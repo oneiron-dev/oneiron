@@ -15,7 +15,7 @@ use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState}
 use crate::claim::ScopedReadActorKey;
 use crate::code_run::storage::ExecutorStorage;
 use crate::code_run::{
-    AgentVerbAnswer, CompareKnown, RunCall, SelfAgentSpawnCall, SelfAgentSpawnResult, SelfCall,
+    AgentVerbAnswer, CompareKnown, SelfAgentSpawnCall, SelfAgentSpawnResult, SelfCall,
     SelfDeniedResult, SelfDispatchOutcome, SelfEffect, SelfFailedResult, SelfTaskRefusalResult,
     SelfTaskRefuseCall,
 };
@@ -625,11 +625,14 @@ impl<'a> HostSelfDispatcher<'a> {
     /// admitted (the room's participant, the off-record line, a step past a
     /// write that did not meet its receipt, the bound door), then resolves
     /// the lease its skill runs under. The skill itself runs on the
-    /// executor's host, which alone holds a runtime to run it on.
+    /// executor's host, which alone holds a runtime to run it on. `outer`:
+    /// the call is the one a credential-bound host projection entered for
+    /// its caller ([`Self::admit_skill_call`]).
     pub(crate) fn admit_skill_call_for_executor_run(
         &self,
         site: ExecutorCallSite<'_>,
         call: &SelfCall,
+        outer: bool,
     ) -> Result<std::result::Result<CallableSkillLease, SelfDispatchOutcome>> {
         let effect = call.effect();
         self.storage.answered(|| {
@@ -643,7 +646,7 @@ impl<'a> HostSelfDispatcher<'a> {
                     ..refused
                 })));
             }
-            let read_as = match self.admit_run_call(RunCall::Bridge(effect))? {
+            let read_as = match self.admit_skill_call(call, outer)? {
                 Ok(read_as) => read_as,
                 Err(refusal) => {
                     return Ok(Err(SelfDispatchOutcome::Denied(SelfDeniedResult {
