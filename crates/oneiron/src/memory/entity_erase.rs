@@ -281,15 +281,6 @@ impl Memory<'_> {
                 preview
                     .check_after_unshare(self.vault, txn)
                     .map_err(Into::into)
-            })
-            .map_err(|error| match options.veto_starter {
-                // The owner, on their own proof, learns `restricted` for a
-                // record they chose to restrict (Q1 = A); any other absence,
-                // and an erase without that proof, passes through.
-                Some(starter) => {
-                    self.owner_absence_as_restricted(starter, &preview.entity(), error)
-                }
-                None => error,
             })?
         };
         let same_bytes = plan
