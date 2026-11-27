@@ -15,7 +15,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 8657 | 2348 | 276 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 8664 | 2351 | 276 |
 | [oneiron-agent-runtime](codemap/oneiron-agent-runtime.md) | `oneiron-agent-runtime`: the sandbox backends above the `oneiron` core crate (core split slice 5b.1) | 23 | 11 | 1 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 4 | 1 | 0 |
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the… | 77 | 12 | 0 |
@@ -63,7 +63,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-sandbox-contract](codemap/oneiron-sandbox-contract.md) | Portable, pure shape rules shared by the host and the isolated guest | 5 | 0 | 0 |
 | [oneiron-schedule-contract](codemap/oneiron-schedule-contract.md) | The Schedule vocabulary below the engine (DESIGN 15-setting-primitive section 1.3): a Schedule is the… | 3 | 0 | 0 |
 | [oneiron-sdk-build](codemap/oneiron-sdk-build.md) | The SDK's generated outputs, produced at build time (untangle slice 4.3, SLICE4-RULED S4-2 G1) | 1 | 0 | 0 |
-| [oneiron-sdk-generator](codemap/oneiron-sdk-generator.md) | The SDK generator: writes every generated SDK output of the verb table (`scripts/sdk/verbs/`), the Rust… | 45 | 8 | 7 |
+| [oneiron-sdk-generator](codemap/oneiron-sdk-generator.md) | The SDK generator: writes every generated SDK output of the verb table (`scripts/sdk/verbs/`), the Rust… | 46 | 8 | 7 |
 | [oneiron-seal](codemap/oneiron-seal.md) | Native Rust PAdES seal and verification engine (ONE-1837) | 69 | 17 | 1 |
 | [oneiron-server](codemap/oneiron-server.md) | Oneiron CRDT sync server library | 2231 | 633 | 72 |
 | [oneiron-setting-contract](codemap/oneiron-setting-contract.md) | The Setting vocabulary below the engine (DESIGN 15-setting-primitive section 1.2): a Setting is a stored… | 6 | 1 | 0 |
@@ -331,7 +331,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `vault_shape` | dir | 28 | L | yes | Vault shape as code (ARCH-0070): the setup plane held in one hand |
 | `verb_names` | file | 1 | s | — | The verb table's rows core reads by name (untangle slice 5.0a, S5-2 = A; S50A-1, S50A-2): the names core… |
 | `verb_table` | file | 1 | s | — | Core's view of the verb table (untangle slice 5.0a, S5-2 = A, S50A-3 = A): the per-verb behaviour core's… |
-| `verbs` | dir | 170 | L | — | Shared typed agent-verb inputs and generated transport dispatch |
+| `verbs` | dir | 177 | L | yes | Shared typed agent-verb inputs and generated transport dispatch |
 | `voice_call` | dir | 3 | m | yes | Transcripts of voice calls with other people (UNBUILT-02 PR 3; Engine ruling VOICE-CALL-SCOPE, corrected 15… |
 | `voice_cascade` | file+dir | 38 | L | yes | ONE-1807: the engine half of a transport-neutral text-brain voice cascade |
 | `voice_identity` | dir | 28 | L | yes | VOX-02 voice identity substrate: consent log, enrollment, local matching |
@@ -1071,6 +1071,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `py` | dir | 8 | m | The Python-behaviour helpers: Python's values, `json`, `str` methods, builtins and the regular expressions… |
 | `uniffi_types` | file | 1 | XL | The UniFFI records and enums for the facade rows' wire types (OF-237), projected from the one facade type… |
 | `verb_table` | file+dir | 2 | m | The verb table, one JSON file per verb under `scripts/sdk/verbs/`, named by its verb, read in file-name order |
+| `verb_tree_index` | file | 1 | m | The verb-tree index (`verb_tree_index.json`): the code-mode verbs, their types, the family lines, the vault… |
 
 ## oneiron-seal
 

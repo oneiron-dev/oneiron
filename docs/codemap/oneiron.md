@@ -9075,7 +9075,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/verbs/machine_status.rs` | src | s | 8 struct · 1 enum · 6 fn · 1 const | MachineCapacityView, MachineNodeAnswer, MachineNodeView, MachineScopeClass, MachineScopeReport, MachineStatusItem, MachineStatusReply, MachineStatusRequest +1 | `vault.machines.status` (design pass 34 section 5 and row Q2): every machine of the owner's, with what the… |
 | `src/verbs/memory_requests.rs` | src | s | 3 struct · 2 fn · 4 re-export · 9 crate-vis | BlobContent, Bm25Search, EditNoteRequest | Typed inputs for the public memory verbs in the SDK inventory |
 | `src/verbs/mesh.rs` | src | s | 1 fn · 2 re-export | — | `vault.mesh.path_receipts` (OF-535): the owner reads this vault's mesh path receipts, newest first, through… |
-| `src/verbs/mod.rs` | src | L | 9 struct · 9 fn · 1 mod · 154 re-export · 4 crate-vis | CompanionSharingSetRequest, ProjectCardDismissal, ProjectGoalDismissReceipt, RoomEntry, TaskAnswerRequest, TaskCanAskRequest, TaskCreateFromMessageRequest, TaskCreateRequest +1 | Shared typed agent-verb inputs and generated transport dispatch |
+| `src/verbs/mod.rs` | src | L | 9 struct · 9 fn · 2 mod · 154 re-export · 4 crate-vis | CompanionSharingSetRequest, ProjectCardDismissal, ProjectGoalDismissReceipt, RoomEntry, TaskAnswerRequest, TaskCanAskRequest, TaskCreateFromMessageRequest, TaskCreateRequest +1 | Shared typed agent-verb inputs and generated transport dispatch |
 | `src/verbs/model_manifest.rs` | src | s | 4 fn | — | Embedded-owner projection of the model-manifest and slot-route doors |
 | `src/verbs/model_pack.rs` | src | s | 2 fn | — | Embedded-owner projection of the model pack setting read (FIX 5367) and the pack change revert (FIX 5369) |
 | `src/verbs/model_settings.rs` | src | s | 1 re-export | — | The owner's field-specific Responses store setting (OF-602) |
@@ -9146,6 +9146,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/verbs/sync_quarantine.rs` | src | s | 1 fn · 1 re-export | — | Owner-only retained held-edit evidence from the sync quarantine |
 | `src/verbs/tables.rs` | src | s | — | — | The side tables `verbs` keeps (core split slice 1): each row declares one, and the crate's build script… |
 | `src/verbs/training_runs.rs` | src | m | 7 struct · 3 enum · 9 fn · 4 const | RoleTrainingPrepareRequest, RoleTrainingPrepared, RoleTrainingScope, TrainingRunEvaluation, TrainingRunExecuteRequest, TrainingRunGetRequest, TrainingRunNeed, TrainingRunObservation +2 | The role-training run doors (ROLE-TRAINING-RUN, LEARN-TRAIN Q1 and Q3) |
+| `src/verbs/tree/index.rs` | src | s | 11 crate-vis | — | — |
+| `src/verbs/tree/mod.rs` | src | s | 5 struct · 1 enum · 10 fn · 1 re-export · 1 crate-vis | NoteKindLine, RenderedView, TreeRefusal, TreeRefusalCode, VerbTree, ViewOptions | A read-only view of the code-mode verb tree, from the base kit to on-demand types |
+| `src/verbs/tree/render.rs` | src | m | 10 crate-vis | — | — |
+| `src/verbs/tree/search.rs` | src | s | 3 crate-vis | — | — |
+| `src/verbs/tree/setting_values.rs` | src | s | 6 crate-vis | — | The value types of the `code_mode.view.*` keys: the verb-tree view's base list, expansion list and token… |
+| `src/verbs/tree/vault_view.rs` | src | s | 1 struct · 3 fn | OwnedViewOptions | The vault's verb-tree view inputs: the `code_mode.view.*` settings in force and the NOTE kinds the view… |
+| `src/verbs/tree/view.rs` | src | s | 1 crate-vis | — | — |
 | `src/verbs/trusted_contact.rs` | src | s | 10 fn · 1 re-export | — | The trusted-contact rows a host door answers (DOOR-140 A, OF-527): the person names a trusted contact… |
 | `src/verbs/turn_program_resume.rs` | src | s | 2 fn · 1 const · 1 crate-vis | — | `vault.turn_programs.resume`: the owner resumes programs a vault copy holds paused (FIX… |
 | `src/verbs/uncertain_send.rs` | src | s | 1 fn · 1 re-export | — | The input and answer of `vault.outbound.uncertain_send.answer` (FIX 4747), a host door: the vault owner's… |
@@ -10953,6 +10960,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/verb_self_memory_self_model.rs` | test | m | — | — | `self.memory.self_model` through the generated verb dispatch (`oneiron::task_verb::sdk::invoke`), as a… |
 | `tests/verb_self_skills_package.rs` | test | m | — | — | `self.skills.package`: an agent with a read permit but no Grant naming the verb is refused, the holder reads… |
 | `tests/verb_tasks_done_executor_stamp.rs` | test | m | — | — | A met DONE through the public `tasks.update` stamps the executor model of the authenticated host run it came… |
+| `tests/verb_tree_view.rs` | test | L | — | — | Verb-tree view integration tests (PR 3b-1, step 5a) |
+| `tests/verb_tree_view_base_shapes.rs` | test | s | — | — | Authored reply shapes in the shipped verb-tree base |
+| `tests/verb_tree_view_grant_hiding.rs` | test | s | — | — | Grant hiding in the shipped verb tree |
 | `tests/verb_vault_assets_masked_read.rs` | test | m | — | — | `vault.assets.masked_read`: an agent with an ordinary read permit but no Grant is refused, the holder reads… |
 | `tests/verb_vault_critic_outcome.rs` | test | L | — | — | Row 4 CRITIC-ATTRIBUTION, PR 3 (rulings LEARN-CRITIC Q3 = B, LEARN-GRANT = A, LEARN-CRITIC-ANCHOR)… |
 | `tests/verb_vault_critic_review.rs` | test | m | — | — | Row 4 CRITIC-ATTRIBUTION, PR 1 (ruling LEARN-CRITIC Q1 = B): a critic review merges findings on a checkable… |

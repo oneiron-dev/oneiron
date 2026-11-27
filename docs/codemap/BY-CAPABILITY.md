@@ -874,6 +874,7 @@ Every top-level module of every mapped crate: its purpose, its entry file (its d
 | The Python-behaviour helpers: Python's values, `json`, `str` methods, builtins and the regular expressions… | `crates/oneiron-sdk-generator/src/py/mod.rs` | m | — |
 | The UniFFI records and enums for the facade rows' wire types (OF-237), projected from the one facade type… | `crates/oneiron-sdk-generator/src/uniffi_types.rs` | XL | OF-237 |
 | The verb table, one JSON file per verb under `scripts/sdk/verbs/`, named by its verb, read in file-name order | `crates/oneiron-sdk-generator/src/verb_table.rs` | m | — |
+| The verb-tree index (`verb_tree_index.json`): the code-mode verbs, their types, the family lines, the vault… | `crates/oneiron-sdk-generator/src/verb_tree_index.rs` | m | — |
 | Frozen orchestration-facing contract for the seal engine (ONE-1837 §4/§5) | `crates/oneiron-seal/src/api.rs` | m | — |
 | Shared output buffers; native accounting constructors are feature-gated | `crates/oneiron-seal/src/buffers.rs` | m | — |
 | Stable seal error classes and codes (ONE-1837 §6) | `crates/oneiron-seal/src/error.rs` | s | — |
