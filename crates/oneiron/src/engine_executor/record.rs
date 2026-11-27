@@ -421,10 +421,7 @@ pub(crate) fn code_run_terminal_in_txn(
             "executor replay terminal marker schema",
         ));
     }
-    Ok(matches!(
-        marker.status,
-        StoredTerminalStatus::Complete | StoredTerminalStatus::WindowOutgrown
-    ))
+    Ok(matches!(marker.status, StoredTerminalStatus::Complete))
 }
 
 /// The run's latest terminal status. A Waiting marker the run resumed from
