@@ -240,6 +240,36 @@ pub(crate) fn retained_subject_rule(name: &str) -> Option<RetainedSubjectRule> {
         .map(|(_, rule)| *rule)
 }
 
+/// The records an export judges a retained row by: every record `records` names, except that a live
+/// membership ledger row is judged by its room alone, as before. Inert copies are also judged by
+/// the people they name, so a former member's delete never withholds a live room's ledger
+/// (REVIEW-10618 round 2 P1-2).
+pub(super) fn judged_records<'a>(
+    table: &str,
+    inert: bool,
+    records: &'a [EntityId],
+) -> &'a [EntityId] {
+    if !inert && table == crate::side_table::CONVERSATION_MEMBERSHIP_ROW.name {
+        return records.get(..1).unwrap_or(records);
+    }
+    records
+}
+
+/// Whether record `id` was hard-deleted here (its dt: marker stands), so an export keeps an
+/// inert copy about it out (FIX HARD-DELETE-RETAINED-ARCHIVE-ROW-OUTLIVES-RECORD).
+pub(super) fn hard_deleted(
+    vault: &crate::Vault,
+    rtxn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> crate::error::Result<bool> {
+    crate::ports::TombstoneStoreRead::port_deletion_marked(
+        &vault.store,
+        rtxn,
+        crate::ports::DeletionMarker::HardDelete,
+        id,
+    )
+}
+
 /// The 16 id bytes at `at`, unchecked for the reserved patterns: no stored record bears one,
 /// so the lookup of such an id finds nothing to keep out.
 fn raw_id_at(key: &[u8], at: usize) -> Option<EntityId> {

@@ -486,4 +486,117 @@ mod tests {
         );
         Ok(())
     }
+
+    #[test]
+    fn a_delete_of_a_record_known_only_by_an_inert_copy_answers_that_it_existed() -> Result<()> {
+        let (_dir, vault) =
+            crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+        let p = EntityId::now();
+        let envelope = ArchiveRetainedSideRow {
+            source_table: TABLE.to_owned(),
+            source_key: p.as_bytes().to_vec(),
+            source_value: b"sentinel words".to_vec(),
+            source_live: false,
+        };
+        let key = retained_side_row_key(&envelope);
+        let mut wtxn = vault.store.env.write_txn()?;
+        RETAINED_SIDE_ROWS.put(&vault, &mut wtxn, &key, &envelope)?;
+        wtxn.commit()?;
+        assert!(
+            vault
+                .delete_entity_with_reason(&p, DeleteReason::UserHardDelete)?
+                .existed,
+            "P existed as an inert copy even without an entity header"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_soft_replay_of_a_record_known_only_by_an_inert_copy_reports_a_change() -> Result<()> {
+        let (_dir, vault) =
+            crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+        let p = EntityId::now();
+        let envelope = ArchiveRetainedSideRow {
+            source_table: TABLE.to_owned(),
+            source_key: p.as_bytes().to_vec(),
+            source_value: b"sentinel words".to_vec(),
+            source_live: false,
+        };
+        let key = retained_side_row_key(&envelope);
+        let mut wtxn = vault.store.env.write_txn()?;
+        RETAINED_SIDE_ROWS.put(&vault, &mut wtxn, &key, &envelope)?;
+        wtxn.commit()?;
+        let outcome = vault.apply_replayed_tombstone(&p, &soft_tombstone_value())?;
+        assert!(
+            matches!(
+                outcome,
+                crate::deletion::ReplayedTombstoneOutcome::SoftErased { changed: true }
+            ),
+            "removing P's only local state, an inert copy, counts as a change"
+        );
+        let rtxn = vault.store.env.read_txn()?;
+        assert!(
+            RETAINED_SIDE_ROWS.get(&vault, &rtxn, &key)?.is_none(),
+            "the replay removed the inert copy"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_former_members_hard_delete_keeps_a_live_room_ledger_exported() -> Result<()> {
+        let (_dir, vault) =
+            crate::test_util::open_test_vault_with(crate::test_util::embedding_test_config());
+        let p = EntityId::now();
+        let q = EntityId::now();
+        let r = EntityId::now();
+        vault.put_entity(&p, ENTITY_TYPE_PERSON, test_time(10), 10, b"person P")?;
+        vault.put_entity(&q, ENTITY_TYPE_PERSON, test_time(11), 11, b"person Q")?;
+        let actor = crate::WriteActor::new(q, crate::EdgeActorClass::Human);
+        vault.create_conversation(
+            r,
+            &crate::conversation::ConversationBody::default(),
+            actor,
+            12,
+        )?;
+        vault.join_member(r, p, actor, 13, crate::conversation::HistoryChoice::Share)?;
+        vault.join_member(r, q, actor, 14, crate::conversation::HistoryChoice::Share)?;
+        vault.leave_member(r, p, actor, 15)?;
+        vault.delete_entity_with_reason(&p, DeleteReason::UserHardDelete)?;
+
+        let held = ArchiveRetainedSideRow {
+            source_table: MEMBERSHIP_TABLE.to_owned(),
+            source_key: membership_source_key(&r, 3),
+            source_value: encode_membership_row(&membership_join(p, q))?,
+            source_live: false,
+        };
+        let held_key = retained_side_row_key(&held);
+        let mut wtxn = vault.store.env.write_txn()?;
+        RETAINED_SIDE_ROWS.put(&vault, &mut wtxn, &held_key, &held)?;
+        wtxn.commit()?;
+        let rtxn = vault.store.env.read_txn()?;
+        let carried = collect_retained_side_rows_in_txn(&vault, &rtxn)?;
+        let mut live_ledger_rows = 0;
+        let mut held_found = false;
+        for row in &carried {
+            let e = RETAINED_SIDE_ROWS.decode_value(&row.value)?;
+            if e.source_table == MEMBERSHIP_TABLE
+                && e.source_live
+                && e.source_key.starts_with(r.as_bytes())
+            {
+                live_ledger_rows += 1;
+            }
+            if e == held {
+                held_found = true;
+            }
+        }
+        assert!(
+            live_ledger_rows > 0,
+            "R's live ledger is exported though a former member was hard-deleted"
+        );
+        assert!(
+            !held_found,
+            "an inert copy naming hard-deleted P is not exported"
+        );
+        Ok(())
+    }
 }

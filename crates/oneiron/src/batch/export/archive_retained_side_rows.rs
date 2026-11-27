@@ -15,6 +15,7 @@ use super::archive_retained_room_ledgers::{
     note_ledger_envelope, retained_row_room, withhold_room_ledger,
 };
 use super::archive_retained_subjects::{RetainedSubjectRule, retained_subject_rule};
+use super::archive_retained_subjects::{hard_deleted, judged_records};
 use super::archive_side_dispositions::{omitted_decls, retained_decl, retained_decls};
 use super::{
     ArchiveSideFamily, ArchiveSideRow, ImportOmissionReason, RetainedSideImportSummary,
@@ -23,7 +24,6 @@ use super::{
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::ports::{DeletionMarker, TombstoneStoreRead};
 use crate::registry::ENTITY_TYPE_SUMMARY;
 use crate::serialize::{ExportBodyFile, null_document_tree_row};
 use crate::side_table::{CodecName, Named, SideKey, SideTable};
@@ -142,15 +142,7 @@ pub(crate) fn retained_envelope_source_table(value: &[u8]) -> Option<String> {
 /// keeps it out (off the record, use-limited by a customer hold that refused its privacy erase,
 /// or held back here, or its words came from such a row), or it is an epoch summary one of whose
 /// transitive sources the door keeps out, or whose epoch does not resolve (FIX 1496 S5).
-/// A record hard-deleted here (its dt: marker stands) is kept out too, so a copy stored before
-/// its delete, or imported after it, is not carried (FIX HARD-DELETE-RETAINED-ARCHIVE-ROW-OUTLIVES-RECORD).
 fn export_keeps_record_out(vault: &crate::Vault, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
-    if vault
-        .store
-        .port_deletion_marked(rtxn, DeletionMarker::HardDelete, id)?
-    {
-        return Ok(true);
-    }
     if super::export_egress::whole_vault_export_excludes_entity_in_txn(vault, rtxn, id)? {
         return Ok(true);
     }
@@ -197,6 +189,7 @@ fn retained_row_withheld(
     rtxn: &RoTxn<'_>,
     rule: Option<RetainedSubjectRule>,
     envelope: &ArchiveRetainedSideRow,
+    inert: bool,
 ) -> Result<bool> {
     if envelope.source_table == crate::side_table::GPU_LINE_PERIOD.name
         && crate::gpu_line::period_row_seals_seed(
@@ -211,8 +204,11 @@ fn retained_row_withheld(
     else {
         return Ok(true);
     };
-    for id in &records {
-        if export_keeps_record_out(vault, rtxn, id)? {
+    // An inert copy about a record hard-deleted here stays out, stored before the delete or
+    // imported after it; a live row keeps its policy
+    // (FIX HARD-DELETE-RETAINED-ARCHIVE-ROW-OUTLIVES-RECORD).
+    for id in judged_records(&envelope.source_table, inert, &records) {
+        if (inert && hard_deleted(vault, rtxn, id)?) || export_keeps_record_out(vault, rtxn, id)? {
             return Ok(true);
         }
     }
@@ -271,7 +267,7 @@ pub(crate) fn collect_retained_side_rows_in_txn(
                 source_value,
                 source_live: true,
             };
-            if retained_row_withheld(vault, rtxn, rule, &envelope)? {
+            if retained_row_withheld(vault, rtxn, rule, &envelope, false)? {
                 withhold_room_ledger(&envelope, &mut withheld_ledgers);
                 continue;
             }
@@ -305,7 +301,7 @@ pub(crate) fn collect_retained_side_rows_in_txn(
         }
         let envelope = RETAINED_SIDE_ROWS.decode_value(&value)?;
         let rule = retained_subject_rule(&envelope.source_table);
-        if retained_row_withheld(vault, rtxn, rule, &envelope)? {
+        if retained_row_withheld(vault, rtxn, rule, &envelope, true)? {
             withhold_room_ledger(&envelope, &mut withheld_ledgers);
             continue;
         }
