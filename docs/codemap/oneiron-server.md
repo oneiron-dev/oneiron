@@ -715,6 +715,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/mcp_gateway/tasks_response.rs` | src | L | 18 crate-vis | — | Tasks verb and response shaping |
 | `src/api/mcp_gateway/tasks_response/native_read.rs` | src | s | 2 crate-vis | — | The native memory read arm of one generated verb tool call, through the verb-hook boundary every generated… |
 | `src/api/mcp_gateway/tasks_response/transport_rows.rs` | src | s | 1 crate-vis | — | The MCP door of a transport-only row (`host_door_transport_only`, FIX HOOK-TRANSCRIPT-IMPORT-PAST-CARRIER) |
+| `src/api/mcp_gateway/tool_args_reasons.rs` | src | s | 10 crate-vis | — | The stable reason codes of a `tool_args_invalid` refusal (FIX CODE-MODE-DENIAL-REASONS): what was wrong with… |
 | `src/api/mcp_gateway/tool_receipt.rs` | src | s | 1 crate-vis | — | A `tools/call`'s lasting receipt on MCP (OF-538), as the gateway's one door writes it |
 | `src/api/mcp_gateway/type_feedback_release.rs` | src | m | 14 crate-vis | — | Type feedback leaves an MCP answer on its own release (FIX 10390, CALLS "feedback released apart from its… |
 | `src/api/mcp_gateway/verb_hooks.rs` | src | m | 8 crate-vis | — | The verb-hook boundary of an MCP row (ARCH-0080 §3), as the generated dispatch crosses it: the row door's… |
@@ -1474,9 +1475,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gpu_execution_node/jobs/receipt.rs` | src | s | 1 struct · 4 fn | ReceiptClock | The receipt: what this node observed about one key, from the journal alone, signed with the machine key… |
 | `src/gpu_execution_node/jobs/recovery.rs` | src | m | 1 fn · 1 crate-vis | — | Recovery on the node (design pass 33, 7.7) |
 | `src/gpu_execution_node/jobs/serving.rs` | src | s | 1 struct · 3 fn | ServedNodeJobs | The node's job service as the server runs it (row R3a, FIX R3A-NODE-JOBS-ATTACH) |
-| `src/gpu_execution_node/jobs/staging.rs` | src | m | 1 struct · 1 enum · 1 trait · 2 fn · 3 const | MirrorStager, StagingRefusal, TemplateMirrors | Staging (design pass 33, `33-exec-node/DESIGN.md` section 7.4; row R3c): the code of a key's pin, exported… |
+| `src/gpu_execution_node/jobs/staging.rs` | src | m | 1 struct · 1 enum · 1 trait · 2 fn · 3 const · 1 re-export | MirrorStager, StagingRefusal, TemplateMirrors | Staging (design pass 33, `33-exec-node/DESIGN.md` section 7.4; row R3c): the code of a key's pin, exported… |
 | `src/gpu_execution_node/jobs/staging/git_process.rs` | src | s | 6 crate-vis | — | The git a staging runs (row R3c): the git directory the stager writes for one staging, the fenced command on… |
-| `src/gpu_execution_node/jobs/staging/payload_dir.rs` | src | s | 1 crate-vis | — | The payload directory's ownership check (row R3c): the work directory's path walked from `/`, each directory… |
+| `src/gpu_execution_node/jobs/staging/payload_dir.rs` | src | m | 2 struct · 2 enum · 3 fn · 1 crate-vis | WorkDirAccess, WorkDirFault, WorkDirUnsafe, WorkDirVerdict | The payload directory's ownership check (row R3c): the work directory's path walked from `/`, each directory… |
 | `src/gpu_execution_node/jobs/status.rs` | src | m | 4 fn · 1 const · 2 crate-vis | — | The status side's answers that admission does not give (design pass 33, 7.1 and 7.6 step 5; row R4): one… |
 | `src/gpu_execution_node/machine_policy.rs` | src | m | 15 fn | — | The two layers of a node's controls (pass 34, `34-compute-general/DESIGN.md` section 2.4; EM-17 = A, row… |
 | `src/gpu_execution_node/mod.rs` | src | s | 14 mod · 7 re-export | — | A vault machine that runs pinned workloads for the vault's issuer (pass 33, `33-exec-node/DESIGN.md`): the… |
@@ -1501,10 +1502,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gpu_execution_node/scope_systemd/probe_unit.rs` | src | m | 1 fn | — | The scope half of `oneiron execution-node check` (pass 33, 7.6: "`execution-node check` runs the same checks… |
 | `src/gpu_execution_node/scope_systemd/records.rs` | src | s | 6 struct · 6 fn · 1 const · 1 re-export | CutoffMark, CutoffPlan, ExecFile, PreparedRecord, ScopeRecord, ScopeReport | The files the unit's steps hand each other, besides R3a's `launch.json` and `ended.json`… |
 | `src/gpu_execution_node/scope_systemd/renew.rs` | src | s | 2 fn | — | A session's renewal on the systemd scope (pass 34, 2.5; row W1), as root, through the job control socket's… |
-| `src/gpu_execution_node/scope_systemd/safe_fs.rs` | src | m | 2 struct · 20 fn | AccountEntry, FileFacts | File operations for the unit's root steps in directories another account owns (the engine's state and… |
+| `src/gpu_execution_node/scope_systemd/safe_fs.rs` | src | m | 2 struct · 21 fn | AccountEntry, FileFacts | File operations for the unit's root steps in directories another account owns (the engine's state and… |
 | `src/gpu_execution_node/scope_systemd/step.rs` | src | s | 2 struct · 7 fn · 1 const | StepArgs, StepContext | What every root step of the unit starts from: its instance, the root-owned node file, the two accounts, and… |
 | `src/gpu_execution_node/scope_systemd/systemd_unit.rs` | src | m | 1 struct · 9 fn · 1 const | SystemdJobUnit | R3a's [`JobUnit`] over the system's service manager: the engine's account starts and stops instances of… |
-| `src/gpu_execution_node/scope_systemd/unit_file.rs` | src | m | 1 struct · 8 fn · 1 const | UnitInputs | The job unit template (pass 33, section 7.6) and the job control socket through which the engine's account… |
+| `src/gpu_execution_node/scope_systemd/unit_file.rs` | src | m | 1 struct · 9 fn · 1 const | UnitInputs | The job unit template (pass 33, section 7.6) and the job control socket through which the engine's account… |
 | `src/gpu_execution_node/selection.rs` | src | s | 3 struct · 2 enum · 1 trait · 3 fn | GpuNodeCandidate, GpuSelectionRefusal, GpuSlotPeer, GpuSlotPeerError, GpuSlotPlacement, LocalGpuSlotPeer | A read that picks a machine's GPU for a GPU job, before its quote |
 | `src/gpu_execution_node/service.rs` | src | s | 2 struct · 4 fn · 2 const | JobService, JobStatusService | The node's two mesh services (section 7.1): [`JobService`] on [`JOB_ALPN`] and [`JobStatusService`] on… |
 | `src/gpu_execution_node/slots.rs` | src | m | 1 struct · 14 fn · 2 re-export | GpuSlotTable | This machine's GPU slots: one job per offered GPU, beside the machine's memory floor |
@@ -2280,7 +2281,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/live_run_step.rs` | src | s | 1 fn | — | Door for `tests/run_step_live_run.rs` ([RUN-STEP-DOOR-SERVER-TEST]): a leased agent run on a test's server… |
 | `src/test_doors/lost_training_waiter.rs` | src | s | 1 struct · 2 fn | LostWaiter | Door for `tests/role_training_execute.rs`: a training run whose waiter is lost, as after a host restart |
 | `src/test_doors/mcp_carrier_release.rs` | src | s | 1 fn | — | Doors for `tests/board_child_release.rs` (census L2-38, review round 1): the release check a gateway carrier… |
-| `src/test_doors/mcp_code_mode_verbs.rs` | src | m | 3 struct · 9 fn | GuestRefusal, HostVerbRefusal, TestCredential | Door for `tests/code_mode_host_verb_refusals.rs`: the code-mode host-verb path as a run's guest calls it… |
+| `src/test_doors/mcp_code_mode_verbs.rs` | src | m | 3 struct · 10 fn | GuestRefusal, HostVerbRefusal, TestCredential | Door for `tests/code_mode_host_verb_refusals.rs`: the code-mode host-verb path as a run's guest calls it… |
 | `src/test_doors/mcp_page_mint.rs` | src | s | 1 fn · 1 crate-vis | — | Door for `tests/mcp_page_continuation_rejudge.rs`: one act run at a vault's next page one mint, after its… |
 | `src/test_doors/mcp_refusal_status.rs` | src | s | 1 fn | — | Door for `tests/mcp_facade_refusal_registry.rs` (UC-11): the JSON-RPC number and stable kind the MCP gateway… |
 | `src/test_doors/mcp_run_claim_lane.rs` | src | s | 1 fn | — | Door for `tests/mcp_run_claim_row_identity_key.rs` (FIX-LIST 25102): the lane a code run's claim and edge… |
@@ -2775,6 +2776,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/token_agent_file_keystore.rs` | test | m | — | — | `[keystore] backend = "file"` (MACOS-UNSIGNED-FILE-KEYSTORE): the owner's explicit file tier lets a build… |
 | `tests/token_agent_own_vault_agent.rs` | test | s | — | — | `oneiron token agent` leaves its agent one of this vault's own agents (PRIVACY-07) |
 | `tests/token_bootstrap_redeem.rs` | test | s | — | — | `oneiron token bootstrap --redeem` (R6 B7; Engine ANSWER R6-OWNER-CREDENTIAL = A, 25 Nov 23:35) |
+| `tests/tool_args_reason_codes.rs` | test | m | — | — | FIX CODE-MODE-DENIAL-REASONS: a refused verb call says what was wrong with its arguments in stable reason… |
 | `tests/turn_program_resume_doors.rs` | test | m | — | — | Public facade doors for resuming paused turn programs on a copy beside its source |
 | `tests/unauthenticated_embedder_peer.rs` | test | s | — | — | An app made by `build_app` keeps the unauthenticated development hatch on this device, however its embedder… |
 | `tests/usage_events_body_scope.rs` | test | s | — | — | USAGE-EVENTS-BODY-SCOPE-UNCHECKED: `POST /v1/usage/events` on a server whose meter is bound to one vault… |
