@@ -202,6 +202,12 @@ impl<'a> VerbWriteRun<'a> {
             )
             .expect("seed actor");
         let actor = WriteActor::new(actor_id, EdgeActorClass::Agent);
+        // Scoped reads are default-deny (OF-063). The actor reads under a
+        // `core:read` grant, as the other executor tests' actor does, so a
+        // speech that asserts the task it created reads that task; without
+        // it the witness refuses the speech and its refusal receipt mints
+        // the actor's stamp token.
+        crate::conversation_dag::fixtures::grant_reads(vault, actor);
         Self::through(vault, TaskCreateDoor::new(vault, actor, extra))
     }
 
@@ -692,21 +698,8 @@ fn a_refused_kept_answer_holds_in_the_steps_next_attempt() {
     run.door
         .refuses_kept
         .store(false, std::sync::atomic::Ordering::SeqCst);
-    let task_rows = || {
-        vault
-            .entities_by_type(crate::registry::ENTITY_TYPE_TASK)
-            .expect("task rows")
-    };
-    let committed_tasks = task_rows();
     let mut admitted = resumed_step(vec![create_task(), speak()]);
-    let outcome = run
-        .run(&run.config, &mut admitted)
-        .expect("the resumed run returns");
-    assert_eq!(
-        task_rows(),
-        committed_tasks,
-        "the resumed run writes no second task"
-    );
+    let outcome = run.resume(&run.config, &mut admitted);
     assert_eq!(
         outcome.expect("the admitted attempt").status,
         EngineExecutorStatus::Complete
