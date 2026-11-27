@@ -89987,7 +89987,7 @@
       "const": 4,
       "crate-vis": 4,
       "enum": 2,
-      "fn": 17,
+      "fn": 19,
       "mod": 1,
       "re-export": 4
      }
@@ -90042,13 +90042,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/sync/chunks/stream.rs",
      "purpose": "The chunk-sync stream an HTTP exchange carries each way (FIX 145): an envelope ([`CHUNK_SYNC_VERSION`] and…",
      "surface": {
-      "const": 1,
+      "const": 3,
       "fn": 4
      }
     },
@@ -113051,6 +113051,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/chunk_request_stream_bound.rs",
+     "purpose": "FIX CHUNK-STREAM-DECODE-UNBOUNDED-MEMORY (ruling CHUNK-STREAM-MEMORY-BOUND = A) and…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -125847,7 +125855,7 @@
    "over_bar": 276,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 8652,
-   "test_files": 2340
+   "test_files": 2341
   },
   "oneiron-agent-runtime": {
    "files": [
