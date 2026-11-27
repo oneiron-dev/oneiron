@@ -458,6 +458,44 @@ impl AgentVerbDoor for McpCodeModeVerbs {
         self.credential_lane()
     }
 
+    /// Rechecks a recorded verb's caller-code policy and binding (FIX
+    /// CODE-MODE-LENDING-W11). Host-served browser, desktop and result rows
+    /// also meet their own gate; session-bound rows meet the room's existing
+    /// admission methods. The input-dependent scope and grade of a generated
+    /// row's recorded answer stay at the generic Read check: the original
+    /// arguments are not available here.
+    fn admit_recorded_verb(&self, verb: AgentVerb) -> Result<(), AgentVerbRefusal> {
+        if self.author == RunAuthor::Caller
+            && let Some(reason) = caller_code_verb_refusal(verb)
+        {
+            return Err(caller_code_refused(reason));
+        }
+        let refused = |error: McpGatewayError| AgentVerbRefusal {
+            hook_notice: None,
+            code: error.kind.to_owned(),
+            reason_codes: error.reason_codes,
+        };
+        if matches!(verb, AgentVerb::VaultRunsReadResult) || verb.is_browser() {
+            return mcp_admit_host_verb(&self.actor, verb)
+                .and_then(|()| mcp_host_verb_gate(&self.server, &self.actor, verb))
+                .map_err(refused);
+        }
+        let surface = try_registered_surface(McpSurfaceMode::ToolFirst)
+            .map_err(|error| refused(admission::mcp_surface_unavailable(error)))?;
+        let name = verb.as_str();
+        let Some(McpEndpointTool::Verb(tool)) = surface.resolve(name) else {
+            if let Some(refusal) = oneiron::task_verb::sdk::wrong_root(name) {
+                return Err(refused(mcp_facade_error(refusal)));
+            }
+            return Err(refused(McpGatewayError::new(
+                -32601,
+                "unknown_tool",
+                format!("{name} is not a verb in the SDK verb table"),
+            )));
+        };
+        mcp_admit_bound_tool(&self.actor, tool.name).map_err(refused)
+    }
+
     /// A room write a session-bound run stages (WILL L11-01, S01-2a) meets
     /// this connector's door as its session reads do, and lands under the
     /// credential's live ceiling (`session_write`).

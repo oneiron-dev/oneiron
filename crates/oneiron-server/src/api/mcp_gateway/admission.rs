@@ -137,7 +137,10 @@ pub(crate) fn mcp_admit_host_verb(
     mcp_admit_unscoped_execution(actor, verb.as_str(), "name")
 }
 
-fn mcp_admit_bound_tool(actor: &McpCallContext, tool_name: &str) -> Result<(), McpGatewayError> {
+pub(crate) fn mcp_admit_bound_tool(
+    actor: &McpCallContext,
+    tool_name: &str,
+) -> Result<(), McpGatewayError> {
     if actor.admits_tool(tool_name) {
         return Ok(());
     }

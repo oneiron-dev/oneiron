@@ -91,7 +91,8 @@ use super::actor_dispatch::{
     mcp_tool_validation_error, mcp_verb_gate,
 };
 use super::admission::{
-    mcp_admit_host_verb, mcp_admit_run_verb, mcp_admit_scoped_verb, mcp_admit_step_verb,
+    mcp_admit_bound_tool, mcp_admit_host_verb, mcp_admit_run_verb, mcp_admit_scoped_verb,
+    mcp_admit_step_verb,
 };
 use super::tasks_response::{
     McpCodeRun, RunAuthor, execute_agent_verb_input, mcp_agent_verb_arguments,

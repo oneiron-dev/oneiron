@@ -10,6 +10,7 @@
 use super::mcp_quickjs::{code_mode_server_with, factory};
 use super::*;
 
+mod recorded_answer_recheck;
 mod verbs;
 
 /// One server bound to the production caller-source provider: the verified component with
