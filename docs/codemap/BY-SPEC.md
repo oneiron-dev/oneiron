@@ -44,7 +44,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | ARCH-0004 | `crates/oneiron/src/embed/space_move.rs` | L |
 | ARCH-0004 | `crates/oneiron/src/embed/space_probe.rs` | m |
 | ARCH-0004 | `crates/oneiron/src/embed/world_space.rs` | m |
-| ARCH-0004 | `crates/oneiron/src/memory/recall/paid.rs` | L |
+| ARCH-0004 | `crates/oneiron/src/memory/recall/paid.rs` | m |
 | ARCH-0004 | `crates/oneiron/src/pipeline/media_channel.rs` | s |
 | ARCH-0004 | `crates/oneiron/src/pipeline/temporal_bound.rs` | m |
 | ARCH-0004 | `crates/oneiron/src/settings/non_base_world_claim_fraction.rs` | s |

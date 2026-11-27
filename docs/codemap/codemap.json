@@ -51038,7 +51038,7 @@
      "purpose": "`vault.imports.hook_transcript` (census L10-17; Engine ruling Tue 17 Nov 06:50, L10-17-PR3-MEMORY = B): one…",
      "surface": {
       "const": 3,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 2,
       "fn": 3,
       "struct": 6
@@ -59821,7 +59821,7 @@
      "path": "src/memory/recall/bar.rs",
      "purpose": "The owner's relevance bar for the lines a recall pushes into a session (RECALL-CARRIER-THRESHOLD)",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -59891,7 +59891,7 @@
      "path": "src/memory/recall/items.rs",
      "purpose": "Projects recall items and render fields for the bound reader",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -59913,7 +59913,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "RecallRerank",
@@ -59941,6 +59941,16 @@
      "purpose": "The rows each rerank document is read from (FIX 7001), kept beside its text so the host's call is sourced…",
      "surface": {
       "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/memory/recall/paid/scoring.rs",
+     "purpose": "Device-only checks, score completion, and model name validation for paid recall",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -69041,13 +69051,23 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/pipeline/execution/channels/text.rs",
      "purpose": "The text channel: the D19 claim-gate widening probe, the scoped BM25 search, and the HyDE-retry extra queries",
      "surface": {
       "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/pipeline/execution/channels/text/truncation.rs",
+     "purpose": "Scope and result limits for widened text searches",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -71228,7 +71248,7 @@
      "path": "src/provenance/conversation_sources.rs",
      "purpose": "The conversations a claim's words came from (FIX 11841), for recall's narrowing by conversation",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -100258,7 +100278,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 406,
+      "mod": 407,
       "re-export": 3
      }
     },
@@ -100803,6 +100823,16 @@
      "purpose": "Door for `tests/recall_gate_judges_once.rs` (row [RECALL-EXPANDED-ROW-FACTS-REREAD]): counts the full actor…",
      "surface": {
       "crate-vis": 2,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/recall_line_provenance.rs",
+     "purpose": "Fixture writes for the line-provenance recall tests",
+     "surface": {
       "fn": 1
      }
     },
@@ -119372,6 +119402,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/recall_line_provenance.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -124518,7 +124556,7 @@
     },
     "memory": {
      "entry": "crates/oneiron/src/memory/mod.rs",
-     "files": 424,
+     "files": 425,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -124709,7 +124747,7 @@
     },
     "pipeline": {
      "entry": "crates/oneiron/src/pipeline/mod.rs",
-     "files": 74,
+     "files": 75,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -125386,7 +125424,7 @@
     },
     "test_doors": {
      "entry": "crates/oneiron/src/test_doors/mod.rs",
-     "files": 419,
+     "files": 420,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -125651,10 +125689,10 @@
      "spec_ids": []
     }
    },
-   "over_bar": 278,
+   "over_bar": 276,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8641,
-   "test_files": 2332
+   "source_files": 8644,
+   "test_files": 2333
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -207528,6 +207566,7 @@
       "HabitCheckinInput",
       "LexicalHit",
       "LexicalHits",
+      "LineProvenance",
       "MemoryItem",
       "MemoryPack",
       "MemoryProvenance",
@@ -207575,7 +207614,7 @@
      "purpose": "The typed UniFFI records of the SDK surface",
      "surface": {
       "enum": 14,
-      "struct": 56
+      "struct": 57
      }
     },
     {
@@ -216869,6 +216908,7 @@
      "kind": "src",
      "notable": [
       "Effort",
+      "LineProvenance",
       "MemoryProvenance",
       "RecallBarAsk",
       "RecallBarOutcome",
@@ -216887,7 +216927,7 @@
       "fn": 9,
       "mod": 3,
       "re-export": 6,
-      "struct": 7
+      "struct": 8
      }
     },
     {

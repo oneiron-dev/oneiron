@@ -43,7 +43,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/codec/weave_reports.rs` | src | s | 2 crate-vis | — | Owned claim JSON in live and saved Weave sections |
 | `src/codec/wire_json.rs` | src | s | — | — | Consuming output conversion for an opaque JSON leaf |
 | `src/contract.rs` | src | s | 1 fn · 2 const | — | The crate-private verb export macro |
-| `src/dto.rs` | src | L | 56 struct · 14 enum | AdmitImportedClaimInput, BlobArtifactInput, BlobVersionAppendOutcome, BlobVersionView, CheckInDecision, CitedMessage, ClaimInput, ClaimListFilter +62 | The typed UniFFI records of the SDK surface |
+| `src/dto.rs` | src | L | 57 struct · 14 enum | AdmitImportedClaimInput, BlobArtifactInput, BlobVersionAppendOutcome, BlobVersionView, CheckInDecision, CitedMessage, ClaimInput, ClaimListFilter +63 | The typed UniFFI records of the SDK surface |
 | `src/embedded_engine.rs` | src | m | 6 struct · 1 trait · 14 fn | AppHostCallbacks, EmbeddedEngine, EngineConnection, EngineHeader, EngineLimits, EngineReply, EngineRequest | The embedded engine (OF-237): the full server `oneiron serve` runs, inside the app's own process, over the… |
 | `src/error.rs` | src | s | 1 enum | OneironError | The single exported error type for the UniFFI head-contract surface |
 | `src/host_root.rs` | src | s | 1 struct · 2 fn | HostRootProfile | `Oneiron.open_with_host_root` (FIX 4730): `Oneiron.open`, then this install's own machine profile from the… |

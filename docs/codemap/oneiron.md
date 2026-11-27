@@ -4350,7 +4350,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ingest/history/codex.rs` | src | m | 2 crate-vis | — | Codex session rollouts: one JSONL file per session under `sessions/YYYY/MM/DD/` |
 | `src/ingest/history/copilot.rs` | src | s | 2 crate-vis | — | GitHub Copilot session logs, as a hook hands them over (`transcript_path`): VS Code's own transcript… |
 | `src/ingest/history/cursor.rs` | src | s | 2 crate-vis | — | Cursor agent transcripts, as its hooks hand them over (`transcript_path`), seen at… |
-| `src/ingest/history/hook_transcript.rs` | src | m | 6 struct · 2 enum · 3 fn · 3 const · 2 crate-vis | HistoryImportCaller, HookSubagentTranscript, HookTranscriptConversation, HookTranscriptImportRequest, HookTranscriptImportView, HookTranscriptPartRequest, HookTranscriptPartView, HookTranscriptSource | `vault.imports.hook_transcript` (census L10-17; Engine ruling Tue 17 Nov 06:50, L10-17-PR3-MEMORY = B): one… |
+| `src/ingest/history/hook_transcript.rs` | src | m | 6 struct · 2 enum · 3 fn · 3 const · 3 crate-vis | HistoryImportCaller, HookSubagentTranscript, HookTranscriptConversation, HookTranscriptImportRequest, HookTranscriptImportView, HookTranscriptPartRequest, HookTranscriptPartView, HookTranscriptSource | `vault.imports.hook_transcript` (census L10-17; Engine ruling Tue 17 Nov 06:50, L10-17-PR3-MEMORY = B): one… |
 | `src/ingest/history/hosted.rs` | src | m | 10 struct · 3 enum · 18 fn · 1 const · 1 crate-vis | HostedImportCanceller, HostedImportEmbeddings, HostedImportId, HostedImportJob, HostedImportParse, HostedImportResumed, HostedImportReview, HostedImportSearchable +5 | A hosted import (ARCH-0027 #hosted-import): an export staged inside the vault's own data directory, landed… |
 | `src/ingest/history/hosted_verbs.rs` | src | s | 2 struct · 5 fn | HostedImportCancel, HostedImportLookup | The hosted import's verbs (ARCH-0027 #hosted-import; the Engine's rulings of 13 Nov 07:14, substrate behind… |
 | `src/ingest/history/land.rs` | src | m | 3 fn · 1 re-export · 8 crate-vis | — | Landing a decoded conversation as an imported transcript (ARCH-0027) |
@@ -5054,16 +5054,17 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/reads.rs` | src | L | 3 struct · 10 fn · 2 re-export · 9 crate-vis | ClaimView, LexicalHit, NeighborHit | Entity/claim read surface plus BM25 and neighbor queries |
 | `src/memory/reads/receipt_page.rs` | src | m | 1 struct · 3 fn · 4 crate-vis | VaultReceiptsPage | `vault.receipts`: the gate decision ledger, or the unified family's receipts of the named kinds, newest… |
 | `src/memory/recall/admission.rs` | src | s | 5 fn | — | — |
-| `src/memory/recall/bar.rs` | src | m | 7 crate-vis | — | The owner's relevance bar for the lines a recall pushes into a session (RECALL-CARRIER-THRESHOLD) |
+| `src/memory/recall/bar.rs` | src | m | 8 crate-vis | — | The owner's relevance bar for the lines a recall pushes into a session (RECALL-CARRIER-THRESHOLD) |
 | `src/memory/recall/bar/setting_keys.rs` | src | s | — | — | The `recall.bar.*` rows (their value and item domain: the parent module) |
 | `src/memory/recall/call_mode.rs` | src | s | 3 fn · 2 re-export · 2 crate-vis | — | Call mode (retrieval hub #call-mode): recall for live calls |
 | `src/memory/recall/conversation.rs` | src | s | 4 crate-vis | — | Conversation and PERSON narrowing for one recall selection |
 | `src/memory/recall/home.rs` | src | m | 3 struct · 1 enum · 8 fn · 1 const · 1 re-export · 4 crate-vis | HomeRecallAsk, HomeRecallCaller, HomeRecallMergeOrder, RecallResidence | What an opened device's recall says of its home (FIX 2905, OF-534) |
 | `src/memory/recall/hyde_host.rs` | src | s | 1 fn | — | Stable authority key for a host expansion's pending work, without storing credentials |
-| `src/memory/recall/items.rs` | src | m | 2 crate-vis | — | Projects recall items and render fields for the bound reader |
+| `src/memory/recall/items.rs` | src | m | 3 crate-vis | — | Projects recall items and render fields for the bound reader |
 | `src/memory/recall/mod.rs` | src | L | 3 struct · 1 fn · 2 const · 6 re-export · 8 crate-vis | CitedMessage, MemoryItem, MemoryPack | Recall and `MemoryPack` assembly (S6): recall/recall_in_session and the scope-honesty + provenance plumbing |
-| `src/memory/recall/paid.rs` | src | L | 3 struct · 1 enum · 1 trait · 4 fn · 1 re-export · 2 crate-vis | RecallRerank, RecallRerankHost, RerankDocument, RerankEgress, RerankScores | Recall at high, xhigh and max through a host's reranker (ARCH-0004 #rerank: a cross-encoder refines the… |
+| `src/memory/recall/paid.rs` | src | m | 3 struct · 1 enum · 1 trait · 4 fn · 1 re-export · 2 crate-vis | RecallRerank, RecallRerankHost, RerankDocument, RerankEgress, RerankScores | Recall at high, xhigh and max through a host's reranker (ARCH-0004 #rerank: a cross-encoder refines the… |
 | `src/memory/recall/paid/lineage.rs` | src | s | 2 crate-vis | — | The rows each rerank document is read from (FIX 7001), kept beside its text so the host's call is sourced… |
+| `src/memory/recall/paid/scoring.rs` | src | s | 3 crate-vis | — | Device-only checks, score completion, and model name validation for paid recall |
 | `src/memory/recall/presentation.rs` | src | s | 5 crate-vis | — | — |
 | `src/memory/recall/render_budget.rs` | src | s | 3 crate-vis | — | The token budget a rendered pack is cut to (FIX 9962): one resolver for every door that renders a recall or… |
 | `src/memory/recall/replay.rs` | src | s | 1 crate-vis | — | The items of one operation's first recall, rebuilt for its replay (RESEARCH-0363 p5): at the revisions that… |
@@ -5874,7 +5875,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/pipeline/execution/channels/rerank.rs` | src | m | 6 crate-vis | — | RET-010 rerank hook: the post-sort score-ladder reassignment over the top-N block |
 | `src/pipeline/execution/channels/rerank/tests.rs` | test | s | — | — | Done-means (the Engine lane's ruling on Sol round 6, R6-1): a block row whose words no revision pins (a… |
 | `src/pipeline/execution/channels/residence_page.rs` | src | s | 2 crate-vis | — | The residence page mode (FIX 8865): a home's paged residence search ranks its text channel as deep as the… |
-| `src/pipeline/execution/channels/text.rs` | src | L | 4 crate-vis | — | The text channel: the D19 claim-gate widening probe, the scoped BM25 search, and the HyDE-retry extra queries |
+| `src/pipeline/execution/channels/text.rs` | src | m | 4 crate-vis | — | The text channel: the D19 claim-gate widening probe, the scoped BM25 search, and the HyDE-retry extra queries |
+| `src/pipeline/execution/channels/text/truncation.rs` | src | s | 1 crate-vis | — | Scope and result limits for widened text searches |
 | `src/pipeline/execution/channels/trace_assembly.rs` | src | s | 2 crate-vis | — | Retrieval-trace assembly: the fork hash and the per-channel, fused, blended, reranked, and final stage records |
 | `src/pipeline/execution/channels/turn_fold.rs` | src | s | 3 crate-vis | — | A MESSAGE hit folds into its TURN, so one result never holds both |
 | `src/pipeline/execution/mod.rs` | src | s | 1 crate-vis | — | Retrieval-transaction execution: channel fan-out, the outer context-pack driver, and attempt plumbing |
@@ -6077,7 +6079,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/provenance/body/checkpoint.rs` | src | s | 2 crate-vis | — | The checkpoint getter of body descriptors (KS7-2): each descriptor and each digest holder row under its… |
 | `src/provenance/body/retained.rs` | src | s | 1 crate-vis | — | The side rows a kept body stands on (FIX 8850) |
 | `src/provenance/codec.rs` | src | s | 1 re-export · 1 crate-vis | — | Provenance vocabulary defined below the claim layer |
-| `src/provenance/conversation_sources.rs` | src | s | 4 crate-vis | — | The conversations a claim's words came from (FIX 11841), for recall's narrowing by conversation |
+| `src/provenance/conversation_sources.rs` | src | s | 5 crate-vis | — | The conversations a claim's words came from (FIX 11841), for recall's narrowing by conversation |
 | `src/provenance/derived_attachment.rs` | src | s | 3 crate-vis | — | Validate generated support evidence at the provenance write door |
 | `src/provenance/edge_ref.rs` | src | s | 1 re-export · 2 crate-vis | — | Provenance vocabulary defined below the claim layer |
 | `src/provenance/entity_ref_wire.rs` | src | s | 1 crate-vis | — | Provenance vocabulary defined below the claim layer |
@@ -8603,7 +8605,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/mesh_machine_endpoint_index.rs` | src | s | 1 enum · 5 fn | IndexedEndpoint | Doors for `tests/mesh_machine_endpoint_index.rs` (census L3-28B): the endpoint lookup as the MACHINE… |
 | `src/test_doors/meso_extraction_width.rs` | src | m | 1 struct · 1 enum · 1 fn · 5 crate-vis | ExtractionWidth, PriorScenario | Door for `tests/dreamer_meso_width.rs` (FIX 21927 P2): measure the extraction calls in flight during one… |
 | `src/test_doors/microsoft_token.rs` | src | s | 1 struct · 6 fn · 1 crate-vis | ExchangedMicrosoftGrant | Door for `tests/microsoft365_oauth.rs` and `tests/microsoft365_refresh_write_back.rs`… |
-| `src/test_doors/mod.rs` | src | m | 1 fn · 406 mod · 3 re-export | — | Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD) |
+| `src/test_doors/mod.rs` | src | m | 1 fn · 407 mod · 3 re-export | — | Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD) |
 | `src/test_doors/model_binding_proposer.rs` | src | m | 1 struct · 2 fn · 1 const | TrialFixture | Fixture for the `model_binding_proposer_grant` server test: one completed held-out trial offer for a role… |
 | `src/test_doors/model_call_turn_link.rs` | src | s | 1 fn | — | Doors for `oneiron-server/tests/chat_model_call_turn_link.rs` (UNBUILT3-41, FIX [TURN-MODEL-LINK]): the… |
 | `src/test_doors/model_step_submission_codec.rs` | src | s | 1 fn | — | Doors for `tests/model_step_submission_codec.rs` (STEP-CORRECTION-HEALTH-PARK): a model step's submission… |
@@ -8655,6 +8657,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/read_exposure.rs` | src | s | 2 fn | — | Doors for `tests/actor_read_exposure.rs` (census L8-65): the record rows a reader's read exposure keeps, and… |
 | `src/test_doors/read_lineage_floor.rs` | src | s | 14 fn | — | Test doors for READ-LINEAGE L1: a row's floor, and the policies the source-audience walk meets on a read of… |
 | `src/test_doors/recall_gate_judgements.rs` | src | s | 1 fn · 2 crate-vis | — | Door for `tests/recall_gate_judges_once.rs` (row [RECALL-EXPANDED-ROW-FACTS-REREAD]): counts the full actor… |
+| `src/test_doors/recall_line_provenance.rs` | src | s | 1 fn | — | Fixture writes for the line-provenance recall tests |
 | `src/test_doors/recovery_box_kit_only_fact.rs` | src | s | 2 fn | — | Doors to the recovery box kit-only fact (WAYBACK-BOX-HOLD-FROM-DEVICE-SWITCH = A): the node-side tests mint… |
 | `src/test_doors/recovery_preset_between.rs` | src | s | 1 fn | — | Door for changing the recovery preset between the owner's check and write |
 | `src/test_doors/remote_task_cancel.rs` | src | s | 1 struct · 3 fn · 1 const | DeferredConnectorSend | Doors for oneiron-server's `tests/remote_task_cancel.rs` (L8-29): a connector send its connector took as a… |
@@ -10524,6 +10527,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/recall_bar.rs` | test | L | — | — | RECALL-CARRIER-THRESHOLD (owner 26 Nov 18:53 "Can we just skip the recall if nothing useful? |
 | `tests/recall_gate_judges_once.rs` | test | s | — | — | Row [RECALL-EXPANDED-ROW-FACTS-REREAD]: a recall's candidate gate (`ScopedRead::recall_candidate_gate`)… |
 | `tests/recall_light_render_text.rs` | test | s | — | — | E2E MUSE-RECALL-08: light recall must return witnessed message text in both structured items and every… |
+| `tests/recall_line_provenance.rs` | test | m | — | — | — |
 | `tests/recall_now_anchor_query_slots.rs` | test | s | — | — | A light recall keeps every TURN its query matched before the rows only the effort's now anchor found… |
 | `tests/recall_operation_replay.rs` | test | m | — | — | L1-13 p5 (RESEARCH-0363 p5; Engine RULING L1-13-P5-NOW, 14 Nov, design (i)): `vault.recall` under a caller's… |
 | `tests/recall_rendered_masks_lifted_secrets.rs` | test | s | — | — | Formatted recall is another view of lifted text, not a way around its handle |
