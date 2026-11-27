@@ -565,6 +565,10 @@ fn a_purge_failure_beside_a_project_hold_still_raises_the_breach_signal() {
         held.vault.get_raw(&other).unwrap().is_none(),
         "the accepted delete's fence hides the row from raw reads"
     );
+    assert!(
+        held.vault.get(&other).unwrap().is_none(),
+        "the accepted delete is fenced while its purge is pending"
+    );
     assert_eq!(
         remat_row(&held.vault, WINDOW, &other).as_deref(),
         Some([1u8].as_slice()),
