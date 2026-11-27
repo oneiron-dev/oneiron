@@ -8905,6 +8905,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/export/archive_retained_record_erase.rs",
+     "purpose": "—",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -8923,7 +8933,7 @@
      "path": "src/batch/export/archive_retained_side_rows.rs",
      "purpose": "Retained side-table envelopes carry source table names, original key suffixes and value bytes, with identity…",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "struct": 1
      }
     },
@@ -8934,7 +8944,7 @@
      "path": "src/batch/export/archive_retained_subjects.rs",
      "purpose": "The records each retained side table's rows are about, so that the whole-vault export withholds a row, live…",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 6
      }
     },
     {
@@ -9385,7 +9395,7 @@
      "path": "src/batch/export/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 27,
       "re-export": 15
      }
     },
@@ -123458,7 +123468,7 @@
     },
     "batch": {
      "entry": "crates/oneiron/src/batch/mod.rs",
-     "files": 216,
+     "files": 217,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -125926,7 +125936,7 @@
    },
    "over_bar": 276,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8655,
+   "source_files": 8656,
    "test_files": 2346
   },
   "oneiron-agent-runtime": {
@@ -180774,6 +180784,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gpu_execution_node/slots/withheld.rs",
+     "purpose": "The withheld list's reader",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [
@@ -194531,7 +194551,7 @@
     },
     "gpu_execution_node": {
      "entry": "crates/oneiron-server/src/gpu_execution_node/mod.rs",
-     "files": 75,
+     "files": 76,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -195088,7 +195108,7 @@
    },
    "over_bar": 72,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 2232,
+   "source_files": 2233,
    "test_files": 630
   },
   "oneiron-setting-contract": {

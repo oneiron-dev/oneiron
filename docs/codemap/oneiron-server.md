@@ -1526,6 +1526,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gpu_execution_node/slots/drain.rs` | src | s | 3 fn · 2 crate-vis | — | The drain guard: once `drain_after_failures` jobs in a row finish failed, or at its node's word, the machine… |
 | `src/gpu_execution_node/slots/lease.rs` | src | s | 1 struct · 5 fn | GpuSlotLease | The node takes a device lease inside its launch commit and immediately confirms launch |
 | `src/gpu_execution_node/slots/ownership.rs` | src | s | 5 crate-vis | — | Which Oneiron server of this machine owns each offered GPU: a lock file per GPU in `owner_lock_dir`, held… |
+| `src/gpu_execution_node/slots/withheld.rs` | src | m | 4 crate-vis | — | The withheld list's reader |
 | `src/gpu_execution_node/wire.rs` | src | L | 22 struct · 15 enum · 9 fn · 5 const · 1 re-export | Breadcrumb, DeviceRelease, HoldRef, JobAnswer, JobEnd, JobReceipt, JobRefusal, JobRequest +29 | The job protocols' messages (pass 33, `33-exec-node/DESIGN.md` sections 5.3 and 7.1) |
 | `src/gpu_host.rs` | src | m | 19 crate-vis | — | The host side of customer GPU jobs (CROSS-ARCH-0023 lifecycle, C2; row L10-31) |
 | `src/handler/admitted_windows.rs` | src | s | 8 crate-vis | — | A federation socket's admitted window copies (FIX 12118): the filtered copy of each window it fetched, with… |
