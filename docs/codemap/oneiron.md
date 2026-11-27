@@ -7694,12 +7694,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/checkpoint_payload/parts.rs` | src | s | 3 crate-vis | — | Which holders each part of a parted window value has (KS7-3a) |
 | `src/sync/checkpoint_payload/restore.rs` | src | m | 1 crate-vis | — | A window's Loro rows put back from a checkpoint (KS7-3b, FIX 5688) |
 | `src/sync/checkpoint_payload/rows.rs` | src | s | 6 crate-vis | — | The non-Loro sync rows (KS7-3a), each placed with its family's own codec: a thin-residence item's cached… |
-| `src/sync/chunks.rs` | src | m | 2 enum · 17 fn · 4 const · 1 mod · 4 re-export · 4 crate-vis | ChunkSyncResponse, LfsHold | Authenticated manifest-scoped have/want exchange |
+| `src/sync/chunks.rs` | src | m | 2 enum · 19 fn · 4 const · 1 mod · 4 re-export · 4 crate-vis | ChunkSyncResponse, LfsHold | Authenticated manifest-scoped have/want exchange |
 | `src/sync/chunks/download.rs` | src | s | 1 struct · 4 fn · 3 crate-vis | ChunkDownload | One bounded in-flight have/want transfer, driven by real socket replies |
 | `src/sync/chunks/page.rs` | src | s | 4 crate-vis | — | One page of a chunk exchange (FIX 8860, 8183): a manifest's canonical bytes from an offset, or a WANT's… |
 | `src/sync/chunks/read.rs` | src | s | 1 enum · 4 fn · 1 type · 1 re-export | LfsReadAuthority | Who reads a lift-marked LFS object's real bytes over a chunk exchange (FIX 2897; ARCH-0069: "the owner gets… |
 | `src/sync/chunks/release.rs` | src | s | 2 crate-vis | — | What a federation peer's chunk exchange releases of a published object that no read authority admits… |
-| `src/sync/chunks/stream.rs` | src | s | 4 fn · 1 const | — | The chunk-sync stream an HTTP exchange carries each way (FIX 145): an envelope ([`CHUNK_SYNC_VERSION`] and… |
+| `src/sync/chunks/stream.rs` | src | m | 4 fn · 3 const | — | The chunk-sync stream an HTTP exchange carries each way (FIX 145): an envelope ([`CHUNK_SYNC_VERSION`] and… |
 | `src/sync/chunks/tests.rs` | test | m | — | — | Real binary have/want exchanges between independent vaults |
 | `src/sync/client/admitted_rewrite.rs` | src | s | 2 crate-vis | — | The write over a window of what an admitted part lost to an earlier admission… |
 | `src/sync/client/artifacts.rs` | src | s | 4 crate-vis | — | Pinned artifact publications on the owner lane: each owed one goes out in bounded parts once the NOTE… |
@@ -9744,6 +9744,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/checkpoint_pins.rs` | test | s | — | — | The nineteen checkpoint getters' pins (UC-10 PR 3, PR 4 and PR 5): one fixed seed, one printed table |
 | `tests/checkpoint_registry_rows.rs` | test | s | — | — | Every side table states a complete checkpoint row (fix list rows 22409-22423, 22346): a payload family, a… |
 | `tests/checkpoint_restore_derived_index_rebuild.rs` | test | s | — | — | CHECKPOINT-RESTORE-SKIPS-DERIVED-INDEX-REBUILD: a checkpoint restore rebuilds a derived index an image does… |
+| `tests/chunk_request_stream_bound.rs` | test | m | — | — | FIX CHUNK-STREAM-DECODE-UNBOUNDED-MEMORY (ruling CHUNK-STREAM-MEMORY-BOUND = A) and… |
 | `tests/claim_approval_recall.rs` | test | s | — | — | Approval publishes a Generated claim without changing corroboration eligibility |
 | `tests/claim_batch_put_and_comm_head_restore_archived_person.rs` | test | m | — | — | FIX [BATCH-RAW-CLAIM-PUT-SKIPS-ARCHIVED-PERSON-RESTORE] and FIX… |
 | `tests/claim_decay_transition.rs` | test | s | — | — | One decay rule for the live demotion door and the signed-history fold (FIX 22387, brief 15 B) |
