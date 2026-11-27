@@ -20,6 +20,7 @@ use super::neighbourhood::Neighbourhood;
 use super::resources::BoundBranchRead;
 use super::roles::{DREAMER_EXTRACTION_ROLE, bind_reasoning};
 use super::support::invalid_consolidation;
+use super::turn_text::writers::{TurnSpeakers, speaker_labels};
 use super::value_projection::rmpv_to_json;
 use super::watermark::decode_turn_body;
 use crate::claim::ScopedRead;
@@ -181,8 +182,9 @@ pub(crate) struct ExtractionStepPiece {
 /// slice, grouped by part line and co-mentioned known entities over the
 /// frozen TURN texts, and `page` must name one page of that slice's
 /// listing when it pages. Each TURN's speaker is its checked native body
-/// speaker, or unknown when the body names none, with the source speaker
-/// PERSON label beside the role as native shows it. The transcript lists
+/// speaker, or unknown when the body names none, with the PERSON labels
+/// beside the role as native shows them: an imported turn's source speaker,
+/// or a native person turn's writers. The transcript lists
 /// each cited TURN in input order under its conversation header, each
 /// named by its turn label, with the selected listing page after the
 /// first header. The transcript holds no host material; execution
@@ -304,6 +306,7 @@ pub(crate) fn prepare_bound_step(
     if scoped.scope.relationship.is_none() {
         page_rels.extend(pages[selected].member_relationships());
     }
+    let rule = TurnSpeakers::read_in(vault, txn).map_err(bound_branch_error)?;
     for (at, piece) in pieces.iter().enumerate() {
         let turn = piece.turn;
         let text = &piece.text;
@@ -324,11 +327,19 @@ pub(crate) fn prepare_bound_step(
             .get(&turn)
             .and_then(|speaker| speaker.as_deref())
             .unwrap_or("unknown");
-        let speaker = bound
-            .turn_text(turn)
-            .and_then(TurnText::source_speaker)
-            .map(|person| format!(" {}", labels.assign(LabelKind::Entity, person)))
-            .unwrap_or_default();
+        let imported = bodies
+            .get(&turn)
+            .is_some_and(|body| decode_turn_body(body).imported);
+        let people = rule
+            .people_in(
+                vault,
+                txn,
+                speakers.get(&turn).and_then(|s| s.as_deref()),
+                imported,
+                bound.turn_text(turn),
+            )
+            .map_err(bound_branch_error)?;
+        let speaker = speaker_labels(&mut labels, &people);
         transcript.push_str(&format!("[{turn_label} {role}{speaker}] {text}\n"));
     }
     let mut sources: Vec<EntityId> = labels.rows().collect();
