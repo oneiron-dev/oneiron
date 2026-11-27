@@ -654,12 +654,6 @@ impl Shared {
         };
         let mut options = std::fs::OpenOptions::new();
         options.read(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-
-            options.custom_flags(libc::O_NONBLOCK);
-        }
         let mut file = options.open(path).map_err(unreadable)?;
         let metadata = file.metadata().map_err(unreadable)?;
         if !metadata.file_type().is_file() {
