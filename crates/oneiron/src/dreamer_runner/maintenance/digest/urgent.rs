@@ -38,9 +38,9 @@ use crate::model_decision::{
 use crate::{EntityId, Result, Vault};
 
 mod intent;
+pub(super) use intent::body_hash_in;
 use intent::{
-    body_hash_in, stated_intent_of, stated_intent_owner_in, stated_intent_text_and_due,
-    stated_intents_in,
+    stated_intent_of, stated_intent_owner_in, stated_intent_text_and_due, stated_intents_in,
 };
 
 /// The maintenance facet one harm question rides; the host's executor asks

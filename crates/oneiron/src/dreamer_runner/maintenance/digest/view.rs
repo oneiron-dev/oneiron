@@ -1,13 +1,15 @@
 //! A delivered proactivity digest as one viewer reads it (FIX 6411). The
 //! stored digest is one canonical object under its stable locator, verified
 //! by its content hash (FIX 2332) before anything reads it; a view then
-//! keeps the proposals this viewer reads ([`super::private_sources`]) and
-//! rebuilds the text from them under the presentation the digest was
-//! assembled under. A shared timer digest is no shared authorization: the
-//! owner's read, the assembly's answer and each delivery are each the
-//! viewer's own view. Nothing but a proposal drawn from private thread words
-//! this viewer does not read is left out, and the view says nothing of what
-//! was.
+//! keeps the proposals this viewer reads ([`super::private_sources`]) whose
+//! CLAIMs still stand as the digest copied them, and rebuilds the text from
+//! them under the presentation the digest was assembled under. A shared
+//! timer digest is no shared authorization: the owner's read, the
+//! assembly's answer and each delivery are each the viewer's own view.
+//! Nothing but a proposal drawn from private thread words this viewer does
+//! not read, or one whose CLAIM is gone, deleted, withdrawn or at another
+//! revision (PROACTIVITY-DIGEST-COPY-ERASURE), is left out, and the view
+//! says nothing of what was.
 
 use std::collections::BTreeMap;
 
@@ -235,9 +237,9 @@ fn hash(purpose: LegacyPurpose, value: &impl Serialize) -> Result<[u8; 32]> {
 }
 
 /// `digest`, the canonical object, as `viewer` reads it: each proposal
-/// whose words it reads, and every line and ask as stored. An authorized
-/// viewer's proposal is never left out because another reader could not
-/// read it.
+/// whose CLAIM still stands as the digest copied it and whose words it
+/// reads, and every line and ask as stored. An authorized viewer's proposal
+/// is never left out because another reader could not read it.
 pub(super) fn digest_view_for_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -250,7 +252,8 @@ pub(super) fn digest_view_for_in(
         let kept: Vec<DigestProposal> = proposals
             .iter()
             .filter(|proposal| {
-                let readable = digest_item_readable_by_in(vault, txn, proposal, viewer);
+                let readable = proposal_current_in(vault, txn, proposal)
+                    && digest_item_readable_by_in(vault, txn, proposal, viewer);
                 withheld |= !readable;
                 readable
             })
@@ -283,6 +286,31 @@ pub(super) fn digest_view_for_in(
         rendered,
         voice_style: digest.voice_style.clone(),
     }
+}
+
+/// Whether the CLAIM of `proposal` still stands as the digest copied it
+/// (PROACTIVITY-DIGEST-COPY-ERASURE, read half): stored with the body whose
+/// hash is the item's revision, under no delete this vault holds, and not
+/// withdrawn. A CLAIM that is gone, deleted, withdrawn, edited, approved or
+/// rejected leaves every view, as the urgent path drops it
+/// ([`super::urgent`]): its copied line would read true over no record, and
+/// a reviewed one is done. A read fault leaves the item out too.
+fn proposal_current_in(vault: &Vault, txn: &heed::RoTxn<'_>, proposal: &DigestProposal) -> bool {
+    current_in(vault, txn, proposal.claim_ref, proposal.revision).unwrap_or(false)
+}
+
+/// [`proposal_current_in`] with its read faults.
+fn current_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    claim: EntityId,
+    revision: [u8; 32],
+) -> Result<bool> {
+    Ok(
+        super::urgent::body_hash_in(vault, txn, claim)? == Some(revision)
+            && !crate::deletion::row_deletion_marked(&vault.store, txn, &claim, None)?
+            && !crate::ports::stale_in_txn(&vault.store, txn, &claim)?,
+    )
 }
 
 /// The text of `groups` and `digest`'s lines under the presentation the
