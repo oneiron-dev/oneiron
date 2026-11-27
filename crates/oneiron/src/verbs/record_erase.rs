@@ -415,9 +415,7 @@ pub fn confirm_record_erase(
         // (H5-R2-PENDING-ERASE-DISK-WORDING = A).
         remaining: {
             let mut remaining = outcome.first.remaining.clone();
-            remaining.extend(view.remaining.into_iter().filter(|notice| {
-                applied_now || notice.code != remaining_claims::REMAINING_DISK_NOT_OVERWRITTEN
-            }));
+            remaining.extend(view.remaining);
             remaining
         },
         legal_copies_kept: view.legal_copies_kept,
