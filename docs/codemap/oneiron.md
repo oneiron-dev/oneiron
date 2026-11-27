@@ -3804,7 +3804,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/federation/pending_act/policy_change.rs` | src | m | 2 struct · 5 fn · 1 const · 1 re-export · 3 crate-vis | SharedActPoliciesView, SharedActPolicyChange | Shared-act policy reads and durable changes (DOOR-129) |
 | `src/federation/pending_act/tests.rs` | test | L | — | — | — |
 | `src/federation/queue_reconciliation.rs` | src | s | 7 crate-vis | — | The sealed admission of a merge queue reconciliation (FIX 6868, G2 PR2, L02 authority seam) |
-| `src/federation/record_scope.rs` | src | L | 2 struct · 1 enum · 3 fn · 26 crate-vis | BirthPosition, ScopeView, ScopedRecord | Birth-facet-bound record-position stamps and scoped read/delete/export doors |
+| `src/federation/record_scope.rs` | src | L | 2 struct · 1 enum · 3 fn · 27 crate-vis | BirthPosition, ScopeView, ScopedRecord | Birth-facet-bound record-position stamps and scoped read/delete/export doors |
 | `src/federation/record_scope/asset_body.rs` | src | s | 1 crate-vis | — | What a scoped door hands out for a row it admitted (FIX 3677, FIX 5397): a file-plane ASSET leaves as its… |
 | `src/federation/record_scope/asset_text.rs` | src | s | 7 crate-vis | — | Facet rule C (arch-0022:139): an ASSET_TEXT written from source ASSETs is born under their facet, and is… |
 | `src/federation/record_scope/birth_placement.rs` | src | s | 10 crate-vis | — | The birth placement a replicated TASK or SUMMARY carries on a copy to another vault (FIX 3656, Engine ruling… |
@@ -3815,10 +3815,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/federation/record_scope/identity_event.rs` | src | s | 2 crate-vis | — | The birth position of an identity topology event (FIX DISTINCT-EVENT-DEFAULT-PROJECT-STAMP) |
 | `src/federation/record_scope/note_world.rs` | src | m | 1 fn · 27 crate-vis | — | A NOTE's world (FIX-LIST 9433): where its live `InWorld` edges place it, read again at every read |
 | `src/federation/record_scope/origin_positions.rs` | src | m | 10 crate-vis | — | Canonical source facts for same-vault ASSET and ASSET_TEXT positions |
+| `src/federation/record_scope/project_placement.rs` | src | s | 2 crate-vis | — | Project placement of NOTE, MESSAGE and TURN rows: the one reader of a row's project and the NOTE settle door |
 | `src/federation/record_scope/read.rs` | src | s | 2 fn · 1 crate-vis | — | The scoped read doors: a record's current stamp, and the records a slip may read |
 | `src/federation/record_scope/secret_projection.rs` | src | s | 6 crate-vis | — | The masked copy a scoped export carries of a marked repo row (FIX 7608 slice 4, LEAF 4.2; L02 ack 17:2x and… |
 | `src/federation/record_scope/stamping.rs` | src | m | 18 crate-vis | — | The birth-position stamp doors: put, stage, settle and restamp a record's position |
-| `src/federation/record_scope/tests.rs` | test | s | — | — | — |
+| `src/federation/record_scope/tests.rs` | test | m | — | — | — |
 | `src/federation/relationships.rs` | src | m | 6 fn · 2 re-export · 1 crate-vis | — | Member-to-person binding, label trust classes, and relationship claim doors |
 | `src/federation/repo_access.rs` | src | m | 12 crate-vis | — | The repo admission seams on an owner's agent Grant (FIX 6867): the L02 seams the Engine approved for L11 G1 |
 | `src/federation/ruling_integrity.rs` | src | s | 5 crate-vis | — | Stored authority bindings and append-only protection for administrative rulings |
@@ -5014,7 +5015,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/message_result.rs` | src | m | 1 fn · 2 crate-vis | — | The result a MESSAGE carries, read by the bound actor (FIX 365): its card, or a `slice`, `search`, `query`… |
 | `src/memory/mod.rs` | src | m | 42 mod · 77 re-export · 49 crate-vis | — | BRIDGE-01 (ONE-1454): transport-agnostic memory facade |
 | `src/memory/note_tombstone.rs` | src | s | 3 fn | — | The owner's NOTE tombstone doors (OF-073, FIX 2419): the tombstones the monthly NOTE review proposed, and… |
-| `src/memory/notes.rs` | src | s | 4 fn · 1 crate-vis | — | Agent-facing NOTE verbs; actor identity is bound to the memory facade |
+| `src/memory/notes.rs` | src | s | 4 fn · 2 crate-vis | — | Agent-facing NOTE verbs; actor identity is bound to the memory facade |
 | `src/memory/origin_doors/external_import.rs` | src | s | 1 enum · 4 fn | ExternalImportProof | The outside import doors (FIX 6871, G7 PR1): `vault.code.imports.create` and `vault.code.imports.get` |
 | `src/memory/origin_doors/import.rs` | src | s | 1 fn | — | `vault.code.import` (FIX 6869, G4 PR1): the owner's import of one admitted commit of a served repository… |
 | `src/memory/origin_doors/import_types.rs` | src | s | 2 re-export | — | `vault.code.import` wire types (FIX 6869, G4 PR1): the owner names a served repo, its PROJECT, the admitted… |
@@ -5229,7 +5230,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/witness/codec.rs` | src | m | 16 crate-vis | — | Turn-speaker and message-envelope codec plus session alias formatting |
 | `src/memory/witness/foreign_speech.rs` | src | s | 4 crate-vis | — | Foreign speech (FIX 15412): a TURN brought in from outside this vault, whose words neither this vault's own… |
 | `src/memory/witness/linked.rs` | src | s | 1 crate-vis | — | A base witness that commits its caller's own record with the turn (FIX 8533): the record runs in the turn's… |
-| `src/memory/witness/mod.rs` | src | s | 5 re-export · 14 crate-vis | — | Witness/turn-ingestion verbs: one witness program (`program`) landing in base (`base`) or in an off-record… |
+| `src/memory/witness/mod.rs` | src | s | 5 re-export · 15 crate-vis | — | Witness/turn-ingestion verbs: one witness program (`program`) landing in base (`base`) or in an off-record… |
 | `src/memory/witness/program.rs` | src | m | 1 re-export · 10 crate-vis | — | The one witness program: request checks, one plan, the ONE-1686 ceiling door and the ONE-1767 mint contract… |
 | `src/memory/witness/program/caller.rs` | src | m | 1 struct · 1 enum · 3 fn · 1 re-export · 4 crate-vis | SessionWitnessContext, SessionWitnessOutcome | Caller-bound session speech |
 | `src/memory/witness/program/caller/binding.rs` | src | s | 1 struct · 8 fn · 8 crate-vis | SessionWitnessBinding | Owned caller/session authority for native work that outlives a borrowed Memory |
@@ -5237,7 +5238,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/witness/program/execute.rs` | src | s | 3 crate-vis | — | The witness program's run: request shape, target, plan, then one write transaction per landing |
 | `src/memory/witness/program/execute/answer.rs` | src | s | 1 crate-vis | — | A landed witness, after its write commits: the receipt it answers with, and the on-record copy, live window… |
 | `src/memory/witness/program/execute/guards.rs` | src | s | 1 crate-vis | — | The overlay witness write's composed-view guards and full-envelope admission |
-| `src/memory/witness/program/execute/in_txn.rs` | src | m | 2 crate-vis | — | The witness program's one write transaction: guards and admission, staging, `effect`, the reply's… |
+| `src/memory/witness/program/execute/in_txn.rs` | src | m | 3 crate-vis | — | The witness program's one write transaction: guards and admission, staging, `effect`, the reply's… |
 | `src/memory/witness/program/execute/request.rs` | src | s | 4 crate-vis | — | The witness program's request: its shape and origin, the landing its target resolves to, and the prose links… |
 | `src/memory/witness/program/execute/staging.rs` | src | s | 1 crate-vis | — | A base landing's staging inside the witness write: its rows, the outbox marks a turn with new words owes… |
 | `src/memory/witness/program/parts.rs` | src | s | 1 crate-vis | — | A base birth's stored parts, prepared after its guards in the same writer |
@@ -5268,7 +5269,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/witness/stream/tests.rs` | test | m | — | — | Observable stream contracts: no partial persistence, cadence, finality and retry |
 | `src/memory/witness/stream/types.rs` | src | s | 2 struct · 2 fn · 1 const · 2 re-export | MessageStreamHandle, MessageStreamPolicy | Public streaming vocabulary |
 | `src/memory/witness/turn_program.rs` | src | s | 2 fn · 2 crate-vis | — | DOOR-141's two seams on the actor's surface: arming a program for this actor's own future turns, and the… |
-| `src/memory/witness/types.rs` | src | s | 4 struct · 1 enum · 2 fn · 1 crate-vis | WitnessAssertions, WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn | Witness DTOs: author enum, message/turn inputs, turn receipt |
+| `src/memory/witness/types.rs` | src | s | 4 struct · 1 enum · 2 fn · 2 crate-vis | WitnessAssertions, WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn | Witness DTOs: author enum, message/turn inputs, turn receipt |
 | `src/memory/witness/validation.rs` | src | m | 12 crate-vis | — | Idempotency validators: turn/message existence, parent/actor binding, order collision axes |
 | `src/memory/witness/wake_outcome.rs` | src | s | 1 re-export · 3 crate-vis | — | What a landed turn's program wake came to (DOOR-141, FIX 9970): the accepted turn's receipt says it, and a… |
 | `src/merge_queue/batch_index.rs` | src | s | 4 crate-vis | — | Keyed reads of one queue's batches (FIX 7067): a run's enqueue, stage and observe read the batches that name… |
@@ -10753,6 +10754,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/serving_egress_credentials.rs` | test | m | — | — | Admitted agent egresses release typed Nulled bodies while the owner keeps encoded carriers and graph source… |
 | `tests/serving_scoped_credentials.rs` | test | m | — | — | Serving keeps the owner's current view while an admitted agent receives the scoped export's typed Nulled… |
 | `tests/session_facet_hint_kind_narrowed.rs` | test | s | — | — | A search that asks for CLAIMs alone and names a session facet finds the claims in that facet, for the owner… |
+| `tests/session_project_note_message_writes.rs` | test | m | — | — | SESSION-PROJECT-NOTE-MESSAGE-PLACEMENT PR A, the write side: a handle bound to an attached session's folder… |
 | `tests/session_project_reads.rs` | test | m | — | — | RECALL-SESSION-PROJECT PR 2 (rows RECALL-SESSION-PROJECT and RECALL-SESSION-PROJECT-ALL-READS; Engine ANSWER… |
 | `tests/session_project_writes.rs` | test | m | — | — | RECALL-SESSION-PROJECT PR 3, the write default (row START-RECALL-WRITES-ROOT-PROJECT; Engine ANSWER… |
 | `tests/session_raw_skill_validators.rs` | test | s | — | — | The off-record session's Put arm runs the base SKILL birth and update gates |

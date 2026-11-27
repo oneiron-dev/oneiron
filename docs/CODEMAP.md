@@ -15,7 +15,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 8654 | 2343 | 276 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 8655 | 2344 | 276 |
 | [oneiron-agent-runtime](codemap/oneiron-agent-runtime.md) | `oneiron-agent-runtime`: the sandbox backends above the `oneiron` core crate (core split slice 5b.1) | 23 | 11 | 1 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 4 | 1 | 0 |
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the… | 77 | 12 | 0 |
@@ -178,7 +178,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `failure_ladder` | dir | 21 | m | yes | ONE-1887 failure ladder: classify → bounded retry → healer slot → surface |
 | `failure_signals` | file+dir | 16 | m | yes | Content-free, versioned tier-1 agent failure counts |
 | `fanout_auto` | file+dir | 2 | m | — | ES-07: the learned AUTO-mode decider behind ONE-1719's fan-out seam |
-| `federation` | dir | 111 | XL | yes | Federation grant record substrate |
+| `federation` | dir | 112 | XL | yes | Federation grant record substrate |
 | `feedback` | dir | 57 | L | yes | Engine feedback channel: bundle wire contract, consent, dispatch, export |
 | `feeds` | dir | 4 | XL | yes | Change feeds (untangle slice 6.8, primitive B; ARCH-0080 §4 Sources and cursors) |
 | `file_secret_marks` | file | 1 | s | — | Value-free file-mask paths, read visibility, and byte-span transformations |

@@ -44595,7 +44595,7 @@
      "path": "src/federation/record_scope.rs",
      "purpose": "Birth-facet-bound record-position stamps and scoped read/delete/export doors",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 27,
       "enum": 1,
       "fn": 3,
       "struct": 2
@@ -44707,6 +44707,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/federation/record_scope/project_placement.rs",
+     "purpose": "Project placement of NOTE, MESSAGE and TURN rows: the one reader of a row's project and the NOTE settle door",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/federation/record_scope/read.rs",
      "purpose": "The scoped read doors: a record's current stamp, and the records a slip may read",
      "surface": {
@@ -44735,7 +44745,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/federation/record_scope/tests.rs",
@@ -59359,7 +59369,7 @@
      "path": "src/memory/notes.rs",
      "purpose": "Agent-facing NOTE verbs; actor identity is bound to the memory facade",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 4
      }
     },
@@ -61716,7 +61726,7 @@
      "path": "src/memory/witness/mod.rs",
      "purpose": "Witness/turn-ingestion verbs: one witness program (`program`) landing in base (`base`) or in an off-record…",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "re-export": 5
      }
     },
@@ -61809,7 +61819,7 @@
      "path": "src/memory/witness/program/execute/in_txn.rs",
      "purpose": "The witness program's one write transaction: guards and admission, staging, `effect`, the reply's…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -62166,7 +62176,7 @@
      "path": "src/memory/witness/types.rs",
      "purpose": "Witness DTOs: author enum, message/turn inputs, turn receipt",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 2,
       "struct": 4
@@ -121258,6 +121268,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/session_project_note_message_writes.rs",
+     "purpose": "SESSION-PROJECT-NOTE-MESSAGE-PLACEMENT PR A, the write side: a handle bound to an attached session's folder…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/session_project_reads.rs",
      "purpose": "RECALL-SESSION-PROJECT PR 2 (rows RECALL-SESSION-PROJECT and RECALL-SESSION-PROJECT-ALL-READS; Engine ANSWER…",
      "surface": {}
@@ -124246,7 +124264,7 @@
     },
     "federation": {
      "entry": "crates/oneiron/src/federation/mod.rs",
-     "files": 111,
+     "files": 112,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -125892,8 +125910,8 @@
    },
    "over_bar": 276,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8654,
-   "test_files": 2343
+   "source_files": 8655,
+   "test_files": 2344
   },
   "oneiron-agent-runtime": {
    "files": [
