@@ -1,5 +1,6 @@
 {
   "name": "self.code.symbols.release",
+  "description": "Releases the run's own symbol declaration, even if expired, and wakes the merge queue.",
   "input": "crate::memory::repo_doors::RepoSymbolsReleaseInput",
   "output": "crate::memory::repo_doors::RepoSymbolsReleaseOutput",
   "scope": "Write",

@@ -79,7 +79,7 @@ impl Tree {
             tree.link(&repository, dir);
         }
         for path in INPUTS {
-            if !path.starts_with("scripts/sdk/") {
+            if !matches!(*path, "scripts/sdk/verbs" | "scripts/sdk/type_names.json") {
                 tree.link(&repository, path);
             }
         }

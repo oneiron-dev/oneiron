@@ -1,5 +1,6 @@
 {
   "name": "vault.claims.supersede",
+  "description": "Supersedes one stored claim with a new claim through the attached run's gates in one write.",
   "input": "crate::code_run::MemorySupersedeInput",
   "output": "crate::code_run::MemoryWriteOutput",
   "scope": "Write",

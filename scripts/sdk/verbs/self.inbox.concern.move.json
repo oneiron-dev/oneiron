@@ -1,5 +1,6 @@
 {
   "name": "self.inbox.concern.move",
+  "description": "Takes one action on a concern card, such as asking the Coach, sending a note, or steering the live run, and keeps the receipt on the card.",
   "input": "crate::dreamer_runner::maintenance::agent_health::ConcernMoveRequest",
   "output": "crate::dreamer_runner::maintenance::agent_health::ConcernMoveOutcome",
   "call": "memory.concern_move(&input)?",

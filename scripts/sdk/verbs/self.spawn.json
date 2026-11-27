@@ -1,5 +1,6 @@
 {
   "name": "self.spawn",
+  "description": "Queues a reader child to answer a question over one bound source and returns immediately, reusing the child for the same intent key.",
   "input": "crate::code_run::ReaderSpawnInput",
   "output": "crate::code_run::ReaderSpawnReceipt",
   "scope": "Write",

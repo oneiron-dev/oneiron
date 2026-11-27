@@ -1,5 +1,6 @@
 {
   "name": "self.unfold",
+  "description": "Appends the raw turns of a landed fold to the current run log by handle without replacing its stub.",
   "input": "crate::compaction::FoldUnfoldInput",
   "output": "crate::compaction::FoldReply<crate::compaction::FoldUnfolded>",
   "scope": "Write",

@@ -1,5 +1,6 @@
 {
   "name": "self.report_blocked",
+  "description": "Records a report that the attached run is blocked, with a category and detail, and returns its receipt.",
   "input": "crate::code_run::ReportBlockedInput",
   "output": "crate::code_run::ReportBlockedOutput",
   "scope": "Write",

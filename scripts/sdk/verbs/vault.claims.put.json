@@ -1,5 +1,6 @@
 {
   "name": "vault.claims.put",
+  "description": "Submits one claim through the attached run's gates, committing it when allowed or parking it as a proposal for review when held.",
   "input": "crate::code_run::MemoryClaimInput",
   "output": "crate::code_run::MemoryWriteOutput",
   "scope": "Write",
