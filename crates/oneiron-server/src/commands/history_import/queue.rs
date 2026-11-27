@@ -34,6 +34,7 @@ use rustix::io::Errno;
 use serde::{Deserialize, Serialize};
 
 use super::confined::open_file;
+use super::session_folder::SessionFolders;
 use super::{
     Decoded, ImportWarning, QueuedSession, Totals, below, crossed_decoded, earliest_first,
     history_file, no_hook_root, own_second, queue_dreamer, queued_stamp, read_queued, read_text,
@@ -719,11 +720,18 @@ fn land(
     let imported_at = own_second(vault)?;
     let mut totals = Totals::default();
     let mut reviewed = Vec::new();
+    let mut folders = SessionFolders::default();
     for (source, mut conversations) in entries {
         earliest_first(&mut conversations);
         for conversation in &conversations {
             let report = vault
-                .import_history(&owner, source, conversation, imported_at)
+                .import_history_in_session_folder(
+                    &owner,
+                    source,
+                    conversation,
+                    imported_at,
+                    &folders.digests_of(conversation),
+                )
                 .map_err(|error| anyhow::anyhow!("import stopped: {error}"))?;
             if (report.new > 0 || report.changed > 0) && !reviewed.contains(&source) {
                 reviewed.push(source);

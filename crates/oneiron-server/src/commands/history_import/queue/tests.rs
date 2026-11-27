@@ -151,6 +151,29 @@ fn said(log: u32, message: usize, day: u32) -> String {
     )
 }
 
+#[cfg(oneiron_test_support)]
+fn said_with_cwd(log: u32, message: usize, day: u32, cwd: Option<&Path>) -> String {
+    let role = if message.is_multiple_of(2) {
+        "user"
+    } else {
+        "assistant"
+    };
+    let uuid = |message: usize| format!("c10000{log:02}-0000-4000-8000-{message:012}");
+    let mut record = serde_json::json!({
+        "parentUuid": message.checked_sub(1).map(uuid),
+        "isSidechain": false,
+        "type": role,
+        "uuid": uuid(message),
+        "sessionId": session_id(log),
+        "timestamp": format!("2026-09-{day:02}T08:{message:02}:00.000Z"),
+        "message": {"role": role, "content": format!("note {message} of session {log}")},
+    });
+    if let Some(cwd) = cwd {
+        record["cwd"] = serde_json::json!(cwd.to_string_lossy());
+    }
+    format!("{record}\n")
+}
+
 /// One Claude Code record by hand: a user message, in an inline sidechain
 /// or the session's own thread, said at `minute` past 08:00 on 1 September,
 /// or with no time at all.
@@ -647,4 +670,96 @@ fn a_subagent_log_over_the_limit_is_left_out_and_the_rest_of_the_session_lands()
     let (landed, reads) = bench.pass(&vault);
     landed.unwrap();
     assert!(reads.is_empty());
+}
+
+#[cfg(oneiron_test_support)]
+#[test]
+fn a_queued_log_whose_folder_is_bound_lands_its_turns_in_the_folders_project() -> anyhow::Result<()>
+{
+    use oneiron::authority::{ActSurface, MachineRole};
+    use oneiron::registry::{ENTITY_TYPE_FACET, ENTITY_TYPE_TURN};
+    use oneiron::session_project::WorkspaceBindRequest;
+    use oneiron::store::GateDecisionId;
+    use oneiron::test_doors::room_facet_set::create_owner_project;
+    use oneiron::test_doors::witness_project::stamped_project;
+    use oneiron::workspace_roster::ProjectRecord;
+    use oneiron::{EntityId, TimeRange};
+
+    use crate::config::SyncServerConfig;
+    use crate::workspace_identity::WorkspaceIdentity;
+
+    let bench = Bench::new(Decoded::LIMIT);
+    let work = bench._dir.path().join("work");
+    fs::create_dir(&work)?;
+    let identity = WorkspaceIdentity::of_session_folder(&work)
+        .expect("the queued log's work folder should have a session identity");
+
+    let vault = Arc::new(bench.vault());
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    let server = SyncServer::new(
+        Arc::clone(&vault),
+        SyncServerConfig {
+            auth_secret: Some("queued-history-project".into()),
+            ..Default::default()
+        },
+    )?;
+    let issuer = vault.load_host_slip_issuer()?;
+    vault.ensure_serving_install_profile(&issuer, MachineRole::Unanswered)?;
+    let owner = vault.ensure_embedded_owner_actor()?;
+    oneiron::test_support::bind_host_owner(&vault, &issuer, owner)?;
+    let proof = vault.authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())?;
+    let root = vault.root_project()?;
+    let signer = vault.owner_project_signer(&issuer)?;
+    vault.sign_owner_project(&proof, &signer, root)?;
+    let facet = EntityId::now();
+    vault.put_entity(
+        &facet,
+        ENTITY_TYPE_FACET,
+        TimeRange { start: 1, end: 1 },
+        1,
+        &rmp_serde::to_vec_named(&serde_json::json!({"name": "alpha facet"}))?,
+    )?;
+    let alpha = EntityId::now();
+    let mut project = ProjectRecord::new(alpha, Some(root), root, owner)?;
+    project.slice.facet = Some(facet);
+    project.depth_remaining = 1;
+    create_owner_project(&vault, &issuer, &proof, &signer, owner, alpha, &project)?;
+    let binding = vault.bind_workspace_as_owner(
+        &proof,
+        Some(ActSurface::ThisInstall),
+        WorkspaceBindRequest {
+            folder_digest: identity.digests[0].clone(),
+            project: alpha,
+            label: Some("alpha".into()),
+        },
+    )?;
+    assert_eq!(
+        binding.project,
+        Some(alpha),
+        "the owner should bind work to alpha"
+    );
+
+    let log = bench.log(1);
+    let mut records = said_with_cwd(1, 0, 1, Some(&work));
+    records.push_str(&said_with_cwd(1, 1, 1, Some(&work)));
+    fs::write(&log, records)?;
+    bench.hand_over(&log);
+    let (landed, _) = bench.pass(&vault);
+    let landed = landed?;
+    assert_eq!(
+        landed.totals.new, 2,
+        "the queue should land both log messages"
+    );
+    let turns = vault.entities_by_type(ENTITY_TYPE_TURN)?;
+    assert_eq!(turns.len(), 2, "the two speakers should land as two TURNs");
+    for turn in turns {
+        assert_eq!(
+            stamped_project(&vault, turn)?,
+            Some(alpha),
+            "a TURN the queue lands from the bound folder should be stamped alpha"
+        );
+    }
+    drop(server);
+    drop(vault);
+    Ok(())
 }
