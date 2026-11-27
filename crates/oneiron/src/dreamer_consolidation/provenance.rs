@@ -460,15 +460,10 @@ pub(super) fn evidence_source_from_claim(body: &crate::claim::ClaimBody) -> Clai
 /// Classification, most-restrictive-wins from the Dreamer's own `Generated`
 /// floor (the same start `evidence_trust_meet` uses):
 ///
-/// * a TURN that `turn_trust_class` classes `Imported` (read through
-///   `native_turn_source`, the extraction path's own classifier) is
-///   `Imported`, whatever hop names it: an imported transcript's turn
-///   (ARCH-0027), and a Counterparty's even unstamped (FIX
-///   DREAMER-TURN-TRUST-TWO-CLASSIFIERS: one classifier for both paths);
+/// * an imported TURN is `Imported` (ARCH-0027), whatever hop names it;
 /// * a ref named by an `AnswerTurn` hop is peer TOOL OUTPUT — `ToolOutput`;
 /// * any other stored TURN contributes the Dreamer floor `Generated` (a
-///   `UserStated` turn cannot lift a meet that already starts at the floor;
-///   a role that classifier never classes contributes the floor, as before);
+///   `UserStated` turn cannot lift a meet that already starts at the floor);
 /// * a CLAIM ref contributes its own stored source folded with its recorded
 ///   evidence taint, so a tainted prior cannot launder itself upward;
 /// * an unresolvable ref fails closed at `Imported`, the lattice bottom.
@@ -486,11 +481,10 @@ pub fn evidence_chain_source(
     for entry in evidence_refs {
         if vault.get_entity_type(entry)? == Some(ENTITY_TYPE_TURN)
             && vault.get_raw(entry)?.is_some_and(|raw| {
-                super::resources::native_turn_source(
-                    vault,
+                super::watermark::decode_turn_body(
                     &raw[crate::batch::ENTITY_METADATA_HEADER_LEN.min(raw.len())..],
                 )
-                .is_ok_and(|source| source == ClaimSource::Imported)
+                .imported
             })
         {
             meet = source_meet(meet, ClaimSource::Imported);
