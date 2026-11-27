@@ -125,7 +125,7 @@ fn scrub_digest_in_txn(
     // A mask can teach custody a value whose encoded spelling the first pass left behind.
     let mut previous = DIGEST.encode_value(&digest)?;
     for pass in 1..=ADMIT_PASSES {
-        match DIGEST.admit(write, txn, &locator, &mut digest) {
+        match DIGEST.admit(store, txn, &locator, &mut digest) {
             Err(error) if is_wall_refusal(&error) => {
                 return delete_digest_whole_in_txn(write, txn, locator);
             }
