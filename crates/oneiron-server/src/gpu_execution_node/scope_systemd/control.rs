@@ -326,7 +326,7 @@ pub fn write_reply(stream: &mut UnixStream, reply: &[u8], wait: Duration) -> std
         // ended at it: a peer that drains the reply late takes no more of it
         // (review r2 of #10579, P1).
         let left = deadline.saturating_duration_since(Instant::now());
-        if left.is_zero() {
+        if written > 0 && left.is_zero() {
             result = Err(std::io::Error::new(
                 std::io::ErrorKind::TimedOut,
                 "the peer did not take the reply within its wait",
