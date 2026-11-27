@@ -67,12 +67,7 @@ pub(crate) fn kept_copy_in_txn(
         if holder != *hold.hold_id.as_bytes() || held != *record.as_bytes() {
             break;
         }
-        if hold
-            .clone_captures
-            .iter()
-            .any(|named| *named.capture.as_bytes() == capture)
-            || pending == Some(capture)
-        {
+        if pending == Some(capture) {
             return Ok(true);
         }
     }
