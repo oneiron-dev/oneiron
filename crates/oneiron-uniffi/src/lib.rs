@@ -63,6 +63,7 @@ mod pairing;
 // FIX 10186: `vault.receipts`'s page record.
 mod receipt_page;
 
+pub use dto::RemainingNotice;
 pub use dto::{
     AdmitImportedClaimInput, BlobArtifactInput, BlobVersionAppendOutcome, BlobVersionView,
     CheckInDecision, CitedMessage, ClaimInput, ClaimListFilter, ClaimView, ClaimViews,

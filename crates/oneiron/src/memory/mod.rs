@@ -230,8 +230,9 @@ pub use claims::{
     ClaimSettleDecision, ClaimSettleRequest, ClaimSettlement, ClaimSettlementAnswer,
     ClaimSettlementReason, ClaimSettlementRevert, ClaimSettlementVerdict, CommitOutcome,
     CommitReceipt, DELETE_RECEIPT_VERSION_RELEASE, DeleteReceipt, DeleteRequestState,
-    MULTI_CARDINALITY_PREDICATES, MemoryReceipt, PendingWrite, RecordRefusal, RefusalReason,
-    SafeDeleteReason, SettleWarning, SettleWarningCode,
+    MULTI_CARDINALITY_PREDICATES, MemoryReceipt, PendingWrite, REMAINING_HISTORY_SWEEP,
+    REMAINING_HISTORY_SWEEP_TEXT, RecordRefusal, RefusalReason, RemainingNotice, SafeDeleteReason,
+    SettleWarning, SettleWarningCode, remaining_after_delete,
 };
 pub use conflict_settle::{
     DreamerCandidateDecisionsRequest, DreamerDecidedCandidateView,

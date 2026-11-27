@@ -45,6 +45,37 @@ impl DeleteRequestState {
 /// and its unheld bytes (ASTRA-R2-002).
 pub const DELETE_RECEIPT_VERSION_RELEASE: &str = "blob_version_release";
 
+/// One thing a delete or erase leaves behind that the person is told
+/// (FIX HARD-DELETE-ANSWER-SILENT-ON-OWED-SWEEP).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemainingNotice {
+    /// The remainder's code (`history_sweep`).
+    pub code: String,
+    /// The remainder's words, as the answer shows them.
+    pub text: String,
+}
+
+/// [`RemainingNotice::code`] of a history sweep the delete queued.
+pub const REMAINING_HISTORY_SWEEP: &str = "history_sweep";
+
+/// [`RemainingNotice::text`] beside [`REMAINING_HISTORY_SWEEP`].
+pub const REMAINING_HISTORY_SWEEP_TEXT: &str = "Removed now. Older copies in this vault's sync history are cleared by a background sweep, and the receipt shows when that is done.";
+
+/// The [`DeleteReceipt::remaining`] of a delete that queued `sweep_key`: one
+/// history-sweep entry when a sweep was queued, else empty. The receipt
+/// writer returns an empty key when no sweep was queued, and callers wrap it
+/// in `Some`, so only a non-empty key counts.
+#[must_use]
+pub fn remaining_after_delete(sweep_key: Option<&[u8]>) -> Vec<RemainingNotice> {
+    match sweep_key {
+        Some(key) if !key.is_empty() => vec![RemainingNotice {
+            code: REMAINING_HISTORY_SWEEP.to_owned(),
+            text: REMAINING_HISTORY_SWEEP_TEXT.to_owned(),
+        }],
+        _ => Vec::new(),
+    }
+}
+
 /// Receipt for one safe delete.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeleteReceipt {
@@ -66,6 +97,10 @@ pub struct DeleteReceipt {
     /// runs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub check_in: Option<oneiron_verb_wire::check_in::CheckInDecision>,
+    /// What the delete leaves behind that the person is told, one entry per
+    /// remainder (FIX HARD-DELETE-ANSWER-SILENT-ON-OWED-SWEEP).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub remaining: Vec<RemainingNotice>,
 }
 
 /// One pending gated write awaiting consent.
