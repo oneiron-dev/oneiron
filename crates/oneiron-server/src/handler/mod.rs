@@ -31,6 +31,8 @@ mod peer_serve;
 mod protocol_close;
 #[cfg(test)]
 mod residence_socket_tests;
+#[cfg(all(test, oneiron_test_support))]
+mod residence_touch_retry_tests;
 mod root_updates;
 mod sealed_updates;
 pub(crate) mod selector_scope;
