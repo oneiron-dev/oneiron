@@ -125,12 +125,7 @@ fn scrub_digest_in_txn(
     // A mask can teach custody a value whose encoded spelling the first pass left behind.
     let mut previous = DIGEST.encode_value(&digest)?;
     for pass in 1..=ADMIT_PASSES {
-        match DIGEST.admit(write, txn, &locator, &mut digest) {
-            Err(error) if is_wall_refusal(&error) => {
-                return delete_digest_whole_in_txn(write, txn, locator);
-            }
-            result => result?,
-        }
+        DIGEST.admit(write, txn, &locator, &mut digest)?;
         let admitted = DIGEST.encode_value(&digest)?;
         if admitted == previous {
             break;
@@ -142,12 +137,7 @@ fn scrub_digest_in_txn(
     }
     digest.content_hash = view::content_hash(&digest)?;
     let kept = DIGEST.encode_value(&digest)?;
-    let stored = match DIGEST.put_as_stored(write, txn, &locator, &digest) {
-        Err(error) if is_wall_refusal(&error) => {
-            return delete_digest_whole_in_txn(write, txn, locator);
-        }
-        result => result?,
-    };
+    let stored = DIGEST.put_as_stored(write, txn, &locator, &digest)?;
     if stored != kept {
         return delete_digest_whole_in_txn(write, txn, locator);
     }
