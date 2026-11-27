@@ -212,6 +212,28 @@ fn a_pinned_ref_with_one_leading_space_hydrates_to_its_view_and_lists_no_miss() 
     assert_eq!(answer["missing"], json!([]), "{answer}");
 }
 
+#[test]
+fn a_pinned_ref_with_an_uppercase_hex_id_hydrates_to_its_view_and_lists_no_miss() {
+    let f = Fixture::new();
+    let owner = f.owner();
+    assert_ne!(
+        f.claim,
+        f.claim.to_uppercase(),
+        "the fixture id must spell a hex letter for this test"
+    );
+    let id = EntityId::from_hex(&f.claim).expect("claim id");
+    let revision = f.vault.pin_entity_revision(&id).expect("retained revision");
+    let pinned = format!("{}@{}", f.claim.to_uppercase(), revision.to_hex());
+    let answer = call(&owner, "vault.hydrate", json!({"refs": [pinned]}));
+    assert_eq!(
+        answer["value"].as_array().expect("views").len(),
+        1,
+        "{answer}"
+    );
+    assert_eq!(answer["value"][0]["id_hex"], json!(f.claim), "{answer}");
+    assert_eq!(answer["missing"], json!([]), "{answer}");
+}
+
 #[cfg(oneiron_test_support)]
 #[test]
 fn the_room_hydrate_door_lists_the_same_misses_as_the_facade() {
