@@ -113,7 +113,6 @@ impl From<MemoryError> for FacadeApiError {
             }
             // Q1 = A: the owner's delete or erase of a record they restricted
             // is the caller's conflict, never this server's failure.
-            oneiron_contracts::memory::MEMORY_CODE_RECORD_RESTRICTED => StatusCode::CONFLICT,
             // OF-123: the person the effect names is not settled yet; the
             // same request succeeds once `self.identity.settle` settles it.
             oneiron::memory::MEMORY_CODE_IDENTITY_UNSETTLED => StatusCode::CONFLICT,
