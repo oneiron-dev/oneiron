@@ -254,7 +254,7 @@ impl Memory<'_> {
         if let Some(existing) = self.vault.get_claim(&id)? {
             if !claim_replay_content_matches(&existing, &write) {
                 write.id = EntityId::now();
-                write.prior = explicit_prior.or(Some(id));
+                write.prior = Some(id);
             } else if write.prior.is_some() && self.vault.machine_history_pinned(&id)? {
                 // A projected signed row cannot be put in place again. Keep
                 // its identity for admission, but propose a fresh replacement.
