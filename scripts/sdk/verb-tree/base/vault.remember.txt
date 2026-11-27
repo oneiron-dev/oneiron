@@ -13,6 +13,5 @@ vault.remember({ subject_ref: string, predicate: string, value: unknown, confide
     person the fact came from.
   approval "proposed": held for the owner, and it replaces nothing yet; it is in vault.writes.pending and not
     yet in recall.
-  e.g. if ("actor_ref" in me) await vault.remember({ subject_ref: me.person_ref ?? me.actor_ref,
-         predicate: "experiment.run_result.d1a", value: { run: "1127-0912-d1a", verdict: "pass" }, confidence: 0.9,
-         source: "run log, 26 Nov 2026" })
+  e.g. await vault.remember({ subject_ref: me.person_ref, predicate: "experiment.run_result.d1a",
+         value: { run: "1127-0912-d1a", verdict: "pass" }, confidence: 0.9, source: "run log, 26 Nov 2026" })
