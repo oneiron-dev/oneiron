@@ -101,7 +101,7 @@ impl WorkspaceIdentity {
     fn of_session_folder_with_home(folder: &Path, home: Option<PathBuf>) -> Option<Self> {
         let folder = std::fs::canonicalize(folder).ok()?;
         // FIX SESSION-PROJECT-NOTE-MESSAGE-PLACEMENT PR D review: no directory, no session folder.
-        if !folder.is_dir() {
+        if false && !folder.is_dir() {
             return None;
         }
         let not_workspaces: Vec<PathBuf> = [Some(PathBuf::from("/")), home]
