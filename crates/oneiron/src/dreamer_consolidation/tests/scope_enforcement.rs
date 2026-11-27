@@ -22,6 +22,7 @@ fn one_part_branch(
     ConsolidationBranchPlan {
         world_ref: partition.world_ref,
         facet_ref: partition.facet_ref,
+        project: partition.project,
         thing: None,
         parts: vec![ConversationPart {
             conversation_ref: partition.conversation_ref,
@@ -754,6 +755,7 @@ fn queued_four_axis_scope_is_inherited_and_cannot_be_erased() -> Result<()> {
         conversation_ref: conversation,
         world_ref: Some(world),
         facet_ref: Some(facet),
+        project: Some(crate::claim::default_project_id()),
     };
     let initial = BranchResources::open(
         &vault,
@@ -766,7 +768,7 @@ fn queued_four_axis_scope_is_inherited_and_cannot_be_erased() -> Result<()> {
     let mut scope = initial.scope().clone();
     scope.relationship = Some(BTreeSet::from([relationship]));
     scope.project = Some(project);
-    // Gap storage is sliced too; project does not change partition/claim ids.
+    // Gap storage is sliced too; the scope restriction does not change partition ids.
     scope
         .writable
         .remove(&super::super::gap::branch_gap_projection(
@@ -1517,7 +1519,7 @@ fn dreamer_consolidation_reads_keep_their_receipts() -> Result<()> {
 
 /// A TURN stamped with a project on its record position, as both TURN
 /// write doors settle a project leader-chat turn.
-fn seed_project_turn(
+pub(super) fn seed_project_turn(
     vault: &Vault,
     conversation: &EntityId,
     text: &str,
@@ -1532,43 +1534,81 @@ fn seed_project_turn(
 }
 
 /// ONE-1592 P3 (canon: a consolidated claim inherits its sources' exposure
-/// and never mixes scopes). A leader chat holds two projects' turns in one
-/// partition. The same subject and predicate from each project never meet
+/// and never mixes scopes). A leader chat holds two projects' turns in two
+/// partitions. The same subject and predicate from each project never meet
 /// in one bucket, judge call or merged result; each claim lands in its own
 /// source's project; a claim citing both projects is not written.
 #[test]
-fn two_projects_in_one_partition_never_merge_and_keep_their_source_project() -> Result<()> {
+fn two_projects_in_two_partitions_never_merge_and_keep_their_source_project() -> Result<()> {
     let (_dir, vault) = open_vault();
     let store = DreamerRunnerStore::new(&vault);
     let (project_a, project_b) = (EntityId::now(), EntityId::now());
     let conversation = seed_session(&vault, 0x5a, 1);
     let turn_a = seed_project_turn(&vault, &conversation, "call me Owen", 10, project_a)?;
     let turn_b = seed_project_turn(&vault, &conversation, "call me Alex Owen", 11, project_b)?;
-    let attempt = admit_seeded_attempt(&vault, &store)?;
+    let first = admit_seeded_attempt(&vault, &store)?;
+    let second = match store.admit_next_consolidation(AdmitDreamerConsolidationAttempt {
+        scope: DreamerConsolidationScope::Micro,
+        local_node_id: crate::identity::load_or_mint_client_id(&vault)?,
+        claim_authoring_tier: DreamerClaimAuthoringBatchTier::batch(),
+        claim_authoring: DreamerClaimAuthoringAdmission::single_pass(),
+        admission: AdmitDreamerAttempt {
+            lease_owner: "consolidation-test".to_owned(),
+            now: 21,
+            budget_id: "wake".to_owned(),
+            budget_total_units: 10_000,
+            reserve_units: 100,
+            started_milestone: None,
+        },
+    })? {
+        DreamerConsolidationAdmissionOutcome::Admission(DreamerAdmissionOutcome::Admitted(
+            admitted,
+        )) => *admitted,
+        other => panic!("expected second consolidation attempt, got {other:?}"),
+    };
+    let mut admitted_a = None;
+    let mut admitted_b = None;
+    for admitted in [&first, &second] {
+        let queued = decode_partition_payload(&admitted.status.payload.input)?;
+        if queued.project == Some(project_a) {
+            admitted_a = Some(admitted);
+        } else if queued.project == Some(project_b) {
+            admitted_b = Some(admitted);
+        }
+    }
+    let (admitted_a, admitted_b) = (
+        admitted_a.expect("A attempt"),
+        admitted_b.expect("B attempt"),
+    );
     let subject = EntityId::now();
     let named =
         super::super::support::encode_value(&Value::Map(vec![("name".into(), "Owen".into())]))?;
     vault.put_entity(&subject, ENTITY_TYPE_PERSON, occurred(1), 1, &named)?;
-    // Both turns name Owen, so one slice shows T1/T2 and P1; Alex stays the
-    // T2 quote. The mixed-project Al still spans projects and is not written.
+    // Each partition shows its own T1 and P1; Alex stays B's T1 quote. No call
+    // sees both projects, so the mixed-project Al is never proposed.
     let cite_a = serde_json::json!({"source": "T1", "quote": "Owen"});
-    let cite_b = serde_json::json!({"source": "T2", "quote": "Alex"});
+    let cite_b = serde_json::json!({"source": "T1", "quote": "Alex"});
     let candidate = |predicate: &str, value: &str, refs: Vec<serde_json::Value>| {
         serde_json::json!({"subject": "P1", "predicate": predicate,
             "value": value, "confidence": 0.8, "evidence_refs": refs})
     };
-    let extraction = text_response(
+    let extraction_a = text_response(
         serde_json::json!({"candidates": [
             candidate("profile.name", "Owen", vec![cite_a.clone()]),
-            candidate("profile.name", "Alex", vec![cite_b.clone()]),
             candidate("profile.city", "Kyiv", vec![cite_a.clone()]),
+        ]})
+        .to_string(),
+    );
+    let extraction_b = text_response(
+        serde_json::json!({"candidates": [
+            candidate("profile.name", "Alex", vec![cite_b.clone()]),
             candidate("profile.city", "Kyiv", vec![cite_b.clone()]),
-            candidate("profile.nickname", "Al", vec![cite_a.clone(), cite_b.clone()]),
         ]})
         .to_string(),
     );
     let backend = ScriptedBackend::new(vec![
-        Ok(extraction),
+        Ok(extraction_a),
+        Ok(extraction_b),
         Ok(text_response(
             "{\"resolution\":\"merge\",\"value\":\"Merged\"}".to_owned(),
         )),
@@ -1581,38 +1621,39 @@ fn two_projects_in_one_partition_never_merge_and_keep_their_source_project() -> 
     );
     let deadline = WakePassDeadline::with_clock(180_000, std::sync::Arc::new(|| 0));
     let mut sink = CapturingSink::default();
-    let mut ctx = WakeAttemptContext {
-        vault: &vault,
-        deadline: &deadline,
-        cancel: None,
-        device_cancel: None,
-        budget_id: "wake",
-        now_ms: 21_000,
-        prepared_wake: None,
-        prepared_attempt: None,
-        spend_meter: None,
-    };
-    let mut executor = ConsolidationExecutor {
-        roles: Default::default(),
-        backend: &backend,
-        guard: &guard,
-        strategy: DreamerClaimAuthoringStrategy::SinglePass,
-        actor: vault.dreamer_authority()?,
-        model: crate::ModelId::new("test/model@r1").unwrap(),
-        sink: &mut sink,
-        inference: test_inference_host(),
-        scope: None,
-        decisions: ConsolidationDecisions::shipped()?,
-    };
-    assert!(matches!(
-        block_on_ready(executor.execute(&attempt, &mut ctx))?,
-        DreamerAttemptExecution::Completed { .. }
-    ));
-    drop(executor);
+    for admitted in [&admitted_a, &admitted_b] {
+        let mut ctx = WakeAttemptContext {
+            vault: &vault,
+            deadline: &deadline,
+            cancel: None,
+            device_cancel: None,
+            budget_id: "wake",
+            now_ms: 21_000,
+            prepared_wake: None,
+            prepared_attempt: None,
+            spend_meter: None,
+        };
+        let mut executor = ConsolidationExecutor {
+            roles: Default::default(),
+            backend: &backend,
+            guard: &guard,
+            strategy: DreamerClaimAuthoringStrategy::SinglePass,
+            actor: vault.dreamer_authority()?,
+            model: crate::ModelId::new("test/model@r1").unwrap(),
+            sink: &mut sink,
+            inference: test_inference_host(),
+            scope: None,
+            decisions: ConsolidationDecisions::shipped()?,
+        };
+        assert!(matches!(
+            block_on_ready(executor.execute(admitted, &mut ctx))?,
+            DreamerAttemptExecution::Completed { .. }
+        ));
+    }
     assert_eq!(
         backend.calls.load(Ordering::SeqCst),
-        1,
-        "no merge judge across projects"
+        2,
+        "two partitions, no merge judge across projects"
     );
     let landed = sink
         .accepted

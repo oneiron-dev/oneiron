@@ -12,9 +12,7 @@ use super::support::{
     KEY_LAST_LEDGER_REVISION_HINT, KEY_SCHEMA_VERSION, decode_value, encode_value, expect_key,
     expect_map, invalid_consolidation, scope_byte,
 };
-use super::watermark::{
-    ConsolidationWatermark, WorkingSetTurn, read_turn_facts, read_turn_facts_in_txn,
-};
+use super::watermark::{ConsolidationWatermark, WorkingSetTurn};
 use crate::Vault;
 use crate::attempt_queue::{EnqueueAttempt, EnqueueOutcome};
 use crate::dreamer_prefilter::{
@@ -31,6 +29,7 @@ use crate::error::Result;
 use crate::side_table::{self, Raw, SideTable};
 use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 
+mod key;
 mod payload;
 pub(crate) use payload::PartitionAudience;
 pub use payload::{PartitionThing, decode_partition_payload};
@@ -62,6 +61,10 @@ pub struct ConsolidationPartitionKey {
     pub conversation_ref: EntityId,
     pub world_ref: Option<EntityId>,
     pub facet_ref: Option<EntityId>,
+    /// The TURNs' stored project (`resources::stored_project`): the default
+    /// project for a row with no position; `None` where the row's audience
+    /// is not exactly one project.
+    pub project: Option<EntityId>,
 }
 
 impl ConsolidationPartitionKey {
@@ -74,7 +77,16 @@ impl ConsolidationPartitionKey {
         hasher.raw(self.conversation_ref.as_bytes());
         raw_optional_entity(&mut hasher, self.world_ref.as_ref());
         raw_optional_entity(&mut hasher, self.facet_ref.as_ref());
+        // A non-default project tags the hash; a default-project partition keeps main's bytes.
+        if self.project != Some(crate::claim::default_project_id()) {
+            hasher.raw(b"project");
+            raw_optional_entity(&mut hasher, self.project.as_ref());
+        }
         hasher.finish()
+    }
+
+    pub(crate) fn bucket(&self) -> (EntityId, Option<EntityId>, Option<EntityId>) {
+        (self.conversation_ref, self.world_ref, self.facet_ref)
     }
 }
 
@@ -188,7 +200,8 @@ fn decode_cursor(raw: &[u8]) -> Result<ConsolidationCursor> {
 /// opt-in body keys with the fallback chain body-key-on-turn → conversation
 /// body key → None (facet None = "channel gave no mask signal"; world None
 /// = base reality — the connector-level facet fallback applies at ingest
-/// time, where connectors stamp the body key).
+/// time, where connectors stamp the body key). Project comes from the TURN's
+/// stored position.
 ///
 /// The OF-361 statistical screen (ONE-1525) runs FIRST, over the whole input:
 /// the scan's GATE-10 role gate has already ruled on which turns MAY be
@@ -212,6 +225,7 @@ pub fn plan_partitions(
     let _ = scope;
     let eligible = without_excluded(dirty_turns, &vault.dreamer_excluded_conversations()?);
     let screened = prefilter_partition_input(vault, &eligible)?;
+    let txn = vault.store.env.read_txn()?;
     let mut plans: BTreeMap<ConsolidationPartitionKey, Vec<WorkingSetTurn>> = BTreeMap::new();
     for turn in &screened.kept {
         let Some(conversation_ref) = turn.conversation else {
@@ -219,13 +233,7 @@ pub fn plan_partitions(
             // partitioned; skip fail-closed rather than invent a partition.
             continue;
         };
-        let turn_facts = read_turn_facts(vault, &turn.turn_id)?;
-        let conversation_facts = read_turn_facts(vault, &conversation_ref)?;
-        let key = ConsolidationPartitionKey {
-            conversation_ref,
-            world_ref: turn_facts.world_ref.or(conversation_facts.world_ref),
-            facet_ref: turn_facts.facet_ref.or(conversation_facts.facet_ref),
-        };
+        let key = key::partition_key_in_txn(vault, &txn, &turn.turn_id, conversation_ref)?;
         plans.entry(key).or_default().push(*turn);
     }
     Ok(plans
@@ -313,15 +321,8 @@ pub(crate) fn turn_partition_hash_in_txn(
     let Some(conversation_ref) = super::redirty::conversation_in_txn(vault, txn, turn)? else {
         return Ok(None);
     };
-    let turn_facts = read_turn_facts_in_txn(vault, txn, turn)?;
-    let conversation_facts = read_turn_facts_in_txn(vault, txn, &conversation_ref)?;
     Ok(Some(
-        ConsolidationPartitionKey {
-            conversation_ref,
-            world_ref: turn_facts.world_ref.or(conversation_facts.world_ref),
-            facet_ref: turn_facts.facet_ref.or(conversation_facts.facet_ref),
-        }
-        .partition_hash(),
+        key::partition_key_in_txn(vault, txn, turn, conversation_ref)?.partition_hash(),
     ))
 }
 
@@ -338,13 +339,7 @@ fn partition_screened_turns_in_txn(
             // partitioned; skip fail-closed rather than invent a partition.
             continue;
         };
-        let turn_facts = read_turn_facts_in_txn(vault, txn, &turn.turn_id)?;
-        let conversation_facts = read_turn_facts_in_txn(vault, txn, &conversation_ref)?;
-        let key = ConsolidationPartitionKey {
-            conversation_ref,
-            world_ref: turn_facts.world_ref.or(conversation_facts.world_ref),
-            facet_ref: turn_facts.facet_ref.or(conversation_facts.facet_ref),
-        };
+        let key = key::partition_key_in_txn(vault, txn, &turn.turn_id, conversation_ref)?;
         plans.entry(key).or_default().push(*turn);
     }
     Ok(plans

@@ -311,6 +311,7 @@ impl crate::Vault {
             conversation_ref: conversation,
             world_ref: None,
             facet_ref: None,
+            project: Some(crate::claim::default_project_id()),
         };
         let mut scope = Scope::default();
         scope.readable.insert(ScopeResource::Bucket {

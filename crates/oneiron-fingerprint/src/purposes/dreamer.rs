@@ -59,8 +59,10 @@ legacy_purposes! {
     /// thing: `0` for none, else `1`, its entity (as the world) and its grouping identity
     /// (`1` and a thread's 16 bytes, `2` and a person's, or `0` for none); the part count
     /// (u64 big-endian); for each part, its partition hash and its TURN count (u64
-    /// big-endian). A one-part branch is its partition's hash instead. Its hex is in the
-    /// child attempt's dedupe key and in the branch's gap, output and signals projection keys.
+    /// big-endian). Each partition hash includes a "project" suffix and an optional id
+    /// unless the project is the default. A one-part branch is its partition's hash instead.
+    /// Its hex is in the child attempt's dedupe key and in the branch's gap, output and
+    /// signals projection keys.
     BRANCH_IDENTITY = (Blake3, HashedFirst, "oneiron:dreamer-branch:v1");
 
     /// An evidence attachment's id (`dreamer_promotion::scoped::attachment_digests`). Plain

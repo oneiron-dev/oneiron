@@ -15,8 +15,9 @@ use oneiron::test_doors::dreamer_attempt_binding::{
     admit_conflict_settle_attempt, enqueue_conflict_settle_attempt, enqueue_strength_attempt,
 };
 use oneiron::test_doors::extraction_inputs::{
-    append_extraction_turn_words, enqueue_admitted_extraction_attempt,
-    settle_extraction_rows_in_project, witness_extraction_turns,
+    admit_extraction_attempt, append_extraction_turn_words, enqueue_admitted_extraction_attempt,
+    enqueue_old_form_extraction_attempt, settle_extraction_rows_in_project,
+    witness_extraction_turns,
 };
 use oneiron::test_doors::extraction_steps::{
     ExtractionStepFixture, attach_extraction_step_lender, extraction_step_state_present,
@@ -398,5 +399,54 @@ fn other_facets_refuse_the_step_verbs() -> ExtractionStepTestResult<()> {
             "unexpected refusal: {receipt:?}"
         );
     }
+    Ok(())
+}
+
+/// An old-form row queues the outside-grant TURN beside the served one, so the
+/// page's grant filter still decides and the step still refuses the unserved
+/// citation below the facet allow-list, with no generation and no state.
+#[test]
+fn an_old_form_row_still_refuses_its_unserved_turn_before_the_backend()
+-> ExtractionStepTestResult<()> {
+    let backend = Arc::new(CapturingStepBackend::new(step_plain_reply(), 100, 50));
+    let fixture = ExtractionStepFixture::new(backend.clone())?;
+    let dir = tempfile::tempdir()?;
+    let vault = Arc::new(open_extraction_step_vault(&dir)?);
+    let actor = dreamer(&vault)?;
+    let grant = stand_steward_grant(&vault, actor, &STEWARD_VERBS)?;
+    let witnessed = witness_extraction_turns(&vault, &["owen likes tea", "yuki likes tea"])?;
+    let outside = witnessed.turns[1];
+    let unserved = source_version(&vault, actor, EdgeActorClass::System, outside)?
+        .unwrap_or_else(|| panic!("the Dreamer reads the turn before it leaves the grant"));
+    let unserved = serde_json::to_value(unserved)?;
+    let project = EntityId::now();
+    settle_extraction_rows_in_project(&vault, &[outside, witnessed.messages[1]], project)?;
+    narrow_steward_grant_to_project(&vault, grant, oneiron::claim::default_project_id())?;
+    let id = enqueue_old_form_extraction_attempt(
+        &vault,
+        witnessed.conversation,
+        &witnessed.turns,
+        QUEUE_NOW,
+    )?;
+    let admitted = admit_extraction_attempt(&vault, id, QUEUE_NOW)?;
+    let binding = attach_extraction_step_lender(bind_extraction(&vault, &admitted)?, &fixture);
+    let page = read_bound_extraction_page(&binding, &extraction_attempt_hex(id))?;
+    let turns = page_turns_with_versions(&page);
+    assert_eq!(turns.len(), 1);
+    let request = extraction_step_request(json!([
+        extraction_step_evidence(&turns[0].0, turns[0].1.clone(), None),
+        extraction_step_evidence(&outside.to_hex(), unserved, None),
+    ]));
+    let Err(withheld) = invoke_bound_step(&binding, request) else {
+        panic!("an unserved turn is refused");
+    };
+    assert_eq!(withheld.code, MEMORY_CODE_FORBIDDEN);
+    assert!(
+        !withheld.message.contains("facet does not admit"),
+        "an unserved row refuses below the facet allow list: {withheld:?}"
+    );
+    assert_eq!(backend.call_count(), 0);
+    assert!(backend.request_texts().is_empty());
+    assert!(!extraction_step_state_present(&vault, id)?);
     Ok(())
 }

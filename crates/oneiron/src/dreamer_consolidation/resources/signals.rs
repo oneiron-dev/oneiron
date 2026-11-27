@@ -437,6 +437,7 @@ impl crate::Vault {
                 conversation_ref: conversation,
                 world_ref: None,
                 facet_ref: None,
+                project: Some(crate::claim::default_project_id()),
             },
             &[],
             crate::attempt_queue::AttemptId::now(),

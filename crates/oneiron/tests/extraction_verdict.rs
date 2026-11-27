@@ -14,8 +14,9 @@ use oneiron::test_doors::dreamer_attempt_binding::{
     admit_conflict_settle_attempt, enqueue_conflict_settle_attempt, enqueue_strength_attempt,
 };
 use oneiron::test_doors::extraction_inputs::{
-    append_extraction_turn_words, enqueue_admitted_extraction_attempt,
-    settle_extraction_rows_in_project, witness_extraction_turns,
+    admit_extraction_attempt, append_extraction_turn_words, enqueue_admitted_extraction_attempt,
+    enqueue_old_form_extraction_attempt, settle_extraction_rows_in_project,
+    witness_extraction_turns,
 };
 use oneiron::test_doors::extraction_verdict::{
     ExtractionVerdictFixture, attach_extraction_verdict_lender,
@@ -664,5 +665,63 @@ fn a_lent_ceiling_below_the_first_rung_is_refused() -> ExtractionVerdictTestResu
     assert_eq!(answered["rung"], json!("big"));
     assert_eq!(reasoner.call_count(), 1);
     assert_eq!(fixture_spent_observations(&fixture).len(), 2);
+    Ok(())
+}
+
+/// An old-form row queues the outside-grant TURN beside the served one, so the
+/// page's grant filter still decides and the verdict still refuses the
+/// unserved citation below the facet allow-list, never reaching a loan.
+#[test]
+fn an_old_form_row_still_refuses_its_unserved_turn_before_any_loan()
+-> ExtractionVerdictTestResult<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Arc::new(open_extraction_verdict_vault(&dir)?);
+    let actor = dreamer(&vault)?;
+    let grant = stand_steward_grant(&vault, actor, &STEWARD_VERBS)?;
+    let witnessed = witness_extraction_turns(&vault, &["owen likes tea", "yuki likes tea"])?;
+    let outside = witnessed.turns[1];
+    let unserved = source_version(&vault, actor, EdgeActorClass::System, outside)?
+        .unwrap_or_else(|| panic!("the Dreamer reads the turn before it leaves the grant"));
+    let unserved = serde_json::to_value(unserved)?;
+    let project = EntityId::now();
+    settle_extraction_rows_in_project(&vault, &[outside, witnessed.messages[1]], project)?;
+    narrow_steward_grant_to_project(&vault, grant, oneiron::claim::default_project_id())?;
+    let subject = EntityId::now();
+    seed_named_person(&vault, &subject, "owen", vault.now_recorded_at())?;
+    let id = enqueue_old_form_extraction_attempt(
+        &vault,
+        witnessed.conversation,
+        &witnessed.turns,
+        QUEUE_NOW,
+    )?;
+    let admitted = admit_extraction_attempt(&vault, id, QUEUE_NOW)?;
+    let binding = bind_extraction(&vault, &admitted)?;
+    let page = read_bound_extraction_page(&binding, &extraction_attempt_hex(id))?;
+    let turns = page_turns_with_versions(&page);
+    assert_eq!(turns.len(), 1);
+    let pack = json!({
+        "read": "resolution",
+        "part": {"kind": "whole"},
+        "candidates": [
+            extraction_candidate(&subject.to_hex(), "profile.hobby", json!("tea"), &turns[0].0, turns[0].1.clone()),
+            extraction_candidate(&subject.to_hex(), "profile.hobby", json!("coffee"), &outside.to_hex(), unserved),
+        ],
+        "listed": [],
+        "priors": [],
+        "questions": [
+            {"key": ["resolution"], "options": native_resolution_options()},
+            {"key": ["identity", "0"], "options": ["none", "candidate:0", "candidate:1"]},
+        ],
+        "earlier": [],
+    });
+    let request = extraction_verdict_request("resolution", native_resolution_options(), pack);
+    let Err(withheld) = invoke_bound_verdict(&binding, request) else {
+        panic!("an unserved turn is refused");
+    };
+    assert_eq!(withheld.code, MEMORY_CODE_FORBIDDEN);
+    assert!(
+        !withheld.message.contains("facet does not admit"),
+        "an unserved row refuses below the facet allow list: {withheld:?}"
+    );
     Ok(())
 }

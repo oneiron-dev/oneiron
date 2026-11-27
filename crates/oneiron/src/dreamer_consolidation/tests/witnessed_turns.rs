@@ -521,6 +521,7 @@ fn branch_reads_only_the_turns_visible_words_and_cites_them_exactly() -> Result<
         conversation_ref: conversation,
         world_ref: None,
         facet_ref: None,
+        project: Some(crate::claim::default_project_id()),
     };
     let branch = BranchResources::open(&vault, actor, partition, &[turn], AttemptId::now(), None)?;
     let text = "I met Casey\nand ☕ after";
@@ -962,6 +963,7 @@ fn partition_of(conversation: EntityId) -> ConsolidationPartitionKey {
         conversation_ref: conversation,
         world_ref: None,
         facet_ref: None,
+        project: Some(crate::claim::default_project_id()),
     }
 }
 
@@ -1634,6 +1636,7 @@ fn branch_gap_write_refuses_evidence_that_moved_after_the_read() -> Result<()> {
         let queued_branch: ConsolidationBranchPlan<EntityId> = ConsolidationBranchPlan {
             world_ref: partition.world_ref,
             facet_ref: partition.facet_ref,
+            project: partition.project,
             thing: None,
             parts: vec![ConversationPart {
                 conversation_ref: partition.conversation_ref,

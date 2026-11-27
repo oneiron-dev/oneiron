@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use super::source_version::{SourceVersion, source_version_in_txn};
 use super::strength_observations::{live_steward_reader_scope_in_txn, observed_claim_reads_in_txn};
 use crate::attempt_queue::{AttemptId, AttemptQueue};
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimReadStatus, ScopedRead, ScopedReadResult};
 use crate::dreamer_consolidation::routing::PredicateKeyRules;
 use crate::dreamer_consolidation::selection::SelectionConfig;
@@ -212,6 +213,7 @@ fn bound_extraction_inputs_page(
         let mut rows = queued.into_iter().skip(start);
         let mut bytes = 0u64;
         let mut shown = None;
+        let mut page_project = None;
         while let Some((key, turn)) = rows.next() {
             let Some(row) = extraction_turn_in_txn(
                 vault,
@@ -225,6 +227,23 @@ fn bound_extraction_inputs_page(
             else {
                 continue;
             };
+            let raw = vault
+                .get_raw_in(txn, &turn)?
+                .ok_or_else(invalid_extraction_attempt)?;
+            let header =
+                EntityMetadataHeader::parse(&raw).ok_or_else(invalid_extraction_attempt)?;
+            let turn_project = crate::dreamer_consolidation::resources::stored_project(
+                &vault.store,
+                txn,
+                turn,
+                header.entity_type,
+                &raw[ENTITY_METADATA_HEADER_LEN..],
+            )?;
+            if page_project.is_some_and(|first| first != turn_project) {
+                page.next = shown.map(extraction_turn_cursor);
+                break;
+            }
+            page_project = Some(turn_project);
             let size = serde_json::to_vec(&row)
                 .map_err(|error| MemoryError::bad_request(error.to_string()))?
                 .len() as u64;

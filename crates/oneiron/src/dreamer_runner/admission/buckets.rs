@@ -8,9 +8,8 @@ use std::collections::{BTreeSet, HashSet};
 
 use crate::Vault;
 use crate::attempt_queue::{AttemptId, AttemptRecord, AttemptState};
-use crate::dreamer_consolidation::{
-    ConsolidationPartitionKey, decode_partition_payload, running_bucket_set_in_txn,
-};
+use crate::dreamer_consolidation::{decode_partition_payload, running_bucket_set_in_txn};
+use crate::entity_id::EntityId;
 use crate::error::Result;
 
 use super::super::{DreamerConsolidationScope, DreamerRunnerStore, decode_dreamer_attempt_payload};
@@ -18,11 +17,15 @@ use super::AdmitDreamerAttempt;
 
 /// A row's sorted, deduplicated set of part partition buckets; `None` for a
 /// job without a partition, which takes one exclusive whole-vault slot.
-fn bucket(record: &AttemptRecord) -> Option<Vec<ConsolidationPartitionKey>> {
+fn bucket(record: &AttemptRecord) -> Option<Vec<(EntityId, Option<EntityId>, Option<EntityId>)>> {
     let payload = decode_dreamer_attempt_payload(&record.payload).ok()?;
-    decode_partition_payload(&payload.input)
-        .ok()
-        .map(|branch| branch.bucket_set())
+    decode_partition_payload(&payload.input).ok().map(|branch| {
+        branch
+            .bucket_set()
+            .into_iter()
+            .map(|key| key.bucket())
+            .collect()
+    })
 }
 
 /// What running MACRO work holds: every bucket of every running row, and
@@ -31,7 +34,7 @@ fn bucket(record: &AttemptRecord) -> Option<Vec<ConsolidationPartitionKey>> {
 struct Held {
     any: bool,
     whole_vault: bool,
-    buckets: BTreeSet<ConsolidationPartitionKey>,
+    buckets: BTreeSet<(EntityId, Option<EntityId>, Option<EntityId>)>,
 }
 
 impl Held {
@@ -68,7 +71,7 @@ impl Held {
     fn admits(&self, row: &AttemptRecord) -> bool {
         !self.whole_vault
             && match bucket(row) {
-                Some(set) => set.iter().all(|key| !self.buckets.contains(key)),
+                Some(set) => set.iter().all(|triplet| !self.buckets.contains(triplet)),
                 None => !self.any,
             }
     }

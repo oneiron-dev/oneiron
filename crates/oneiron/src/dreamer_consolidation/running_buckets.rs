@@ -43,7 +43,7 @@ pub(super) fn record_running_buckets(
         attempt_count,
         buckets: buckets
             .iter()
-            .map(|key| (key.conversation_ref, key.world_ref, key.facet_ref))
+            .map(ConsolidationPartitionKey::bucket)
             .collect(),
     };
     vault.with_write_txn_grouped(|txn| {
@@ -73,20 +73,9 @@ pub(crate) fn running_bucket_set_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     record: &AttemptRecord,
-) -> Result<Option<Vec<ConsolidationPartitionKey>>> {
+) -> Result<Option<Vec<(EntityId, Option<EntityId>, Option<EntityId>)>>> {
     Ok(RUNNING_BUCKETS
         .get_lenient(vault, txn, &record.id)?
         .filter(|row| row.attempt_count == record.attempt_count)
-        .map(|row| {
-            row.buckets
-                .into_iter()
-                .map(
-                    |(conversation_ref, world_ref, facet_ref)| ConsolidationPartitionKey {
-                        conversation_ref,
-                        world_ref,
-                        facet_ref,
-                    },
-                )
-                .collect()
-        }))
+        .map(|row| row.buckets))
 }

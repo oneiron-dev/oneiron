@@ -194,6 +194,7 @@ pub(super) fn split_parts(branch: &QueuedBranch, indexes: &[usize]) -> Vec<Queue
         .map(|part| QueuedBranch {
             world_ref: branch.world_ref,
             facet_ref: branch.facet_ref,
+            project: branch.project,
             thing: branch.thing,
             parts: vec![part.clone()],
         })
@@ -224,6 +225,7 @@ pub(super) fn overflow_chunks(
         chunks.extend(turns.chunks(size.max(1)).map(|chunk| QueuedBranch {
             world_ref: branch.world_ref,
             facet_ref: branch.facet_ref,
+            project: branch.project,
             thing: None,
             parts: vec![ConversationPart {
                 conversation_ref: part.conversation_ref,

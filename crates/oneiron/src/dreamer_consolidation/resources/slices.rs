@@ -103,11 +103,11 @@ pub(super) fn branch_turn_lines(branch: &QueuedBranch) -> BTreeMap<EntityId, u32
 }
 
 impl BranchResources<'_> {
-    /// Group by slice line (FIX 8724) and co-mentioned known entities, then
-    /// chunk each group. Every TURN appears in one chunk, and every child sees
-    /// only its own source versions, its own TURNs' conversations and the
-    /// neighbourhood heads that accompany them. A child may span the parts of
-    /// one line, never two lines. Each group's whole listing (its thing
+    /// Group by stored project, slice line (FIX 8724) and co-mentioned known
+    /// entities, then chunk each group. Every TURN appears in one chunk, and
+    /// every child sees only its own source versions, its TURNs' conversations
+    /// and the neighbourhood heads that accompany them. A child may span the
+    /// parts of one line, never two lines. Each group's whole listing (its thing
     /// first) is paged (FIX 7580, 9347), and a chunk is one call per page:
     /// each page's call reads the chunk's turns, and every page's call holds
     /// all of the chunk's heads, so a candidate is decided against every head
@@ -134,7 +134,7 @@ impl BranchResources<'_> {
         bound: SliceBound,
     ) -> Result<(Vec<ExtractionSlice>, bool)> {
         type Group = Vec<(EntityId, TurnBodyFacts)>;
-        let mut groups = BTreeMap::<(u32, Vec<EntityId>), Group>::new();
+        let mut groups = BTreeMap::<(Option<EntityId>, (u32, Vec<EntityId>)), Group>::new();
         let lines: BTreeMap<EntityId, u32> = match &self.origin {
             ResourceOrigin::Branch(branch) => branch_turn_lines(branch),
             ResourceOrigin::Root(_) => self.turns.keys().map(|turn| (*turn, 0)).collect(),
@@ -145,11 +145,15 @@ impl BranchResources<'_> {
             serial_width |= facts.imported;
             let (_, body) = self.source(self.scope(), id)?;
             let line = lines.get(id).copied().unwrap_or_default();
-            let key = crate::dreamer_consolidation::extraction_step::slice_group_key(
-                &self.known,
-                line,
-                &body,
-                facts.text.as_deref(),
+            // One call never holds two projects' TURNs.
+            let key = (
+                self.sources[id].project,
+                crate::dreamer_consolidation::extraction_step::slice_group_key(
+                    &self.known,
+                    line,
+                    &body,
+                    facts.text.as_deref(),
+                ),
             );
             groups.entry(key).or_default().push((*id, facts));
         }
@@ -163,7 +167,7 @@ impl BranchResources<'_> {
             crate::dreamer_consolidation::PreparedWake::hook_material,
         );
         let mut slices = Vec::new();
-        for ((_, entities), group) in groups {
+        for ((_, (_, entities)), group) in groups {
             let known = self.known.slice(&entities);
             let pages = known.pages(|id| self.priors.contains_key(id));
             let (texts, turn_room) = match bound.room {
