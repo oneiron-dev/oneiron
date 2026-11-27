@@ -69,11 +69,11 @@ impl Node {
         node.callable = true;
     }
 
-    pub fn visible_verb(&self, hidden: &BTreeMap<String, String>) -> bool {
+    pub(super) fn visible_verb(&self, hidden: &BTreeMap<String, String>) -> bool {
         self.callable && !hidden.contains_key(&self.path)
     }
 
-    pub fn visible_count(&self, hidden: &BTreeMap<String, String>) -> usize {
+    pub(super) fn visible_count(&self, hidden: &BTreeMap<String, String>) -> usize {
         usize::from(self.visible_verb(hidden))
             + self
                 .children
@@ -82,13 +82,16 @@ impl Node {
                 .sum::<usize>()
     }
 
-    pub fn has_visible_children(&self, hidden: &BTreeMap<String, String>) -> bool {
+    pub(super) fn has_visible_children(&self, hidden: &BTreeMap<String, String>) -> bool {
         self.children
             .values()
             .any(|child| child.visible_count(hidden) > 0)
     }
 
-    pub fn ordered_children<'a>(&'a self, hidden: &BTreeMap<String, String>) -> Vec<&'a Self> {
+    pub(super) fn ordered_children<'a>(
+        &'a self,
+        hidden: &BTreeMap<String, String>,
+    ) -> Vec<&'a Self> {
         let mut children: Vec<_> = self
             .children
             .values()
@@ -98,7 +101,7 @@ impl Node {
         children
     }
 
-    pub fn outside_grant(&self, hidden: &BTreeMap<String, String>) -> Option<TreeRefusal> {
+    pub(super) fn outside_grant(&self, hidden: &BTreeMap<String, String>) -> Option<TreeRefusal> {
         let mut grants = BTreeSet::new();
         if self.visible_count(hidden) == 0 {
             self.collect_grants(hidden, &mut grants);
