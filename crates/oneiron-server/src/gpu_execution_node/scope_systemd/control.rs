@@ -43,6 +43,7 @@ use std::time::{Duration, Instant};
 use super::super::jobs::JobKeyId;
 use super::super::node_settings::CHECKPOINT_SIGNALS;
 use super::device_query;
+use super::exec::connect_by_deadline;
 use super::safe_fs::account;
 use super::systemd_unit::{SYSTEMCTL_TIMEOUT, run_tool, show};
 use super::unit_file::plain_account;
@@ -78,8 +79,8 @@ const CUTOFF_DIGITS_MAX: usize = 20;
 /// The longest reply line the engine reads.
 const REPLY_MAX_BYTES: usize = 1024;
 
-/// How long the handler waits for the whole request line, from its start;
-/// the engine's write of it waits as long.
+/// How long the handler waits for the whole request line, from its start.
+/// The engine's job control connect and the socket writes wait as long.
 pub(super) const REQUEST_WAIT: Duration = Duration::from_secs(5);
 
 /// How long the engine waits for the handler's answer: the handler's own
@@ -233,16 +234,34 @@ pub fn parse_request(line: &[u8]) -> Result<(ControlVerb, JobKeyId), String> {
     Ok((verb, id))
 }
 
-/// The engine's side: asks the handler for `verb` on the job unit `id` and
-/// waits at most [`CONTROL_ANSWER_WAIT`] for its answer.
+/// The engine's side: makes the connection within `REQUEST_WAIT`, asks the
+/// handler for `verb` on the job unit `id`, then waits at most
+/// [`CONTROL_ANSWER_WAIT`] for its answer.
 ///
 /// # Errors
 ///
-/// The socket is missing or did not answer, or the handler refused (its
-/// reason).
+/// As [`request_at`].
 pub fn request(verb: ControlVerb, id: &JobKeyId) -> Result<(), String> {
-    let fail = |error: std::io::Error| format!("{CONTROL_SOCKET_PATH}: {error}");
-    let mut stream = UnixStream::connect(CONTROL_SOCKET_PATH).map_err(fail)?;
+    request_at(Path::new(CONTROL_SOCKET_PATH), verb, id, REQUEST_WAIT)
+}
+
+/// Asks the handler at `socket` for `verb` on the job unit `id`, allowing
+/// `connect_wait` for the connection.
+///
+/// # Errors
+///
+/// The socket could not be reached or did not answer, or the handler refused
+/// (its reason).
+pub fn request_at(
+    socket: &Path,
+    verb: ControlVerb,
+    id: &JobKeyId,
+    connect_wait: Duration,
+) -> Result<(), String> {
+    let fail = |error: std::io::Error| format!("{}: {error}", socket.display());
+    let deadline = Instant::now() + connect_wait;
+    let address = rustix::net::SocketAddrUnix::new(socket).map_err(|error| fail(error.into()))?;
+    let mut stream = connect_by_deadline(&address, deadline).map_err(fail)?;
     stream.set_write_timeout(Some(REQUEST_WAIT)).map_err(fail)?;
     stream
         .write_all(render_request(verb, id).as_bytes())
@@ -272,7 +291,7 @@ pub fn run(args: &[String]) -> i32 {
         .map(UnixStream::from)
         .and_then(|mut stream| {
             let answer = serve(args, &mut stream);
-            let _ = stream.write_all(&render_reply(&answer));
+            let _ = write_reply(&mut stream, &render_reply(&answer), REQUEST_WAIT);
             answer
         });
     match answer {
@@ -282,6 +301,72 @@ pub fn run(args: &[String]) -> i32 {
             1
         }
     }
+}
+
+/// Writes the handler's reply. A device query can return up to
+/// [`device_query::DEVICE_QUERY_OUTPUT_MAX_BYTES`] bytes of output. The whole
+/// reply gets `wait`, measured from the first byte (review r1 of #10579),
+/// not each write: if the peer does not drain the reply, the root handler
+/// gives up after `wait`, rather than waiting for the unit's `RuntimeMaxSec`.
+/// No write starts once `wait` has passed (review r2 of #10579), so a reply
+/// is never finished late.
+///
+/// # Errors
+///
+/// The stream's blocking mode could not be changed, the peer closed the
+/// reply, the peer did not take the whole reply within `wait`, or a write
+/// failed.
+pub fn write_reply(stream: &mut UnixStream, reply: &[u8], wait: Duration) -> std::io::Result<()> {
+    let deadline = Instant::now() + wait;
+    stream.set_nonblocking(true)?;
+    let mut written = 0;
+    let mut result: std::io::Result<()> = Ok(());
+    while written < reply.len() {
+        // The deadline holds before every write, also after a poll that
+        // ended at it: a peer that drains the reply late takes no more of it
+        // (review r2 of #10579, P1).
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            result = Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "the peer did not take the reply within its wait",
+            ));
+            break;
+        }
+        match stream.write(&reply[written..]) {
+            Ok(0) => {
+                result = Err(std::io::ErrorKind::WriteZero.into());
+                break;
+            }
+            Ok(count) => written += count,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                let mut poll = libc::pollfd {
+                    fd: stream.as_raw_fd(),
+                    events: libc::POLLOUT,
+                    revents: 0,
+                };
+                let sub_ms = u64::from(left.subsec_nanos() % 1_000_000 != 0);
+                let millis = left.as_millis().saturating_add(u128::from(sub_ms));
+                let millis = libc::c_int::try_from(millis).unwrap_or(libc::c_int::MAX);
+                // SAFETY: one valid pollfd.
+                let ready = unsafe { libc::poll(&raw mut poll, 1, millis) };
+                if ready < 0 {
+                    let error = std::io::Error::last_os_error();
+                    if error.kind() != std::io::ErrorKind::Interrupted {
+                        result = Err(error);
+                        break;
+                    }
+                }
+            }
+            Err(error) => {
+                result = Err(error);
+                break;
+            }
+        }
+    }
+    let _ = stream.set_nonblocking(false);
+    result
 }
 
 /// The handler's reply to one request: `ok\n`; for a device query, `ok <n>\n`
@@ -418,6 +503,90 @@ pub(super) fn read_line(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_reply_to_a_peer_that_never_reads_gives_up_within_its_wait() {
+        let (mut writer, _reader) = UnixStream::pair().expect("a connected pair");
+        let wait = Duration::from_millis(200);
+        let limit = wait + Duration::from_secs(3);
+        let (answered, answer) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let reply = vec![0_u8; 8 << 20];
+            // testkit-lint: allow(wall-clock) measures the real socket write timeout
+            let started = Instant::now();
+            let result = write_reply(&mut writer, &reply, wait);
+            let _ = answered.send((result, started.elapsed()));
+        });
+        let (result, elapsed) = answer.recv_timeout(limit).expect("the write timed out");
+        let error = result.expect_err("the peer never drained the reply");
+        assert!(
+            matches!(
+                error.kind(),
+                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+            ),
+            "{error}"
+        );
+        assert!(elapsed < limit, "the write took {elapsed:?}");
+    }
+
+    #[test]
+    fn a_reply_to_a_peer_that_reads_slowly_gives_up_at_its_deadline() {
+        use std::io::Read as _;
+        let (mut writer, mut reader) = UnixStream::pair().expect("a connected pair");
+        let wait = Duration::from_millis(200);
+        let limit = wait + Duration::from_secs(3);
+        std::thread::spawn(move || {
+            let mut drained = [0_u8; 4096];
+            loop {
+                match reader.read(&mut drained) {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) => {
+                        // testkit-lint: allow(sleep) a slow peer drains a little at a time
+                        std::thread::sleep(Duration::from_millis(20));
+                    }
+                }
+            }
+        });
+        let (answered, answer) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let reply = vec![0_u8; 8 << 20];
+            // testkit-lint: allow(wall-clock) measures the real socket write deadline
+            let started = Instant::now();
+            let result = write_reply(&mut writer, &reply, wait);
+            let _ = answered.send((result, started.elapsed()));
+        });
+        let (result, elapsed) = answer.recv_timeout(limit).expect("the write answered");
+        let error = result.expect_err("the slow peer never took the whole reply");
+        assert!(
+            matches!(
+                error.kind(),
+                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+            ),
+            "{error}"
+        );
+        assert!(
+            elapsed < wait + Duration::from_secs(2),
+            "the write took {elapsed:?}"
+        );
+    }
+
+    /// No write starts once the wait has passed (review r2 of #10579): a
+    /// reply with no wait left sends nothing, even to a peer that would take
+    /// it at once, so a peer that drains late never receives a finished reply.
+    #[test]
+    fn no_write_starts_once_the_reply_wait_has_passed() {
+        use std::io::Read as _;
+        let (mut writer, mut reader) = UnixStream::pair().expect("a connected pair");
+        let error = write_reply(&mut writer, b"ok\n", Duration::ZERO)
+            .expect_err("a reply with no wait left is not written");
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut, "{error}");
+        drop(writer);
+        let mut taken = Vec::new();
+        reader
+            .read_to_end(&mut taken)
+            .expect("the peer reads the closed stream");
+        assert!(taken.is_empty(), "the peer took {taken:?}");
+    }
 
     #[test]
     fn a_request_names_a_known_verb_and_a_job_instance_and_nothing_else() {
