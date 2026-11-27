@@ -243,6 +243,21 @@ impl Vault {
         &self,
         connector: Option<&str>,
     ) -> Result<Vec<ConnectorSlateRevisionOffer>> {
+        self.connector_slate_revision_offers_listed(connector)
+            .map(|(offers, _)| offers)
+    }
+
+    /// [`Self::connector_slate_revision_offers`] beside the rows each
+    /// listed offer was read from, in the same one read txn: a scope
+    /// offer lists the connector key its standing check read; an issuer
+    /// revision lists the catalog key and each dependent key its dependent
+    /// rows were read from; sorted and deduped. Each is an entity row.
+    /// Bindings, consent grants, slates and signals are side tables and
+    /// list nothing.
+    pub fn connector_slate_revision_offers_listed(
+        &self,
+        connector: Option<&str>,
+    ) -> Result<(Vec<ConnectorSlateRevisionOffer>, Vec<EntityId>)> {
         let now = self.store.clock.now_recorded_at();
         let wanted = connector.map(normalize_connector_key);
         let names = |name: &str| {
@@ -253,6 +268,7 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         let mut offers = Vec::new();
         let mut listed = BTreeSet::new();
+        let mut rows = BTreeSet::new();
         for signal in scan_signals_in_txn(&self.store, &txn)? {
             let Some(proposal_ref) = signal.proposed_slate_ref else {
                 continue;
@@ -273,14 +289,29 @@ impl Vault {
                 continue;
             }
             listed.insert(proposal_ref);
+            // The standing check read this signal's key, an entity row the
+            // cause carries too, and its grant, which the consent store
+            // keeps by its bound digest in a side table: no row stands at
+            // the grant's id for a release to judge again, so it lists
+            // nothing (REVIEW-10630). An accept judges the offer's
+            // standing again ([`accept_scope_in_txn`]).
+            rows.insert(signal.key_ref);
             offers.push(offer_of(proposal_ref, &proposal, signal.connector, cause));
         }
-        for (connector, proposal_ref, cause) in
-            super::credential_binding::open_issuer_revisions_in_txn(&self.store, &txn)?
+        // An issuer revision lists the catalog key and each dependent key
+        // its dependent rows were read from; its binding is a side-table
+        // row, and the dependent rows themselves are tool names.
+        for super::credential_binding::OpenIssuerRevision {
+            connector,
+            drafted: proposal_ref,
+            cause,
+            keys,
+        } in super::credential_binding::open_issuer_revisions_in_txn(&self.store, &txn)?
         {
             if !names(&connector) {
                 continue;
             }
+            rows.extend(keys);
             let proposal = match proposal_ref {
                 Some(id) => {
                     read_slate_in_store_txn(&self.store, &txn, id)?.map(|slate| (id, slate))
@@ -299,7 +330,7 @@ impl Vault {
                 },
             });
         }
-        Ok(offers)
+        Ok((offers, rows.into_iter().collect()))
     }
 
     /// The owner holds a scope revision's offer back, or lets it surface
