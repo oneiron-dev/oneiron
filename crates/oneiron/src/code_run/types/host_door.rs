@@ -316,6 +316,17 @@ pub trait AgentVerbDoor: Send + Sync {
         })
     }
 
+    /// Reads back a verb row's recorded answer only where this door admits
+    /// that verb now (FIX CODE-MODE-LENDING-W11). A door that rules on verb
+    /// rows only at [`Self::call`] keeps today's ruling.
+    fn admit_recorded_verb(
+        &self,
+        verb: crate::task_verb::sdk::AgentVerb,
+    ) -> std::result::Result<(), AgentVerbRefusal> {
+        let _ = verb;
+        Ok(())
+    }
+
     /// Whether a result the run retained stays on this device for the door's
     /// caller now (DEC-0005), re-checked at each read of it: `rows` are the
     /// rows the run was served producing it, `None` when one of its answers
