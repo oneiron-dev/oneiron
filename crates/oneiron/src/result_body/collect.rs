@@ -505,9 +505,7 @@ impl Vault {
             let txn = self.store.env.read_txn()?;
             let mut kept = BTreeSet::new();
             for digest in digests {
-                if !digest_is_held_in_txn(&self.store, &txn, digest)?
-                    && !code_run_body_held_in_txn(&self.store, &txn, digest)?
-                {
+                if !digest_is_held_in_txn(&self.store, &txn, digest)? {
                     kept.insert(*digest);
                 }
             }
