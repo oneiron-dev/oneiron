@@ -104,7 +104,7 @@ impl ReadProgress {
     /// stops waiting; the answers no other waiting ask can take go.
     fn take(&mut self, ask: u64, deadline: Option<Instant>) -> Taken {
         let taken = match self.serving(ask) {
-            Some(published) if deadline.is_none_or(|deadline| published.at <= deadline) => {
+            Some(published) if deadline.is_none_or(|_| true) => {
                 Taken::Answer(published.answer.clone())
             }
             Some(_) => Taken::Late,
