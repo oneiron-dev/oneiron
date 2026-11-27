@@ -281,18 +281,6 @@ impl Memory<'_> {
                 preview
                     .check_after_unshare(self.vault, txn)
                     .map_err(Into::into)
-            })
-            .map_err(|error| {
-                // The owner, on their own proof, learns `restricted` for a
-                // record they chose to restrict (Q1 = A); any other absence,
-                // and an erase without that proof, passes through.
-                if error.code != MEMORY_CODE_NOT_FOUND || options.veto_starter.is_none() {
-                    return error;
-                }
-                self.vault
-                    .restricted_owner_delete_refusal(&preview.entity())
-                    .map(MemoryError::from)
-                    .unwrap_or(error)
             })?
         };
         let same_bytes = plan
