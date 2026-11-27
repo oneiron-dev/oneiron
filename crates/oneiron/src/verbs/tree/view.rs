@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use oneiron_store::note_kind::RetentionDefault;
 
 use super::index::{Node, name_order};
+use super::render::is_word_char;
 use super::render::{child_label, text_len};
 use super::{NoteKindLine, RenderedView, VerbTree, ViewOptions};
 
@@ -124,6 +125,18 @@ impl VerbTree {
                     .is_some_and(|node| node.outside_grant(hidden).is_some()))
     }
 
+    fn without_hidden_paths(&self, text: &str, hidden: &BTreeMap<String, String>) -> String {
+        text.split('\n')
+            .filter(|line| {
+                !line
+                    .split(|char| !is_word_char(char) && char != '.')
+                    .map(|token| token.trim_end_matches('.'))
+                    .any(|token| token.contains('.') && self.grant_hidden(token, hidden))
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     fn full_subtree(
         &self,
         node: &Node,
@@ -158,12 +171,13 @@ impl VerbTree {
                 }
                 continue;
             }
-            if let Some(text) = authored {
-                base.push(text.replace("{note_kinds}", &kinds));
+            if let Some(text) = authored.filter(|_| !options.hidden.contains_key(path)) {
+                let text = text.replace("{note_kinds}", &kinds);
+                base.push(self.without_hidden_paths(&text, options.hidden));
             } else if let Some(node) = node {
                 let mut blocks = Vec::new();
                 self.full_subtree(node, options.hidden, &mut blocks);
-                base.push(blocks.join("\n\n"));
+                base.push(self.without_hidden_paths(&blocks.join("\n\n"), options.hidden));
             }
             shown_base.insert(path.as_str());
         }
@@ -173,15 +187,25 @@ impl VerbTree {
             .trim_end()
             .replace("{TOTAL}", &grouped(self.root.visible_count(options.hidden)))
             .replace("{BASE_COUNT}", &grouped(base.len()));
+        let head = self.without_hidden_paths(&head, options.hidden);
         let mut expanded = Vec::new();
         for path in options.expanded {
             if let Some(node) = self.visible_node(path, options) {
-                expanded.push((path.as_str(), self.expand_node(node, options.hidden)));
+                let block = self.expand_node(node, options.hidden);
+                expanded.push((
+                    path.as_str(),
+                    self.without_hidden_paths(&block, options.hidden),
+                ));
             } else if !self.grant_hidden(path, options.hidden) {
                 not_shown.push(path.as_str());
             }
         }
         let coarse = self.coarse_tree(&shown_base, options.hidden);
+        let coarse_tip = self.without_hidden_paths(
+            "Before you call one: return await verbs.expand(\"vault.mail\") \
+             shows its verbs and their fields.",
+            options.hidden,
+        );
         let render = |keep: usize| {
             let mut text = head.clone();
             for block in &base {
@@ -201,9 +225,12 @@ impl VerbTree {
                 let dropped = expanded[keep..]
                     .iter()
                     .map(|(path, _)| *path)
+                    .filter(|path| !options.hidden.contains_key(*path))
                     .collect::<Vec<_>>();
-                text.push_str("\nnot expanded for size: ");
-                text.push_str(&dropped.join(", "));
+                if !dropped.is_empty() {
+                    text.push_str("\nnot expanded for size: ");
+                    text.push_str(&dropped.join(", "));
+                }
             }
             if !not_shown.is_empty() {
                 text.push_str("\nnot shown (not in the tree): ");
@@ -213,10 +240,11 @@ impl VerbTree {
                 "\n\nTHE REST, by name only. A name with (n) is a branch of n verbs; \
                            the labels before a colon are not paths.",
             );
-            text.push_str(
-                "\nBefore you call one: return await verbs.expand(\"vault.mail\") \
-                           shows its verbs and their fields.\n",
-            );
+            if !coarse_tip.is_empty() {
+                text.push('\n');
+                text.push_str(&coarse_tip);
+            }
+            text.push('\n');
             text.push_str(&coarse);
             text.push('\n');
             text

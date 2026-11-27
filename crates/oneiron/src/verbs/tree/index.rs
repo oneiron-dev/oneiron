@@ -105,10 +105,6 @@ impl Node {
         let mut grants = BTreeSet::new();
         if self.visible_count(hidden) == 0 {
             self.collect_grants(hidden, &mut grants);
-        } else if self.callable
-            && let Some(grant) = hidden.get(&self.path)
-        {
-            grants.insert(grant.as_str());
         }
         if grants.is_empty() {
             return None;
