@@ -180943,6 +180943,16 @@
     },
     {
      "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/handler/mesh/sync_grant.rs",
+     "purpose": "An open sync connection's grant, judged again while it serves (FIX [SYNC-OPEN-SOCKET-OUTLIVES-MESH-REVOKE]…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "src/handler/message_stream_tests.rs",
@@ -192164,6 +192174,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/mesh_sync_revoke_closes_connection.rs",
+     "purpose": "Withdrawing a machine's sync grant or revoking it outright closes its open sync connection and every stream…",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -194297,7 +194315,7 @@
     },
     "handler": {
      "entry": "crates/oneiron-server/src/handler/mod.rs",
-     "files": 50,
+     "files": 51,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -194834,8 +194852,8 @@
    },
    "over_bar": 72,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 2225,
-   "test_files": 625
+   "source_files": 2226,
+   "test_files": 626
   },
   "oneiron-setting-contract": {
    "files": [
