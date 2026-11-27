@@ -55,7 +55,6 @@ use crate::compaction::output::{OutputAffordance, OutputRef, OutputTier, OutputW
 use crate::limit_ask::EngineLimit;
 use crate::off_record::ExecutorUtterance;
 use crate::prompt::resolve_engine_executor_wire_prompt;
-use crate::runtime_hooks::VerbHookStop;
 use crate::{
     CallClass, CallEnvelope, CallPurpose, ContentPart, DeterministicFallback, EntityId, Error,
     LlmMessage, LlmMessageRole, LlmRequest, LlmResponse, ModelId, ResponseFormat, TierPrecedence,
@@ -192,10 +191,10 @@ impl EngineNativeExecutor<'_> {
                     .generate_step_program(
                         config,
                         &mut record,
-                        &wire_prompt.text,
-                        &wire_prompt.stamp.resolved_fingerprint,
+                        &wire_prompt,
                         continuation.as_ref(),
                         completed_steps,
+                        expected_generation,
                     )
                     .await?
                 {
@@ -813,20 +812,4 @@ impl EngineNativeExecutor<'_> {
 
 fn answering_model(response: &LlmResponse) -> Option<ModelId> {
     ModelId::new(response.usage.served_model_id()?).ok()
-}
-
-/// The wait a turn hook's ask parks the run on, as a call's ask parks the
-/// call (`code_run::dispatcher::verb_hooks`): the ask's group, its prompt
-/// naming the turn's invocation, whose next try takes the answer. `None` for
-/// a skip, a hidden result, or an ask with no group: the turn ends there.
-fn turn_hook_wait(stop: &VerbHookStop) -> Option<SelfDurableWait> {
-    let VerbHookStop::Pending { invocation, ask } = stop else {
-        return None;
-    };
-    Some(SelfDurableWait {
-        wait_id: EntityId::from_hex(ask).ok()?,
-        effect: SelfEffect::TasksWait,
-        reason: SelfDurableWaitReason::PeerResult,
-        prompt: Some(format!("verb_hook:{invocation}")),
-    })
 }

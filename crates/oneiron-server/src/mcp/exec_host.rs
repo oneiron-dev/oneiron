@@ -9,8 +9,7 @@ use oneiron::agent_dispatch::{AgentDispatcher, SpawnPlanReceipt, SpendScopeId};
 use oneiron::attempt_queue::AttemptRecord;
 use oneiron::code_run::{CompactionHostBinding, GatedActorWrite, ScopedChildProfile};
 use oneiron::engine_executor::{
-    EngineExecutorConfig, EngineExecutorOutcome, EngineNativeExecutor, JsCodeModeRuntime,
-    RunCompaction, SelfBriefPort,
+    EngineExecutorConfig, EngineExecutorOutcome, JsCodeModeRuntime, RunCompaction, SelfBriefPort,
 };
 use oneiron::llm::run_admission::{PayerPerson, RunAdmission};
 use oneiron::llm::seat::{ModelSeat, SeatDecisions, SeatKind, SeatLearningContext, SeatTask};
@@ -143,6 +142,8 @@ pub struct McpCodeExecutionRequest<'a> {
     /// The durable run's self brief, when the door lends one (FIX 17594
     /// D5): keyed by [`Self::run_id`], never the stream or a session label.
     pub brief: Option<Arc<dyn McpCodeRunSelfBrief>>,
+    /// The resource cleanup the host runs when this entry ends its run.
+    pub run_end: Option<Arc<dyn McpCodeRunEnd>>,
 }
 
 /// A code-mode durable run's self brief (FIX 17594 delivery slice D5), lent
@@ -164,6 +165,14 @@ pub trait McpCodeRunSelfBrief: SelfBriefPort {
 
     /// Closes the run's brief: the run completed.
     fn close(&self);
+}
+
+/// What the host does once when an entry ends its run (Complete, or a window outgrown), under
+/// the run's single flight and before the run's permit is released, whether or not the caller
+/// still waits (FIX CODE-MODE-LENDING-W6).
+pub trait McpCodeRunEnd: Send + Sync {
+    /// Releases the resources held by the ended run.
+    fn end(&self);
 }
 
 impl fmt::Debug for McpCodeExecutionRequest<'_> {
@@ -839,8 +848,9 @@ pub(crate) fn enter_engine_native_run(
             Some(backend) => backend.as_ref(),
             None => provider.backend(),
         };
-        return enter_on(
+        return native_run::enter_on(
             vault, provider, backend, bound, config, compaction, reactor, seat, brief, horizon,
+            false,
         );
     };
     // The lease the entry's door and planner runner were lent: one ledger.
@@ -880,7 +890,7 @@ pub(crate) fn enter_engine_native_run(
         EngineRunError::Binding("this code-mode provider cannot meter a spend scope".into())
     })?;
     let entered = if per_rung {
-        enter_on(
+        native_run::enter_on(
             vault,
             provider,
             backend.as_ref(),
@@ -891,9 +901,10 @@ pub(crate) fn enter_engine_native_run(
             seat,
             brief,
             horizon,
+            false,
         )
     } else {
-        enter_on(
+        native_run::enter_on(
             vault,
             provider,
             &LiveLeaseBackend::new(&live, backend.as_ref()),
@@ -904,6 +915,7 @@ pub(crate) fn enter_engine_native_run(
             seat,
             brief,
             horizon,
+            false,
         )
     };
     live.book_rest()
@@ -1164,46 +1176,6 @@ fn engine_seat_task(
         served: None,
         learning: None,
     }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn enter_on(
-    vault: &Vault,
-    provider: &dyn McpCodeModeProvider,
-    backend: &dyn LlmBackend,
-    bound: &GatedActorWrite<'_>,
-    config: &EngineExecutorConfig,
-    compaction: Option<&mut RunCompaction>,
-    reactor: &tokio::runtime::Runtime,
-    seat: Option<&ModelSeat>,
-    brief: Option<&dyn SelfBriefPort>,
-    horizon: Option<oneiron::idle_fold::CachedPrefixHorizon>,
-) -> Result<EngineExecutorOutcome, EngineRunError> {
-    let mut runtime = provider.runtime();
-    let runtime: &mut dyn JsCodeModeRuntime = &mut *runtime;
-    let mut routed_config = config.clone();
-    let mut executor = EngineNativeExecutor::new(vault, backend, provider.lease(), runtime, bound)
-        .with_cache_horizon(horizon);
-    if let Some(seat) = seat {
-        routed_config.model = seat.model().clone();
-        routed_config.model_locality = seat.locality();
-        routed_config.seat_effort = Some(seat.effort());
-        executor = executor.with_model_seat(seat);
-    }
-    if let Some(seat) = compaction {
-        executor = executor.with_compaction(seat);
-    }
-    if let Some(feedback) = provider.code_check() {
-        executor = executor.with_code_check(feedback);
-    }
-    // FIX 17594 (delivery slice D2): the host's self-brief port, when it
-    // lends one.
-    if let Some(port) = brief {
-        executor = executor.with_self_brief(port);
-    }
-    reactor
-        .block_on(executor.run(&routed_config))
-        .map_err(EngineRunError::Run)
 }
 
 static MCP_CODE_EXECUTION_HOST: OnceLock<Arc<dyn McpCodeExecutionHost>> = OnceLock::new();

@@ -165,8 +165,8 @@ impl McpEngineNativeCodeHost {
 
     /// One entry of `request`'s run, once its single flight (`guard`) and
     /// its run permit are the entry's own: the run's config, read under
-    /// single flight, and its worker. The worker releases
-    /// the single flight and the permit before it wakes the entry.
+    /// single flight, and its worker. The worker cleans up terminal runs
+    /// before releasing single flight and the permit, then wakes the entry.
     async fn run_admitted(
         &self,
         request: McpCodeExecutionRequest<'_>,
@@ -237,6 +237,7 @@ impl McpEngineNativeCodeHost {
                 .map_err(McpCodeExecutionError::RunBinding)?,
             Some(_) => Vec::new(),
         };
+        let run_end = request.run_end;
         // An MCP run takes no compaction seat, for either input: its window
         // stays raw (CODE-MODE-LENDING-RUN-SPEND = A, FIX CODE-MODE-LENDING-W6).
         let (sender, receiver) = tokio::sync::oneshot::channel();
@@ -303,6 +304,10 @@ impl McpEngineNativeCodeHost {
                     && let Some(brief) = &brief
                 {
                     brief.close();
+                }
+                // End the run's resources under single flight even if the caller hung up.
+                if ended && let Some(run_end) = run_end {
+                    run_end.end();
                 }
                 // Completion must release single-flight and the run's
                 // permit before waking an awaiter that may immediately

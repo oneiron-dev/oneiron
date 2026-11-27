@@ -57,6 +57,7 @@ pub use self::endpoint_schema::{
     MCP_BOARD_BUDGET_TOK_MAX, MCP_CACHE_TTL_MS_MAX, MCP_FRAME_EPOCH_MAX, MCP_PAGE_LIMIT_MAX,
     MCP_PAGE_LIMIT_MIN,
 };
+pub use self::exec_host::McpCodeRunEnd;
 pub use self::exec_host::{
     CodeRunLimits, McpCodeExecutionError, McpCodeExecutionHost, McpCodeExecutionRequest,
     McpCodeModeProvider, McpCodeRunInput, McpCodeRunResumeCondition, McpCodeRunResumed,

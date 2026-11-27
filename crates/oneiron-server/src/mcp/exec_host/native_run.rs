@@ -3,17 +3,61 @@
 
 use std::sync::Arc;
 
+use oneiron::LlmBackend;
 use oneiron::code_run::GatedActorWrite;
+use oneiron::engine_executor::RunCompaction;
 use oneiron::engine_executor::{
     CallerRunInput, EngineExecutorConfig, EngineExecutorOutcome, EngineNativeExecutor,
     JsCodeModeRuntime, SelfBriefPort, caller_run_input,
 };
+use oneiron::llm::seat::ModelSeat;
 use oneiron::{EntityId, Vault, WriteActor};
 
-use super::{
-    EngineRunError, McpCodeExecutionError, McpCodeModeProvider, engine_run_seat,
-    enter_engine_native_run, enter_on,
-};
+use super::{EngineRunError, McpCodeExecutionError, McpCodeModeProvider, engine_run_seat};
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn enter_on(
+    vault: &Vault,
+    provider: &dyn McpCodeModeProvider,
+    backend: &dyn LlmBackend,
+    bound: &GatedActorWrite<'_>,
+    config: &EngineExecutorConfig,
+    compaction: Option<&mut RunCompaction>,
+    reactor: &tokio::runtime::Runtime,
+    seat: Option<&ModelSeat>,
+    brief: Option<&dyn SelfBriefPort>,
+    horizon: Option<oneiron::idle_fold::CachedPrefixHorizon>,
+    window_outgrown_ends_run: bool,
+) -> Result<EngineExecutorOutcome, EngineRunError> {
+    let mut runtime = provider.runtime();
+    let runtime: &mut dyn JsCodeModeRuntime = &mut *runtime;
+    let mut routed_config = config.clone();
+    let mut executor = EngineNativeExecutor::new(vault, backend, provider.lease(), runtime, bound)
+        .with_cache_horizon(horizon);
+    if let Some(seat) = seat {
+        routed_config.model = seat.model().clone();
+        routed_config.model_locality = seat.locality();
+        routed_config.seat_effort = Some(seat.effort());
+        executor = executor.with_model_seat(seat);
+    }
+    if let Some(seat) = compaction {
+        executor = executor.with_compaction(seat);
+    }
+    if window_outgrown_ends_run {
+        executor = executor.with_window_outgrown_terminal();
+    }
+    if let Some(feedback) = provider.code_check() {
+        executor = executor.with_code_check(feedback);
+    }
+    // FIX 17594 (delivery slice D2): the host's self-brief port, when it
+    // lends one.
+    if let Some(port) = brief {
+        executor = executor.with_self_brief(port);
+    }
+    reactor
+        .block_on(executor.run(&routed_config))
+        .map_err(EngineRunError::Run)
+}
 
 /// Enters the EXISTING sandbox/REPL substrate for one durable run.
 ///
@@ -105,23 +149,21 @@ pub(super) fn run_engine_native_code_mode(
             brief,
             // Each `execute` call is its own entry.
             None,
+            true,
         ),
-        None => enter_engine_native_run(
+        None => enter_on(
             vault,
             provider,
+            provider.backend(),
             &gated_write,
             config,
             // An MCP run takes no compaction seat (FIX CODE-MODE-LENDING-W6).
             None,
             &reactor,
-            None,
             seat.as_ref(),
-            // An `execute` run is no planned child.
-            None,
-            // Keep this caller's existing unconstrained routing.
-            Vec::new(),
             brief,
             None,
+            true,
         ),
     }
     .map_err(|error| {
