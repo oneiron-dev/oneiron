@@ -12,7 +12,6 @@ mod vault_view;
 mod view;
 
 use std::collections::BTreeMap;
-use std::sync::OnceLock;
 
 use oneiron_store::note_kind::RetentionDefault;
 
@@ -96,18 +95,13 @@ pub struct TreeRefusal {
 }
 
 impl VerbTree {
-    /// The embedded catalogue, parsed once per process.
-    pub fn shipped() -> crate::Result<&'static Self> {
-        static SHIPPED: OnceLock<Result<VerbTree, String>> = OnceLock::new();
-        SHIPPED
-            .get_or_init(|| {
-                Self::parse_index(include_str!(concat!(
-                    env!("OUT_DIR"),
-                    "/verb_tree_index.json"
-                )))
-            })
-            .as_ref()
-            .map_err(|message| crate::Error::InvalidConfig(message.clone()))
+    /// The embedded catalogue, parsed on each call: the caller keeps the tree (one per host).
+    pub fn shipped() -> crate::Result<Self> {
+        Self::parse_index(include_str!(concat!(
+            env!("OUT_DIR"),
+            "/verb_tree_index.json"
+        )))
+        .map_err(crate::Error::InvalidConfig)
     }
 
     /// Build a tree from a JSON index in the generator's format.

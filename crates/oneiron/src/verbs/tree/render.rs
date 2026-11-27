@@ -145,10 +145,14 @@ fn branch_line(node: &Node, hidden: &BTreeMap<String, String>) -> String {
     };
     let callable = node.visible_verb(hidden);
     let count = node.visible_count(hidden) - callable as usize;
-    let path_suffix = if callable { ".*" } else { "" };
+    let detail = if callable {
+        " under this callable verb"
+    } else {
+        ""
+    };
     let plural = if count == 1 { "" } else { "s" };
     format!(
-        "{}{path_suffix}  {count} verb{plural}: {shown}{suffix}",
+        "{}  {count} verb{plural}{detail}: {shown}{suffix}",
         node.path
     )
 }
@@ -293,7 +297,15 @@ impl VerbTree {
 
     pub(super) fn verb_full(&self, path: &str, row: &VerbRow) -> String {
         let parameters = input_parameters(&row.input);
-        let mut lines = vec![format!("{path}{parameters}: Promise<{}>", row.output)];
+        let stored_result = if row.output == "unknown" {
+            ""
+        } else {
+            " | StoredResult"
+        };
+        let mut lines = vec![format!(
+            "{path}{parameters}: Promise<{}{stored_result}>",
+            row.output
+        )];
         let description = if row.description.is_empty() {
             NO_DESCRIPTION
         } else {

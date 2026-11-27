@@ -233,9 +233,10 @@ impl VerbTree {
         }
         if total > hits.len() {
             let more = total - hits.len();
+            let quoted = serde_json::to_string(query).unwrap_or_default();
             if !under.is_empty() {
                 lines.push(format!(
-                    "{more} more; raise the limit: verbs.search(\"{query}\", {{ under: \"{under}\", limit: {} }})",
+                    "{more} more; raise the limit: verbs.search({quoted}, {{ under: \"{under}\", limit: {} }})",
                     total.min(40)
                 ));
             } else if let Some(branch) = hits
@@ -249,7 +250,7 @@ impl VerbTree {
                 })
             {
                 lines.push(format!(
-                    "{more} more; narrow it: verbs.search(\"{query}\", {{ under: \"{branch}\" }})"
+                    "{more} more; narrow it: verbs.search({quoted}, {{ under: \"{branch}\" }})"
                 ));
             }
         }

@@ -57,7 +57,8 @@ fn view_options<'a>(
 }
 
 fn shipped_tree() -> &'static VerbTree {
-    VerbTree::shipped().expect("the shipped verb tree parses")
+    static TREE: std::sync::OnceLock<VerbTree> = std::sync::OnceLock::new();
+    TREE.get_or_init(|| VerbTree::shipped().expect("the shipped verb tree parses"))
 }
 
 /// The `{TOTAL}` number from a rendered head line (`ONEIRON VERBS · 1,640 verbs ...`).
@@ -687,14 +688,12 @@ fn a_hidden_path_is_left_out_and_expand_names_the_grant_it_needs() {
         "the hidden verb leaves the view"
     );
     assert!(
-        narrowed
+        !narrowed
             .text
-            .contains("not shown (not in the tree or outside this grant):"),
-        "the hidden path is reported"
-    );
-    assert!(
-        narrowed.text.contains("vault.claims.retract"),
-        "the report names the path"
+            .lines()
+            .filter(|line| line.starts_with("not shown"))
+            .any(|line| line.contains("vault.claims.retract")),
+        "a grant-hidden base path is not named"
     );
     let options = hidden_options.as_options();
     let missing = tree
@@ -890,4 +889,150 @@ fn verb_takes_and_example_for_vault_get() {
         example.contains("entity_ref"),
         "the example uses entity_ref: {example}"
     );
+}
+
+#[test]
+fn a_grant_hidden_path_is_not_named_but_an_unknown_one_is() {
+    let tree = shipped_tree();
+    let mut base = design_base();
+    base.push("vault.no_such_verb".to_owned());
+    let expanded = ["tasks.consult".to_owned()];
+    let hidden = BTreeMap::from([
+        ("vault.remember".to_owned(), "write".to_owned()),
+        (
+            "tasks.consult.result".to_owned(),
+            "tasks:consult".to_owned(),
+        ),
+    ]);
+    let view = tree.default_view(&view_options(&base, &expanded, 4000, &[], &hidden));
+    let notices: Vec<_> = view
+        .text
+        .lines()
+        .filter(|line| line.starts_with("not shown"))
+        .collect();
+    assert_eq!(notices.len(), 1, "one skip notice: {notices:?}");
+    assert_eq!(
+        notices[0],
+        "not shown (not in the tree): vault.no_such_verb"
+    );
+    assert!(
+        notices
+            .iter()
+            .all(|line| !line.contains("vault.remember") && !line.contains("tasks.consult")),
+        "the skip notice omits grant-hidden paths"
+    );
+    assert!(
+        !view
+            .text
+            .lines()
+            .any(|line| line.starts_with("vault.remember(")),
+        "the hidden base entry is left out"
+    );
+}
+
+#[test]
+fn every_path_a_branch_expansion_prints_expands() {
+    let tree = shipped_tree();
+    let base = design_base();
+    let hidden = BTreeMap::new();
+    let options = view_options(&base, &[], 4000, &[], &hidden);
+    let tasks = tree.expand("tasks", &options).expect("tasks expands");
+    assert!(!tasks.contains(".*"), "no wildcard paths: {tasks}");
+    let branch = tasks
+        .lines()
+        .find(|line| line.starts_with("tasks.create "))
+        .expect("the tasks.create branch line");
+    assert!(branch.contains("under this callable verb"), "{branch}");
+    for line in tasks.lines() {
+        let path = line.split([' ', '(']).next().expect("the line has a path");
+        assert!(
+            tree.expand(path, &options).is_ok(),
+            "cannot expand the path on: {line}"
+        );
+    }
+}
+
+#[test]
+fn a_full_signature_keeps_the_stored_result_card() {
+    let tree = shipped_tree();
+    let base = design_base();
+    let hidden = BTreeMap::new();
+    let options = view_options(&base, &[], 4000, &[], &hidden);
+    let full = tree
+        .expand("vault.hydrate", &options)
+        .expect("vault.hydrate expands");
+    let signature = full
+        .lines()
+        .next()
+        .expect("the first line is the signature");
+    assert!(signature.starts_with("vault.hydrate("), "{signature}");
+    assert!(signature.contains(" | StoredResult>"), "{signature}");
+}
+
+#[test]
+fn the_remember_base_text_falls_back_to_the_actor_ref() {
+    let tree = shipped_tree();
+    let base = design_base();
+    let hidden = BTreeMap::new();
+    let view = tree.default_view(&view_options(&base, &[], 4000, &[], &hidden));
+    assert!(
+        view.text
+            .contains("subject_ref: me.person_ref ?? me.actor_ref")
+    );
+    assert!(
+        view.text
+            .contains(r#"if ("actor_ref" in me) await vault.remember("#)
+    );
+    assert!(!view.text.contains("subject_ref: me.person_ref,"));
+}
+
+#[test]
+fn the_self_fold_example_passes_a_span() {
+    let tree = shipped_tree();
+    let base = design_base();
+    let hidden = BTreeMap::new();
+    let options = view_options(&base, &[], 4000, &[], &hidden);
+    let example = tree
+        .verb_example("self.fold")
+        .expect("self.fold has an example");
+    assert!(example.starts_with("await self.fold(["), "{example}");
+    let full = tree
+        .expand("self.fold", &options)
+        .expect("self.fold expands");
+    let example_line = full
+        .lines()
+        .find(|line| line.starts_with("  example:"))
+        .expect("the expansion shows an example");
+    assert!(example_line.contains("self.fold(["), "{example_line}");
+}
+
+#[test]
+fn a_search_retry_quotes_the_query_as_json() {
+    let tree = shipped_tree();
+    let base = design_base();
+    let hidden = BTreeMap::new();
+    let options = view_options(&base, &[], 4000, &[], &hidden);
+    let query = "\"vault\"";
+    for under in [Some("vault.notes"), None] {
+        let answer = tree
+            .search(query, under, Some(1), &options)
+            .expect("search answers");
+        if under.is_some() {
+            assert!(
+                answer.lines().any(|line| line.contains("verbs.search(")),
+                "the scoped search suggests a retry: {answer}"
+            );
+        }
+        for line in answer.lines() {
+            if let Some((_, rest)) = line.split_once("verbs.search(") {
+                let decoded = serde_json::Deserializer::from_str(rest)
+                    .into_iter::<String>()
+                    .next();
+                assert!(
+                    matches!(decoded, Some(Ok(ref first)) if first == query),
+                    "the first argument is the original query as JSON: {line} ({decoded:?})"
+                );
+            }
+        }
+    }
 }
