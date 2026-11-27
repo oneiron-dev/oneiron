@@ -136,7 +136,8 @@ pub(super) fn read_one_below(
         source.history_source().source_id(),
         path.display()
     );
-    let folder_digests = session_folder::log_folder_digests(
+    let folder_digests: Vec<String> = Vec::new();
+    let _ = session_folder::log_folder_digests(
         source.history_source(),
         &HistoryFile {
             stem: session.clone(),
@@ -395,7 +396,8 @@ fn read_below(root: &Path, path: &Path) -> anyhow::Result<SessionLogs> {
         .map_err(|error| anyhow::anyhow!("read {}: {error}", path.display()))?;
     let transcript_gzip_base64 = encode(path, &bytes)?;
     let log_bytes = bytes.len();
-    let folder_digests = session_folder::log_folder_digests(
+    let folder_digests: Vec<String> = Vec::new();
+    let _ = session_folder::log_folder_digests(
         HistorySource::ClaudeCode,
         &HistoryFile {
             stem: session.clone(),
