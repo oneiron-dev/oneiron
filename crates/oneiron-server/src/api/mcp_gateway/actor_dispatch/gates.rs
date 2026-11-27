@@ -225,8 +225,8 @@ pub(in crate::api::mcp_gateway) fn mcp_run_call_gate(
 }
 
 /// One speech call of a run, at `destination`, where its storage lands it:
-/// the live session, then Read in the run's own derived conversation and
-/// Write anywhere else (`McpCallEffect::of_run_speech`).
+/// the live session, then Write in the run's own derived conversation as
+/// anywhere else (`McpCallEffect::of_run_speech`, FIX CODE-MODE-LENDING-W7).
 pub(in crate::api::mcp_gateway) fn mcp_run_speech_gate(
     server: &Arc<SyncServer>,
     actor: &McpCallContext,

@@ -531,3 +531,48 @@ pub fn admits_guest(
         reason_codes: refused.reason_codes,
     }))
 }
+
+/// One media door's refusal, as the door typed it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MediaDoorRefusal {
+    /// The stable refusal code.
+    pub code: String,
+    /// The door's message.
+    pub message: String,
+    /// The refusal's stable reason codes (`grant_required.ai.<operation>`
+    /// for a Grant read as absent).
+    pub reason_codes: Vec<String>,
+}
+
+/// The `ai.*` media door `verb` (`ai.options`, `ai.image`, `ai.video`,
+/// `ai.video.poll` or `ai.video.cancel`) on `input`, as `credential` calls
+/// it from code-mode run `run` whose program the engine's model wrote:
+/// inside the run's line, which that run's verb dispatch binds (FIX 780).
+/// `Ok` is the door's answer, `Err` its refusal.
+///
+/// # Errors
+///
+/// The credential failing to resolve, or resolving to no auth.
+pub async fn media_call_on_run_line(
+    server: &Arc<SyncServer>,
+    credential: &TestCredential,
+    run: EntityId,
+    verb: &str,
+    input: Value,
+) -> anyhow::Result<Result<Value, MediaDoorRefusal>> {
+    let context = resolve_context(server, credential).await?;
+    let auth = context
+        .actor
+        .auth
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("the door credential resolved no auth"))?;
+    Ok(
+        crate::api::media_door_on_run_line_for_test(server, auth, run, verb, input)
+            .await
+            .map_err(|refusal| MediaDoorRefusal {
+                code: refusal.code,
+                message: refusal.message,
+                reason_codes: refusal.reason_codes,
+            }),
+    )
+}

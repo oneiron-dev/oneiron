@@ -417,9 +417,9 @@ impl AgentVerbDoor for McpCodeModeVerbs {
         self.admit_bound_run_call(RunCall::Bridge(SelfEffect::SkillsCall))
     }
 
-    /// A run's speech is its own record only where its storage lands it in
-    /// the run's own derived conversation; anywhere else it is a room write
-    /// and needs Write (`mcp_run_speech_gate`). A caller's own speech is a
+    /// A run's speech writes a MESSAGE wherever its storage lands it, so the
+    /// engine's program needs Write in its own run's conversation as in a room
+    /// (`mcp_run_speech_gate`, FIX CODE-MODE-LENDING-W7). A caller's own speech is a
     /// call it chose to make: the row it is made through needs its binding,
     /// as a direct call's does, and it needs Write wherever it lands (FIX
     /// EXECUTE-CALLER-CODE). It reads nothing.

@@ -27,6 +27,10 @@ mod job_workloads;
 mod machine_execution;
 mod machine_status;
 mod media;
+// The integration tests' door to the media doors on a code-mode run's line
+// (FIX CODE-MODE-LENDING-W1).
+#[cfg(oneiron_test_support)]
+mod media_line_door;
 mod packs;
 mod planner_card;
 mod proactivity;
@@ -48,6 +52,8 @@ pub(crate) use self::job_workloads::*;
 pub(crate) use self::machine_execution::*;
 pub(crate) use self::machine_status::*;
 pub(crate) use self::media::*;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::media_line_door::media_door_on_run_line_for_test;
 pub(crate) use self::packs::*;
 pub(crate) use self::planner_card::*;
 pub(crate) use self::proactivity::*;
