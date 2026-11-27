@@ -359,7 +359,7 @@ impl Vault {
             request,
             host,
             // The Dreamer's own verdict calls are judged whatever purpose they carry (FIX CONSOLIDATION-CALL-EXTRACTION-EGRESS-GATE).
-            ExtractionEgressScope::EveryCall,
+            ExtractionEgressScope::AdmittedAsExtraction,
         )
     }
 }
