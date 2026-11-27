@@ -1033,4 +1033,35 @@ declare namespace self {
         got.sort();
         assert_eq!(got, ["self.report_blocked", "self.think.aloud", "self.zz"]);
     }
+
+    #[test]
+    fn a_board_row_reads_its_own_input_in_code_mode_and_the_host_envelope_on_the_facade() {
+        // FIX [CODE-MODE-BOARD-ROWS-DECLARE-HOST-ENVELOPE]: the MCP code-mode door runs a board row's own input
+        // (the board arm decodes it and calls the row's board engine fn), so the fragment declares the row's own
+        // input; the facade projection keeps the LiveRunRequest host envelope.
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let outputs = crate::outputs(&root).expect("the repository's outputs");
+        let fragment = outputs.get(FRAGMENT).expect("the catalog fragment");
+        let signature = fragment
+            .lines()
+            .find(|line| line.contains("refresh(input:"))
+            .expect("the refresh signature");
+        assert!(signature.contains("Sdk.BoardRefreshRequest"), "{signature}");
+        assert!(!signature.contains("LiveRun"), "{signature}");
+        let declaration = fragment
+            .lines()
+            .find(|line| line.starts_with("  type BoardRefreshRequest = "))
+            .expect("the refresh input declaration");
+        assert!(declaration.contains("frame_epoch"), "{declaration}");
+        assert!(!declaration.contains("live_run"), "{declaration}");
+        let remote = outputs
+            .get("crates/oneiron-remote/src/generated/agent_verbs.rs")
+            .expect("the remote facade");
+        assert!(
+            remote.contains(
+                "pub fn self_focus_refresh(&self, input: &oneiron::task_verb::sdk::LiveRunRequest<oneiron::task_verb::sdk::BoardRefreshRequest>)"
+            ),
+            "the facade keeps the host envelope"
+        );
+    }
 }

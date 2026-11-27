@@ -5,13 +5,13 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use regex::Regex;
-
 use crate::error::GenerateError;
 use crate::py::json;
 use crate::py::read_text;
 use crate::py::text::{display_os_str, os_str_code_points};
 use crate::py::value::{Dict, Value};
+
+mod example_call;
 
 /// The verb table's directory, from the repository root.
 pub(crate) const VERBS_DIR: &str = "scripts/sdk/verbs";
@@ -74,8 +74,9 @@ fn check_act_class(row: &Dict) -> Result<(), GenerateError> {
     Ok(())
 }
 
-/// An optional example has one physical line and calls the exact verb path as code: the call
-/// stands outside every string literal and comment, so a quoted mention is no call.
+/// An optional example has one physical line and calls the exact verb path as code: the token stream
+/// holds the path's segments dotted and opening a paren, so a mention inside a string, a template, a comment or a
+/// regex literal is no call, and neither is an example that does not lex.
 fn check_example(row: &Dict, name: &str) -> Result<(), GenerateError> {
     let Some(example) = row.get("example") else {
         return Ok(());
@@ -83,14 +84,7 @@ fn check_example(row: &Dict, name: &str) -> Result<(), GenerateError> {
     let valid = example.as_str().is_some_and(|text| {
         !text.trim().is_empty()
             && !text.contains(['\n', '\r'])
-            && Regex::new(&format!(
-                r"(?:^|[^\p{{ID_Continue}}.$\x{{200C}}\x{{200D}}])({}) *\(",
-                regex::escape(name)
-            ))
-            .expect("an escaped verb name in the example pattern")
-            .captures_iter(text)
-            .filter_map(|call| call.get(1))
-            .any(|path| outside_strings_and_comments(&text[..path.start()]))
+            && example_call::calls_exact_path(text, name).unwrap_or(false)
     });
     if !valid {
         return Err(GenerateError::value(format!(
@@ -98,26 +92,6 @@ fn check_example(row: &Dict, name: &str) -> Result<(), GenerateError> {
         )));
     }
     Ok(())
-}
-
-/// Whether code goes on after `prefix`: it leaves no string literal open (`"`, `'` or a
-/// backtick, with backslash escapes) and starts no comment.
-fn outside_strings_and_comments(prefix: &str) -> bool {
-    let mut open: Option<char> = None;
-    let mut chars = prefix.chars().peekable();
-    while let Some(c) = chars.next() {
-        match open {
-            Some(_) if c == '\\' => {
-                chars.next();
-            }
-            Some(quote) if c == quote => open = None,
-            Some(_) => {}
-            None if matches!(c, '"' | '\'' | '`') => open = Some(c),
-            None if c == '/' && matches!(chars.peek(), Some('/' | '*')) => return false,
-            None => {}
-        }
-    }
-    open.is_none()
 }
 
 /// Reads one verb-tree file, identifying it on any read, parse, or shape error.
@@ -157,7 +131,12 @@ pub(crate) fn check_verb_tree<'a>(
         if !families
             .get(*root)
             .and_then(Value::as_str)
-            .is_some_and(|line| !line.trim().is_empty() && !line.contains(['\n', '\r']))
+            .is_some_and(|line| {
+                !line.trim().is_empty()
+                    && !line.contains([
+                        '\n', '\r', '\u{B}', '\u{C}', '\u{85}', '\u{2028}', '\u{2029}',
+                    ])
+            })
         {
             return Err(GenerateError::value(format!(
                 "{}: root {root:?} needs a non-blank family line of one line",
@@ -485,11 +464,19 @@ mod tests {
     }
 
     fn example_row(label: &str, example: &str) -> Result<Vec<Dict>, GenerateError> {
+        example_row_named(label, "vault.recall", example)
+    }
+
+    fn example_row_named(
+        label: &str,
+        name: &str,
+        example: &str,
+    ) -> Result<Vec<Dict>, GenerateError> {
         let dir = scratch(label);
         let row = format!(
-            r#"{{"name":"vault.recall","description":"Recalls memories.","scope":"Read","act_class":"read","example":{example}}}"#
+            r#"{{"name":"{name}","description":"Recalls memories.","scope":"Read","act_class":"read","example":{example}}}"#
         );
-        fs::write(dir.join("vault.recall.json"), row).expect("a verb file");
+        fs::write(dir.join(format!("{name}.json")), row).expect("a verb file");
         let loaded = load_verbs(&dir);
         fs::remove_dir_all(&dir).expect("cleanup");
         loaded
@@ -567,6 +554,64 @@ mod tests {
         .expect("an example calling its own verb is valid");
     }
 
+    #[test]
+    fn rejects_an_example_whose_verb_mention_is_no_call() {
+        for example in [
+            r#""const hint = /vault.recall()/;""#,
+            r#""const hint = /a[/]vault.recall()/;""#,
+            r#""const t = `vault.recall({})`;""#,
+            r#""x.vault.recall({})""#,
+            r#""myvault.recall({})""#,
+            r#""\"vault.recall({})\"""#,
+            r#""// vault.recall({})""#,
+            r#""const hint = \"vault.recall({});""#,
+        ] {
+            assert_example_refusal("example-no-call", example);
+        }
+    }
+
+    #[test]
+    fn accepts_an_example_with_a_slash_a_division_and_a_keyword() {
+        example_row(
+            "example-slash-in-string",
+            r#""const items = await vault.recall({ query: \"a/b\", limit: 8 }).then(result => \"items\" in result ? result.items : []);""#,
+        )
+        .expect("a slash inside a string is no regex");
+        example_row_named(
+            "example-in-keyword",
+            "vault.remember",
+            r#""if (\"actor_ref\" in me) await vault.remember({ subject_ref: me.person_ref ?? me.actor_ref });""#,
+        )
+        .expect("the `in` keyword and `??` are no call");
+        example_row(
+            "example-division",
+            r#""const n = a / b; await vault.recall({});""#,
+        )
+        .expect("a division is no regex");
+    }
+
+    #[test]
+    fn accepts_every_shipped_example_against_its_own_row() {
+        let verbs = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../scripts/sdk/verbs");
+        let rows = load_verbs(&verbs).expect("the shipped verb table loads");
+        let mut checked = 0;
+        for row in &rows {
+            let (Some(name), Some(example)) = (
+                row.get("name").and_then(Value::as_str),
+                row.get("example").and_then(Value::as_str),
+            ) else {
+                continue;
+            };
+            assert_eq!(
+                super::example_call::calls_exact_path(example, name),
+                Ok(true),
+                "{name}"
+            );
+            checked += 1;
+        }
+        assert_eq!(checked, 8, "eight shipped examples");
+    }
+
     fn verb_tree_error(label: &str, families: &str, capabilities: &str, names: &[&str]) -> String {
         let sdk = scratch(label);
         write_verb_tree(&sdk, families, capabilities);
@@ -590,6 +635,9 @@ mod tests {
         for families in [
             r#"{"vault":"Shared memory.\nMore."}"#,
             r#"{"vault":"Shared memory.\rMore."}"#,
+            r#"{"vault":"first\u2028second"}"#,
+            r#"{"vault":"first\u2029second"}"#,
+            r#"{"vault":"first\u0085second"}"#,
         ] {
             let error = verb_tree_error(
                 "multi-line-family",
