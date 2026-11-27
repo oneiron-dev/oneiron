@@ -36907,7 +36907,7 @@
      "purpose": "The digest's urgent breakthrough (OF-194 L3; ARCH-0026: \"urgent breakthrough only when waiting would harm…",
      "surface": {
       "const": 3,
-      "crate-vis": 15,
+      "crate-vis": 16,
       "fn": 8,
       "re-export": 1,
       "struct": 4
@@ -114377,6 +114377,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/digest_view_drops_changed_claims.rs",
+     "purpose": "A delivered proactivity digest shows a Dreamer finding to the owner only while the proposed CLAIM still…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -125937,7 +125945,7 @@
    "over_bar": 276,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 8656,
-   "test_files": 2346
+   "test_files": 2347
   },
   "oneiron-agent-runtime": {
    "files": [
