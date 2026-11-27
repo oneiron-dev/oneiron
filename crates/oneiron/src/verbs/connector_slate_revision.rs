@@ -242,14 +242,32 @@ pub fn connector_slate_revision_offers(
     owner: &AuthenticatedOwner,
     input: ConnectorSlateRevisionOffersRequest,
 ) -> MemoryResult<ConnectorSlateRevisionOffersView> {
+    connector_slate_revision_offers_listed(vault, owner, input).map(|(view, _)| view)
+}
+
+/// [`connector_slate_revision_offers`] beside the rows each listed offer
+/// was read from: a scope offer's key and standing grant, and an issuer
+/// revision's catalog key and dependent keys, sorted and deduped.
+///
+/// # Errors
+/// The owner check's refusal and storage failures.
+pub fn connector_slate_revision_offers_listed(
+    vault: &crate::Vault,
+    owner: &AuthenticatedOwner,
+    input: ConnectorSlateRevisionOffersRequest,
+) -> MemoryResult<(ConnectorSlateRevisionOffersView, Vec<EntityId>)> {
     owner.revalidate(vault)?;
-    let offers = vault.connector_slate_revision_offers(input.connector.as_deref())?;
-    Ok(ConnectorSlateRevisionOffersView {
-        offers: offers
-            .iter()
-            .map(ConnectorSlateRevisionOfferView::of)
-            .collect(),
-    })
+    let (offers, rows) =
+        vault.connector_slate_revision_offers_listed(input.connector.as_deref())?;
+    Ok((
+        ConnectorSlateRevisionOffersView {
+            offers: offers
+                .iter()
+                .map(ConnectorSlateRevisionOfferView::of)
+                .collect(),
+        },
+        rows,
+    ))
 }
 
 /// Whether, and until when, the offer is held back.
