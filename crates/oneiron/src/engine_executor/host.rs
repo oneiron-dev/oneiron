@@ -176,6 +176,11 @@ pub(super) struct RecordingJsHost<'a, 's> {
     /// A turn program's pinned entry only (DOOR-141 PR3b): the calls an
     /// earlier entry settled, answered in their place instead of issued.
     pub(super) injection: Option<ProgramInjection>,
+    /// Caller source starts read-world capture at the live frontier, or at
+    /// the matched wait whose reply it consumes. The settled prefix writes
+    /// nothing until it matches (FIX EXECUTE-CALLER-CODE).
+    pub(super) advance_caller_source:
+        Option<&'s mut dyn FnMut(Option<u64>) -> Result<Option<serde_json::Value>>>,
     /// The callables a pinned entry's own calls ran, nested in its pinned
     /// call (FIX 5878): where each one's own calls end, and whether its
     /// body reached the entry's wait.
@@ -270,6 +275,7 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             admitted_skill_withheld: false,
             callable_rows: (Vec::new(), Some(Vec::new())),
             injection: None,
+            advance_caller_source: None,
             program_callables: Vec::new(),
             callable_checks: CallableChecks::default(),
             step_deadline: false,
@@ -389,9 +395,15 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
         outcome: SelfDispatchOutcome,
         view: Option<serde_json::Value>,
     ) -> SelfDispatchResponse {
-        // The run's read-world capture sees every answer first (FIX 6130).
-        self.gated_write
-            .read_worlds_answered(self.run_id, &outcome, view.is_some());
+        // The run's read-world capture sees new answers first (FIX 6130).
+        if !self
+            .injection
+            .as_ref()
+            .is_some_and(ProgramInjection::replaying_caller_source)
+        {
+            self.gated_write
+                .read_worlds_answered(self.run_id, &outcome, view.is_some());
+        }
         // One read of the envelope: the runtime is handed it, and the
         // replay context keeps the same value, never a later read.
         let budget = self.budget();

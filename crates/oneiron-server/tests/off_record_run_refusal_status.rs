@@ -190,6 +190,7 @@ fn code_host(programs: &[&str]) -> Host {
         EngineExecutorConfig {
             run_id: EntityId::now(),
             task: "template".to_owned(),
+            caller_source_digest: None,
             prompt_package_root: oneiron::prompt::workspace_test_prompt_package_root()
                 .expect("the workspace test prompt package"),
             model: ModelId::new("fixture/refusal-status@v1").expect("a model id"),

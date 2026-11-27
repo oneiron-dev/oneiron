@@ -35,6 +35,10 @@ const CONFIG_ROUTE_BASE_TAG: &[u8] = b"route:base";
 /// under (FIX 3694); a run with none hashes nothing more.
 const CONFIG_CONTINUATION_TAG: &[u8] = b"continuation";
 
+/// Tags the content hash of a caller-source run's exact code (FIX EXECUTE-CALLER-CODE); a task
+/// run hashes nothing more.
+const CONFIG_CALLER_SOURCE_TAG: &[u8] = b"caller_source.v1";
+
 pub(super) fn executor_config_hash_hex(
     storage: &ExecutorStorage<'_>,
     config: &EngineExecutorConfig,
@@ -81,7 +85,7 @@ fn executor_config_hash(
 /// its hex, so it keeps its bytes (K, PLAN-UC-04 3.4b): each field a u64
 /// big-endian length and its bytes, but the frozen time, its 8 big-endian
 /// bytes with no length (`hash_u64`).
-fn executor_config_hash_for_binding(
+pub(in crate::engine_executor) fn executor_config_hash_for_binding(
     session_ref: Option<&str>,
     route_target: Option<RouteTarget>,
     config: &EngineExecutorConfig,
@@ -119,6 +123,13 @@ fn executor_config_hash_for_binding(
     if let Some(digest) = continuation {
         hash_bytes(&mut hasher, CONFIG_CONTINUATION_TAG);
         hash_bytes(&mut hasher, digest);
+    }
+    // FIX EXECUTE-CALLER-CODE: a caller-source run binds the content hash of its exact code,
+    // after every other input. A task run (no digest) hashes exactly as before: no tag, no
+    // bytes.
+    if let Some(digest) = &config.caller_source_digest {
+        hash_bytes(&mut hasher, CONFIG_CALLER_SOURCE_TAG);
+        hash_bytes(&mut hasher, digest.as_bytes());
     }
     hasher.finish()
 }

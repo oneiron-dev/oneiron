@@ -47,7 +47,7 @@ use crate::{Error, Vault};
 
 mod injection;
 
-use self::injection::SettledCall;
+pub(super) use self::injection::SettledCall;
 pub(super) use self::injection::{
     InjectedAnswer, ProgramCallableSpan, ProgramInjection, ProgramLogEntry,
 };
@@ -673,7 +673,7 @@ impl<'a> EngineNativeExecutor<'a> {
 }
 
 /// The row of `record` at `seq`.
-fn row_at(record: &CodeRunReplayRecord, seq: u64) -> Option<&CodeRunBridgeCall> {
+pub(super) fn row_at(record: &CodeRunReplayRecord, seq: u64) -> Option<&CodeRunBridgeCall> {
     record
         .bridge_calls
         .get(usize::try_from(seq).ok()?)
@@ -700,11 +700,20 @@ fn delivered_reply(
     else {
         return Ok(None);
     };
-    let text = load_utf8_output(storage, record, &output.path)?;
+    Ok(read_delivered_reply(storage, record, &output.path)?)
+}
+
+/// Read the reply a resumed entry committed at its own step's output path.
+pub(super) fn read_delivered_reply(
+    storage: &ExecutorStorage<'_>,
+    record: &CodeRunReplayRecord,
+    path: &str,
+) -> crate::Result<Option<serde_json::Value>> {
+    let text = load_utf8_output(storage, record, path)?;
     let Ok(serde_json::Value::Object(mut resumed)) =
         serde_json::from_str::<serde_json::Value>(&text)
     else {
-        return Err(Error::CorruptedIndex("a resumed wait's reply").into());
+        return Err(Error::CorruptedIndex("a resumed wait's reply"));
     };
     Ok(resumed.remove("reply"))
 }

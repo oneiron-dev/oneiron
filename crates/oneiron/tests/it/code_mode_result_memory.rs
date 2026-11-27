@@ -284,6 +284,7 @@ fn a_result_past_the_session_share_and_thousands_of_small_ones_keep_memory_flat(
     let config = EngineExecutorConfig {
         run_id: entity(0xB2),
         task: "keep a big result and read it back".to_owned(),
+        caller_source_digest: None,
         prompt_package_root: oneiron::prompt::workspace_test_prompt_package_root()
             .expect("workspace test prompt package"),
         model: ModelId::new("test/executor@v1").expect("model id"),
