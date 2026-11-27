@@ -139,6 +139,7 @@ impl Vault {
             Some(opened) => opened.carry_erasures(erased),
             None => erased.clone(),
         };
+        let payload_opened = opened.is_some();
         // Every body instance the rows name, through the plan the claim keys
         // share, so one fork copies both: missing refuses by name, retired
         // takes its rows out (KS-2A).
@@ -512,7 +513,7 @@ impl Vault {
             pad_object_notes: Vec::new(),
             // A bare restore has no live vault to check its records against,
             // so every bare restore carries the note (H5, F5).
-            erasure_note: bare.then(|| BARE_ERASURE_NOTE.to_owned()),
+            erasure_note: (bare && !payload_opened).then(|| BARE_ERASURE_NOTE.to_owned()),
         };
         Ok((made, forked, vault, report))
     }
