@@ -26,6 +26,18 @@ pub fn claim_digests_indexed(vault: &crate::Vault) -> crate::Result<bool> {
 /// # Errors
 /// Returns a claim, authorization, or storage error.
 pub fn put_digest_proposal(vault: &crate::Vault, value: &str) -> crate::Result<crate::EntityId> {
+    put_digest_proposal_with_predicate(vault, "dreamer.proactivity.follow_up", value)
+}
+
+/// Writes a pending Dreamer proposal with the given predicate and value.
+///
+/// # Errors
+/// Returns a claim, authorization, or storage error.
+pub fn put_digest_proposal_with_predicate(
+    vault: &crate::Vault,
+    predicate: &str,
+    value: &str,
+) -> crate::Result<crate::EntityId> {
     use crate::{
         ClaimApprovalStatus, ClaimCandidate, ClaimSource, ClaimSubject, EntityId, TimeRange,
         WriteEnvelope, WriteProvenance,
@@ -36,7 +48,7 @@ pub fn put_digest_proposal(vault: &crate::Vault, value: &str) -> crate::Result<c
     let id = EntityId::now();
     let now = vault.now_recorded_at();
     let candidate = ClaimCandidate::new(
-        "dreamer.proactivity.follow_up",
+        predicate,
         ClaimSubject::Entity(actor.entity_ref()),
         Value::from(value),
         0.7,
@@ -122,6 +134,35 @@ pub fn digest_custody_id(
         return Ok(None);
     };
     vault.resolve_secret_ref(&key.name)
+}
+
+/// Checks for any non-revoked custody minted from the digest at this locator.
+///
+/// # Errors
+/// Returns an origin, authorization, or storage error.
+pub fn digest_has_live_custody(
+    vault: &crate::Vault,
+    owner: &crate::consent::AuthenticatedOwner,
+    locator: [u8; 32],
+) -> crate::Result<bool> {
+    let place = format!(
+        "side:{}",
+        crate::side_table::DREAMER_PROACTIVITY_DIGEST.name
+    );
+    let origin = crate::batch::secret_scan::side_row_origin(&place, &digest_storage_key(locator))?;
+    let notices = vault.found_keys(owner, false, usize::MAX)?;
+    if let Some(notice) = notices.into_iter().find(|notice| notice.record == origin) {
+        for key in notice.keys.into_iter().filter(|key| key.place == place) {
+            if let Some(id) = vault.resolve_secret_ref(&key.name)?
+                && vault.get_secret_metadata(&id)?.is_some_and(|metadata| {
+                    metadata.status != crate::secret_custody::SecretCustodyStatus::Revoked
+                })
+            {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
 }
 
 /// Copies the stored digest verbatim to a damaged key missing the locator's last byte.
