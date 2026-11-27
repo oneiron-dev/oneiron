@@ -370,6 +370,14 @@ pub enum FatalLlmError {
     /// fallback's trigger, never handed to another offer.
     #[error("response erased")]
     ResponseErased,
+    /// A row the call's input was read from is erased, deleted or withdrawn
+    /// (`oneiron::code_run::source_rows_withdrawn`): the host's source fence
+    /// sent nothing of that input ([DREAMER-STEP-RESENDS-ERASED-SOURCE-WORDS]).
+    /// Terminal, as [`Self::ResponseErased`] is: never retried, never a
+    /// fallback's trigger, never handed to another offer. A request built
+    /// afresh from the rows that stand sends.
+    #[error("source row withdrawn")]
+    SourceWithdrawn,
     /// A media job's submit went out and its provider's answer never
     /// reached its row, so the job cannot be found again (FIX 11464): a
     /// poll of the kept row reads this. The job may still run and bill at

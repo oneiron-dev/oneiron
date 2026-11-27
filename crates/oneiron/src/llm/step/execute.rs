@@ -385,12 +385,15 @@ pub(super) async fn durable_step(
     let response = match generated {
         Ok(response) => response,
         // An erased answer is terminal: it never triggers a fallback (FIX 6296).
+        // Nor does a source fence's refusal: a row the input was read from is
+        // withdrawn, and no fallback answers over it (REVIEW-10342).
         // Nor does a lapsed seat login: the step fails, and its try parks on
         // the seat until the login is back (SEAT-PARK-MODEL-STEP-PATH).
         // Nor does a wake pass's window refusal (`refused_for_window_in_pass`).
         Err(DurableStepError::Llm(LlmError::Fatal(error)))
             if matches!(request.envelope.class, CallClass::Durable { .. })
                 && error != FatalLlmError::ResponseErased
+                && error != FatalLlmError::SourceWithdrawn
                 && !matches!(error, FatalLlmError::SeatSignedOut { .. })
                 && !refused_for_window_in_pass(ctx, &error) =>
         {
@@ -498,10 +501,22 @@ pub(super) async fn durable_step(
                         DurableStepError::Llm(LlmError::Fatal(source))
                     }
                 }
-                // Nor does a failure policy route it to one.
-                erased @ DurableStepError::Llm(LlmError::Fatal(FatalLlmError::ResponseErased)) => {
-                    erased
+                // A fence's refusal of a correction stays terminal, and keeps
+                // the replies before it, answered and paid, on the error, as
+                // any spent correction does: the attempt's park charges them
+                // (REVIEW-10342 round 2).
+                DurableStepError::Llm(source @ LlmError::Fatal(FatalLlmError::SourceWithdrawn))
+                    if usage_spent(&failed_usage) =>
+                {
+                    DurableStepError::SpentLlm {
+                        source,
+                        usage: Box::new(failed_usage),
+                    }
                 }
+                // Nor does a failure policy route it, or a fence's refusal, to one.
+                terminal @ DurableStepError::Llm(LlmError::Fatal(
+                    FatalLlmError::ResponseErased | FatalLlmError::SourceWithdrawn,
+                )) => terminal,
                 DurableStepError::Llm(source) => {
                     if usage_spent(&failed_usage) {
                         DurableStepError::SpentLlm {

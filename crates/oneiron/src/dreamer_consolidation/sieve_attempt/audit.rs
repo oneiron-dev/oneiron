@@ -225,8 +225,11 @@ impl ConsolidationExecutor<'_> {
             };
             decode_finding(response, &shown, &window).map(|_| ())
         };
+        // The call sends under the rows its text was read from: the window's
+        // turn and source ([DREAMER-UNSOURCED-ROLE-CALLS-SEND-UNFENCED]).
+        let backend = call.call_backend(Some(labels.rows().collect()));
         let response =
-            match call_as_step_checked(&step, call.backend, self.guard, request, &check).await {
+            match call_as_step_checked(&step, backend.get(), self.guard, request, &check).await {
                 Ok(StepOutcome::Finished {
                     response,
                     memoized,

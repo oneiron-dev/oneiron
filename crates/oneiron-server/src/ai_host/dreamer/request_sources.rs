@@ -6,12 +6,12 @@
 //! on the route's own run, its sources unknown. A call bound to its rows
 //! asks them in the vault before each rung, wait and resend, and at each
 //! physical send, and sends nothing once one is withdrawn ([`SourceFence`],
-//! [DREAMER-STEP-RESENDS-ERASED-SOURCE-WORDS]).
+//! [DREAMER-STEP-RESENDS-ERASED-SOURCE-WORDS]): it ends with the fence's
+//! [`SourceFence::refusal`].
 use std::sync::Arc;
 
 use oneiron::dreamer_consolidation::SourcedBackend;
 use oneiron::llm::run_admission::RunAdmission;
-use oneiron::llm::{FatalLlmError, LlmError};
 use oneiron::{
     BudgetLease, EntityId, LlmBackend, LlmCapability, LlmGenerateFuture, LlmRequest,
     LlmStreamResult, ModelId, Vault,
@@ -96,12 +96,16 @@ impl ServedRealization {
         Box::pin(async move {
             let may_send = || fence.is_none_or(SourceFence::stands);
             if !may_send() {
-                return Err(LlmError::from(FatalLlmError::InvalidRequest));
+                return Err(SourceFence::refusal());
             }
             let generated = self
                 .ladder
                 .generate_served_while(run, request, None, &may_send)
                 .await;
+            let generated = match fence {
+                Some(fence) => fence.failure_as_refusal(generated),
+                None => generated,
+            };
             generated.map(|(response, served)| {
                 *self.served.lock().expect("served model mutex poisoned") = Some(served);
                 response

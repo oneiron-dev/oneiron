@@ -55,11 +55,11 @@
 //! lent the kept row waits for the reset and is answered, and the owner is
 //! asked nothing (guard). For a child lent both rows the model holds its
 //! refusal until the owner's erase has committed: nothing more reaches the
-//! model (guard), and the step ends as the invalid request a withdrawn
-//! input is, which no step retries, with no quota question kept for the
-//! owner. On the fence before this fix the walk ended as an unanswered
-//! call: a rate refusal a step retries, after asking the owner about the
-//! window (RED).
+//! model (guard), and the step ends as a withdrawn input does
+//! (`FatalLlmError::SourceWithdrawn`, #10342), which no step retries and no
+//! fallback answers, with no quota question kept for the owner. On the
+//! fence before this fix the walk ended as an unanswered call: a rate
+//! refusal a step retries, after asking the owner about the window (RED).
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p
 //! oneiron-server --all-features --test
@@ -672,7 +672,7 @@ fn a_window_wait_withdrawn_by_an_erase_ends_unretried_and_asks_the_owner_nothing
         );
         assert_eq!(
             error,
-            LlmError::from(FatalLlmError::InvalidRequest),
+            LlmError::from(FatalLlmError::SourceWithdrawn),
             "a step whose lent row was erased in its window wait ended as a refusal a step retries"
         );
         assert_eq!(

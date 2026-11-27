@@ -55,9 +55,11 @@ pub struct UnboundPass {
 
 /// A scripted model that answers every call with `reply` and records each
 /// call's relationship exposure.
-struct ReplyBackend {
-    reply: String,
-    calls: Mutex<Vec<Option<BTreeSet<EntityId>>>>,
+pub(super) struct ReplyBackend {
+    /// The text every call is answered with.
+    pub(super) reply: String,
+    /// Holds each call's relationship exposure, in call order.
+    pub(super) calls: Mutex<Vec<Option<BTreeSet<EntityId>>>>,
 }
 
 impl LlmBackend for ReplyBackend {
@@ -110,7 +112,7 @@ impl LlmBackend for ReplyBackend {
     }
 }
 
-fn ready<F: Future>(future: F) -> F::Output {
+pub(super) fn ready<F: Future>(future: F) -> F::Output {
     let mut cx = Context::from_waker(Waker::noop());
     let mut future = pin!(future);
     match future.as_mut().poll(&mut cx) {
@@ -119,7 +121,7 @@ fn ready<F: Future>(future: F) -> F::Output {
     }
 }
 
-fn allow_fixture_extraction(_: &LlmRequest) -> bool {
+pub(super) fn allow_fixture_extraction(_: &LlmRequest) -> bool {
     true
 }
 

@@ -5,7 +5,8 @@
 //! A sourced call carries the rows its caller names in place of the run's
 //! own (FIX 5760, 7104). A backend bound to the rows a call's input was read
 //! from ([`SourceFence`]) sends nothing of that input once one of them is
-//! withdrawn ([DREAMER-STEP-RESENDS-ERASED-SOURCE-WORDS]).
+//! withdrawn ([DREAMER-STEP-RESENDS-ERASED-SOURCE-WORDS]), and ends the
+//! call with [`FatalLlmError::SourceWithdrawn`].
 use std::sync::Arc;
 
 use oneiron::code_run::source_rows_withdrawn;
@@ -45,6 +46,30 @@ impl SourceFence {
         !source_rows_withdrawn(&self.vault, &self.rows)
     }
 
+    /// What a call bound to rows one of which is withdrawn ends with:
+    /// [`FatalLlmError::SourceWithdrawn`], which no step retries and no
+    /// deterministic fallback answers (REVIEW-10342), where an invalid
+    /// request would read as a provider's failure.
+    #[must_use]
+    pub fn refusal() -> LlmError {
+        LlmError::from(FatalLlmError::SourceWithdrawn)
+    }
+
+    /// `generated` as this fence ends it: a call that failed once one of the
+    /// rows is withdrawn (refused by the ladder before a rung, in a wait or
+    /// at a physical send) ends with [`Self::refusal`]; any other outcome
+    /// stays as it came.
+    ///
+    /// # Errors
+    /// [`Self::refusal`] for a failure after a row was withdrawn, else
+    /// `generated`'s own error.
+    pub fn failure_as_refusal<T>(&self, generated: oneiron::LlmResult<T>) -> oneiron::LlmResult<T> {
+        match generated {
+            Err(_) if !self.stands() => Err(Self::refusal()),
+            generated => generated,
+        }
+    }
+
     /// The fence as a run's pre-send condition: a physical send, after any
     /// wait for a key or an offer, asks it again.
     #[must_use]
@@ -54,7 +79,7 @@ impl SourceFence {
             if fence.stands() {
                 Ok(())
             } else {
-                Err(LlmError::from(FatalLlmError::InvalidRequest))
+                Err(Self::refusal())
             }
         })
     }
@@ -78,7 +103,7 @@ impl RunBackend {
 
     /// This backend for calls whose input was read from `fence`'s rows:
     /// each call asks them first and sends nothing once one is withdrawn
-    /// (an invalid request, which no step retries), the ladder asks them
+    /// ([`SourceFence::refusal`]), the ladder asks them
     /// before each rung and through each wait, and the run's gate at each
     /// physical send.
     #[must_use]
@@ -102,12 +127,17 @@ impl RunBackend {
         request: LlmRequest,
     ) -> oneiron::LlmResult<oneiron::LlmResponse> {
         if !self.may_send() {
-            return Err(LlmError::from(FatalLlmError::InvalidRequest));
+            return Err(SourceFence::refusal());
         }
         let may_send = || self.may_send();
-        self.ladder
+        let generated = self
+            .ladder
             .generate_while(run, request, None, &may_send)
-            .await
+            .await;
+        match &self.fence {
+            Some(fence) => fence.failure_as_refusal(generated),
+            None => generated,
+        }
     }
 }
 
