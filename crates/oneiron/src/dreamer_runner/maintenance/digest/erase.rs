@@ -151,8 +151,7 @@ fn scrub_digest_in_txn(
     if stored != kept {
         return delete_digest_whole_in_txn(write, txn, locator);
     }
-    let origin = digest_origin(&DIGEST.key_bytes(&locator))?;
-    secret_custody::revoke_unreferenced_side_row_custody_in_txn(write, txn, &origin, &kept)
+    Ok(())
 }
 
 /// Decodes one stored digest and checks its locator and content hash, deleting it on failure.
