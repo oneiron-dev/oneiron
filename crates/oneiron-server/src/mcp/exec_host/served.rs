@@ -305,10 +305,7 @@ impl McpEngineNativeCodeHost {
                 {
                     brief.close();
                 }
-                // End the run's resources under single flight even if the caller hung up.
-                if ended && let Some(run_end) = run_end {
-                    run_end.end();
-                }
+                drop(run_end);
                 // Completion must release single-flight and the run's
                 // permit before waking an awaiter that may immediately
                 // re-enter this persisted run or start another.
