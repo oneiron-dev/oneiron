@@ -11,7 +11,6 @@
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test dreamer_counterparty_turn_evidence_class`.
 #![cfg(oneiron_test_support)]
-#![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use oneiron::dreamer_consolidation::evidence_chain_source;
 use oneiron::registry::ENTITY_TYPE_TURN;
