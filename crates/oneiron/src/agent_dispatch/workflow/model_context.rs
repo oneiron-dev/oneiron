@@ -284,7 +284,7 @@ impl RenderedWorkflowStepContext {
             .join("\n");
         let speaker = xml_text_token(speaker);
         let text = xml_text_token(&text);
-        self.chat.push(format!("- {speaker}: {text}"));
+        self.chat.push(format!("- [turn] {speaker}: {text}"));
         self.capture_row(id, body);
         for (_, child, _, bytes) in visible {
             self.capture_row(child, &bytes);
@@ -641,15 +641,18 @@ fn note_line(markdown: &str) -> Option<String> {
     Some(format!("- [note] {}", xml_text_token(markdown)))
 }
 
-/// A turn's line: `- {speaker}: {text}` or `- {text}`, with both fields
-/// fenced. `None` for another kind, a body that is not a map, or one with
-/// no text of its own (a witnessed turn keeps its words in its messages).
+/// A turn's line: `- [turn] {speaker}: {text}` or `- [turn] {text}`, with
+/// both fields fenced. The `[turn]` marker is engine text ahead of every
+/// stored field, so a speaker such as `[note] x` never reads as a note row
+/// (REVIEW-10627 round 1). `None` for another kind, a body that is not a
+/// map, or one with no text of its own (a witnessed turn keeps its words in
+/// its messages).
 fn turn_line(entity_type: u8, body: &[u8]) -> Option<String> {
     let entries = turn_fields(entity_type, body)?;
     let text = xml_text_token(turn_field(&entries, TURN_TEXT_KEYS)?);
     Some(match turn_field(&entries, TURN_SPEAKER_KEYS) {
-        Some(speaker) => format!("- {}: {text}", xml_text_token(speaker)),
-        None => format!("- {text}"),
+        Some(speaker) => format!("- [turn] {}: {text}", xml_text_token(speaker)),
+        None => format!("- [turn] {text}"),
     })
 }
 

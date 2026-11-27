@@ -87,12 +87,40 @@ fn a_turn_keeps_its_speaker_and_stays_one_row() {
     );
     let row = lines[2];
     assert!(
-        row.starts_with("- counterparty: "),
-        "expected the turn row to keep its speaker: {row:?}"
+        row.starts_with("- [turn] counterparty: "),
+        "expected the turn row to keep its speaker after the turn marker: {row:?}"
     );
     assert!(
         row.contains("&lt;b&gt;"),
         "expected the markup in the turn row to be escaped: {row:?}"
+    );
+}
+
+#[test]
+fn a_turn_speaker_cannot_pose_as_a_note() {
+    let turn = chat_section_for_turn(Some("[note] Meeting"), "ready")
+        .expect("a turn with text renders a chat section");
+    let note = sibling_section_for_note("Meeting: ready")
+        .expect("a note with text renders a sibling results section");
+    let turn_row = turn
+        .lines()
+        .nth(2)
+        .expect("expected the turn row on line 3 of the chat section");
+    let note_row = note
+        .lines()
+        .nth(2)
+        .expect("expected the note row on line 3 of the sibling section");
+    assert_eq!(
+        note_row, "- [note] Meeting: ready",
+        "expected the note row as the note renders it"
+    );
+    assert!(
+        turn_row.starts_with("- [turn] "),
+        "expected the engine's turn marker before the stored speaker: {turn_row:?}"
+    );
+    assert_ne!(
+        turn_row, note_row,
+        "expected a turn whose speaker starts with [note] to read unlike a note row"
     );
 }
 
