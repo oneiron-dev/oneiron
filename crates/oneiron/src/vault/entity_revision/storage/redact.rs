@@ -497,12 +497,6 @@ fn withdraw_derived_copies_in_txn(
     id: &EntityId,
 ) -> Result<()> {
     let write = crate::secret_custody::CustodyWrite::of(vault);
-    crate::ports::invalidate_source_in_txn(
-        &write,
-        txn,
-        id,
-        crate::ports::DependentWalkDoor::ClaimValueRedaction,
-    )?;
     crate::dreamer_runner::maintenance::digest::erase_sources_in_txn(&write, txn, id)
 }
 
