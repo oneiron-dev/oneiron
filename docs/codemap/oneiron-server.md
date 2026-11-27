@@ -693,7 +693,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/mcp_gateway/code_run_resume.rs` | src | m | 9 crate-vis | — | The automatic re-entry of a served MCP `execute_code` run parked on a durable wait (FIX 4606) |
 | `src/api/mcp_gateway/code_run_resume/origin.rs` | src | s | 1 crate-vis | — | The admitted caller an MCP `execute_code` run is bound for (FIX 4606) |
 | `src/api/mcp_gateway/code_run_resume/recovery.rs` | src | m | 2 crate-vis | — | A served MCP `execute_code` run a restart left parked on a code consent wait, entered again for its original… |
-| `src/api/mcp_gateway/device_release.rs` | src | m | 18 crate-vis | — | What a gateway result may carry off this device once its call has nothing left to wait on (DEC-0005): a… |
+| `src/api/mcp_gateway/device_release.rs` | src | m | 19 crate-vis | — | What a gateway result may carry off this device once its call has nothing left to wait on (DEC-0005): a… |
 | `src/api/mcp_gateway/envelope.rs` | src | m | 19 crate-vis | — | JSON-RPC envelope types and request dispatch |
 | `src/api/mcp_gateway/envelope/blob_body.rs` | src | m | 8 crate-vis | — | A tool-first `tools/call`'s `arguments.spec.content_base64`, spooled and decoded into a file before the call… |
 | `src/api/mcp_gateway/envelope/http.rs` | src | L | 16 crate-vis | — | The MCP gateway's Streamable HTTP side: its routes, its connection stamp and each POST's reply |
@@ -1359,7 +1359,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/decision_verdict.rs` | src | L | 24 crate-vis | — | `ai.verdict` (ARCH-0076): a caller's own typed question through the host's decision ladder |
 | `src/decision_verdict/hook.rs` | src | s | 3 crate-vis | — | `ai.verdict` for a generative fact hook (FIX 10068, 10075): the same ladder and the same clock as any… |
 | `src/decision_verdict/model_calls.rs` | src | s | 4 crate-vis | — | The capture caller a model-call capture attributes (FIX 12516/12742) |
-| `src/device_local.rs` | src | s | 12 crate-vis | — | Release checks for a payload a caller was served earlier and is sent again (DEC-0005): a payload naming a… |
+| `src/device_local.rs` | src | m | 15 crate-vis | — | Release checks for a payload a caller was served earlier and is sent again (DEC-0005): a payload naming a… |
 | `src/device_sync.rs` | src | m | 12 crate-vis | — | The device side of sync (ARCH-0023b): a machine that is not the home dials its home and keeps its vault in… |
 | `src/device_sync/batch_admission.rs` | src | s | 1 crate-vis | — | The reap freeze's admission for each batch the device sync connection applies or sends (FIX 12036) |
 | `src/device_sync/catalog.rs` | src | s | 3 crate-vis | — | The device's view of the models the owner's other nodes offer (OF-575), learned while its home connection is… |
@@ -1633,7 +1633,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/livequery/residence/tombstones.rs` | src | s | 1 crate-vis | — | A followed window's tombstone id set, `residence.tombstones` (FOLLOWED-WORLD-TIER1-TOMBSTONE-IDS; canon… |
 | `src/livequery/residence/windows.rs` | src | s | 1 crate-vis | — | `residence.windows`: the rootless window catalogue a member lane boots from (MEMBER-SYNC D6) |
 | `src/livequery/residence/work.rs` | src | m | 11 crate-vis | — | Socket-owned drivers for durable sealed-bundle work |
-| `src/livequery/routing.rs` | src | s | 7 crate-vis | — | Private routing header for the EXISTING server broadcast channel and a socket's own reply queue |
+| `src/livequery/routing.rs` | src | s | 8 crate-vis | — | Private routing header for the EXISTING server broadcast channel and a socket's own reply queue |
 | `src/livequery/rpc.rs` | src | m | 7 crate-vis | — | The held socket's verb RPC (OF-489 socket-first): an `rpc.req` names any facade row, and it runs through the… |
 | `src/livequery/rule5_tests.rs` | test | m | 4 crate-vis | — | Rule five at the live-query rows (census rows 20 to 24): past a row the next session or subscription waits… |
 | `src/livequery/socket_tests.rs` | test | m | — | — | Real TCP/WebSocket ownership tests |

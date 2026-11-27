@@ -59005,6 +59005,21 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "HydrateMiss",
+      "HydrateMissReason",
+      "HydrateResult"
+     ],
+     "path": "src/memory/hydrate_result.rs",
+     "purpose": "The result of a partial `vault.hydrate` read",
+     "surface": {
+      "enum": 1,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -59247,7 +59262,7 @@
      "surface": {
       "crate-vis": 49,
       "mod": 42,
-      "re-export": 75
+      "re-export": 76
      }
     },
     {
@@ -59814,8 +59829,8 @@
      "path": "src/memory/reads.rs",
      "purpose": "Entity/claim read surface plus BM25 and neighbor queries",
      "surface": {
-      "crate-vis": 9,
-      "fn": 10,
+      "crate-vis": 12,
+      "fn": 11,
       "re-export": 2,
       "struct": 3
      }
@@ -99861,6 +99876,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/hydrate_missing.rs",
+     "purpose": "Test-only entry to the read door used by an off-record code run",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/hydration_decode_guard.rs",
      "purpose": "Door for `tests/hydration_decode_guard.rs` (census L6-30b; ARCH-0069 #readers-followups-open, \"an isolating…",
      "surface": {
@@ -100308,7 +100333,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 407,
+      "mod": 408,
       "re-export": 3
      }
     },
@@ -116161,6 +116186,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/hydrate_missing.rs",
+     "purpose": "Partial results on the public `vault.hydrate` verb and its room door",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/hydration_decode_guard.rs",
      "purpose": "Census L6-30b (ARCH-0069 #readers-followups-open: \"an isolating check for hydration's decode guard\")…",
      "surface": {}
@@ -124586,7 +124619,7 @@
     },
     "memory": {
      "entry": "crates/oneiron/src/memory/mod.rs",
-     "files": 425,
+     "files": 426,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -125454,7 +125487,7 @@
     },
     "test_doors": {
      "entry": "crates/oneiron/src/test_doors/mod.rs",
-     "files": 420,
+     "files": 421,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -125721,8 +125754,8 @@
    },
    "over_bar": 276,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8646,
-   "test_files": 2334
+   "source_files": 8648,
+   "test_files": 2335
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -171358,7 +171391,7 @@
      "path": "src/api/mcp_gateway/device_release.rs",
      "purpose": "What a gateway result may carry off this device once its call has nothing left to wait on (DEC-0005): a…",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 19
      }
     },
     {
@@ -178526,13 +178559,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/device_local.rs",
      "purpose": "Release checks for a payload a caller was served earlier and is sent again (DEC-0005): a payload naming a…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 15
      }
     },
     {
@@ -181667,7 +181700,7 @@
      "path": "src/livequery/routing.rs",
      "purpose": "Private routing header for the EXISTING server broadcast channel and a socket's own reply queue",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -194040,7 +194073,7 @@
      "entry": "crates/oneiron-server/src/device_local.rs",
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "Release checks for a payload a caller was served earlier and is sent again (DEC-0005): a payload naming a…",
      "spec_ids": []
@@ -207594,6 +207627,8 @@
       "FacadeReceipt",
       "ForgetSelector",
       "HabitCheckinInput",
+      "HydrateMiss",
+      "HydrateMissReason",
       "LexicalHit",
       "LexicalHits",
       "LineProvenance",
@@ -207643,8 +207678,8 @@
      "path": "src/dto.rs",
      "purpose": "The typed UniFFI records of the SDK surface",
      "surface": {
-      "enum": 14,
-      "struct": 57
+      "enum": 15,
+      "struct": 58
      }
     },
     {

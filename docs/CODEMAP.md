@@ -15,7 +15,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 8646 | 2334 | 276 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 8648 | 2335 | 276 |
 | [oneiron-agent-runtime](codemap/oneiron-agent-runtime.md) | `oneiron-agent-runtime`: the sandbox backends above the `oneiron` core crate (core split slice 5b.1) | 23 | 11 | 1 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 4 | 1 | 0 |
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the… | 77 | 12 | 0 |
@@ -229,7 +229,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `machine_signature` | file | 1 | s | — | A machine's own signature on what it states to the owner's other machines over the mesh: the job submit and… |
 | `mail_pack` | dir | 47 | XL | yes | The Mail & Calendar pack, engine half (FIX 12559, 12560; owner MAIL-SHARE, MAIL-DELETE, MAIL-PROVIDERS and… |
 | `maintain` | dir | 7 | m | — | — |
-| `memory` | dir | 425 | L | yes | BRIDGE-01 (ONE-1454): transport-agnostic memory facade |
+| `memory` | dir | 426 | L | yes | BRIDGE-01 (ONE-1454): transport-agnostic memory facade |
 | `merge_queue` | dir | 45 | m | yes | Durable batched speculation over real detached worktrees |
 | `model_decision` | dir | 1 | s | — | Model-independent typed decision vocabulary and pure policy values |
 | `model_step_context` | file | 1 | s | — | Caller-owned model-step context and terminal outcomes |
@@ -314,7 +314,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `task_work_line` | file | 1 | s | yes | The vault's task-work line: the inherent `Vault` methods that admit task work through the line in… |
 | `team` | dir | 24 | m | — | Coordination patterns as skills, and the team receipt contract (OF-540, ARCH-0079) |
 | `temporal` | file | 1 | s | — | `TimeRange`, temporal expressions/parsing, granularity/anchor enums |
-| `test_doors` | dir | 420 | XL | — | Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD) |
+| `test_doors` | dir | 421 | XL | — | Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD) |
 | `test_fixtures` | file | 1 | s | — | Fixture writes that every test build shares: the crate's unit tests (`test_util`), dependent crates… |
 | `test_support` | file | 1 | s | — | Doors for tests that drive the engine from another crate, such as the seal organ's end-to-end check, which… |
 | `test_util` | dir | 9 | m | — | Shared test helpers |
@@ -1118,7 +1118,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `decision_graph` | dir | 2 | m | Typed judgments over graph units (ARCH-0076, OF-506): the host's decision ladder answers a graph question |
 | `decision_host` | dir | 11 | L | The host's decision ladder (ARCH-0076): built once at serve start and lent to every caller that asks a typed… |
 | `decision_verdict` | file+dir | 3 | L | `ai.verdict` (ARCH-0076): a caller's own typed question through the host's decision ladder |
-| `device_local` | file | 1 | s | Release checks for a payload a caller was served earlier and is sent again (DEC-0005): a payload naming a… |
+| `device_local` | file | 1 | m | Release checks for a payload a caller was served earlier and is sent again (DEC-0005): a payload naming a… |
 | `device_sync` | file+dir | 19 | m | The device side of sync (ARCH-0023b): a machine that is not the home dials its home and keeps its vault in… |
 | `document_memory` | file | 1 | s | The machine's memory as the document engine's resource port (Rule 5; FIX 8569, 8574, 8596, 8598, 9617) |
 | `embedded` | file+dir | 8 | m | The engine inside an app's own process (OF-237): [`serve_embedded`] serves a vault the app already opened… |
