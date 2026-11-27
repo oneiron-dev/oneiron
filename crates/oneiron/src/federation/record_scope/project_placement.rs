@@ -78,6 +78,38 @@ pub(crate) fn session_projects_admit_row(
     }
 }
 
+/// Whether an explicit project selection admits this non-CLAIM row: a NOTE, MESSAGE or
+/// TURN by its placement (`stored_project`), every other kind always (the corpus filter
+/// judges a CLAIM by its body). No usable placement matches no selection, and a placement
+/// that does not read is quiet, never a wider read (SESSION-PROJECT-NOTE-MESSAGE-PLACEMENT
+/// PR C).
+pub(crate) fn corpus_admits_placed_row(
+    store: &(impl ManifestDbs + MachineHistoryScope),
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    kind: u8,
+    body: &[u8],
+    scope: &crate::claim::corpus_scope::CorpusScope,
+) -> Result<bool> {
+    match kind {
+        crate::registry::ENTITY_TYPE_NOTE
+        | crate::registry::ENTITY_TYPE_MESSAGE
+        | crate::registry::ENTITY_TYPE_TURN => match stored_project(store, txn, id, kind, body) {
+            Ok(project) => Ok(project.is_some_and(|project| scope.matches(project))),
+            Err(error) => {
+                tracing::warn!(
+                    error_kind = ?error.kind(),
+                    "a project selection refused a row whose placement it could not read: \
+                     unreadable placement is quiet, never a wider read \
+                     (SESSION-PROJECT-NOTE-MESSAGE-PLACEMENT)"
+                );
+                Ok(false)
+            }
+        },
+        _ => Ok(true),
+    }
+}
+
 /// Settle a session-placed NOTE onto its project
 /// (SESSION-PROJECT-NOTE-MESSAGE-PLACEMENT), after the NOTE's birth batch
 /// lands. Only the birth writer calls this door, in the birth transaction;

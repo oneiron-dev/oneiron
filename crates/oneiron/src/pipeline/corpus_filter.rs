@@ -5,6 +5,7 @@ use crate::context_pack::EmptyReason;
 use crate::corpus::CorpusScope;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::ports::EntityStoreRead;
 use crate::store::StoreRead;
 
 use super::builder::PipelineBuilder;
@@ -122,9 +123,10 @@ pub(super) fn claim_matches_corpus(scope: &CorpusScope, body: &ClaimBody) -> boo
     scope.matches(body.scope_project)
 }
 
-/// Post-fusion project-axis removal, before result truncation. Selected
-/// projects retain only their own claims; non-claims pass untouched. The D19
-/// cache supplies decoded bodies, as it does on the candidate/probe path.
+/// Post-fusion project-axis removal, before result truncation. Selected projects
+/// retain only their own CLAIMs and the NOTE, MESSAGE and TURN rows placed in them;
+/// other kinds pass untouched. The D19 cache supplies decoded bodies, as it does on
+/// the candidate/probe path.
 pub(super) fn apply_corpus_filter(
     scores: &mut Vec<ScoredEntity>,
     store: &StoreRead<'_>,
@@ -175,6 +177,41 @@ pub(super) fn pipeline_candidate_matches_corpus_filter(
     match gate.decisions.get(id) {
         Some(Some(body)) => Ok(claim_matches_corpus(scope, body)),
         Some(None) => Ok(false),
-        None => Ok(true), // Non-claims never enter the D19 cache.
+        // FIX SESSION-PROJECT-NOTE-MESSAGE-PLACEMENT PR C: non-claims never enter the D19 cache; NOTE, MESSAGE and TURN rows narrow by their placement.
+        None => placed_row_matches_corpus(store, rtxn, id, scope, metadata_cache),
     }
+}
+
+/// A non-CLAIM candidate under a project selection: a NOTE, MESSAGE or TURN by its
+/// placement, every other kind as before. The kind comes from the metadata the gate
+/// above has just read; the row is read once more only for those three kinds.
+fn placed_row_matches_corpus(
+    store: &StoreRead<'_>,
+    rtxn: &RoTxn<'_>,
+    id: &EntityId,
+    scope: &CorpusScope,
+    metadata_cache: &mut EntityMetadataCache,
+) -> Result<bool> {
+    let Some(meta) = metadata_cache.get(store, rtxn, id)? else {
+        return Ok(true);
+    };
+    if !matches!(
+        meta.entity_type,
+        crate::registry::ENTITY_TYPE_NOTE
+            | crate::registry::ENTITY_TYPE_MESSAGE
+            | crate::registry::ENTITY_TYPE_TURN
+    ) {
+        return Ok(true);
+    }
+    let Some(row) = store.port_entity_record(rtxn, id)? else {
+        return Ok(false);
+    };
+    crate::federation::record_scope::corpus_admits_placed_row(
+        store,
+        rtxn,
+        *id,
+        row.entity_type,
+        &row.body,
+        scope,
+    )
 }

@@ -95,6 +95,7 @@ impl Memory<'_> {
     /// transaction: the caller's `diary.read` Grants decide which entries it
     /// gets, the read lands in the agent's log, and an agent that reviews
     /// gets the reason to answer first. A person authenticates.
+    /// A handle bound to a session's folder reads only the entries placed in its projects.
     pub fn read_agent_diary(
         &self,
         reader: Option<&AuthenticatedOwner>,
@@ -142,8 +143,8 @@ impl Memory<'_> {
     /// The read behind [`Self::read_agent_diary_pinned`] and
     /// [`Self::read_agent_diary_pinned_filtered`], in one writer. With `lane`, the caller's live
     /// Grant listing `self.memory.diary.pinned` is checked first, and an entry `lane` withholds
-    /// is left out before the gate judges it. Without `lane`, the diary gate alone decides: the
-    /// compaction path.
+    /// is left out before the gate judges it. Without `lane`, the handle's session default, where
+    /// it has one, and then the diary gate decide: the compaction path and `self.memory.diary.query`.
     fn read_agent_diary_pinned_through(
         &self,
         reader: Option<&AuthenticatedOwner>,
@@ -186,7 +187,11 @@ impl Memory<'_> {
                     })?
                     .value
                 }
-                None => vec![true; listed.len()],
+                // FIX SESSION-PROJECT-NOTE-MESSAGE-PLACEMENT PR C: with no lane, the handle's session default judges each diary entry (Q1 DIARY = a).
+                None => listed
+                    .iter()
+                    .map(|(id, _, _)| self.session_admits_note_in_txn(txn, *id))
+                    .collect::<Result<Vec<_>>>()?,
             };
             let mut entries = Vec::new();
             let mut pins = Vec::new();
@@ -354,6 +359,27 @@ impl Memory<'_> {
         Ok(())
     }
 
+    /// Whether this handle's session default admits the NOTE `id`, judged by its placement as
+    /// every session read judges it (`session_projects_admit_row`; a diary entry or a pad is
+    /// never room speech). A handle with no session default admits every entry, as before; a
+    /// row that does not read is not admitted.
+    fn session_admits_note_in_txn(&self, txn: &heed::RoTxn<'_>, id: EntityId) -> Result<bool> {
+        let Some(projects) = &self.session_projects else {
+            return Ok(true);
+        };
+        let Some(raw) = self.vault.get_raw_in(txn, &id)? else {
+            return Ok(false);
+        };
+        crate::federation::record_scope::session_projects_admit_row(
+            &self.vault.store,
+            txn,
+            id,
+            &raw,
+            projects,
+            false,
+        )
+    }
+
     /// The reader this caller is: a person with their authentication, or a
     /// live agent or system actor.
     fn diary_reader_in_txn(
@@ -396,6 +422,7 @@ impl Memory<'_> {
     /// ([`Memory::admin_pad_reads`]). An agent that reviews reads answers the
     /// reason first. Any other reader is not covered: a health flag never
     /// grants access, and a personal vault has no Admin reader.
+    /// A handle bound to a session's folder reads only the pads placed in its projects.
     pub fn read_agent_sealed_pads(
         &self,
         reader: Option<&AuthenticatedOwner>,
@@ -469,6 +496,8 @@ impl Memory<'_> {
                 if let Some((note, learned_at)) = live_note_in_txn(self.vault, txn, &pad)?
                     && note.kind == kind
                     && note.author_ref.is(agent)
+                    // FIX SESSION-PROJECT-NOTE-MESSAGE-PLACEMENT PR C: a sealed pad reads only where the handle's session default admits it (R3).
+                    && self.session_admits_note_in_txn(txn, pad)?
                 {
                     entries.push(DiaryEntry {
                         id: pad,
