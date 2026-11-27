@@ -161,35 +161,6 @@ fn erases_world(
         .map_err(MemoryError::from)
 }
 
-/// Whether a copy of this vault lives on another machine or with other members, so an
-/// erase reaches it only when that copy next syncs (H5, F9).
-fn vault_syncs_in_txn(vault: &crate::Vault, txn: &heed::RoTxn<'_>) -> crate::Result<bool> {
-    // This machine is a replica that reached its home at least once.
-    // (`sync` owns the row, so this arm builds only with that feature.)
-    #[cfg(feature = "sync")]
-    if crate::sync::window_rows::LAST_SYNC
-        .get(&vault.store, txn, &())?
-        .is_some()
-    {
-        return Ok(true);
-    }
-    // The authority names a machine other than the serving one.
-    let serving = vault.serving_machine_in_txn(txn)?;
-    if vault
-        .authority_view_readonly_in_txn(txn)?
-        .machines
-        .keys()
-        .any(|machine| Some(*machine) != serving)
-    {
-        return Ok(true);
-    }
-    // A shared vault: other members hold a copy.
-    if vault.shared_vault_creation_in_txn(txn)?.is_some() {
-        return Ok(true);
-    }
-    Ok(false)
-}
-
 /// The erase-level entries P shows and R repeats, in door order, and how many legal
 /// holds keep a sealed copy of `record` outside the vault: backups and exports notes
 /// and the disk note always; the devices note when the record was shared or the vault
@@ -221,12 +192,6 @@ fn remaining_for_erase(
         code: remaining_claims::REMAINING_EXPORTS_BEFORE_ERASE.to_owned(),
         text: remaining_claims::REMAINING_EXPORTS_BEFORE_ERASE_TEXT.to_owned(),
     });
-    if !preview.shared_with().is_empty() || vault_syncs_in_txn(vault, txn)? {
-        remaining.push(RemainingNotice {
-            code: remaining_claims::REMAINING_DEVICES_AND_PEERS.to_owned(),
-            text: remaining_claims::REMAINING_DEVICES_AND_PEERS_TEXT.to_owned(),
-        });
-    }
     if crate::llm::vault_allows_provider_model_in_txn(vault, txn)? {
         remaining.push(RemainingNotice {
             code: remaining_claims::REMAINING_MODEL_PROVIDERS.to_owned(),
