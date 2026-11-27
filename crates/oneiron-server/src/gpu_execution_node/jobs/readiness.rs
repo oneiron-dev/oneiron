@@ -319,7 +319,7 @@ impl NodeJobs {
             }
             book.record.mark.clone()
         };
-        if self.attempt_runs() || self.release_owed() {
+        if self.attempt_runs() {
             return;
         }
         let found = match self.check_readiness(mark.as_ref(), &now, &settings, withheld) {
