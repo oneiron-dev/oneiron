@@ -393,6 +393,25 @@ pub async fn admit_skill_run_effect(
         .map_err(guest_refusal))
 }
 
+/// The outer skill call's admission at a callable skill's door
+/// ([`skill_door`]): `AgentVerbDoor::admit_outer_skill_call`, as the host
+/// projection admits the call its caller made itself (REVIEW-10594).
+///
+/// # Errors
+///
+/// The credential failing to resolve, and the skill door not being built.
+pub async fn admit_outer_skill_call(
+    server: &Arc<SyncServer>,
+    credential: &TestCredential,
+    run: EntityId,
+) -> anyhow::Result<Result<(), GuestRefusal>> {
+    let door = skill_door(server, credential, run).await?;
+    Ok(door
+        .admit_outer_skill_call()
+        .map(drop)
+        .map_err(guest_refusal))
+}
+
 fn guest_refusal(refused: oneiron::code_run::AgentVerbRefusal) -> GuestRefusal {
     GuestRefusal {
         code: refused.code,

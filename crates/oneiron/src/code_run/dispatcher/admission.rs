@@ -37,6 +37,32 @@ impl HostSelfDispatcher<'_> {
         &self,
         call: RunCall,
     ) -> Result<std::result::Result<Option<ScopedReadActorKey>, AgentVerbRefusal>> {
+        self.admit_door_call(call, false)
+    }
+
+    /// [`Self::admit_run_call`] for `call`, a `self.skills.call`. The outer
+    /// call a credential-bound host projection entered for its caller
+    /// (`outer`) is that caller's own: the bound door admits it with
+    /// [`crate::code_run::AgentVerbDoor::admit_outer_skill_call`]. The
+    /// skill's body's own calls are admitted as run calls.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::admit_run_call`].
+    pub(crate) fn admit_skill_call(
+        &self,
+        call: &SelfCall,
+        outer: bool,
+    ) -> Result<std::result::Result<Option<ScopedReadActorKey>, AgentVerbRefusal>> {
+        let outer = outer && matches!(call, SelfCall::SkillsCall(_));
+        self.admit_door_call(RunCall::Bridge(call.effect()), outer)
+    }
+
+    fn admit_door_call(
+        &self,
+        call: RunCall,
+        outer_skill_call: bool,
+    ) -> Result<std::result::Result<Option<ScopedReadActorKey>, AgentVerbRefusal>> {
         // A slip-woken program's call holds only while its slip admits it
         // (FIX 8717), door or none.
         if let RunCall::Bridge(effect) = call
@@ -53,6 +79,7 @@ impl HostSelfDispatcher<'_> {
         };
         // Speech is admitted with where this run's storage lands it.
         let admitted = match call {
+            RunCall::Bridge(_) if outer_skill_call => door.admit_outer_skill_call(),
             RunCall::Bridge(effect) if effect.is_speech() => {
                 door.admit_run_speech(effect, self.storage.speech_destination())
             }
