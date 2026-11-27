@@ -141,13 +141,7 @@ impl Memory<'_> {
             // The owner, on their own proof, learns `restricted` for a
             // record they chose to restrict (Q1 = A); any other absence
             // passes through, as every absence does on the role arm below.
-            Err(error) if error.code == MEMORY_CODE_NOT_FOUND => {
-                return Err(self
-                    .resolve_ref(entity_ref)
-                    .ok()
-                    .and_then(|id| self.vault.restricted_owner_delete_refusal(&id))
-                    .map_or(error, MemoryError::from));
-            }
+            Err(error) if error.code == MEMORY_CODE_NOT_FOUND => return Err(error),
             Err(error) => return Err(error),
         };
         receipt.check_in = Some(check_in::owner_own_proof_decision(ActClass::Delete));
