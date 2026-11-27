@@ -216,6 +216,7 @@ fn session_start(host: HookHost, args: &HookRecallArgs) -> Vec<String> {
         deadline,
         bar: RecallSource::Start,
         session,
+        expect_vault: None,
     };
     said.extend(recall.block(
         &format!(
@@ -287,6 +288,7 @@ fn prompt(host: HookHost, args: &HookRecallArgs) -> Vec<String> {
         deadline,
         bar: RecallSource::Carrier,
         session: session_id(host, &event),
+        expect_vault: None,
     };
     let lead = match args
         .query

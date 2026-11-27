@@ -57,6 +57,10 @@ pub(super) struct Recall<'a> {
     /// session's project.
     pub(super) bar: RecallSource,
     pub(super) session: Option<&'a str>,
+    /// The vault the credential names, when the query's full form may go:
+    /// the exchange bails before `tools/list` unless the vault answers it
+    /// ([`answers_vault`]), so no `tools/call` goes to another vault.
+    pub(super) expect_vault: Option<&'a str>,
 }
 
 struct Hit {
@@ -184,7 +188,12 @@ impl Recall<'_> {
     }
 
     fn exchange(&self, bridge: &mut Bridge) -> anyhow::Result<Value> {
-        bridge.initialize()?;
+        let initialized = bridge.initialize()?;
+        if let Some(vault) = self.expect_vault
+            && !answers_vault(&initialized, vault)
+        {
+            anyhow::bail!("the vault did not answer the credential's own vault id");
+        }
         let listed = bridge.call(2, "tools/list", json!({}))?;
         let (name, arguments) = self.tool_call(&listed)?;
         // One logical call under one invocation id (ARCH-0080 §3): this
@@ -307,6 +316,13 @@ fn receipt(result: &Value) -> Option<String> {
             (None, None) => rule.to_string(),
         },
     })
+}
+
+/// Whether the vault's `initialize` answer names `vault` as the authority
+/// vault id it serves: the check a hook makes before its credential's full
+/// query goes anywhere.
+pub(super) fn answers_vault(initialized: &Value, vault: &str) -> bool {
+    initialized.get("vault_id").and_then(Value::as_str) == Some(vault)
 }
 
 /// Whether the server at `url` admits `auth` over `oneiron mcp` by

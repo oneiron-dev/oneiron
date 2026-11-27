@@ -2,6 +2,8 @@
 //! whose words they are, when the vault learned them, what trust the Dreamer
 //! gives them, and that an import cannot be made to read as live speech.
 
+mod placed_blocks;
+
 use super::ledger;
 use super::{HistoryConversation, HistoryMessage, HistoryRole, HistorySource, HistoryThreadKind};
 use crate::claim::ClaimSource;

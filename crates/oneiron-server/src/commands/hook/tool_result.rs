@@ -7,8 +7,10 @@ use std::time::{Duration, Instant};
 
 use oneiron::ingest::history::carried_headers::{CARRIED_CONTEXT_HEADER, TOOL_RESULT_CONTEXT_LEAD};
 use oneiron::memory::RecallSource;
+use oneiron_contracts::fingerprint::ContentHash;
 use serde_json::{Map, Value, json};
 
+use super::hosted_command::slip_vault_id;
 use super::hosted_selection::HostedDiscovery;
 use super::recall::Recall;
 use super::session_binding::{self, BOARD_KEYFRAME, CARRIER_LINES};
@@ -72,20 +74,28 @@ pub(super) fn tool_result(host: HookHost, args: &HookRecallArgs) -> Option<Strin
     // Keep the read and append together: simultaneous calls cannot show the
     // same key or spend the same slot. A busy hook never waits on the file.
     session_binding::ensure_session_folder(&folder).ok()?;
+    let shown_path = folder.join(CARRIER_LINES);
     let mut file = OpenOptions::new()
         .read(true)
         .append(true)
         .create(true)
         .mode(0o600)
         .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
-        .open(folder.join(CARRIER_LINES))
+        .open(&shown_path)
         .ok()?;
     let metadata = file.metadata().ok()?;
     if !metadata.is_file()
         || metadata.uid() != rustix::process::geteuid().as_raw()
-        || metadata.mode() & 0o022 != 0
         || credential_file::has_extended_acl(&file)
     {
+        return None;
+    }
+    if metadata.mode() & 0o077 != 0 {
+        eprintln!(
+            "oneiron hook: {} may be read by others; run chmod 600 {}",
+            shown_path.display(),
+            shown_path.display()
+        );
         return None;
     }
     file.try_lock().ok()?;
@@ -105,7 +115,20 @@ pub(super) fn tool_result(host: HookHost, args: &HookRecallArgs) -> Option<Strin
     // What leaves the device is the person's words and what they handed
     // over: a vault not on this machine gets the tool name and the file's
     // base name alone (ANSWER TOOL-RESULT-HOSTED-QUERY = A, REVIEW-10587 P1 2).
-    let local = bound.hosted.is_none() && bind::loopback_origin(&url);
+    // A vault on this machine gets the full query only after it answers the
+    // credential's own vault id; when the slip names none, it gets the short
+    // form too.
+    let mut local = bound.hosted.is_none() && bind::loopback_origin(&url);
+    let slip_vault = if local {
+        args.credential_file
+            .as_deref()
+            .and_then(|file| slip_vault_id(file).ok())
+    } else {
+        None
+    };
+    if slip_vault.is_none() {
+        local = false;
+    }
     let query = tool_query(name, &event, local);
     if Instant::now() >= deadline {
         return None;
@@ -125,8 +148,12 @@ pub(super) fn tool_result(host: HookHost, args: &HookRecallArgs) -> Option<Strin
         deadline,
         bar: RecallSource::Carrier,
         session: Some(session),
+        expect_vault: slip_vault.as_deref(),
     };
-    let (key, line) = recall.carrier_line(|key| shown.lines().any(|prior| prior == key))?;
+    let (key, line) = recall.carrier_line(|key| {
+        let digest = shown_key(key);
+        shown.lines().any(|prior| prior == digest)
+    })?;
     let output = json!({
         "hookSpecificOutput": {
             "hookEventName": "PostToolUse",
@@ -142,9 +169,15 @@ pub(super) fn tool_result(host: HookHost, args: &HookRecallArgs) -> Option<Strin
     } else {
         "\n"
     };
-    file.write_all(format!("{separator}{key}\n").as_bytes())
+    file.write_all(format!("{separator}{}\n", shown_key(&key)).as_bytes())
         .ok()?;
     (Instant::now() < deadline).then_some(output)
+}
+
+/// What the shown-keys file holds for `key`: its digest, never recalled
+/// text. A text key from before this change simply stops matching.
+fn shown_key(key: &str) -> String {
+    ContentHash::of(key.as_bytes()).to_hex()
 }
 
 /// Whether `name` (`mcp__<server>__<tool>`) is a board tool of the Oneiron

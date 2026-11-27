@@ -45,7 +45,8 @@
 
 use std::collections::HashMap;
 use std::io::{self, BufRead, Read, Write};
-use std::sync::{Arc, Condvar, Mutex, PoisonError};
+use std::path::PathBuf;
+use std::sync::{Arc, Condvar, Mutex, Once, PoisonError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -224,13 +225,6 @@ fn pending_answer_invocation(answer: &Value) -> Option<&str> {
 
 pub fn mcp(args: McpArgs) -> anyhow::Result<()> {
     let bridge = Arc::new(Bridge::new(&args)?);
-    // The bridge started, so its paired credential file goes to this origin
-    // from here on: a hook that holds the same file sends it there alone
-    // (credential_origin). A record not written stops only that hook.
-    if let Some(credential) = args.credential_file.as_deref() {
-        let _ = api::normalized_base(&args.url)
-            .and_then(|origin| credential_origin::record(credential, &origin));
-    }
     let _wakes = args
         .wake_config
         .as_deref()
@@ -291,6 +285,11 @@ pub fn mcp(args: McpArgs) -> anyhow::Result<()> {
     }
     for call in in_flight {
         let _ = call.join();
+    }
+    // The bridge ends, so its origin record goes with it: a hook uses an
+    // origin only while a bridge that wrote it runs (credential_origin).
+    if let Some(credential) = args.credential_file.as_deref() {
+        credential_origin::forget(credential);
     }
     Ok(())
 }
@@ -427,6 +426,18 @@ struct Bridge {
     /// Fold a `tools/call` answer's board carrier frame into its text
     /// content (`--carrier-in-content`).
     carrier_in_content: bool,
+    /// The paired credential file and this bridge's normalized origin, to
+    /// record once the vault first admits the bridge
+    /// ([`credential_origin`]): on the first answer to the client that has
+    /// no `error` key. A record not written stops only the hook.
+    origin_record: Option<OriginRecord>,
+}
+
+/// The origin record one bridge writes, once.
+struct OriginRecord {
+    credential: PathBuf,
+    origin: String,
+    written: Once,
 }
 
 impl Bridge {
@@ -466,6 +477,14 @@ impl Bridge {
                     .and_then(crate::workspace_identity::WorkspaceIdentity::of_session_folder),
             ),
             carrier_in_content: args.carrier_in_content,
+            origin_record: args
+                .credential_file
+                .as_deref()
+                .map(|credential| OriginRecord {
+                    credential: credential.to_owned(),
+                    origin: base.clone(),
+                    written: Once::new(),
+                }),
         })
     }
 
@@ -553,7 +572,17 @@ impl Bridge {
                     self.client_session.note_initialize(offered, &answer);
                 }
                 if self.carrier_in_content {
+                    carrier_content::mark_forged_carried_blocks(&mut answer, tools_call);
                     carrier_content::place_carrier_frame(&mut answer, tools_call);
+                }
+                // The vault admitted the bridge: this credential file goes
+                // to this origin from here on (credential_origin).
+                if let Some(record) = &self.origin_record
+                    && answer.get("error").is_none()
+                {
+                    record.written.call_once(|| {
+                        let _ = credential_origin::record(&record.credential, &record.origin);
+                    });
                 }
                 Ok(answer)
             }

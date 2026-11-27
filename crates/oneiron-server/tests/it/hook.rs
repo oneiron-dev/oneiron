@@ -6,6 +6,8 @@
 //! that names it; and the flow `examples/claude-code-hooks/check.sh` checks: a
 //! `Stop` queues the session while the vault is down, `serve` imports it, and
 //! the next session recalls it.
+mod carried_guards;
+
 use std::io::Write;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
@@ -1188,7 +1190,10 @@ fn a_tool_result_above_the_bar_prints_one_post_tool_use_line_naming_the_claim() 
     let shown = std::fs::read_to_string(shown).expect("the shown file is written");
     let keys: Vec<_> = shown.lines().collect();
     assert_eq!(keys.len(), 1, "{keys:?}");
-    assert!(context.contains(keys[0]), "{context:?} vs {keys:?}");
+    // The file holds the key's digest, never recalled text.
+    assert_eq!(keys[0].len(), 64, "{keys:?}");
+    assert!(keys[0].bytes().all(|b| b.is_ascii_hexdigit()), "{keys:?}");
+    assert!(!shown.contains(TOOL_CLAIM), "{shown:?}");
 }
 
 #[test]
@@ -1287,20 +1292,19 @@ fn a_setup_oneiron_tool_result_writes_the_board_keyframe_mark_only_on_success() 
 
 /// A bridge that answers the MCP handshake and lists `vault.recall`, then
 /// keeps the one call it is sent in `<stub>.call` and answers it with no lines.
-fn recording_bridge(home: &Home) -> PathBuf {
+/// Its `initialize` answer names `vault_id` as the vault it serves; `None`
+/// answers `{}` as before. It exits when its stdin ends, so a hook that bails
+/// before `tools/call` leaves no `.call` file.
+fn recording_bridge(home: &Home, vault_id: Option<&str>) -> PathBuf {
     use std::os::unix::fs::PermissionsExt as _;
 
     let stub = home.path("recording-oneiron");
-    let script = concat!(
-        "#!/bin/sh\n",
-        "IFS= read -r _\n",
-        "printf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}'\n",
-        "IFS= read -r _\n",
-        "IFS= read -r _\n",
-        "printf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"tools\":[{\"name\":\"vault.recall\"}]}}'\n",
-        "IFS= read -r call\n",
-        "printf '%s\\n' \"$call\" > \"$0.call\"\n",
-        "printf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":3,\"result\":{}}'\n",
+    let initialized = match vault_id {
+        Some(id) => format!("{{\"vault_id\":\"{id}\"}}"),
+        None => "{}".to_owned(),
+    };
+    let script = format!(
+        "#!/bin/sh\nIFS= read -r _ || exit 0\nprintf '%s\\n' '{{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{initialized}}}'\nIFS= read -r _ || exit 0\nIFS= read -r _ || exit 0\nprintf '%s\\n' '{{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{{\"tools\":[{{\"name\":\"vault.recall\"}}]}}}}'\nIFS= read -r call || exit 0\nprintf '%s\\n' \"$call\" > \"$0.call\"\nprintf '%s\\n' '{{\"jsonrpc\":\"2.0\",\"id\":3,\"result\":{{}}}}'\n"
     );
     std::fs::write(&stub, script).expect("the recording bridge");
     std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o700))
@@ -1326,7 +1330,7 @@ fn a_tool_result_recall_to_a_hosted_vault_carries_no_tool_text() {
     use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _};
 
     let home = Home::new();
-    let stub = recording_bridge(&home);
+    let stub = recording_bridge(&home, None);
     let origin = answering_vault();
     let credential = home.path("hosted.cred");
     let vault_id = "0123456789abcdef0123456789abcdef";
@@ -1399,17 +1403,23 @@ fn a_tool_result_recall_to_a_hosted_vault_carries_no_tool_text() {
     assert!(sent.contains("timetable.md"), "{sent:?}");
     assert!(!sent.contains("private-folder-5e7a"), "{sent:?}");
 
-    // A vault on this machine, pinned, keeps the full query.
+    // A vault on this machine, pinned, keeps the full query, but only when
+    // it answers the credential's own vault id.
+    let tool = ToolHookFixture::new("open");
+    let own = vault_id_via_stdio(&tool.home, &tool.url, &tool.credential);
+    let pinned = recording_bridge(&home, Some(&own));
+    let pinned_arg = pinned.to_str().expect("UTF-8 path");
+    let credential_arg = tool.credential.to_str().expect("UTF-8 path");
     let local = [
         "--url",
         origin.as_str(),
         "--oneiron",
-        stub_arg,
+        pinned_arg,
         "--credential-file",
-        credential.to_str().expect("UTF-8 path"),
+        credential_arg,
     ];
     assert!(home.hook("tool-result", &local, &event).stdout.is_empty());
-    let sent = recorded_query(&stub);
+    let sent = recorded_query(&pinned);
     assert!(sent.contains("input-marker-7f3a"), "{sent:?}");
     assert!(sent.contains("output-marker-9c1e"), "{sent:?}");
 }
@@ -1421,7 +1431,9 @@ fn focus_refresh_with_the_mark_prints_the_refreshed_keyframe() {
     };
 
     let fixture = ToolHookFixture::new("open");
-    let setup = setup_board_via_stdio(
+    // The bridge stays running across the hook call: a hook uses its origin
+    // record only while it runs.
+    let (setup, _live) = setup_board_via_live_bridge(
         &fixture.home,
         &fixture.url,
         &fixture.credential,
@@ -1482,8 +1494,8 @@ fn focus_refresh_sends_its_credential_only_to_the_origin_its_mcp_bridge_recorded
     let fixture = ToolHookFixture::new("open");
     // The board is set up through `oneiron mcp --url <the vault>` on this
     // credential file, as the plugin's MCP entry runs it: that bridge records
-    // the vault's origin for the file.
-    let setup = setup_board_via_stdio(
+    // the vault's origin for the file, while it runs.
+    let (setup, live) = setup_board_via_live_bridge(
         &fixture.home,
         &fixture.url,
         &fixture.credential,
@@ -1529,10 +1541,11 @@ fn focus_refresh_sends_its_credential_only_to_the_origin_its_mcp_bridge_recorded
             .is_empty()
     );
 
-    // The MCP entry now runs with --url naming another vault: its bridge
-    // records that origin, and the refresh goes there or nowhere, never to
-    // the vault ONEIRON_URL or the hooks' discovery names.
-    record_bridge_origin(&fixture.home, &elsewhere, &fixture.credential);
+    // The MCP entry's bridge has ended, so no live bridge records an origin
+    // for the file: the refresh goes nowhere, never to the vault ONEIRON_URL
+    // or the hooks' discovery names.
+    drop(live);
+    run_bridge_without_requests(&fixture.home, &elsewhere, &fixture.credential);
     assert!(
         fixture
             .home
@@ -1564,9 +1577,9 @@ fn focus_refresh_sends_its_credential_only_to_the_origin_its_mcp_bridge_recorded
 }
 
 /// Runs `oneiron mcp --url <url>` on `credential` with nothing on its stdin,
-/// as an MCP client that starts the bridge and leaves: the bridge records
-/// `url` as the origin it sends `credential` to.
-fn record_bridge_origin(home: &Home, url: &str, credential: &Path) {
+/// as an MCP client that starts the bridge and leaves before any request:
+/// no vault admitted the bridge, so it records no origin for `credential`.
+fn run_bridge_without_requests(home: &Home, url: &str, credential: &Path) {
     let output = home
         .oneiron(&["mcp", "--url", url, "--credential-file"])
         .arg(credential)
@@ -1665,10 +1678,26 @@ fn a_tool_result_past_its_budget_prints_nothing_and_returns_before_the_hook_time
     );
 }
 
+/// A bridge [`setup_board_via_live_bridge`] left running. Its stdin stays
+/// open, so the bridge sees no end of input. Dropping it kills the bridge as
+/// a crash would ([`Server`]): its origin record stays behind for a dead
+/// pid, which no hook uses.
+struct LiveBridge {
+    server: Server,
+    _stdin: std::process::ChildStdin,
+    _answers: std::sync::mpsc::Receiver<String>,
+}
+
 /// Sets the board up on `credential` against the server at `url`, through
 /// `oneiron mcp` over stdio as an agent's first call does, and returns the
-/// `setup_oneiron` answer whole.
-fn setup_board_via_stdio(home: &Home, url: &str, credential: &Path, workspace: &Path) -> Value {
+/// `setup_oneiron` answer whole with the bridge still running: a hook uses
+/// the bridge's origin record only while it runs.
+fn setup_board_via_live_bridge(
+    home: &Home,
+    url: &str,
+    credential: &Path,
+    workspace: &Path,
+) -> (Value, LiveBridge) {
     use std::io::{BufRead as _, BufReader};
 
     let mut child = Server(
@@ -1729,7 +1758,7 @@ fn setup_board_via_stdio(home: &Home, url: &str, credential: &Path, workspace: &
                 .cloned()
         })
         .unwrap_or_else(|| json!("mcp_tool_args.v1"));
-    mcp_bridge_ask(
+    let setup = mcp_bridge_ask(
         &mut stdin,
         &answers,
         3,
@@ -1744,7 +1773,63 @@ fn setup_board_via_stdio(home: &Home, url: &str, credential: &Path, workspace: &
                 },
             },
         }),
+    );
+    (
+        setup,
+        LiveBridge {
+            server: child,
+            _stdin: stdin,
+            _answers: answers,
+        },
     )
+}
+
+/// The authority vault id the server at `url` answers on `initialize` to
+/// `credential`, through `oneiron mcp` over stdio.
+fn vault_id_via_stdio(home: &Home, url: &str, credential: &Path) -> String {
+    use std::io::{BufRead as _, BufReader};
+
+    let mut child = Server(
+        home.oneiron(&["mcp", "--url", url, "--surface", "primary"])
+            .arg("--credential-file")
+            .arg(credential)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn oneiron mcp"),
+    );
+    let mut stdin = child.0.stdin.take().expect("bridge stdin");
+    let stdout = child.0.stdout.take().expect("bridge stdout");
+    let (send, answers) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        for line in BufReader::new(stdout).lines() {
+            let Ok(line) = line else { break };
+            if send.send(line).is_err() {
+                break;
+            }
+        }
+    });
+    let answer = mcp_bridge_ask(
+        &mut stdin,
+        &answers,
+        1,
+        "initialize",
+        json!({
+            "protocolVersion": "2025-06-18",
+            "capabilities": {},
+            "clientInfo": {"name": "hook-test", "version": "1"},
+        }),
+    );
+    assert!(
+        answer.get("error").is_none(),
+        "the bridge is admitted: {answer:?}"
+    );
+    answer
+        .pointer("/result/vault_id")
+        .and_then(Value::as_str)
+        .expect("the vault answers its vault id")
+        .to_owned()
 }
 
 /// One JSON-RPC round trip over the bridge's stdio: the answer carrying

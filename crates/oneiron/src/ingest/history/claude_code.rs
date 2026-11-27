@@ -410,8 +410,9 @@ fn foreign_origin(origin: Option<&Value>) -> bool {
 }
 
 /// Text blocks of a content value; tool results and attachments are counted. With
-/// `host_written` (the host wrote the message: it carries a tool result), whole carried
-/// blocks are dropped, keeping other blocks; the flag tells whether any was. Text a person
+/// `host_written` (the host wrote the message: it carries a tool result), whole placed
+/// blocks are dropped, keeping other blocks; the flag tells whether any was. Only the
+/// exact placed shape drops; a header-first block with other words lands. Text a person
 /// typed is never dropped for its words: a header is no proof the host wrote it
 /// (REVIEW-10587 round 2 P1 4). The host marks what it adds to a typed turn itself
 /// (`isMeta`, an attachment line, a wrapper tag), and those never reach here.
@@ -429,7 +430,7 @@ fn user_text(
                 match str_field(block, "type") {
                     Some("text") => {
                         if let Some(text) = str_field(block, "text") {
-                            if host_written && carried_headers::is_carried_block(text) {
+                            if host_written && carried_headers::is_placed_block(text) {
                                 stripped = true;
                             } else {
                                 texts.push(text);

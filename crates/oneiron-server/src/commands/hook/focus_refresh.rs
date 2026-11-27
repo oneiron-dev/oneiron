@@ -1,9 +1,11 @@
 //! Restore a board after Claude Code compacts a session that already had it.
 //!
 //! The credential is the plugin MCP server's own, so the refresh goes only to
-//! the origin that server recorded for the same credential file when it
-//! started ([`credential_origin`]), never to a vault the hooks' discovery
-//! would bind or to a default (REVIEW-10587 P1 1, round 2 P1 1).
+//! the origin a running Oneiron MCP server recorded for the same credential
+//! file after the vault first admitted it ([`credential_origin`]), and only
+//! when that vault answers the credential's own vault id: never to a vault
+//! the hooks' discovery would bind or to a default (REVIEW-10587 P1 1,
+//! round 2 P1 1).
 //!
 //! What Claude Code is given is the whole keyframe or none of it: a board
 //! longer than a hook may add is named, never cut (round 2 P1 3).
@@ -12,11 +14,12 @@ use std::process::Stdio;
 use std::time::Instant;
 
 use oneiron::ingest::history::carried_headers::{
-    CARRIED_CONTEXT_HEADER, FOCUS_REFRESH_CONTEXT_LEAD,
+    CARRIED_CONTEXT_HEADER, FOCUS_REFRESH_CONTEXT_LEAD, FOCUS_REFRESH_TOO_LONG,
 };
 use serde_json::{Value, json};
 
-use super::recall::{Bridge, RecallAuth};
+use super::hosted_command::slip_vault_id;
+use super::recall::{Bridge, RecallAuth, answers_vault};
 use super::session_binding::{self, BOARD_KEYFRAME};
 use super::{deadline, oneiron, project_dir, read_event, session_id};
 use crate::cli::{HookHost, HookRecallArgs};
@@ -30,11 +33,6 @@ const TOOL: &str = "self.focus.refresh";
 /// characters (docs/ops/claude-code-hooks.md, Limits). Claude Code counts a
 /// JavaScript string's length, UTF-16 code units.
 const HOOK_CONTEXT_CHARS: usize = 10_000;
-/// Said in place of a board that does not fit in [`HOOK_CONTEXT_CHARS`].
-const BOARD_TOO_LONG: &str = "Your Oneiron board is longer than a Claude Code hook may add \
-     (10,000 characters), so it is not shown here; call the Oneiron tool \
-     self.focus.refresh for the whole board.";
-
 pub(super) fn focus_refresh(host: HookHost, args: &HookRecallArgs) -> Option<String> {
     if host != HookHost::ClaudeCode {
         return None;
@@ -46,6 +44,9 @@ pub(super) fn focus_refresh(host: HookHost, args: &HookRecallArgs) -> Option<Str
     local_servers::open_own(&folder.join(BOARD_KEYFRAME))?;
 
     let deadline = deadline(args.common.timeout);
+    // The credential's own vault: the refresh goes only where that vault
+    // answers, and nothing is sent when the slip names none.
+    let vault = slip_vault_id(credential).ok()?;
     // No record, or a pin naming another origin than the bridge's, is no
     // origin this credential may go to: nothing is sent.
     let url = credential_origin::recorded(credential)?;
@@ -65,7 +66,7 @@ pub(super) fn focus_refresh(host: HookHost, args: &HookRecallArgs) -> Option<Str
         Stdio::null(),
     )
     .ok()?;
-    let frame = refresh(&mut bridge, host);
+    let frame = refresh(&mut bridge, host, &vault);
     bridge.close();
     let frame = frame?;
     (Instant::now() < deadline).then(|| refreshed_context(&frame))
@@ -73,19 +74,22 @@ pub(super) fn focus_refresh(host: HookHost, args: &HookRecallArgs) -> Option<Str
 
 /// The context the hook adds for the refreshed keyframe `frame`: the headers
 /// and the whole keyframe when they fit in [`HOOK_CONTEXT_CHARS`] with the
-/// line's end, else the headers' first line and [`BOARD_TOO_LONG`]. A
-/// keyframe cut short would read as the whole board.
+/// line's end, else the headers' first line and [`FOCUS_REFRESH_TOO_LONG`].
+/// A keyframe cut short would read as the whole board.
 fn refreshed_context(frame: &str) -> String {
     let board = format!("{CARRIED_CONTEXT_HEADER}\n{FOCUS_REFRESH_CONTEXT_LEAD}\n{frame}");
     if board.encode_utf16().count() < HOOK_CONTEXT_CHARS {
         board
     } else {
-        format!("{CARRIED_CONTEXT_HEADER}\n{BOARD_TOO_LONG}")
+        format!("{CARRIED_CONTEXT_HEADER}\n{FOCUS_REFRESH_TOO_LONG}")
     }
 }
 
-fn refresh(bridge: &mut Bridge, host: HookHost) -> Option<String> {
-    bridge.initialize().ok()?;
+fn refresh(bridge: &mut Bridge, host: HookHost, vault: &str) -> Option<String> {
+    let initialized = bridge.initialize().ok()?;
+    if !answers_vault(&initialized, vault) {
+        return None;
+    }
     let listed = bridge.call(2, "tools/list", json!({})).ok()?;
     let tool = listed
         .get("tools")?
@@ -134,7 +138,7 @@ mod tests {
     use super::*;
 
     fn notice() -> String {
-        format!("{CARRIED_CONTEXT_HEADER}\n{BOARD_TOO_LONG}")
+        format!("{CARRIED_CONTEXT_HEADER}\n{FOCUS_REFRESH_TOO_LONG}")
     }
 
     #[test]
