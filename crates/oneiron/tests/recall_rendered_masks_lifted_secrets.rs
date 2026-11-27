@@ -157,6 +157,13 @@ fn a_non_owner_recall_renders_a_lifted_claim_value_as_its_handle() -> TestResult
         },
         900,
     )?;
+    // A raw put writes no text postings, so the claim must be indexed as the claim writer
+    // indexes its value (field "val") or no recall finds it and the mask is never asked.
+    // Index before the mark, so the indexed input is the fixture's own value.
+    vault
+        .batch()
+        .text(&claim, &[("val", CLAIM_TEXT)])
+        .commit()?;
     let handle = mark_lifted_key(&vault, claim, CLAIM_TEXT, SECRET)?;
     let agent = reader(&vault, owner)?;
     let proof = credential(&vault, agent, EdgeActorClass::Agent)?;
