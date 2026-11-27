@@ -545,8 +545,6 @@ impl Memory<'_> {
         .with_guest_revoke(guest_revoke)
         .with_owner_act(owner_act)
         .with_run(run.as_deref());
-        let file_digests = crate::deletion::delete::remaining::file_body_digests(self.vault, id)
-            .map_err(MemoryError::from)?;
         let outcome = self
             .vault
             .delete_entity_with_reason_gated(id, reason, gated);
@@ -577,7 +575,7 @@ impl Memory<'_> {
                 self.vault,
                 reason,
                 outcome.sweep_key.as_deref(),
-                &file_digests,
+                &outcome.released_file_digests,
             ),
         })
     }

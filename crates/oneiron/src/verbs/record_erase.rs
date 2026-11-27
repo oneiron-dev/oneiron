@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use super::owner_confirm;
 use crate::consent::AuthenticatedOwner;
 use crate::deletion::DeleteEntityPreview;
+use crate::deletion::LegalHoldKind;
 use crate::deletion::LegalHoldTarget;
 use crate::memory::RemainingNotice;
 use crate::memory::{
@@ -194,7 +195,7 @@ fn vault_syncs_in_txn(vault: &crate::Vault, txn: &heed::RoTxn<'_>) -> crate::Res
 /// holds keep a sealed copy of `record` outside the vault: backups and exports notes
 /// and the disk note always; the devices note when the record was shared or the vault
 /// syncs; the provider note when the vault's settings let a model call leave the
-/// device; the hold note when a hold the owner may see covers the record.
+/// device; the hold note when an owner-visible customer hold names a sealed capture of the record.
 fn remaining_for_erase(
     memory: &Memory<'_>,
     owner: &AuthenticatedOwner,
@@ -242,9 +243,14 @@ fn remaining_for_erase(
             let now = vault.store.clock.now_recorded_at();
             crate::store::legal_hold::holds_in_txn(&vault.store, txn)?
                 .into_iter()
+                // Host orders keep no copy in this vault. Customer holds seal each
+                // Record target on placement or widening and name it in clone_captures.
+                // A row from before sealed captures has none and does not count.
                 .filter(|hold| {
                     hold.stands()
                         && hold.owner_may_see(now)
+                        && hold.kind == LegalHoldKind::Customer
+                        && !hold.clone_captures.is_empty()
                         && hold.targets.contains(&LegalHoldTarget::Record(*record))
                 })
                 .fold(0u32, |count, _| count.saturating_add(1))

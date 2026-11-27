@@ -1,5 +1,7 @@
 //! Public and gated delete entry points plus the headerful orchestration state machine.
 
+use std::collections::BTreeSet;
+
 use crate::Vault;
 use crate::batch::EntityMetadataHeader;
 use crate::consent::AuthenticatedOwner;
@@ -85,13 +87,12 @@ impl Vault {
         id: &EntityId,
         reason: DeleteReason,
     ) -> Result<(DeleteEntityOutcome, Vec<crate::memory::RemainingNotice>)> {
-        let file_digests = super::remaining::file_body_digests(self, id)?;
         let outcome = self.delete_entity_with_reason_as_owner(owner, id, reason)?;
         let remaining = super::remaining::delete_remaining(
             self,
             reason,
             outcome.sweep_key.as_deref(),
-            &file_digests,
+            &outcome.released_file_digests,
         );
         Ok((outcome, remaining))
     }
@@ -480,7 +481,7 @@ impl Vault {
             &plan.window_label,
             &plan.captured,
         )?;
-        self.delete_receipt_phase(
+        let mut outcome = self.delete_receipt_phase(
             id,
             reason,
             gate,
@@ -497,7 +498,15 @@ impl Vault {
             hard.crdt_persisted,
             hard.authority_settled,
             hard.soft_complete_at,
-        )
+        )?;
+        outcome.released_file_digests = outcome
+            .released_file_digests
+            .into_iter()
+            .chain(hard.released_file_digests)
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        Ok(outcome)
     }
 
     /// [`Self::delete_entity`] with `between` run in the gap between the

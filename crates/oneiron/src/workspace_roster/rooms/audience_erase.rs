@@ -118,6 +118,7 @@ fn erase_edit_as(
                 sweep_key: None,
                 turn_program_details: Vec::new(),
                 version_release: false,
+                released_file_digests: Vec::new(),
             }
         };
         Ok(Some(ConfirmedEraseOutcome::Completed(outcome)))

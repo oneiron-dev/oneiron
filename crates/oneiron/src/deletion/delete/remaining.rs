@@ -1,6 +1,6 @@
 //! What a delete answer lists as still out of its reach (H5): whether old
-//! backups hold the record, and which of its file bodies are still in use
-//! after the delete's collect pass.
+//! backups hold the record, and which of the file bodies found in the
+//! delete's own writer are still in use after the collect pass.
 
 use std::collections::BTreeSet;
 
@@ -10,14 +10,17 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::memory::{RemainingNotice, remaining_after_delete};
 use crate::provenance::body::{BodyLocation, owned_bodies_in_txn};
+use crate::store::ManifestDbs;
 
-/// The digests of every body `id` owns that is held in a FILE: what the
-/// delete about to run may leave still in use. One read transaction;
-/// deduplicated.
-pub(crate) fn file_body_digests(vault: &Vault, id: &EntityId) -> Result<Vec<[u8; 32]>> {
-    let txn = vault.store.env.read_txn()?;
+/// Deduplicated digests of every FILE body `id` owns, read in the delete's
+/// own writer before it releases the descriptors.
+pub(super) fn file_body_digests_in_txn(
+    store: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Vec<[u8; 32]>> {
     let mut digests = BTreeSet::new();
-    for body in owned_bodies_in_txn(&vault.store, &txn, id)? {
+    for body in owned_bodies_in_txn(store, txn, id)? {
         if let Some(held) = body.state.held() {
             if held.location == BodyLocation::File {
                 digests.insert(held.blake3);

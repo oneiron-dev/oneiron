@@ -20,6 +20,7 @@ use super::super::topology_delete_intent::{
     TopologyDeletePhase, clear_own_topology_delete_in_txn, reserve_topology_delete_in_txn,
 };
 use super::DeleteEntityOutcome;
+use super::remaining::file_body_digests_in_txn;
 
 impl Vault {
     /// Purges the active store in one transaction, then writes the hard
@@ -180,6 +181,7 @@ impl Vault {
                 sweep_key: None,
                 turn_program_details: turn_program_details.to_vec(),
                 version_release: false,
+                released_file_digests: Vec::new(),
             });
         }
         // ONE-1122 `dt:` local hard-delete marker: the permanent local truth
@@ -226,6 +228,7 @@ impl Vault {
         // A FEDERATION_GRANT row erased here is marked withdrawn; this door's
         // own `dt:` marker and tombstone carry its erasure (FIX 11779).
         crate::authority::mark_if_withdrawn_grant_in_txn(&self.store, &mut wtxn, *id)?;
+        let released_file_digests = file_body_digests_in_txn(&self.store, &wtxn, id)?;
         let (existed, citing, purged_cancelled) = self.purge_entity_active_store_in_txn(
             &mut wtxn,
             id,
@@ -336,6 +339,7 @@ impl Vault {
             sweep_key: Some(sweep_key),
             turn_program_details: turn_program_details.to_vec(),
             version_release: false,
+            released_file_digests,
         })
     }
 }

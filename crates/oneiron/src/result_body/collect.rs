@@ -494,8 +494,8 @@ impl Vault {
     /// descriptor holds: a released file still on disk after the collect pass
     /// (pinned by a reader, past the pass's bound, or waiting on an older
     /// read snapshot) is one "still in use and removed later" (H5, F13). A
-    /// digest another record still holds is not this delete's file. No
-    /// directory: none left.
+    /// digest another record still holds, or a raw output holds on its own
+    /// (FIX 5399b), is not this delete's file. No directory: none left.
     ///
     /// # Errors
     ///
@@ -505,7 +505,9 @@ impl Vault {
             let txn = self.store.env.read_txn()?;
             let mut kept = BTreeSet::new();
             for digest in digests {
-                if !digest_is_held_in_txn(&self.store, &txn, digest)? {
+                if !digest_is_held_in_txn(&self.store, &txn, digest)?
+                    && !code_run_body_held_in_txn(&self.store, &txn, digest)?
+                {
                     kept.insert(*digest);
                 }
             }
