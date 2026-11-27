@@ -80,14 +80,15 @@ impl TurnSpeakers {
         ) {
             return Ok(Vec::new());
         }
-        let writers = text.native_writers();
+        // RED (proof pin): round 1's order, the filter before the owner's exception.
+        let writers = standing(vault, txn, text.native_writers());
         if !self.shared
             && let [writer] = writers.as_slice()
             && crate::policy_model::is_live_vault_owner_in_txn(vault, txn, writer)?
         {
             return Ok(Vec::new());
         }
-        Ok(standing(vault, txn, writers))
+        Ok(writers)
     }
 }
 
