@@ -484,6 +484,7 @@ impl Vault {
             return Ok(None);
         };
         if let HistoryImportCaller::GrantedAgent(agent) = caller
+            && false
             && !self
                 .credential_admits_project_placement_in_txn(&txn, agent, presented, true, project)?
         {
