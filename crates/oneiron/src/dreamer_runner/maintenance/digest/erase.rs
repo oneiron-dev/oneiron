@@ -66,7 +66,6 @@ fn index_stored_digests_once_in_txn(
         let Ok(locator) = <[u8; 32]>::try_from(key.as_slice()) else {
             let mut full_key = DIGEST.decl().prefix.to_vec();
             full_key.extend_from_slice(&key);
-            DIGEST.delete_raw(store, txn, &full_key)?;
             let origin = digest_origin(&full_key)?;
             secret_custody::revoke_side_row_custody_with_context_in_txn(write, txn, &origin)?;
             continue;
