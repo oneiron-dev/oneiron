@@ -1,5 +1,6 @@
 {
   "name": "self.decisions.asks",
+  "description": "Lists open decision asks at roles the caller currently holds, oldest first, when the caller can read each ask in full.",
   "input": "EmptyRequest",
   "output": "Vec<crate::llm::decision::DecisionAsk>",
   "call": "crate::task_verb::sdk::host_only(memory, \"self.decisions.asks\", &EmptyRequest {})?",

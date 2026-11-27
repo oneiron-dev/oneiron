@@ -1,5 +1,6 @@
 {
   "name": "self.code.checkout.bind",
+  "description": "Binds and materializes the calling run's checkout lease for an admitted Git ref.",
   "input": "crate::memory::repo_doors::RepoCheckoutBindInput",
   "output": "crate::memory::repo_doors::RepoCheckoutBindOutput",
   "scope": "Write",

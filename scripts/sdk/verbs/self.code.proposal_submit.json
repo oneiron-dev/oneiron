@@ -1,5 +1,6 @@
 {
   "name": "self.code.proposal_submit",
+  "description": "Stores a whole-file change as an immutable proposal against the run's pinned work base.",
   "input": "crate::memory::repo_doors::RepoProposalSubmitInput",
   "output": "crate::memory::repo_doors::RepoProposalSubmitOutput",
   "scope": "Write",

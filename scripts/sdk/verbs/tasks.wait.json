@@ -1,5 +1,6 @@
 {
   "name": "tasks.wait",
+  "description": "Waits on a run's reader or agent children, or on its actor's world-privacy request, and returns their states or parks the run while the wait is pending.",
   "input": "crate::code_run::TaskWaitInput",
   "output": "crate::code_run::TaskWaitOutput",
   "scope": "Read",

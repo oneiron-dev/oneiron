@@ -1,5 +1,6 @@
 {
   "name": "vault.graph.ask",
+  "description": "Asks one typed question over graph units through the host's decision ladder and records each answer as a proposed claim private to the caller.",
   "input": "crate::receipt::GraphAskRequest",
   "output": "crate::receipt::GraphAskOutcome",
   "call": "crate::task_verb::sdk::host_only(memory, \"vault.graph.ask\", &input)?",

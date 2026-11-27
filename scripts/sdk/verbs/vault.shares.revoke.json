@@ -1,5 +1,6 @@
 {
   "name": "vault.shares.revoke",
+  "description": "Revokes one share immediately as its issuer or the live vault owner and returns its status.",
   "input": "crate::task_verb::sdk::ShareRevokeRequest",
   "output": "crate::receipt::ShareRevokeReceipt",
   "call": "crate::task_verb::sdk::revoke_share_as_caller(memory, input)?",

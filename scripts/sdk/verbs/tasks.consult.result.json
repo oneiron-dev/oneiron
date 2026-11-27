@@ -1,5 +1,6 @@
 {
   "name": "tasks.consult.result",
+  "description": "Records the leased agent run's answer with evidence, or its abstention with a reason, on the consult task it is allowed to answer.",
   "input": "crate::task_verb::run_doors::ConsultLandRequest",
   "output": "crate::task_verb::run_doors::ConsultLandReply",
   "scope": "Write",

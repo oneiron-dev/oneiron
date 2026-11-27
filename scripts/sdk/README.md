@@ -177,6 +177,17 @@ The cursor's presence, not a full row count, decides source exhaustion. A vector
 output is an exhaustive set. MCP can split either result into retained transport
 pages; drain `meta.page.cursor` before using an engine `next_after` cursor.
 
+## Verb tree data
+
+Every verb row has a top-level `description`: one printable ASCII line ending in a period, at
+most 241 characters including the period, with no backslash, double quote or `*/`. The optional
+`example` is one non-blank line of code that calls the row's own verb by its exact name.
+
+`scripts/sdk/verb-tree/families.json` gives a non-blank line for each root with dotted descendants.
+`scripts/sdk/verb-tree/vault_capabilities.json` assigns each `vault.*` second segment to exactly
+one capability label. A PR adding a new root family or vault child must add its family line or
+label membership, respectively, or generation fails.
+
 ## Task handles
 
 `client.ask(spec)` returns `{handle, count, replayed}` immediately. The

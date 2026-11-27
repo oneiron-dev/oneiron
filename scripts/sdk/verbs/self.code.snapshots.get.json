@@ -1,5 +1,6 @@
 {
   "name": "self.code.snapshots.get",
+  "description": "Gets the named snapshot's manifest at the ref's current commit, limited to grant-readable paths.",
   "input": "crate::memory::repo_doors::RepoSnapshotsGetInput",
   "output": "crate::memory::repo_doors::RepoSnapshotsGetOutput",
   "scope": "Read",

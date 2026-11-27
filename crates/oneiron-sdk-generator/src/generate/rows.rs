@@ -17,7 +17,7 @@ use crate::facade_types::{Inventory, type_names};
 use crate::py::re::compile_fullmatch;
 use crate::py::text::repr_str;
 use crate::py::value::{Dict, Value};
-use crate::verb_table::load_verbs;
+use crate::verb_table::{check_verb_tree, load_verbs};
 
 mod sets;
 
@@ -543,18 +543,18 @@ fn check_generic_binding(row: &Dict) -> Result<bool, GenerateError> {
     Ok(true)
 }
 
-/// A callable row's one-line description.
+/// Every original row's one-line description.
 fn check_description(row: &Dict) -> Result<(), GenerateError> {
-    let Some(text) = row.get("description") else {
-        return Ok(());
-    };
-    let valid = text.as_str().is_some_and(|text| {
-        DESCRIPTION.is_match(text) && !["\\", "\"", "*/"].iter().any(|bad| text.contains(bad))
-    });
-    if !row.contains_key("call") || !valid {
+    let valid = row
+        .get("description")
+        .and_then(Value::as_str)
+        .is_some_and(|text| {
+            DESCRIPTION.is_match(text) && !["\\", "\"", "*/"].iter().any(|bad| text.contains(bad))
+        });
+    if !valid {
         return Err(refuse(
             row,
-            "a description is one printable ASCII line of a callable row, ending in a period, with no backslash, \
+            "every row has a description: one printable ASCII line ending in a period, with no backslash, \
              double quote or `*/`",
         ));
     }
@@ -603,6 +603,10 @@ impl Generator {
             .into_iter()
             .map(|row| rows.push(row))
             .collect();
+        check_verb_tree(
+            &sdk,
+            manifest.iter().filter_map(|&id| rows[id]["name"].as_str()),
+        )?;
         let mut generator = Self {
             root,
             hand_declared_cache: super::common::HandDeclaredCache::new(),

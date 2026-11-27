@@ -1,5 +1,6 @@
 {
   "name": "self.leader.split",
+  "description": "Splits the bound leader's task into a linked subproject under a child leader and a narrowed authority slice.",
   "input": "crate::code_run::LeaderSplitInput",
   "output": "crate::code_run::LeaderSplitOutput",
   "scope": "Write",
