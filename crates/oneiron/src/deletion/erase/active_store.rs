@@ -480,9 +480,8 @@ impl Vault {
                 ppr::invalidate_ppr_for_delete(&self.store, wtxn, id, &cleanup.neighbors)?;
                 crate::store::graph_version::increment_graph_version(&self.store, wtxn)?;
             }
-            let had_retained_copy = crate::batch::export::archive_retained_record_erase::erase_retained_side_rows_of_record_in_txn(&self.store, wtxn, id)?;
             return Ok((
-                had_refinement || had_merge_receipt || had_tags || had_missing || had_retained_copy,
+                had_refinement || had_merge_receipt || had_tags || had_missing,
                 had_vector,
                 ledger_changed,
             ));
