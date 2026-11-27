@@ -11,7 +11,6 @@ use serde::{Deserialize, Serialize};
 use super::owner_confirm;
 use crate::consent::AuthenticatedOwner;
 use crate::deletion::DeleteEntityPreview;
-use crate::deletion::LegalHoldKind;
 use crate::deletion::LegalHoldTarget;
 use crate::memory::RemainingNotice;
 use crate::memory::{
@@ -249,8 +248,6 @@ fn remaining_for_erase(
                 .filter(|hold| {
                     hold.stands()
                         && hold.owner_may_see(now)
-                        && hold.kind == LegalHoldKind::Customer
-                        && !hold.clone_captures.is_empty()
                         && hold.targets.contains(&LegalHoldTarget::Record(*record))
                 })
                 .fold(0u32, |count, _| count.saturating_add(1))
