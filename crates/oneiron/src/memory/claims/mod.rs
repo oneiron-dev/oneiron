@@ -297,6 +297,14 @@ impl RecordRefusal {
 pub use crate::deletion::SafeDeleteReason;
 
 #[doc(hidden)]
+pub use oneiron_records::memory::claims::REMAINING_HISTORY_SWEEP;
+#[doc(hidden)]
+pub use oneiron_records::memory::claims::REMAINING_HISTORY_SWEEP_TEXT;
+#[doc(hidden)]
+pub use oneiron_records::memory::claims::RemainingNotice;
+#[doc(hidden)]
+pub use oneiron_records::memory::claims::remaining_after_delete;
+#[doc(hidden)]
 pub use oneiron_records::memory::claims::{
     DELETE_RECEIPT_VERSION_RELEASE, DeleteReceipt, DeleteRequestState, PendingWrite,
 };
