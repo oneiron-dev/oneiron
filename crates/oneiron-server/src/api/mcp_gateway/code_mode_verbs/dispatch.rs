@@ -86,6 +86,9 @@ impl McpCodeModeVerbs {
         )
     }
 
+    /// Only the test-only legacy task result lists the guest manifests: a
+    /// caller-source run has no guests (FIX EXECUTE-SOURCE-BROWSER-PARITY).
+    #[cfg(test)]
     pub(crate) fn manifests(&self) -> Vec<Value> {
         self.guests.manifests()
     }
