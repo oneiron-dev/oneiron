@@ -120,10 +120,11 @@ pub(crate) async fn vault_imports_cancel(
 
 /// Who lands a hook transcript: the owner on its proof, or the actor its
 /// credential binds, whose live Grant naming `vault.imports.hook_transcript`
-/// the engine checks.
+/// the engine checks. The agent's credential travels with it so the engine can
+/// judge a hand-over whose folder is bound against that credential.
 pub(in crate::api::facade) enum TranscriptImporter {
     Owner(AuthenticatedOwner),
-    Agent(EntityId),
+    Agent(EntityId, Option<oneiron::authority::VerifiedSlip>),
 }
 
 /// `vault.imports.hook_transcript`'s caller, as `door_admits` checks it first
@@ -143,7 +144,10 @@ pub(in crate::api::facade) fn transcript_importer(
             server
                 .vault()
                 .admit_hook_transcript_caller(HistoryImportCaller::GrantedAgent(actor))?;
-            Ok(TranscriptImporter::Agent(actor))
+            Ok(TranscriptImporter::Agent(
+                actor,
+                auth.verified_slip().cloned(),
+            ))
         }
     }
 }
@@ -161,11 +165,16 @@ pub(crate) async fn vault_imports_hook_transcript(
     };
     let server = Arc::clone(server);
     let answer = super::clock_ingress::run_blocking(move || {
-        let caller = match &importer {
-            TranscriptImporter::Owner(owner) => HistoryImportCaller::Owner(owner),
-            TranscriptImporter::Agent(agent) => HistoryImportCaller::GrantedAgent(*agent),
+        let (caller, presented) = match &importer {
+            TranscriptImporter::Owner(owner) => (HistoryImportCaller::Owner(owner), None),
+            TranscriptImporter::Agent(agent, presented) => (
+                HistoryImportCaller::GrantedAgent(*agent),
+                presented.as_ref(),
+            ),
         };
-        server.vault().import_hook_transcript(caller, &input)
+        server
+            .vault()
+            .import_hook_transcript(caller, presented, &input)
     })
     .await
     .map_err(|_| internal(VERB))

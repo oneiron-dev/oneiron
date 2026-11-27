@@ -10,7 +10,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use oneiron::ingest::history::HistoryConversation;
+use oneiron::ingest::history::{HistoryConversation, HistoryFile, HistorySource};
 
 use crate::workspace_identity::WorkspaceIdentity;
 
@@ -44,6 +44,33 @@ fn logged_folder_digests(cwd: &Path) -> Vec<String> {
     }
     WorkspaceIdentity::of_session_folder(cwd)
         .map(|identity| identity.digests)
+        .unwrap_or_default()
+}
+
+/// The folder digests of the session the log `text` (the file `file`, read as `source`'s
+/// import reads it) records, as the local import names the folder it lands that log in
+/// ([`SessionFolders::digests_of`]): the session's own conversation's `cwd` (for Claude Code
+/// the one the log's stem names, else the first the log decodes to, as the vault names the
+/// session's own), on this machine, where the session ran. None when the log does not
+/// decode, records no absolute `cwd`, or names a folder that is not here; the vault then
+/// lands it at the default project, as before (FIX SESSION-PROJECT-HOOK-TRANSCRIPT-PLACEMENT).
+pub(in crate::commands) fn log_folder_digests(
+    source: HistorySource,
+    file: &HistoryFile,
+    text: &str,
+) -> Vec<String> {
+    let Ok(conversations) = source.decode(text, file) else {
+        return Vec::new();
+    };
+    let own = if source == HistorySource::ClaudeCode {
+        conversations
+            .iter()
+            .find(|conv| conv.native_id == file.stem)
+    } else {
+        conversations.first()
+    };
+    own.and_then(|conv| conv.cwd.as_deref())
+        .map(|cwd| logged_folder_digests(Path::new(cwd)))
         .unwrap_or_default()
 }
 

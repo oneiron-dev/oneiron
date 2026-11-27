@@ -496,34 +496,17 @@ impl Memory<'_> {
                 session_placement_refused(project, self.read_proof.as_ref())
             }
         };
-        let Some(proof) = self.read_proof.as_ref() else {
-            return if self.transport_invocation {
-                Err(refused())
-            } else {
-                Ok(())
-            };
-        };
-        if proof.claims().holder_ref != self.actor.to_hex()
-            || !proof.claims().records.is_empty()
-            || !proof.claims().channels.is_empty()
-            || !self.vault.capability_slip_is_live_in_txn(txn, proof)?
-        {
-            return Err(refused());
+        if self.vault.credential_admits_project_placement_in_txn(
+            txn,
+            self.actor,
+            self.read_proof.as_ref(),
+            self.transport_invocation,
+            project,
+        )? {
+            Ok(())
+        } else {
+            Err(refused())
         }
-        if !["core:write", "write", "core:propose"]
-            .into_iter()
-            .any(|verb| proof.allows_verb(verb))
-        {
-            return Err(refused());
-        }
-        if !proof
-            .scope()
-            .audience
-            .contains(&crate::federation::ScopeId(project))
-        {
-            return Err(refused());
-        }
-        Ok(())
     }
 }
 
