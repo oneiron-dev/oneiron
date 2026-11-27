@@ -530,7 +530,7 @@ impl Memory<'_> {
                 .map(|receipt| format!("redaction:{}", receipt.to_hex())),
             state: DeleteRequestState::Applied,
             check_in: None,
-            remaining: remaining_after_delete(outcome.sweep_key.as_deref()),
+            remaining: remaining_after_delete(None),
         })
     }
 
