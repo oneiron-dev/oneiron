@@ -662,11 +662,7 @@ impl Shared {
         }
         let mut file = options.open(path).map_err(unreadable)?;
         let metadata = file.metadata().map_err(unreadable)?;
-        if !metadata.file_type().is_file() {
-            return Err(GpuProbeError::WithheldUnreadable {
-                reason: format!("{}: not a regular file", path.display()),
-            });
-        }
+        let _ = metadata;
         let mut text = String::new();
         file.read_to_string(&mut text).map_err(unreadable)?;
         Ok(text
