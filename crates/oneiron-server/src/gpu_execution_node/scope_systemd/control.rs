@@ -308,6 +308,8 @@ pub fn run(args: &[String]) -> i32 {
 /// reply gets `wait`, measured from the first byte (review r1 of #10579),
 /// not each write: if the peer does not drain the reply, the root handler
 /// gives up after `wait`, rather than waiting for the unit's `RuntimeMaxSec`.
+/// No write starts once `wait` has passed (review r2 of #10579), so a reply
+/// is never finished late.
 ///
 /// # Errors
 ///
@@ -320,6 +322,17 @@ pub fn write_reply(stream: &mut UnixStream, reply: &[u8], wait: Duration) -> std
     let mut written = 0;
     let mut result: std::io::Result<()> = Ok(());
     while written < reply.len() {
+        // The deadline holds before every write, also after a poll that
+        // ended at it: a peer that drains the reply late takes no more of it
+        // (review r2 of #10579, P1).
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            result = Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "the peer did not take the reply within its wait",
+            ));
+            break;
+        }
         match stream.write(&reply[written..]) {
             Ok(0) => {
                 result = Err(std::io::ErrorKind::WriteZero.into());
@@ -328,14 +341,6 @@ pub fn write_reply(stream: &mut UnixStream, reply: &[u8], wait: Duration) -> std
             Ok(count) => written += count,
             Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                let left = deadline.saturating_duration_since(Instant::now());
-                if left.is_zero() {
-                    result = Err(std::io::Error::new(
-                        std::io::ErrorKind::TimedOut,
-                        "the peer did not take the reply within its wait",
-                    ));
-                    break;
-                }
                 let mut poll = libc::pollfd {
                     fd: stream.as_raw_fd(),
                     events: libc::POLLOUT,
@@ -563,6 +568,24 @@ mod tests {
             elapsed < wait + Duration::from_secs(2),
             "the write took {elapsed:?}"
         );
+    }
+
+    /// No write starts once the wait has passed (review r2 of #10579): a
+    /// reply with no wait left sends nothing, even to a peer that would take
+    /// it at once, so a peer that drains late never receives a finished reply.
+    #[test]
+    fn no_write_starts_once_the_reply_wait_has_passed() {
+        use std::io::Read as _;
+        let (mut writer, mut reader) = UnixStream::pair().expect("a connected pair");
+        let error = write_reply(&mut writer, b"ok\n", Duration::ZERO)
+            .expect_err("a reply with no wait left is not written");
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut, "{error}");
+        drop(writer);
+        let mut taken = Vec::new();
+        reader
+            .read_to_end(&mut taken)
+            .expect("the peer reads the closed stream");
+        assert!(taken.is_empty(), "the peer took {taken:?}");
     }
 
     #[test]

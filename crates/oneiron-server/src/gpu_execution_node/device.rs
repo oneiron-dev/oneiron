@@ -590,7 +590,11 @@ pub(crate) fn run_device_tool_as(
                 return Err(unavailable(format!("{program_name}'s output: {error}")));
             }
         };
-        if exited.is_none() {
+        // The leader is reaped only once its output has ended, and the loop
+        // then ends in the same pass: until then its process id stays its
+        // group's, so `abandon` never signals a group whose id the kernel
+        // has given out again (review r2 of #10579, P1).
+        if exited.is_none() && stdout.ended() {
             match child.try_wait() {
                 Ok(now) => exited = now,
                 Err(error) => {

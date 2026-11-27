@@ -253,9 +253,10 @@ fn connect_to_gate(exchange: &Path) -> Result<UnixStream, String> {
 const CONNECT_RETRY: Duration = Duration::from_millis(20);
 
 /// Connects without blocking, retrying a full listen queue or an interrupted
-/// attempt until `deadline`. No try starts once `deadline` has passed, and a
-/// connection that completes after it is dropped and reported as `TimedOut`
-/// (review r1 of #10579, P1). The stream is blocking once connected.
+/// attempt until `deadline`. No try starts once `deadline` has passed, the
+/// first one included (review r2 of #10579), and a connection that completes
+/// after it is dropped and reported as `TimedOut` (review r1 of #10579, P1).
+/// The stream is blocking once connected.
 ///
 /// # Errors
 ///
@@ -267,6 +268,15 @@ pub(super) fn connect_by_deadline(
     deadline: Instant,
 ) -> io::Result<UnixStream> {
     loop {
+        // The deadline holds before every try, the first one too: a request
+        // whose deadline passed before it connected queues no connection, so
+        // the socket starts no handler for it (review r2 of #10579, P1).
+        if Instant::now() >= deadline {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "the handler's deadline passed before a connection was tried",
+            ));
+        }
         match connect_once(address) {
             Ok(stream) => {
                 if Instant::now() > deadline {
@@ -683,5 +693,29 @@ mod tests {
         // testkit-lint: allow(wall-clock) a deadline ahead on the real clock
         let ahead = Instant::now() + Duration::from_secs(5);
         connect_by_deadline(&address, ahead).expect("a connection within its deadline");
+    }
+
+    /// A deadline that passed before the first try queues no connection
+    /// (review r2 of #10579): the socket's listen queue stays empty, so no
+    /// handler starts for a request that is already late.
+    #[test]
+    fn no_connection_is_tried_once_its_deadline_has_passed() {
+        let dir = tempfile::tempdir().expect("a socket directory");
+        let path = dir.path().join("gate.sock");
+        let listener = UnixListener::bind(&path).expect("a listening socket");
+        listener
+            .set_nonblocking(true)
+            .expect("a listener that does not block");
+        let address = rustix::net::SocketAddrUnix::new(path.as_path()).expect("a unix address");
+        // testkit-lint: allow(wall-clock) a deadline already past on the real clock
+        let past = Instant::now()
+            .checked_sub(Duration::from_millis(1))
+            .expect("a past deadline");
+        let refused = connect_by_deadline(&address, past).expect_err("a late request is refused");
+        assert_eq!(refused.kind(), std::io::ErrorKind::TimedOut, "{refused}");
+        match listener.accept() {
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+            other => panic!("a late request queued a connection: {other:?}"),
+        }
     }
 }
