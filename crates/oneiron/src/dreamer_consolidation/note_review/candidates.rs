@@ -133,10 +133,7 @@ pub(super) fn note_candidate(
             .with_scope(Value::Map(fields));
     // NOTE-REVIEW-CLAIM-DROPS-NOTE-WORLD: born in the NOTE's world, as a
     // TURN's beliefs are born in their branch's (executor/extraction.rs).
-    let candidate = match note.world {
-        Some(world) => candidate.with_world(world),
-        None => candidate,
-    };
+    let _ = note.world;
     let facts = crate::dreamer_consolidation::conflict::candidate_facts(&candidate)?;
     let claim_id = crate::dreamer_consolidation::conflict::deterministic_claim_id(
         run.attempt_id,
