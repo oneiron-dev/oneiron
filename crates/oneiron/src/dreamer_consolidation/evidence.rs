@@ -529,7 +529,8 @@ impl VerifiedEvidenceSet {
     /// MESSAGE's birth state when it had no document). While `citing` is live
     /// an owner purge keeps that history, and a value-only recovery that
     /// rebuilds the MESSAGE's document stales `citing`. Gap-queue rows are not
-    /// entities and record neither.
+    /// entities and record neither. A row with no MESSAGE span (an
+    /// inline-text TURN, a cited CLAIM) depends on its source itself.
     pub(crate) fn record_message_dependencies_in_txn(
         &self,
         vault: &Vault,
@@ -546,6 +547,16 @@ impl VerifiedEvidenceSet {
                 citing,
                 span.frontier.as_deref(),
             )?;
+        }
+        // PROMOTED-CLAIM-SOURCE-DEPENDENCY-GAPS: a row with no MESSAGE span (an
+        // inline-text TURN, a cited CLAIM) depends on its source itself, so
+        // erasing that source withdraws what was written from it. A row that
+        // cites itself records nothing (the index refuses a self dependency).
+        for row in self.rows.iter().filter(|row| row.messages.is_empty()) {
+            let source = row.locator.source_id();
+            if source != *citing {
+                crate::ports::record_derived_edge_in_txn(&vault.store, txn, citing, &source)?;
+            }
         }
         // A claim drawn from a kept copy of mail the provider deleted is
         // checked again, as the claims drawn before the delete were (fix list
