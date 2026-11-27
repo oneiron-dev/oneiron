@@ -145,14 +145,10 @@ fn branch_line(node: &Node, hidden: &BTreeMap<String, String>) -> String {
     };
     let callable = node.visible_verb(hidden);
     let count = node.visible_count(hidden) - callable as usize;
-    let detail = if callable {
-        " under this callable verb"
-    } else {
-        ""
-    };
+    let path_suffix = if callable { ".*" } else { "" };
     let plural = if count == 1 { "" } else { "s" };
     format!(
-        "{}  {count} verb{plural}{detail}: {shown}{suffix}",
+        "{}{path_suffix}  {count} verb{plural}: {shown}{suffix}",
         node.path
     )
 }
