@@ -658,7 +658,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/mcp_gateway/actor_dispatch/auth.rs` | src | m | 13 crate-vis | — | Who an MCP call acts as: its actor, resolved from its credential, proof headers and placement |
 | `src/api/mcp_gateway/actor_dispatch/execute.rs` | src | s | 3 crate-vis | — | How an admitted MCP tool call executes: its params, its validation and its dispatch |
 | `src/api/mcp_gateway/actor_dispatch/gates.rs` | src | m | 16 crate-vis | — | The gates an MCP call passes before it executes: proof, verb, credential, a code run's session and each… |
-| `src/api/mcp_gateway/admission.rs` | src | m | 14 crate-vis | — | Scoped-call admission and actor resolution |
+| `src/api/mcp_gateway/admission.rs` | src | m | 15 crate-vis | — | Scoped-call admission and actor resolution |
 | `src/api/mcp_gateway/admission_intent.rs` | src | s | 4 crate-vis | — | The durable admission receipt (ARCH-0044 C5) of a generated verb an MCP `tools/call` runs under the… |
 | `src/api/mcp_gateway/board_observations.rs` | src | m | 10 crate-vis | — | Session-clock read observations and turn-local riders for MCP boards |
 | `src/api/mcp_gateway/board_setup.rs` | src | s | 19 crate-vis | — | Board state, setup grammar, and page preflight |
@@ -983,6 +983,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/api/tests/mcp_code_admission.rs` | test | m | 1 crate-vis | — | `execute_code` admission (C10, under the rate law of ARCH-0044 C5): a burst of runs on one credential all… |
 | `src/api/tests/mcp_code_check.rs` | test | m | — | — | Done-means (TSC-WIRE): feedback mode changes no program's behaviour or result |
 | `src/api/tests/mcp_execute.rs` | test | L | — | — | The MCP `execute` and `resume` tools over caller-source runs (FIX EXECUTE-CALLER-CODE) |
+| `src/api/tests/mcp_execute/recorded_answer_recheck.rs` | test | s | — | — | Recorded-answer rechecks for caller-source runs (FIX CODE-MODE-LENDING-W11) |
 | `src/api/tests/mcp_execute/verbs.rs` | test | m | — | — | Caller-code verb behaviors through `execute` (FIX EXECUTE-CALLER-CODE): a held write (d), supersede on the… |
 | `src/api/tests/mcp_memory.rs` | test | s | — | — | Memory tool projections exercise the same scoped reads as native clients |
 | `src/api/tests/mcp_paging_cursors.rs` | test | m | — | — | Setup page budgets/end-markers, one-time bound cursors, mutating-use refusal, concurrent continuations |
@@ -1145,22 +1146,24 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/commands/history_import/queue/tests.rs` | test | m | — | — | The queue's passes on a vault held as `serve` holds it, one pass at a time, over invented Claude Code… |
 | `src/commands/history_import/slack.rs` | src | m | 1 crate-vis | — | `oneiron import slack <zip \| folder> --members <map.json>`: a Slack workspace export, imported into a… |
 | `src/commands/hook.rs` | src | m | 1 fn · 2 re-export · 1 crate-vis | — | `oneiron hook --host <host> <event>`: an agent harness's hooks, run by the binary |
-| `src/commands/hook/bind.rs` | src | m | 5 crate-vis | — | Which vault a session binds (ARCH-0028 `#plugin-first-run`, owner ruling PLUGIN-FIRSTRUN = D), the first… |
+| `src/commands/hook/bind.rs` | src | m | 6 crate-vis | — | Which vault a session binds (ARCH-0028 `#plugin-first-run`, owner ruling PLUGIN-FIRSTRUN = D), the first… |
 | `src/commands/hook/continue_command.rs` | src | m | 1 fn · 8 crate-vis | — | `oneiron continue --cloud` (census L10-17): moves the Claude Code session working in this repo to the hosted… |
 | `src/commands/hook/continue_command/hand_off.rs` | src | m | 2 fn · 7 crate-vis | — | The workspace half of `oneiron continue --cloud` (census L10-17): a hand-off commit of the working tree as… |
 | `src/commands/hook/continue_command/hand_off/lfs.rs` | src | m | 5 crate-vis | — | The Git-LFS half of a hand-off push (FIX CONTINUE-CLOUD-LFS-OBJECTS-NOT-SENT) |
 | `src/commands/hook/continue_command/hosted_hand_over.rs` | src | m | 1 crate-vis | — | The hooks' hand-over of a session's log to the selected hosted vault ([`hand_over_hosted`]): step 3 of… |
 | `src/commands/hook/continue_command/test_support.rs` | src | s | 2 struct · 3 fn · 1 re-export | Script, Scripted | Seams for `tests/continue_command.rs`, reached through `crate::test_doors::continue_command`: the hand-off… |
 | `src/commands/hook/continue_command/transcript.rs` | src | m | 9 crate-vis | — | The session `oneiron continue --cloud` sends: one Claude Code session log and its subagents' logs, each… |
+| `src/commands/hook/focus_refresh.rs` | src | s | 1 crate-vis | — | Restore a board after Claude Code compacts a session that already had it |
 | `src/commands/hook/hand_over_ask.rs` | src | s | 4 crate-vis | — | The hand-over sign-in request the hooks file themselves (row HOOK-HOSTED-HAND-OVER-OAUTH-READ-TIER; the… |
 | `src/commands/hook/hand_over_queue.rs` | src | s | 10 crate-vis | — | The hand-over queue of an OAuth selection (row HOOK-HOSTED-HAND-OVER-OAUTH-READ-TIER; lead ruling B, Sat 21… |
-| `src/commands/hook/hosted_command.rs` | src | m | 1 fn | — | `oneiron hosted`: the commands that publish this user's hosted sign-in and selection, which `oneiron hook`… |
+| `src/commands/hook/hosted_command.rs` | src | m | 1 fn · 1 crate-vis | — | `oneiron hosted`: the commands that publish this user's hosted sign-in and selection, which `oneiron hook`… |
 | `src/commands/hook/hosted_continue_sign_in.rs` | src | s | 3 crate-vis | — | The continue sign-in of an OAuth selection: the step-up `oneiron continue --cloud` runs on (lead rulings… |
 | `src/commands/hook/hosted_selection.rs` | src | s | 18 crate-vis | — | The hosted vault this user's sign-in selected (H41, ARCH-0028 `#plugin-first-run` step 3), as `oneiron hook`… |
 | `src/commands/hook/hosted_sign_in.rs` | src | m | 15 crate-vis | — | `oneiron hosted login --origin <url>` with no credential: this user signs in to the hosted vault through the… |
 | `src/commands/hook/hosted_sign_in/unattended.rs` | src | s | 2 crate-vis | — | An unattended sign-in ([`super::CodeDelivery::Unattended`]): no browser |
-| `src/commands/hook/recall.rs` | src | m | 12 crate-vis | — | Recall through `oneiron mcp`, spoken to one JSON-RPC request at a time, and the short block a hook prints… |
-| `src/commands/hook/session_binding.rs` | src | m | 6 crate-vis | — | What a session's starts bound, recorded by each `session-start` for the session's hand-over (REVIEW-9834) |
+| `src/commands/hook/recall.rs` | src | m | 14 crate-vis | — | Recall through `oneiron mcp`, spoken to one JSON-RPC request at a time, and the short block a hook prints… |
+| `src/commands/hook/session_binding.rs` | src | m | 11 crate-vis | — | What a session's starts bound, recorded by each `session-start` for the session's hand-over (REVIEW-9834) |
+| `src/commands/hook/tool_result.rs` | src | m | 1 crate-vis | — | Claude Code's PostToolUse push, paced by one deadline and one session file |
 | `src/commands/hook_regen.rs` | src | s | 3 crate-vis | — | One startup pass over hooks bound under an older engine contract |
 | `src/commands/host_init.rs` | src | s | 1 fn | — | Reference deployment scaffolding and explicit encryption provisioning |
 | `src/commands/host_re_root.rs` | src | s | 1 fn · 2 crate-vis | — | `oneiron host re-root`: moves a stopped self-host vault's root to a new issuer seed, in-chain (OF-455), and… |
@@ -1171,9 +1174,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/commands/link.rs` | src | s | 2 fn | — | `oneiron link`, `oneiron link status` and `oneiron unlink` (L10-16; canon cross-arch-0024 M4.25): thin… |
 | `src/commands/local_servers.rs` | src | s | 13 crate-vis | — | The local servers running for this user, one runtime file each, so a client such as `oneiron hook` finds any… |
 | `src/commands/maintain.rs` | src | s | 1 fn | — | `maintain`: the owner's "run housekeeping now" on a stopped vault |
-| `src/commands/mcp_bridge.rs` | src | L | 1 fn · 5 crate-vis | — | `oneiron mcp`: MCP over stdio for an agent that spawns a command (Claude Code's `claude mcp add`, Codex's… |
+| `src/commands/mcp_bridge.rs` | src | L | 1 fn · 6 crate-vis | — | `oneiron mcp`: MCP over stdio for an agent that spawns a command (Claude Code's `claude mcp add`, Codex's… |
 | `src/commands/mcp_bridge/bridge_auth.rs` | src | m | 7 crate-vis | — | Whom `oneiron mcp`'s requests run as (FIX 5540): a paired slip, the vault's owner himself by the sign-in an… |
 | `src/commands/mcp_bridge/call_meta.rs` | src | s | 9 crate-vis | — | What the bridge adds to a relayed `tools/call`'s `_meta`: the invocation it runs under (ARCH-0080 §3), and… |
+| `src/commands/mcp_bridge/carrier_content.rs` | src | m | 2 crate-vis | — | `--carrier-in-content`: fold a `tools/call` answer's board carrier frame into its text content, for a client… |
+| `src/commands/mcp_bridge/credential_origin.rs` | src | s | 3 crate-vis | — | The origin each `oneiron mcp` sends its paired credential file to, as the bridge records it after the vault… |
 | `src/commands/mcp_bridge/link.rs` | src | m | 8 crate-vis | — | The one connection `oneiron mcp` holds to its server (ARCH-0044 "anything that loops holds a socket"; owner… |
 | `src/commands/mcp_bridge/link/replies.rs` | src | s | 5 crate-vis | — | Reply forwarding on the bridge's shared socket driver |
 | `src/commands/mcp_bridge/wake.rs` | src | s | 2 crate-vis | — | The bridge's wake pump (OF-385): it polls `oneiron/wakes` for one host instance on its own cadence and hands… |
@@ -2300,7 +2305,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/memory_owner_commit.rs` | src | s | 1 fn · 1 crate-vis | — | Door for `tests/memory_verb_owner_proof_at_commit.rs` (FIX… |
 | `src/test_doors/memory_timeline_projection.rs` | src | s | 1 fn | — | Door for `tests/timeline_shell_projection_recheck.rs` (FIX TIMELINE-SHELL-TWO-SNAPSHOT-CAP): the projection… |
 | `src/test_doors/merge_queue_checker_pressure.rs` | src | s | 1 fn | — | Doors for `tests/merge_queue_checker_pressure.rs` ([GUEST-PIDS-PRESSURE-MERGE-QUEUE-CHECKER], FIX 8013… |
-| `src/test_doors/mod.rs` | src | s | 92 mod | — | Doors for the integration tests to crate-private items, as in `oneiron::test_doors` |
+| `src/test_doors/mod.rs` | src | s | 93 mod | — | Doors for the integration tests to crate-private items, as in `oneiron::test_doors` |
 | `src/test_doors/model_licence.rs` | src | s | 1 fn | — | The model licence admission under the owner's choice (`models.install.allow_noncommercial_licences`), read… |
 | `src/test_doors/native_board.rs` | src | s | 2 fn | — | Doors for `tests/room_pins_native.rs` (ROOM-SCOPED-PINS P2c): what a pumped run's native board and self… |
 | `src/test_doors/node_jobs/devices.rs` | src | m | 1 struct · 17 fn | ScriptedDevices | The scripted GPU slot table: its devices, their leases, quarantines and drains, a device probe a test can… |
@@ -2318,6 +2323,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/pre_idle_reuse.rs` | src | s | 1 struct · 6 fn | ManagedBackups | Door for `tests/pre_idle_held_verdict.rs` ([HELD-WHOLE-READ-OFF-PRE-IDLE]): a managed vault's owner host… |
 | `src/test_doors/question_heads.rs` | src | s | 7 fn | — | Doors for `tests/question_head_host.rs` (FIX 23586, 23587; FIX 3864): the Local slot fronted by the owner's… |
 | `src/test_doors/raw_stream.rs` | src | s | 1 fn | — | Doors for `tests/caller_deadline.rs` (review round 2 of #7831): the raw stream door's model stream, opened… |
+| `src/test_doors/recorded_answer_recheck.rs` | src | s | 1 fn | — | Integration-test door to the MCP code-mode admission of a recorded verb |
 | `src/test_doors/recovery_box_hold.rs` | src | s | 1 fn | — | Doors for `tests/recovery_box_hold_client.rs`: the recovery box hold caller managed boot installs, on a… |
 | `src/test_doors/refusal_wire.rs` | src | s | 2 fn | — | Door for tests/check_in_pending_block_wire.rs: a MemoryError as the facade and the MCP gateway answer it |
 | `src/test_doors/remote_task_poll.rs` | src | s | 1 fn | — | Door for `tests/remote_task_cancel.rs` (L8-29): one pass of the served poll of remote MCP tasks, as the… |
@@ -2591,7 +2597,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/it/dreamer_live.rs` | test | L | — | — | The Dreamer on a real model provider (dogfood gate 3, map gap 13): the consolidation-only live acceptance run |
 | `tests/it/first_owner_bootstrap.rs` | test | s | — | — | Fresh self-host pairing through the shipped offline command and HTTP door |
 | `tests/it/history_import.rs` | test | L | — | — | `oneiron import <source> <path>` through the shipped binary, for each of the four sources (owner… |
-| `tests/it/hook.rs` | test | L | — | — | `oneiron hook --host claude-code`, through the shipped binary |
+| `tests/it/hook.rs` | test | XL | — | — | `oneiron hook --host claude-code`, through the shipped binary |
+| `tests/it/hook/carried_guards.rs` | test | m | — | — | Guards for the carried-context fixes: the bridge's origin record and the refresh's vault check (CRED-1), the… |
 | `tests/it/host_re_root.rs` | test | m | — | — | A self-host owner moves the vault's root off a leaked host secret (OF-455; ARCH-0028 #host-key-warning) |
 | `tests/it/import_claims.rs` | test | m | — | — | Claims from imported history wait for the owner's review (ARCH-0027 trust tier: "imported material never… |
 | `tests/it/main.rs` | test | s | — | — | Consolidated integration-test binary: five former standalone `tests/*.rs` Cargo targets compiled and linked… |
@@ -2704,6 +2711,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/question_head_host.rs` | test | m | — | — | The host's question heads (FIX 23586, 23587; FIX 3864) |
 | `tests/quota_answer_requires_vault_owner.rs` | test | m | — | — | The owner's answer to a quota question is an owner act (FIX-LIST OWNER-GRADE-IS-NOT-OWNERSHIP; the lead's… |
 | `tests/recall_host_root_read.rs` | test | m | — | — | The owner's host-root recall reads on a self-hosted vault ([RECALL-HOST-ROOT-READ-REFUSED], FIX-LIST row… |
+| `tests/recorded_answer_recheck.rs` | test | s | — | — | T3 (FIX CODE-MODE-LENDING-W11) |
 | `tests/recovery_box_hold_client.rs` | test | s | — | — | The recovery box's kit-only hold caller (Fable pass 27 R7; Engine RULING WAYBACK-BOX-HOLD-RELAY = A, 16 Nov… |
 | `tests/recovery_hold_passkey_cancel_routes.rs` | test | m | — | — | RECOVERY-HOLD-PASSKEY-CANCEL-ROUTE over HTTP: an owner whose passkey is an owner key reads a box recovery's… |
 | `tests/remote_task_cancel.rs` | test | m | — | — | L8-29 (canon agent-runtime-v1 `#mcp-tasks-outbound`, ONEIRON-MCP-TASKS = AB; ruling L8-29-CANCEL-TRIGGER =… |

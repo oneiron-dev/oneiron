@@ -1787,7 +1787,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/contribution/source_admission.rs` | src | m | 1 re-export · 17 crate-vis | — | A contribution check reads its captured source only under each reader's own admission (FIX 20607, L07-B's… |
 | `src/code_run/coordination_codec.rs` | src | m | 9 crate-vis | — | Replay encoding for the typed coordination calls |
 | `src/code_run/correction.rs` | src | s | 2 struct · 2 const · 1 re-export · 11 crate-vis | CodeRunCorrection, CodeRunCorrectionCheckpoint | Durable code-run correction records (CODE-RUNTIME-02 slice 1: FIX 4411, 4412, 4413) |
-| `src/code_run/dispatcher/admission.rs` | src | s | 10 crate-vis | — | The admission of the run door and its answered dispatch bracket |
+| `src/code_run/dispatcher/admission.rs` | src | m | 11 crate-vis | — | The admission of the run door and its answered dispatch bracket |
 | `src/code_run/dispatcher/agent_powers.rs` | src | s | 3 crate-vis | — | The grant powers a running agent acts under (SPAWN-KNOB, ARCH-0053:20): which instance's grant decides its… |
 | `src/code_run/dispatcher/agent_verb.rs` | src | m | 1 fn · 1 re-export · 8 crate-vis | — | Code mode's verb-table calls: the run's write origin and the receipt a write keeps |
 | `src/code_run/dispatcher/agent_verb/connector_wait.rs` | src | s | 2 crate-vis | — | A connector call's answer as a run takes it (ONE-2510): one held or retried parks the run on the call's ref |
@@ -1812,12 +1812,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/dispatcher/leader.rs` | src | m | 2 struct · 9 fn · 9 crate-vis | HostPlannerBinding, HostPlannerDecisions | Host entry points for the CEO starter on a leased, task-bound leader |
 | `src/code_run/dispatcher/memory_verbs.rs` | src | m | 1 const · 5 crate-vis | — | The four durable memory writes, search, and the off-record policy that refuses them |
 | `src/code_run/dispatcher/memory_verbs/claim_put.rs` | src | s | 2 crate-vis | — | The claim put: code mode asks Proposed; a caller's live run asks Auto first, and the checker its door lent… |
-| `src/code_run/dispatcher/mod.rs` | src | s | 1 struct · 1 type · 6 re-export · 20 crate-vis | HostSelfDispatcher | State and export seam for the host-bound first-party dispatcher |
+| `src/code_run/dispatcher/mod.rs` | src | s | 1 struct · 1 type · 7 re-export · 21 crate-vis | HostSelfDispatcher | State and export seam for the host-bound first-party dispatcher |
 | `src/code_run/dispatcher/orders_wait.rs` | src | s | 1 crate-vis | — | `vault.jobs.orders.wait` (pass 34 row Q1, 14.2): the run waits on one work order its actor may read, until… |
 | `src/code_run/dispatcher/program_step.rs` | src | m | 16 crate-vis | — | A turn program's code run (DOOR-141 PR2): the program's own leased try, lent to the one callable SKILL its… |
 | `src/code_run/dispatcher/read_worlds.rs` | src | m | 1 fn · 13 crate-vis | — | A run's read-world capture as its host serves it (FIX 6130) |
 | `src/code_run/dispatcher/reader_spawn.rs` | src | m | 4 fn · 20 crate-vis | — | Reader forks at the dispatcher (ARCH-0079 #reader-forks): the seat a host lends a run that may spawn… |
 | `src/code_run/dispatcher/record_refs.rs` | src | s | 1 crate-vis | — | OF-063 on a run's in-core memory writes (FIX 1214) |
+| `src/code_run/dispatcher/recorded_producer.rs` | src | s | 1 const · 3 crate-vis | — | — |
 | `src/code_run/dispatcher/refusal_output.rs` | src | s | 2 crate-vis | — | Released reason bodies captured from the actual accepted refusal call |
 | `src/code_run/dispatcher/repo.rs` | src | m | 2 fn · 1 crate-vis | — | `self.code.*` (FIX 6867, L11 G1 PR2a, PR2b, PR3b): a leased agent run's repo rows |
 | `src/code_run/dispatcher/repo_sources.rs` | src | s | 1 struct · 1 fn · 4 crate-vis | RepoRequestWitness | The attribution a run's proposal records (FIX 6867, G1 PR2b; CALL "FIX 6867 review policy and provenance")… |
@@ -1842,7 +1843,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/dispatcher/world_privacy_wait.rs` | src | s | 1 crate-vis | — | `tasks.wait({request, step_key})` (FIX 4706): a code run's wait on one world-privacy request its actor… |
 | `src/code_run/fold_api.rs` | src | s | 1 fn · 1 re-export | — | Typed public calls on a credential's attached live run |
 | `src/code_run/live_run.rs` | src | s | 2 struct · 10 fn · 2 const · 3 crate-vis | CodeRunLiveRunBinding, LiveRunCredential | A live agent run's attachment to the one credential that may act for it (OF-181) |
-| `src/code_run/mod.rs` | src | m | 9 mod · 39 re-export · 78 crate-vis | — | Host-side skeleton for first-party `self.*` code-mode calls |
+| `src/code_run/mod.rs` | src | m | 9 mod · 39 re-export · 79 crate-vis | — | Host-side skeleton for first-party `self.*` code-mode calls |
 | `src/code_run/model_call.rs` | src | m | 2 struct · 12 fn · 1 re-export · 3 crate-vis | ModelCallReasoningPart, ModelCallRecord | Per-model-call evidence and replay records (FIX 12516) |
 | `src/code_run/model_call/signed_reasoning.rs` | src | s | 1 crate-vis | — | Whole signed reasoning parts use existing custody, never text masking |
 | `src/code_run/payload.rs` | src | m | 15 crate-vis | — | Code-run request and outcome replay values |
@@ -3639,6 +3640,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/engine_executor/tests/compaction_host.rs` | test | L | — | — | The compaction host end to end (agent-runtime-v1 §d7 done-means): a run past its threshold compacts by… |
 | `src/engine_executor/tests/memory_rows.rs` | test | s | — | — | The memory rows a run answers itself (`search`, `put_claim`, `supersede_claim`, `put_edge`) are verb-table… |
 | `src/engine_executor/tests/output_decay.rs` | test | s | — | — | Model-facing output decay and successful native compaction on the real REPL path |
+| `src/engine_executor/tests/recorded_producer.rs` | test | m | — | — | T4 for FIX CODE-MODE-LENDING-W11: a kept verb write is read back by its original verb |
 | `src/engine_executor/tests/speech_identity_regressions.rs` | test | s | — | — | — |
 | `src/engine_executor/turn_hooks.rs` | src | s | 3 crate-vis | — | `host.turn.generate` (ARCH-0080 §5) around the executor's model call |
 | `src/engine_executor/type_feedback.rs` | src | s | 6 crate-vis | — | A step's type feedback on the executor (FIX 8277): its check started beside its program, its feedback kept… |
@@ -4350,6 +4352,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ingest/docs_tests.rs` | test | L | — | — | — |
 | `src/ingest/exports.rs` | src | m | 1 struct · 1 enum | ExportLayout, ExportSource | Native export layouts with catalog-supplied platform identity (ARCH-0027) |
 | `src/ingest/fingerprint.rs` | src | s | 1 re-export · 2 crate-vis | — | Entity-local four-rung birth fingerprints over the ingest pipeline's own segments |
+| `src/ingest/history/carried_headers.rs` | src | s | 3 fn · 6 const | — | Fixed headers for text the harness carries into a Claude Code session, shared by the bridge, the hooks and… |
 | `src/ingest/history/chatgpt.rs` | src | s | 1 crate-vis | — | ChatGPT export: `conversations.json`, a list of conversations whose `mapping` is a message tree |
 | `src/ingest/history/claude.rs` | src | s | 1 crate-vis | — | Claude.ai export: `conversations.json`, a list of conversations with their `chat_messages` in order |
 | `src/ingest/history/claude_code.rs` | src | m | 1 crate-vis | — | Claude Code session logs: one JSONL file per session in a project directory, and one per subagent under… |
@@ -4365,13 +4368,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ingest/history/land/tests.rs` | test | m | — | — | ARCH-0027: an imported coding session keeps the folder it ran in and when it started, and importing its log… |
 | `src/ingest/history/ledger.rs` | src | m | 15 crate-vis | — | The history import ledger: one row per imported source message, keyed by the source and the message's native… |
 | `src/ingest/history/members.rs` | src | m | 1 struct · 4 fn | HistoryMemberAddress | The members of each workspace a shared source was imported from (Engine ruling L2-18-CONTACT = A, under the… |
-| `src/ingest/history/mod.rs` | src | m | 7 struct · 3 enum · 6 fn · 3 const · 1 mod · 7 re-export · 6 crate-vis | HistoryConversation, HistoryFile, HistoryMember, HistoryMessage, HistoryRole, HistorySharing, HistorySharingCounts, HistorySkips +2 | The owner's own history, imported (ARCH-0027): ChatGPT and Claude.ai exports, the on-device Claude Code and… |
+| `src/ingest/history/mod.rs` | src | m | 7 struct · 3 enum · 6 fn · 3 const · 2 mod · 7 re-export · 6 crate-vis | HistoryConversation, HistoryFile, HistoryMember, HistoryMessage, HistoryRole, HistorySharing, HistorySharingCounts, HistorySkips +2 | The owner's own history, imported (ARCH-0027): ChatGPT and Claude.ai exports, the on-device Claude Code and… |
 | `src/ingest/history/plan.rs` | src | s | 2 struct · 4 fn | HistoryDryRun, HistoryLedgerSnapshot | A dry run: what an import would do, read from the vault's files with LMDB opened read-only |
 | `src/ingest/history/review.rs` | src | s | 3 fn · 2 crate-vis | — | The owner's review of what the Dreamer proposes from one import (ARCH-0027 trust tier): imported material… |
 | `src/ingest/history/sharing.rs` | src | s | 6 crate-vis | — | A source's own sharing, kept by the import (ARCH-0027 #import-audience, owner ruling 2026-10-17): the rows… |
 | `src/ingest/history/slack.rs` | src | m | 5 struct · 1 enum · 9 fn · 1 type · 3 const | SlackExport, SlackExportFile, SlackMember, SlackMemberCounts, SlackMemberMapping, SlackWorkspace | A Slack workspace export (ARCH-0027 #import-audience): `users.json`, the conversation lists `channels.json`… |
 | `src/ingest/history/speakers.rs` | src | s | 2 crate-vis | — | An imported conversation's recorded speakers, conversation-scoped (FIX 11353) |
 | `src/ingest/history/tests.rs` | test | L | — | — | Substrate invariants of an imported transcript (ARCH-0027, ARCH-0040): whose words they are, when the vault… |
+| `src/ingest/history/tests/placed_blocks.rs` | test | s | — | — | The import drops only the exact block shapes the harness places beside a tool result: a header-first block… |
 | `src/ingest/history/text.rs` | src | s | 7 crate-vis | — | Field readers the history decoders share: records, times and text |
 | `src/ingest/history/tree.rs` | src | s | 2 crate-vis | — | Threads of a branching export: the main path, and each edit or regeneration the source kept beside it |
 | `src/ingest/history/workspace_facet.rs` | src | s | 1 fn | — | The facet a shared workspace's import lands its TURNs under (Engine rulings L2-18-WORKSPACE-SCOPE = A and… |

@@ -20638,13 +20638,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/code_run/dispatcher/admission.rs",
      "purpose": "The admission of the run door and its answered dispatch bracket",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -20907,8 +20907,8 @@
      "path": "src/code_run/dispatcher/mod.rs",
      "purpose": "State and export seam for the host-bound first-party dispatcher",
      "surface": {
-      "crate-vis": 20,
-      "re-export": 6,
+      "crate-vis": 21,
+      "re-export": 7,
       "struct": 1,
       "type": 1
      }
@@ -20963,6 +20963,17 @@
      "purpose": "OF-063 on a run's in-core memory writes (FIX 1214)",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_run/dispatcher/recorded_producer.rs",
+     "purpose": "—",
+     "surface": {
+      "const": 1,
+      "crate-vis": 3
      }
     },
     {
@@ -21235,7 +21246,7 @@
      "path": "src/code_run/mod.rs",
      "purpose": "Host-side skeleton for first-party `self.*` code-mode calls",
      "surface": {
-      "crate-vis": 78,
+      "crate-vis": 79,
       "mod": 9,
       "re-export": 39
      }
@@ -42584,6 +42595,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/engine_executor/tests/recorded_producer.rs",
+     "purpose": "T4 for FIX CODE-MODE-LENDING-W11: a kept verb write is read back by its original verb",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -51034,6 +51053,17 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/ingest/history/carried_headers.rs",
+     "purpose": "Fixed headers for text the harness carries into a Claude Code session, shared by the bridge, the hooks and…",
+     "surface": {
+      "const": 6,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/ingest/history/chatgpt.rs",
      "purpose": "ChatGPT export: `conversations.json`, a list of conversations whose `mapping` is a message tree",
      "surface": {
@@ -51243,7 +51273,7 @@
       "crate-vis": 6,
       "enum": 3,
       "fn": 6,
-      "mod": 1,
+      "mod": 2,
       "re-export": 7,
       "struct": 7
      }
@@ -51320,6 +51350,14 @@
      "notable": [],
      "path": "src/ingest/history/tests.rs",
      "purpose": "Substrate invariants of an imported transcript (ARCH-0027, ARCH-0040): whose words they are, when the vault…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/ingest/history/tests/placed_blocks.rs",
+     "purpose": "The import drops only the exact block shapes the harness places beside a tool result: a header-first block…",
      "surface": {}
     },
     {
@@ -123643,7 +123681,7 @@
     },
     "code_run": {
      "entry": "crates/oneiron/src/code_run/mod.rs",
-     "files": 279,
+     "files": 280,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -124134,7 +124172,7 @@
     },
     "engine_executor": {
      "entry": "crates/oneiron/src/engine_executor/mod.rs",
-     "files": 84,
+     "files": 85,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -124468,7 +124506,7 @@
     },
     "ingest": {
      "entry": "crates/oneiron/src/ingest/mod.rs",
-     "files": 85,
+     "files": 87,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -125854,8 +125892,8 @@
    },
    "over_bar": 276,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8652,
-   "test_files": 2341
+   "source_files": 8654,
+   "test_files": 2343
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -171151,7 +171189,7 @@
      "path": "src/api/mcp_gateway/admission.rs",
      "purpose": "Scoped-call admission and actor resolution",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -174337,6 +174375,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/api/tests/mcp_execute/recorded_answer_recheck.rs",
+     "purpose": "Recorded-answer rechecks for caller-source runs (FIX CODE-MODE-LENDING-W11)",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -176156,7 +176202,7 @@
      "path": "src/commands/hook/bind.rs",
      "purpose": "Which vault a session binds (ARCH-0028 `#plugin-first-run`, owner ruling PLUGIN-FIRSTRUN = D), the first…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -176230,6 +176276,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/commands/hook/focus_refresh.rs",
+     "purpose": "Restore a board after Claude Code compacts a session that already had it",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/commands/hook/hand_over_ask.rs",
      "purpose": "The hand-over sign-in request the hooks file themselves (row HOOK-HOSTED-HAND-OVER-OAUTH-READ-TIER; the…",
      "surface": {
@@ -176253,6 +176309,7 @@
      "path": "src/commands/hook/hosted_command.rs",
      "purpose": "`oneiron hosted`: the commands that publish this user's hosted sign-in and selection, which `oneiron hook`…",
      "surface": {
+      "crate-vis": 1,
       "fn": 1
      }
     },
@@ -176303,7 +176360,7 @@
      "path": "src/commands/hook/recall.rs",
      "purpose": "Recall through `oneiron mcp`, spoken to one JSON-RPC request at a time, and the short block a hook prints…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 14
      }
     },
     {
@@ -176313,7 +176370,17 @@
      "path": "src/commands/hook/session_binding.rs",
      "purpose": "What a session's starts bound, recorded by each `session-start` for the session's hand-over (REVIEW-9834)",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 11
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/hook/tool_result.rs",
+     "purpose": "Claude Code's PostToolUse push, paced by one deadline and one session file",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -176425,7 +176492,7 @@
      "path": "src/commands/mcp_bridge.rs",
      "purpose": "`oneiron mcp`: MCP over stdio for an agent that spawns a command (Claude Code's `claude mcp add`, Codex's…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 1
      }
     },
@@ -176447,6 +176514,26 @@
      "purpose": "What the bridge adds to a relayed `tools/call`'s `_meta`: the invocation it runs under (ARCH-0080 §3), and…",
      "surface": {
       "crate-vis": 9
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/mcp_bridge/carrier_content.rs",
+     "purpose": "`--carrier-in-content`: fold a `tools/call` answer's board carrier frame into its text content, for a client…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/mcp_bridge/credential_origin.rs",
+     "purpose": "The origin each `oneiron mcp` sends its paired credential file to, as the bridge records it after the vault…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -189033,7 +189120,7 @@
      "path": "src/test_doors/mod.rs",
      "purpose": "Doors for the integration tests to crate-private items, as in `oneiron::test_doors`",
      "surface": {
-      "mod": 92
+      "mod": 93
      }
     },
     {
@@ -189225,6 +189312,16 @@
      "notable": [],
      "path": "src/test_doors/raw_stream.rs",
      "purpose": "Doors for `tests/caller_deadline.rs` (review round 2 of #7831): the raw stream door's model stream, opened…",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/recorded_answer_recheck.rs",
+     "purpose": "Integration-test door to the MCP code-mode admission of a recorded verb",
      "surface": {
       "fn": 1
      }
@@ -191765,11 +191862,19 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "tests/it/hook.rs",
      "purpose": "`oneiron hook --host claude-code`, through the shipped binary",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/it/hook/carried_guards.rs",
+     "purpose": "Guards for the carried-context fixes: the bridge's origin record and the refresh's vault check (CRED-1), the…",
      "surface": {}
     },
     {
@@ -192668,6 +192773,14 @@
      "notable": [],
      "path": "tests/recall_host_root_read.rs",
      "purpose": "The owner's host-root recall reads on a self-hosted vault ([RECALL-HOST-ROOT-READ-REFUSED], FIX-LIST row…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/recorded_answer_recheck.rs",
+     "purpose": "T3 (FIX CODE-MODE-LENDING-W11)",
      "surface": {}
     },
     {
@@ -194016,7 +194129,7 @@
     },
     "api": {
      "entry": "crates/oneiron-server/src/api/mod.rs",
-     "files": 864,
+     "files": 865,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -194146,7 +194259,7 @@
     },
     "commands": {
      "entry": "crates/oneiron-server/src/commands.rs",
-     "files": 100,
+     "files": 104,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -194822,7 +194935,7 @@
     },
     "test_doors": {
      "entry": "crates/oneiron-server/src/test_doors/mod.rs",
-     "files": 98,
+     "files": 99,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -194941,8 +195054,8 @@
    },
    "over_bar": 72,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 2227,
-   "test_files": 627
+   "source_files": 2232,
+   "test_files": 630
   },
   "oneiron-setting-contract": {
    "files": [
