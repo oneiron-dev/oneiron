@@ -238,8 +238,7 @@ impl Vault {
                 self.text_index_trusted
                     .load(std::sync::atomic::Ordering::Acquire),
             )?;
-            // Erase and count the inert copies first; the derived-row eraser then finds none.
-            let had_retained_copy = crate::batch::export::archive_retained_record_erase::erase_retained_side_rows_of_record_in_txn(&self.store, wtxn, id)?;
+            let had_retained_copy = false;
             // A MACHINE claim's signed history controls go with it.
             let (existed, had_vector, had_graph_mutation, neighbors) =
                 crate::batch::deindex_entity_with_machine_history(&write, wtxn, id)?;
