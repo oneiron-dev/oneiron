@@ -150,3 +150,54 @@ fn fold(text: &str) -> (String, Vec<(usize, usize, usize)>) {
     }
     (folded, spans)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{QuoteBinding, SourceShown, bind_quote};
+
+    #[test]
+    fn a_quote_copied_from_a_fenced_turn_line_binds_the_stored_words() {
+        let source = crate::EntityId::now();
+        let stored = "I moved to\nLisbon\u{2028}in May\r\nlast year";
+        let shown = crate::context_board::one_line_token(stored);
+        let quote_start = shown.find("to ").expect("the shown words include 'to'");
+        for (last_word, expected_quote, expected_stored) in [
+            ("May", "to Lisbon in May", "to\nLisbon\u{2028}in May"),
+            (
+                "last",
+                "to Lisbon in May  last",
+                "to\nLisbon\u{2028}in May\r\nlast",
+            ),
+        ] {
+            let quote_end = shown
+                .find(last_word)
+                .expect("the shown words include the end")
+                + last_word.len();
+            let quote = &shown[quote_start..quote_end];
+            assert_eq!(
+                quote, expected_quote,
+                "copy the quote from the fenced words"
+            );
+            let binding = bind_quote(
+                Some((
+                    source,
+                    SourceShown {
+                        text: Some(stored),
+                        project: None,
+                    },
+                )),
+                quote,
+            );
+            let QuoteBinding::Bound {
+                source: bound_source,
+                start,
+                end,
+            } = binding
+            else {
+                panic!("expected {quote:?} to bind to the stored words; got {binding:?}");
+            };
+            assert_eq!(bound_source, source, "the quote binds to its source");
+            assert_eq!(&stored[start..end], expected_stored, "bind to stored bytes");
+        }
+    }
+}
