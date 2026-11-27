@@ -30615,7 +30615,7 @@
      "purpose": "Public and gated delete entry points plus the headerful orchestration state machine",
      "surface": {
       "crate-vis": 5,
-      "fn": 5
+      "fn": 6
      }
     },
     {
@@ -30666,7 +30666,7 @@
      "path": "src/deletion/delete/mod.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "re-export": 3
      }
     },
@@ -30712,6 +30712,16 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/deletion/delete/remaining.rs",
+     "purpose": "What a delete answer lists as still out of its reach (H5): whether old backups hold the record, and which of…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -31003,7 +31013,7 @@
      "path": "src/deletion/mod.rs",
      "purpose": "ARCH-0038 deletion/redaction contract types",
      "surface": {
-      "crate-vis": 53,
+      "crate-vis": 54,
       "re-export": 15
      }
     },
@@ -55198,7 +55208,7 @@
      "path": "src/llm/defaults.rs",
      "purpose": "Vault-local inference defaults: the stored, owner-editable purpose-default table and the vault doors that…",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 4,
       "re-export": 1
      }
@@ -55324,7 +55334,7 @@
      "path": "src/llm/mod.rs",
      "purpose": "Engine-facing LLM invocation seam",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 27,
       "mod": 12,
       "re-export": 34
      }
@@ -74958,7 +74968,7 @@
      "path": "src/result_body/collect.rs",
      "purpose": "The result body collector: released bodies first, then orphan files",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "fn": 1,
       "struct": 1
      }
@@ -114259,6 +114269,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/delete_answer_counts_released_files.rs",
+     "purpose": "H5R1 T11–T12: an independently held body file is not listed as pending collection, and a hard delete returns…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -114800,6 +114818,22 @@
      "notable": [],
      "path": "tests/epoch_lineage_pointer_form_summary.rs",
      "purpose": "The lineage census reads a pointer-form epoch SUMMARY by the keyframe keys it keeps beside its pointer…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/erase_answer_counts_sealed_hold_copies.rs",
+     "purpose": "The erase answer counts only sealed hold copies (H5R1 T10): a host order with no sealed capture counts no…",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/erase_answer_lists_copies_out_of_reach.rs",
+     "purpose": "What a delete and an erase cannot reach, told in the answer (H5): T1 the hard delete lists old backups; T2…",
      "surface": {}
     },
     {
@@ -124212,7 +124246,7 @@
     },
     "deletion": {
      "entry": "crates/oneiron/src/deletion/mod.rs",
-     "files": 76,
+     "files": 77,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -126130,8 +126164,8 @@
    },
    "over_bar": 276,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8666,
-   "test_files": 2356
+   "source_files": 8667,
+   "test_files": 2359
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -155697,9 +155731,9 @@
      "path": "src/memory/claims/mod.rs",
      "purpose": "Moved from `crates/oneiron/src/memory/claims/mod.rs` (lib split R2: record types below the lib)",
      "surface": {
-      "const": 3,
+      "const": 19,
       "enum": 1,
-      "fn": 2,
+      "fn": 3,
       "re-export": 12,
       "struct": 3
      }
@@ -160707,6 +160741,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/remaining_files_still_in_use.rs",
+     "purpose": "H5 T9 fallback: no existing pinned FILE-body delete fixture",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/snapshot_id_side_key.rs",
      "purpose": "`SnapshotId`'s side-table key (UC-06 PR 9)",
      "surface": {}
@@ -161707,7 +161749,7 @@
    "over_bar": 0,
    "purpose": "Engine-internal, not a public interface: the stored record types below `oneiron` (lib split, stage A), the…",
    "source_files": 894,
-   "test_files": 4
+   "test_files": 5
   },
   "oneiron-remote": {
    "files": [
