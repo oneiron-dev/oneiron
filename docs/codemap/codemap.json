@@ -51229,7 +51229,7 @@
      "purpose": "Landing a decoded conversation as an imported transcript (ARCH-0027)",
      "surface": {
       "crate-vis": 8,
-      "fn": 3,
+      "fn": 4,
       "re-export": 1
      }
     },
@@ -121404,6 +121404,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/session_project_history_import.rs",
+     "purpose": "SESSION-PROJECT-NOTE-MESSAGE-PLACEMENT PR D, the host-import side: an import through…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/session_project_note_message_writes.rs",
      "purpose": "SESSION-PROJECT-NOTE-MESSAGE-PLACEMENT PR A, the write side: a handle bound to an attached session's folder…",
      "surface": {}
@@ -126071,7 +126079,7 @@
    "over_bar": 276,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 8664,
-   "test_files": 2351
+   "test_files": 2352
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -176387,6 +176395,16 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/commands/history_import/session_folder.rs",
+     "purpose": "Name the folder a host session log names as the MCP bridge names an attached session's folder",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -190630,7 +190648,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "WorkspaceIdentity"
@@ -194471,7 +194489,7 @@
     },
     "commands": {
      "entry": "crates/oneiron-server/src/commands.rs",
-     "files": 104,
+     "files": 105,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -195246,7 +195264,7 @@
      "entry": "crates/oneiron-server/src/workspace_identity.rs",
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "s",
+     "largest_src_bucket": "m",
      "layout": "file",
      "purpose": "A folder's workspace identity (RECALL-SESSION-PROJECT; Engine ANSWER RECALL-SESSION-PROJECT-INTENT, 26 Nov…",
      "spec_ids": []
@@ -195266,7 +195284,7 @@
    },
    "over_bar": 72,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 2231,
+   "source_files": 2232,
    "test_files": 633
   },
   "oneiron-setting-contract": {
