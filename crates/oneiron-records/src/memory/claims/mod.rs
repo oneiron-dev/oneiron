@@ -143,12 +143,7 @@ pub fn remaining_after_delete(
             text: REMAINING_BACKUPS_BEFORE_DELETE_TEXT.to_owned(),
         });
     }
-    if files_left > 0 {
-        remaining.push(RemainingNotice {
-            code: REMAINING_FILES_STILL_IN_USE.to_owned(),
-            text: files_still_in_use_text(files_left),
-        });
-    }
+    let _ = (files_left, files_still_in_use_text);
     remaining
 }
 
