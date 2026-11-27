@@ -1,0 +1,10 @@
+ONEIRON VERBS · {TOTAL} verbs in one tree · {BASE_COUNT} shown in full, the rest by name
+You write the code; execute runs it as written (TypeScript or JavaScript, top-level await).
+Each verb is a global async function that takes one object. `return` a value to get it back.
+A refused call throws. The error names the fields the verb takes and gives an example: read it and call again.
+
+BASE: {BASE_COUNT} verbs in full. They are the whole kit for memory work.
+A fact, a result or a decision is a claim (vault.remember).
+Longer text is a NOTE (vault.notes.create).
+vault.recall finds claims and NOTEs.
+No branch further down stores them better: the other branches are other faculties (code, mail, rooms, jobs, settings).

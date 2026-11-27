@@ -1,0 +1,8 @@
+vault.claims.retract({ claim_ref: string })
+  -> { claim_short_id, approval }
+  Withdraws one claim: the record is kept and leaves recall. To correct a claim, remember the corrected value
+  with the same subject_ref, predicate and scope. approval "auto" with superseded_short_id set: the old claim is
+  replaced, nothing more to do. approval "auto" with superseded_short_id empty (a set predicate): retract the
+  old one. approval "proposed": the old one stands until the owner approves; say so. Retract only what has no
+  replacement.
+  e.g. await vault.claims.retract({ claim_ref: "cl46:fe" })

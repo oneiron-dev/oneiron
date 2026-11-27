@@ -1,0 +1,9 @@
+vault.recall({ query: string, limit?: number })
+  -> { items: [{ short_id, kind, predicate, value_text, confidence, record, source_revision_ref? }],
+    held?: [{ claim_ref, predicate, value, approval }], retrieval_meta }
+  Ranked memories for a question: claims, notes, projects, people. limit defaults to 10. Ranked, not complete:
+  ask again in other words for what is missing. value_text is cut at 500 characters (a cut text ends in …).
+  held lists your own matching claims that wait for the owner, apart from the ranked items.
+  vault.hydrate reads the whole record.
+  More options (scope, effort, as_of): verbs.expand("vault.recall").
+  e.g. const { items } = await vault.recall({ query: "Granite drafter D1 result", limit: 8 })

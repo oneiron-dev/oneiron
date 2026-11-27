@@ -1,0 +1,21 @@
+vault.remember({ subject_ref: string, predicate: string, value: unknown, confidence: number, source: string })
+  -> { claim_short_id, approval: "auto" | "proposed", superseded_short_id, receipt_ref }
+  Adds one claim: one fact about one subject. A claim replaces the standing claim with the same subject_ref,
+  predicate and scope (superseded_short_id names it). On a set predicate, it replaces only a standing claim
+  with the same value; distinct values stand side by side (superseded_short_id is empty if none matches).
+  Examples of set predicates: preference.food, decision.* except decision.settled, and relationship.*.
+  Facts that must stand together take a predicate each (experiment.run_result.d1a) or a subject each.
+  subject_ref: the short_id of the record the fact is about. A project's facts and decisions go on the project.
+    vault.recall finds the project (kind PROJECT).
+    Facts about yourself go on me.person_ref ?? me.actor_ref (person_ref can be null).
+    Get me from self.actor.
+  predicate: a dotted lowercase name you choose, each part [a-z][a-z0-9_]*; one subject holds one standing
+    claim per predicate and scope, except that set predicates hold one per distinct value.
+  value: text or JSON. confidence: 0 to 1 (0.9 and up for what you read in a source). source: the file, log or
+    person the fact came from.
+  approval "proposed": held for the owner; it replaces nothing yet.
+    Your own vault.recall lists a matching proposed claim under held, not in the ranked items.
+    vault.writes.pending lists the claim with its reason.
+  e.g. if ("actor_ref" in me) await vault.remember({ subject_ref: me.person_ref ?? me.actor_ref,
+         predicate: "experiment.run_result.d1a", value: { run: "1127-0912-d1a", verdict: "pass" }, confidence: 0.9,
+         source: "run log, 26 Nov 2026" })
