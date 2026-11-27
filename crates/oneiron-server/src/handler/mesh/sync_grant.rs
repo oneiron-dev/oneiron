@@ -20,7 +20,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use oneiron::Vault;
-use oneiron_mesh_transport::{MachineGrants, MeshConnection, SYNC_ALPN};
+use oneiron_mesh_transport::{MachineGrants, MeshConnection, MeshError, SYNC_ALPN};
 use tokio::sync::watch;
 use tokio::time::{Instant, Interval, MissedTickBehavior};
 
@@ -96,4 +96,19 @@ impl SyncGrantWatch {
             Ok(true)
         )
     }
+}
+
+/// Closes `connection` once its accept loop's accept failed, and hands back
+/// `error`. A failed accept ends the connection, not just the loop: a stream
+/// the connection already upgraded holds a handle to it, so without the close
+/// it would outlive a revoke that the next stream's admission refused before
+/// the notice woke the watch (review round 1 of #10600). An accept fails only
+/// when the grant is refused or cannot be read, or the connection is already
+/// lost, so this never closes a connection whose grant holds.
+pub(super) fn close_on_accept_error(
+    connection: &dyn MeshConnection,
+    error: MeshError,
+) -> MeshError {
+    connection.close();
+    error
 }

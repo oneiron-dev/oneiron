@@ -215,7 +215,7 @@ mod host {
     use super::home_pin::{PinnedGrants, PinnedRoster};
     use super::pressure::{self, MeshFloor};
     use super::shutdown::{self, MeshShutdown};
-    use super::sync_grant::SyncGrantWatch;
+    use super::sync_grant::{SyncGrantWatch, close_on_accept_error};
     use crate::http_listener::ConnectionLimits;
 
     /// How often the routes' ticks run.
@@ -732,7 +732,7 @@ mod host {
                         () = grant.lapsed(&*connection) => break Ok(()),
                         stream = connection.accept_duplex() => match stream {
                             Ok(stream) => stream,
-                            Err(error) => break Err(error),
+                            Err(error) => break Err(close_on_accept_error(&*connection, error)),
                         },
                     };
                     let place = tokio::select! {
