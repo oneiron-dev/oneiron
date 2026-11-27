@@ -69,9 +69,7 @@ impl Vault {
             // The owner, on their own proof, learns `restricted` for a
             // record they chose to restrict (Q1 = A); any other absence
             // passes through.
-            Err(Error::EntityNotFound) => Err(self
-                .restricted_owner_delete_refusal(owner, id)
-                .unwrap_or(Error::EntityNotFound)),
+            Err(Error::EntityNotFound) => Err(Error::EntityNotFound),
             outcome => outcome,
         }
     }
