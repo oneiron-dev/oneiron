@@ -662,20 +662,9 @@ pub(super) fn refused() -> TransportError {
 /// over the cap as `Capacity`), a protocol fault and a read that timed out
 /// are not, so they are never read as a withdrawn answer.
 fn socket_ended(error: &WsError) -> bool {
-    match error {
-        WsError::ConnectionClosed
-        | WsError::AlreadyClosed
-        | WsError::Protocol(ProtocolError::ResetWithoutClosingHandshake) => true,
-        WsError::Io(error) => matches!(
-            error.kind(),
-            std::io::ErrorKind::UnexpectedEof
-                | std::io::ErrorKind::ConnectionReset
-                | std::io::ErrorKind::ConnectionAborted
-                | std::io::ErrorKind::BrokenPipe
-                | std::io::ErrorKind::NotConnected
-        ),
-        _ => false,
-    }
+    // RED (proof pin): round 0's read, every error but a timed-out read.
+    matches!(error, WsError::Protocol(ProtocolError::ResetWithoutClosingHandshake))
+        || !matches!(error, WsError::Io(error) if error.kind() == std::io::ErrorKind::TimedOut)
 }
 
 #[cfg(test)]
