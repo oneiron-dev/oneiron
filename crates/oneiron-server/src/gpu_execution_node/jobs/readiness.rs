@@ -308,9 +308,6 @@ impl NodeJobs {
         let now = self.now();
         let mark = {
             let mut book = self.shared.readiness.book();
-            if book.checked_offer.as_ref() != Some(&offer) {
-                book.offer_changed = true;
-            }
             if !book.due(now.wall_ms, settings.readiness_every_secs, &offer) {
                 return;
             }
