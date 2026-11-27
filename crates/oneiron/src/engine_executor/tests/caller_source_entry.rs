@@ -21,39 +21,6 @@ const ASK_CODE: &str = concat!(
     "const answer = await self.ask('continue?');",
 );
 
-/// A model backend that fails the test on any call: a source run never
-/// calls the model (FIX EXECUTE-CALLER-CODE). Every backend method panics,
-/// including the `supports` default, so consulting the backend in any way
-/// is a red test.
-struct NoModelBackend;
-
-impl LlmBackend for NoModelBackend {
-    fn supports(&self, _model: &crate::ModelId, _capability: crate::LlmCapability) -> bool {
-        panic!("a source run called the model");
-    }
-
-    fn generate<'a>(
-        &'a self,
-        _request: LlmRequest,
-        _lease: &'a BudgetLease,
-    ) -> LlmGenerateFuture<'a> {
-        panic!("a source run called the model");
-    }
-
-    fn generate_sourced<'a>(
-        &'a self,
-        _request: LlmRequest,
-        _lease: &'a BudgetLease,
-        _sources: Option<Vec<EntityId>>,
-    ) -> LlmGenerateFuture<'a> {
-        panic!("a source run called the model");
-    }
-
-    fn stream<'a>(&'a self, _request: LlmRequest, _lease: &'a BudgetLease) -> LlmStreamResult<'a> {
-        panic!("a source run called the model");
-    }
-}
-
 /// A host's verb door reduced to the one verb a source test calls:
 /// `tasks.create` on the host's memory surface, under the origin the
 /// dispatcher hands it. It admits every call, or refuses the run's reads of

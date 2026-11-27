@@ -12,9 +12,8 @@ use crate::{Error, Result, Vault};
 const GUEST_ERROR_CHARS: usize = 2048;
 
 /// The guest's own error text for a failed step, so the model learns why its
-/// program stopped. The guest's position header never reaches it; a
-/// TypeScript program's error ends with where it threw in the TypeScript
-/// source, past the text's cut, and a JavaScript program's is as it was.
+/// program stopped. The guest's position header never reaches it; the
+/// authored source position, when available, follows the capped text.
 #[cfg(feature = "code-sandbox-wasmtime")]
 pub fn guest_failure(message: &str, prepared: &PreparedSource<'_>) -> Error {
     let (message, at) = split_guest_error(message);
@@ -81,8 +80,8 @@ impl GuestProgramError {
     /// position is moved past the `prefix_lines` lines the host put before
     /// `prepared`'s program. Then the whole body is masked: `mask` replaces
     /// each known value, and the release shape sanitizer redacts a
-    /// credential-shaped body. The existing cut and the TypeScript position
-    /// come last. A mask that fails returns its own error, never the text.
+    /// credential-shaped body. The existing cut and authored position come
+    /// last. A mask that fails returns its own error, never the text.
     pub fn into_error(
         self,
         prepared: &PreparedSource<'_>,

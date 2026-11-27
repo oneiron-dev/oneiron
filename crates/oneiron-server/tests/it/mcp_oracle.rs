@@ -127,7 +127,7 @@ use oneiron::{
 };
 use oneiron_server::mcp::{
     CodeRunLimits, McpCodeExecutionHost, McpCodeExecutionRequest, McpCodeModeProvider,
-    McpConnectorScope, McpEngineNativeCodeHost, McpResolvedActor, mcp_code_run_id,
+    McpCodeRunInput, McpConnectorScope, McpEngineNativeCodeHost, McpResolvedActor, mcp_code_run_id,
 };
 
 fn oracle_vault_config() -> VaultConfig {
@@ -372,7 +372,7 @@ async fn injected_host_execute_code() -> InjectedHostRun {
             vault: Arc::clone(&vault),
             actor: &resolved,
             run_ref,
-            task,
+            input: McpCodeRunInput::Task(task),
             run_id,
             verbs: Arc::new(OracleNoVerbs),
             off_record_session: None,
@@ -389,7 +389,7 @@ async fn injected_host_execute_code() -> InjectedHostRun {
             vault: Arc::clone(&vault),
             actor: &resolved,
             run_ref,
-            task,
+            input: McpCodeRunInput::Task(task),
             run_id,
             verbs: Arc::new(OracleNoVerbs),
             off_record_session: None,

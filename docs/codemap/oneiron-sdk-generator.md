@@ -39,7 +39,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/generate/emit_ts.rs` | src | m | 17 crate-vis | — | The TypeScript emitters: the verb tree every package emitter walks, the facade verbs module… |
 | `src/generate/emit_ts/facade_verb.rs` | src | m | 5 crate-vis | — | One facade verb as a TypeScript member ([`ts_verb`]): a typed binding's verb (its native call, or the… |
 | `src/generate/emit_ts/tests.rs` | test | s | — | — | — |
-| `src/generate/mod.rs` | src | s | 22 crate-vis | — | The `Generator` state and the module-level constants |
+| `src/generate/mod.rs` | src | s | 26 crate-vis | — | The `Generator` state and the module-level constants |
 | `src/generate/outputs.rs` | src | m | 1 struct · 4 fn · 17 crate-vis | Outputs | `BUILD_TIME_OUTPUTS`, `PACKAGE_OUTPUTS`, `PACKAGE_PATHS` and `outputs()`, which runs the emitters in a fixed… |
 | `src/generate/row_access.rs` | src | s | 26 crate-vis | — | Python's operations on a verb row, as the Rust emitters perform them (G4a) |
 | `src/generate/rows.rs` | src | m | 2 crate-vis | — | The Python generator's module level: the verb rows' validation and the row sets, in source order |

@@ -217,15 +217,18 @@ SyncServer::new(vault, server_config)?.with_mcp_quickjs_provider(provider)
 
 The host belongs to that server/vault, not the process. No backend or spend lease
 is invented by startup. Servers without this explicit verified binding keep
-`execute_code` unavailable and omit it from listings. Bound servers advertise
-it on both MCP endpoints. Actor resolution, scope admission, gate dispatch,
-checkpoint persistence, and result envelopes use the existing engine paths.
-Narrow world/facet credentials remain refused, rather than gaining vault-wide
-execution through the new door.
+`execute` and `resume` unavailable and omit them from listings. Bound servers list
+`execute` and `resume` on both MCP endpoints. The Foreign `execute_code` row is
+served by its HTTP facade door only, and is no MCP tool. Actor resolution, scope
+admission, gate dispatch, checkpoint persistence, and result envelopes use the
+existing engine paths. Narrow world/facet credentials remain refused, rather than
+gaining vault-wide execution through the new door.
 
-Reuse `run_ref` and `task` to resume a yielded run. Completed re-entry returns
-the persisted result without a second effect. A changed task, interpreter pin,
-or actor identity cannot reuse the existing replay identity. Concurrent calls
+Call `resume` with `run_ref` to continue a paused run. On a complete run it
+returns the stored result without a second effect. The same `run_ref` with the
+same code returns the stored result and repeats no write; the same `run_ref`
+with other code is refused (`RUN_REF_REUSED`). A changed interpreter pin or
+actor identity cannot reuse the existing replay identity. Concurrent calls
 to the same run wait their turn in arrival order, each entering the run once
 the one before it ends; a call still waiting at the configured queue wait
 (`limits.queue_wait_timeout_ms`) starts nothing and answers

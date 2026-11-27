@@ -4,8 +4,8 @@ pub(crate) use self::auth::*;
 pub(crate) use self::execute::*;
 pub(crate) use self::gates::*;
 use super::{
-    MCP_CREDENTIAL_HEADER, McpCallContext, McpGatewayError, actions, execute_mcp_execute_code,
-    execute_mcp_generated_verb, execute_mcp_read_result, execute_mcp_setup, mcp_actor_class_wire,
+    MCP_CREDENTIAL_HEADER, McpCallContext, McpGatewayError, actions, execute_mcp_execute,
+    execute_mcp_generated_verb, execute_mcp_resume, execute_mcp_setup, mcp_actor_class_wire,
     mcp_engine_error, owner_call,
 };
 use crate::mcp::McpActorMetadata;

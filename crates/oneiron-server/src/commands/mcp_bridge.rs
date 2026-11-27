@@ -37,11 +37,12 @@
 //! #surface).
 //!
 //! Unless the operator names `--surface`, the bridge asks the server once,
-//! before the first request, which endpoint to use: `/mcp` (`setup_oneiron`
-//! and `execute_code`) when `/mcp`'s `initialize` says this credential may
+//! before the first request, which endpoint to use: `/mcp` (`setup_oneiron`,
+//! `execute` and `resume`) when `/mcp`'s `initialize` says this credential may
 //! run code there, which needs a bound code host and a credential
-//! `execute_code` admits, and `/mcp/tool-first` otherwise. The listing alone
-//! cannot say it: `/mcp` lists `execute_code` to every credential alike.
+//! `execute` admits, and `/mcp/tool-first` otherwise. The listing alone
+//! cannot say it: a ready host lists `execute` and `resume` regardless of
+//! the credential's execute admission.
 
 use std::collections::HashMap;
 use std::io::{self, BufRead, Read, Write};

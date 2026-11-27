@@ -1158,20 +1158,20 @@ agent's cap, its purpose's) counts those charges too, and a try the
 remainder cannot admit ends the step. `models.workflows.enabled = false` turns the pump
 off.
 
-## 6. Code mode (MCP `execute_code`)
+## 6. Code mode (MCP `execute`, `resume`)
 
-`execute_code` runs a task as generated TypeScript or JavaScript: each step's
-program comes from the `generative_reasoner` seat and runs in the checked-in
-QuickJS component, calling the vault through each verb at its SDK path
-(`vault.recall(...)`, `self.focus.refresh(...)`) under the connector's own grants.
+`execute` runs the caller's own TypeScript or JavaScript as written, with no
+model: the code runs in the checked-in QuickJS component, calling the vault
+through each verb at its SDK path (`vault.recall(...)`,
+`self.focus.refresh(...)`) under the caller's own grant.
 JavaScript that parses in the guest's async body runs byte for byte. TypeScript
 is lowered by Oxc; declarations that need script-level grammar can be prepared
 before the guest envelope, with their original source positions retained.
 This adds no module loader. An unsuccessful preparation still leaves the
 original program for QuickJS to report, with its preparation note.
 
-It is listed on `tools/list` only when the seat has a rung and a prompt package
-for the executor is named:
+`execute` and `resume` are listed on `tools/list` on both MCP endpoints
+whenever the server binds a verified code host, with or without model seats:
 
 ```toml
 [models.code_mode]
@@ -1252,7 +1252,7 @@ block, a seat for the role, or `[models]`, compaction is off and never calls
 a model; `GET /api/health` says `"compaction": "off"` with the reason
 (`no_model_configured`, `no_compaction_prompt`, `no_compaction_seat`,
 `compaction_seat_too_small` when the role's smallest rung leaves less input
-room than `window_tokens`, `disabled`, or `code_mode_off`). Each `execute_code` result carries the run's
+room than `window_tokens`, `disabled`, or `code_mode_off`). Each `execute` and `resume` result carries the run's
 `compaction` object: `used_tokens`, `compact_at`, `window_tokens`,
 `in_flight`, `last_swap`, and `suppressed` (`auth`, `no_credit`,
 `turn_scoped` with the failed `check`, or `sticky` with `why`).
@@ -1597,7 +1597,8 @@ described) and the memory one child may hold
 may have running, at 32 MiB each). `self.spawn` queues one child over one
 range, and `tasks.wait` waits on them. Children run on the vault's reader
 runner, never inside a step. A paid or attempt-scoped run's children spend
-under its spend scope. An `execute_code` run's children, and those of a
+under its spend scope. A task run's children (a run the engine's model
+wrote; caller code from `execute` may not spawn children), and those of a
 resident run with no spend scope, spend on the host's code-mode meter
 (`budget_units`), the one the run's own model calls take, with no per-run
 cap: one run's children can exhaust it for every code-mode run. Past
@@ -2702,9 +2703,10 @@ events while the owner watches or holds it: `state` (the takeover), `frame`
 (`{seq, png_base64}`, at most every 500 ms and only when it changed),
 `error`, `ended` and `refused`. The owner is re-proved at each frame.
 
-The desktop belongs to the run, not to one door. An `execute_code` entry
+The desktop belongs to the run, not to one door (a task run's: caller code
+from `execute` may not start a browser or desktop guest). A `resume` entry
 that does not finish the run leaves it parked, and the run's next entry
-gets the same guest and seat; a pumped run's desktop waits through a
+gets the same guest; a pumped run's desktop waits through a
 durable wait the same way. It ends when the run ends (an entry that
 answers complete, or a pumped attempt that settles other than parked), or
 after it sits idle with no door of its run: 30 minutes while its agent has
@@ -2724,7 +2726,7 @@ held, every browser verb refuses `browser_taken_over` (a batch stops
 `NEEDS_YOU`). Handing it back writes the run's `browser_takeover` sandbox
 receipt, the agent's next browser answer carries the record as `takeover`,
 and its next observe is whole. The browser belongs to the run as the
-desktop does: parked between `execute_code` entries and through a pumped
+desktop does: parked between a task run's `resume` entries and through a pumped
 run's durable wait, with its cart and login, and ended with the run or on
 the same idle limits.
 
@@ -2751,7 +2753,7 @@ verb that meets a second tab, or a new tab once its only page closed,
 refuses `browser_unsupported`, as `click_at` does there, and the refusal's
 words name `self.browser.switch_engine` as the way to Chromium: as its
 detail at the facade's browser door, and as its `reasonCodes` in a
-code-mode program (an agent run's or an MCP `execute_code`'s).
+code-mode program (an agent run's or an MCP `execute`'s).
 
 A run's browser starts on the engine the `[browser]` section's `engine`
 names: `lightpanda`, the default and the engine agents start on, or
@@ -3175,7 +3177,7 @@ auto_check = "Should this claim land without the owner's review?"
 wire_health = "Is this traffic one of our own tools, or a bot?"
 
 [models.decisions.seat]
-# A manifest-backed execute_code run picks its seat through the ladder:
+# A task run started before the change picked its seat through the ladder:
 # a model among those described under `facet`, then one of its efforts.
 facet = "code-task"
 model = "Which model should run this task?"

@@ -516,8 +516,9 @@ impl JsCodeModeRuntime for WasmtimeComponentRuntime {
     ) -> Result<JsCodeModeStepOutcome> {
         // A step cancelled before it starts stages no guest at all.
         cancel.check()?;
+        let program = prepared.guest_program();
         let step = JsCodeModeStep {
-            script: prepared.executed(),
+            script: &program,
             ..step
         };
         let backends: &dyn super::microvm::SandboxBackends = match &self.sandbox_backends {
