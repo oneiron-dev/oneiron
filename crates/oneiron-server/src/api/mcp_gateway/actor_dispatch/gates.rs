@@ -1,4 +1,4 @@
-//! The gates an MCP call passes before it executes: proof, verb, credential, execute_code's
+//! The gates an MCP call passes before it executes: proof, verb, credential, a code run's
 //! session and each operation a run makes.
 //! `mcp_proof_admits`, `mcp_verb_gate`, `mcp_execute_code_gate`, `mcp_run_call_gate` and
 //! `mcp_host_verb_gate` are its call surface.
@@ -191,9 +191,9 @@ pub(super) fn mcp_call_scope(
     }
 }
 
-/// `execute_code`'s session gate: the native run this credential starts,
-/// enters again or reads a result of, at that call and at each later check
-/// of it (after an await, at a replay, at the answer's release). Its holder,
+/// `execute` and `resume`'s session gate: the native run this credential
+/// starts or enters again, at that call and at each later check of it
+/// (after an await, at a replay, at the answer's release). Its holder,
 /// class and organization were judged where the call resolved
 /// (`mcp_proof_admits`). Here the credential is live now, holds Read, and
 /// carries no record bound, since no proof projection reaches a run. The

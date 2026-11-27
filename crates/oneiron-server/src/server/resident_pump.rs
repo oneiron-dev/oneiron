@@ -295,8 +295,8 @@ impl SyncServer {
         }
     }
 
-    /// Starts the pump, or returns `None` when no engine-native code host
-    /// serves this vault.
+    /// Starts the pump, or returns `None` when no task-ready engine-native code host
+    /// serves this vault (a source-only host leaves agent attempts waiting).
     pub(crate) fn spawn_resident_pump(self: &Arc<Self>) -> Option<tokio::task::JoinHandle<()>> {
         self.spawn_resident_pump_admitted(admit_every_pass(), admit_every_pass())
     }
@@ -312,7 +312,13 @@ impl SyncServer {
         admit: HousekeepingAdmission,
         admit_run: HousekeepingAdmission,
     ) -> Option<tokio::task::JoinHandle<()>> {
-        self.code_execution_host()?.engine_native()?;
+        let host = self.code_execution_host()?;
+        // FIX EXECUTE-CALLER-CODE P1-7: agent attempts are task runs, so a source-only host
+        // leaves them waiting instead of claiming them to fail on task config.
+        if !host.task_runtime_available() {
+            return None;
+        }
+        host.engine_native()?;
         let server = Arc::clone(self);
         Some(tokio::spawn(async move {
             server.pump_residents_forever(admit, admit_run).await
@@ -555,9 +561,11 @@ impl SyncServer {
         let permit = loop {
             let wait = match self
                 .code_execution_host()
+                .filter(|host| host.task_runtime_available())
                 .and_then(|host| host.engine_native())
             {
                 Some(host) => host.runs().admit_in_line(key.clone()),
+                // No task-ready host: the run waits for a later pass (P1-7).
                 None => return false,
             };
             // A wait that reached its deadline refuses nothing: the run
@@ -602,8 +610,10 @@ impl SyncServer {
     ) -> bool {
         let Some(host) = self
             .code_execution_host()
+            .filter(|host| host.task_runtime_available())
             .and_then(|host| host.engine_native())
         else {
+            // No task-ready host: leave the attempt waiting (P1-7).
             return false;
         };
         let vault = self.vault();
@@ -838,14 +848,13 @@ fn task_text(status: &AgentDispatchStatus, parts: impl Iterator<Item = String>) 
 /// tick beside the send reaper: an agent run whose lease expired is taken
 /// here, in the ruled order, when it can run here
 /// ([`Vault::reap_agent_run_leases`]). The host's part of that check is this
-/// pump's own: an engine-native code host to run the run on, which every
-/// claim of the pump needs first.
+/// pump's own: a task-ready engine-native code host to run the run on, which every
+/// claim of the pump needs first (a source-only host leaves expired runs waiting).
 pub(super) fn reap_agent_run_leases(server: &SyncServer) {
     let runs_here = |_: &AgentDefinition| {
         server
             .code_execution_host()
-            .and_then(|host| host.engine_native())
-            .is_some()
+            .is_some_and(|host| host.task_runtime_available() && host.engine_native().is_some())
     };
     match server.vault().reap_agent_run_leases(&runs_here) {
         Ok(AgentRunLeaseReap {

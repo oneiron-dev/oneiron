@@ -1732,19 +1732,16 @@ async fn an_off_device_mcp_code_run_releases_a_device_local_hydrate_miss_like_a_
         )
         .unwrap();
 
+    // No MCP tool starts a task run since EXECUTE-CALLER-CODE PR D: the kept
+    // task path is entered through its test seam, off this device.
     for (run_ref, reference) in ["hydrate-never", "hydrate-kept"].into_iter().zip(refs) {
-        let mut request = mcp_endpoint_call_request(
-            "/mcp",
+        let body = execute_task_run_for_test(
+            &mode.server,
             credential,
             run_ref,
-            "execute_code",
-            mcp_merge_args(
-                mcp_endpoint_envelope(actor, "read_memory"),
-                json!({"run_ref": run_ref, "task": "hydrate the supplied reference"}),
-            ),
-        );
-        request.extensions_mut().insert(ConnectInfo(AWAY.peer));
-        let (_, body) = route_json(mode.server.clone(), request).await;
+            "hydrate the supplied reference",
+        )
+        .await;
         let structured = &body["result"]["structuredContent"];
         assert_eq!(structured["result"]["status"], "complete", "{body}");
         let step = &structured["steps"][0];
@@ -1757,6 +1754,53 @@ async fn an_off_device_mcp_code_run_releases_a_device_local_hydrate_miss_like_a_
             output["missing"],
             json!([{"ref": reference, "reason": "not_found"}]),
             "{body}"
+        );
+    }
+}
+
+/// #10571 ported to the MCP `execute` tool (EXECUTE-CALLER-CODE PR D): off
+/// this device, caller code that hydrates a device-local row's hex id gets
+/// its answer released exactly as for a never-used id. The release scans a
+/// copy whose hydrate miss echoes are cleared, so neither answer is withheld.
+#[cfg(feature = "code-sandbox-wasmtime")]
+#[tokio::test]
+async fn an_off_device_caller_code_hydrate_misses_a_device_local_row_like_a_never_used_id() {
+    let mode = super::mcp_quickjs::code_mode_server_with(Vec::new(), None);
+    let actor = mode.vault.ensure_embedded_owner_actor().unwrap();
+    let credential = "hydrate-miss-caller-code";
+    register_mcp_actor(
+        &mode.server,
+        credential,
+        actor,
+        oneiron::EdgeActorClass::Human,
+    )
+    .await;
+    put_actor_read_grant(&mode.vault, actor, None);
+    let kept = device_local_hydrate_claim(&mode.server, actor);
+    let refs = [EntityId::now().to_hex(), kept.to_hex()];
+    for (run_ref, reference) in ["caller-hydrate-never", "caller-hydrate-kept"]
+        .into_iter()
+        .zip(refs)
+    {
+        let code = format!("await vault.hydrate({{refs: ['{reference}']}}); return 'hydrated';");
+        let mut request = mcp_endpoint_call_request(
+            "/mcp",
+            credential,
+            run_ref,
+            "execute",
+            json!({"code": code, "run_ref": run_ref}),
+        );
+        request.extensions_mut().insert(ConnectInfo(AWAY.peer));
+        let (_, body) = route_json(mode.server.clone(), request).await;
+        let structured = &body["result"]["structuredContent"];
+        assert_eq!(structured["status"], "complete", "{reference}: {body}");
+        assert_eq!(structured["result"], "hydrated", "{reference}: {body}");
+        let calls = structured["calls"].as_array().expect("calls");
+        assert!(
+            calls
+                .iter()
+                .any(|call| call["verb"] == "vault.hydrate" && call["outcome"] == "read"),
+            "{reference}: {body}"
         );
     }
 }

@@ -4,7 +4,7 @@
 
 use std::collections::BTreeSet;
 
-use super::super::{Generator, RowId, SESSION_READS};
+use super::super::{Generator, RowId, SESSION_READS, facade_only_row};
 use super::{FIELD_NAME, GRANT_CLASS, filter, is, item, item_in, keys_are, refuse, same_name};
 use crate::error::GenerateError;
 use crate::py::text::{repr_str_tuple, strip};
@@ -367,12 +367,14 @@ impl Generator {
         for &id in &self.host_rows {
             host_names.push(item(&self.rows[id], "name")?.clone());
         }
+        // A row served by its HTTP facade door only is no code-mode verb (FIX EXECUTE-CALLER-CODE).
         let mut code_mode = Vec::new();
         for &id in &self.callable_rows {
             let name = item(&self.rows[id], "name")?;
-            if !host_names
-                .iter()
-                .any(|host_name| same_name(name, host_name))
+            if !facade_only_row(&self.rows[id])
+                && !host_names
+                    .iter()
+                    .any(|host_name| same_name(name, host_name))
             {
                 code_mode.push(id);
             }

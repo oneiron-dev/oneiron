@@ -36,8 +36,8 @@ mod waves;
 pub(crate) use media::{MediaCallParts, MediaCallRefusal, VoiceRefusal, prepare_media_call};
 // Every `ai.options` door lists through one projection (FIX 2942).
 pub(crate) use options::{
-    CallerOptions, caller_options, granted_operations, line_options, run_options,
-    video_granted_agent,
+    CallerOptions, caller_options, granted_operations, granted_operations_checked, line_options,
+    run_options, video_granted_agent,
 };
 // The facade's `ai.ask_image` door answers on this route's one path (FIX 679).
 pub(crate) use vision::asked as ask_image_answered;

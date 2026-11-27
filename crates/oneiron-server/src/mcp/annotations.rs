@@ -10,20 +10,20 @@
 //!
 //! | tool | `readOnlyHint` | `destructiveHint` | `openWorldHint` |
 //! |---|---|---|---|
-//! | `setup`, `read_result`, a `read` verb | true | | |
+//! | `setup`, a `read` verb | true | | |
 //! | a `reversible_work` verb (an undo restores it) | false | false | |
 //! | a `delete`, `erase`, `vault_delete`, `member_remove` or `protected_ref_rewrite_or_delete` verb | false | true | |
 //! | an `outbound_send` or `legal_send` verb | false | | true |
 //! | a verb of any other act class | false | | |
-//! | an `unstated` verb, `execute_code`, `invoke_action` | no annotations | | |
+//! | an `unstated` verb, `execute`, `resume`, `invoke_action` | no annotations | | |
 //!
 //! An empty cell is left out, so the protocol's default applies: a tool that
 //! is not read-only may destroy and may reach outside the vault. No hint is
 //! given that the act class cannot back: a `read` or `reversible_work` verb
 //! may still reach outside the vault (a model call, a publish to a git
-//! origin), so neither says `openWorldHint` false. `execute_code` and
-//! `invoke_action` run whatever the call names, and an `unstated` verb has no
-//! proven undo class, so they carry no hints at all.
+//! origin), so neither says `openWorldHint` false. `execute`, `resume`
+//! and `invoke_action` run whatever the call names, and an `unstated` verb
+//! has no proven undo class, so they carry no hints at all.
 //!
 //! The hints depend on the tool alone, so the listing frozen at registration
 //! stays the same bytes for every caller.

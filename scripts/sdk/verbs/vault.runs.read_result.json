@@ -1,0 +1,14 @@
+{
+  "name": "vault.runs.read_result",
+  "description": "Reads a window of one stored result of one of your own runs by its run_ref and result_ref: up to limit bytes (at most 20,000) from offset, with where to read on. An execute result past its cut names both.",
+  "input": "crate::code_run::run_result_read::RunResultReadRequest",
+  "output": "serde_json::Value",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.runs.read_result\", &input)?",
+  "scope": "Read",
+  "act_class": "read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "mcp": "code",
+  "section": false
+}

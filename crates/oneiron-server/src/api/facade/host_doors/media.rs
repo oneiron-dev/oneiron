@@ -24,7 +24,8 @@ use super::support::{
 };
 use crate::api::ai::{
     CallerOptions, MediaCallParts, MediaCallRefusal, VoiceRefusal, caller_options,
-    granted_operations, line_options, prepare_media_call, video_granted_agent,
+    granted_operations, granted_operations_checked, line_options, prepare_media_call,
+    video_granted_agent,
 };
 use crate::auth::CoreAuth;
 use crate::models::RungVoices;
@@ -211,17 +212,37 @@ pub(super) async fn answered(
 /// [`owner_grade`]'s check at the owner's door for `operation`, which also
 /// admits an agent whose live Grant the owner minted names the operation
 /// (FIX 3208): its call is then the owner's, as he minted it. Any other
-/// caller is refused with `message`, as before.
+/// caller is refused with `message`, as before. A lookup that did not succeed
+/// (no principal, or Grants that cannot be read) leaves the refusal as it was:
+/// only a Grant read as absent names the missing Grant.
 fn owner_or_granted(
     server: &SyncServer,
     auth: &CoreAuth,
     operation: AiOperation,
     message: &str,
 ) -> MemoryResult<()> {
-    if granted_operations(server, auth).contains(&operation) {
+    let Some(granted) = granted_operations_checked(server, auth) else {
+        return owner_grade(auth, message);
+    };
+    if granted.contains(&operation) {
         return Ok(());
     }
-    owner_grade(auth, message)
+    missing_grant(auth, operation, message)
+}
+
+/// The refusal for a Grant read as absent: the owner's door plus the exact
+/// missing Grant, which crosses the run bridge (FIX EXECUTE-CALLER-CODE).
+fn missing_grant(auth: &CoreAuth, operation: AiOperation, message: &str) -> MemoryResult<()> {
+    owner_grade(auth, message).map_err(|mut refusal| {
+        // Keep the exact missing Grant on the refusal that crosses the run
+        // bridge (FIX EXECUTE-CALLER-CODE), not just in facade prose.
+        let grant = format!("ai.{}", operation.as_str());
+        refusal
+            .message
+            .push_str(&format!("; this operation needs a Grant naming {grant}"));
+        refusal.reason_codes.push(format!("grant_required.{grant}"));
+        refusal
+    })
 }
 
 /// [`answered`] past its credential check, for a caller its own door proved

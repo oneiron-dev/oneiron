@@ -322,28 +322,25 @@ fn mcp_endpoint_tool_validation_fixtures_gate_args_before_execution() {
     }
 }
 
-/// An `execute_code` task is never refused for its length: a 64 KiB task
-/// statement passes the advertised schema and argument admission unchanged.
-/// The transport's whole-request body bound is the only size limit.
+/// A 64 KiB caller-source body passes the advertised schema and admission
+/// unchanged. The transport and runtime apply their own size limits later.
 #[test]
-fn execute_code_admits_a_64_kib_task() {
-    let task = "x".repeat(64 * 1024);
-    let schema = McpEndpointTool::ExecuteCode.schema().input_schema;
+fn execute_admits_a_64_kib_code_body() {
+    let code = "x".repeat(64 * 1024);
+    let schema = McpEndpointTool::Execute.schema().input_schema;
     assert!(
-        draft2020_12_accepts(&schema["properties"]["task"], &json!(task)),
-        "the advertised task schema states no length ceiling",
+        draft2020_12_accepts(&schema["properties"]["code"], &json!(code)),
+        "the advertised code schema states no length ceiling",
     );
 
-    let mut args = endpoint_envelope("execute_code");
-    args["run_ref"] = json!("long-task");
-    args["task"] = json!(task);
-    let McpValidatedToolArgs::ExecuteCode(parsed) =
-        validate_mcp_endpoint_tool_args(McpEndpointTool::ExecuteCode, McpToolArguments::from(args))
-            .expect("a 64 KiB task is admitted")
+    let args = json!({"run_ref": "long-code", "code": code});
+    let McpValidatedToolArgs::Execute(parsed) =
+        validate_mcp_endpoint_tool_args(McpEndpointTool::Execute, McpToolArguments::from(args))
+            .expect("a 64 KiB body is admitted")
     else {
-        panic!("execute_code decodes to its own arguments");
+        panic!("execute decodes to its own arguments");
     };
-    assert_eq!(parsed.task, task, "the task reaches the run unchanged");
+    assert_eq!(parsed.code, code, "the body reaches the run unchanged");
 }
 
 /// ONE-1704 M3: durable ids are derived from the IMMUTABLE connector-scope
@@ -418,7 +415,7 @@ fn claim_id_scopes_by_credential_scope_identity() {
         mcp_scoped_identity_id("claim", "one-1704-key", &a),
     );
 
-    // The `execute_code` run handle IS that one derivation, not a second rule.
+    // The `execute` run handle IS that one derivation, not a second rule.
     assert_eq!(
         mcp_code_run_id("one-1704-run", &a),
         mcp_scoped_identity_id("execute_code.run", "one-1704-run", &a),
@@ -444,18 +441,8 @@ fn endpoint_census_args(tool: McpEndpointTool) -> Value {
         McpEndpointTool::Setup => {
             object.insert("board_budget_tok".to_owned(), json!(400));
         }
-        McpEndpointTool::ExecuteCode => {
-            object.insert("run_ref".to_owned(), json!("census-run"));
-            object.insert("task".to_owned(), json!("summarize the current board"));
-        }
-        McpEndpointTool::ReadResult => {
-            object.remove("page");
-            object.remove("cache");
-            object.insert("run_ref".to_owned(), json!("census-run"));
-            object.insert("ref".to_owned(), json!("census-result"));
-            object.insert("facet".to_owned(), json!("describe"));
-            object.insert("input".to_owned(), json!({}));
-        }
+        McpEndpointTool::Execute => return json!({"run_ref": "census-run", "code": "return 1;"}),
+        McpEndpointTool::Resume => return json!({"run_ref": "census-run", "answer": null}),
         McpEndpointTool::InvokeAction => {
             object.remove("page");
             object.remove("cache");

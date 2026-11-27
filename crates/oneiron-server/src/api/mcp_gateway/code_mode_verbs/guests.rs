@@ -735,7 +735,8 @@ impl RunGuests {
     }
 
     /// The run's guest manifests, each with the pressure its guest shows
-    /// now (FIX 8013).
+    /// now (FIX 8013). Test-only, as its one caller is.
+    #[cfg(test)]
     pub(crate) fn manifests(&self) -> Vec<Value> {
         let browser = self
             .browser
