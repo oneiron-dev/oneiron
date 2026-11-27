@@ -1,4 +1,8 @@
 //! Restore a board after Claude Code compacts a session that already had it.
+//!
+//! The credential is the plugin MCP server's own, so the refresh goes only to
+//! the origin that server forwards to ([`mcp_bridge_origin`]), never to a vault
+//! the hooks' discovery would bind (REVIEW-10587 P1 1).
 
 use std::process::Stdio;
 use std::time::Instant;
@@ -10,13 +14,16 @@ use serde_json::{Value, json};
 
 use super::recall::{Bridge, RecallAuth};
 use super::session_binding::{self, BOARD_KEYFRAME};
-use super::{bind, deadline, oneiron, project_dir, read_event, session_id};
+use super::{deadline, oneiron, project_dir, read_event, session_id};
 use crate::cli::{HookHost, HookRecallArgs};
 use crate::commands::local_servers;
 use crate::commands::mcp_bridge::{INVOCATION_META, mint_invocation};
 use crate::mcp::MCP_TOOL_ARGS_SCHEMA_VERSION;
 
 const TOOL: &str = "self.focus.refresh";
+/// The origin `oneiron mcp` forwards to when the plugin starts it with no
+/// `--url` (cli.rs `McpArgs::url`).
+const MCP_BRIDGE_DEFAULT_URL: &str = "http://127.0.0.1:9090";
 
 pub(super) fn focus_refresh(host: HookHost, args: &HookRecallArgs) -> Option<String> {
     if host != HookHost::ClaudeCode {
@@ -29,7 +36,7 @@ pub(super) fn focus_refresh(host: HookHost, args: &HookRecallArgs) -> Option<Str
     local_servers::open_own(&folder.join(BOARD_KEYFRAME))?;
 
     let deadline = deadline(args.common.timeout);
-    let url = bind::quietly(args.url.as_deref(), deadline).url?;
+    let url = mcp_bridge_origin(args.url.as_deref());
     let mut bridge = Bridge::start(
         &oneiron(args.common.oneiron.as_deref()),
         &url,
@@ -44,6 +51,20 @@ pub(super) fn focus_refresh(host: HookHost, args: &HookRecallArgs) -> Option<Str
     let frame = frame?;
     (Instant::now() < deadline)
         .then(|| format!("{CARRIED_CONTEXT_HEADER}\n{FOCUS_REFRESH_CONTEXT_LEAD}\n{frame}"))
+}
+
+/// The origin the plugin's MCP server reaches, as `oneiron mcp` resolves it:
+/// `--url`, else `ONEIRON_URL`, else [`MCP_BRIDGE_DEFAULT_URL`]. No hook pin,
+/// running local vault or hosted selection is consulted: the credential this
+/// hook sends was paired with that server's vault alone.
+fn mcp_bridge_origin(flag: Option<&str>) -> String {
+    flag.map(str::to_owned)
+        .or_else(|| {
+            std::env::var("ONEIRON_URL")
+                .ok()
+                .filter(|url| !url.trim().is_empty())
+        })
+        .unwrap_or_else(|| MCP_BRIDGE_DEFAULT_URL.to_owned())
 }
 
 fn refresh(bridge: &mut Bridge, host: HookHost) -> Option<String> {

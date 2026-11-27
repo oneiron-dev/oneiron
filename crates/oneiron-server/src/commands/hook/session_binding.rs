@@ -37,7 +37,8 @@
 //! locally, as every hand-over did before.
 //!
 //! The board mark and shown recall keys live beside the bindings but are
-//! not binding records.
+//! not binding records: they expire with the folder they sit in
+//! (REVIEW-10587 P1 4).
 //!
 //! Binding records are only added. Each is written under a staging name no
 //! other writer uses and renamed into place, so starts of one session running at
@@ -46,13 +47,13 @@
 //! never read. No record other than `local` is ever removed, so a session
 //! that bound a hosted vault, or more than one vault, hands over by its
 //! whole record however long it waited (REVIEW-9914). The folders of
-//! sessions whose every file is a `local` record or a staging file, all
-//! older than [`KEEP_FOR`], are removed when another session records: such
-//! a session queues locally with its record or without it. That removal
-//! may list a folder just before a start of its session adds a file, and
-//! remove the `local` record after, so a start adding another binding
-//! beside a `local` record first records `unknown`, which is never removed:
-//! the log stays mixed when the `local` record goes (FIX
+//! sessions whose every file is a `local` record, a staging file or hook
+//! state, all older than [`KEEP_FOR`], are removed when another session
+//! records: such a session queues locally with its record or without it.
+//! That removal may list a folder just before a start of its session adds a
+//! file, and remove the `local` record after, so a start adding another
+//! binding beside a `local` record first records `unknown`, which is never
+//! removed: the log stays mixed when the `local` record goes (FIX
 //! HOOK-SESSION-LOCAL-RECORD-EXPIRY-RACE).
 
 use std::ffi::{OsStr, OsString};
@@ -353,8 +354,8 @@ fn add_hosted(folder: &Path, binding: &HostedBinding) -> anyhow::Result<()> {
 }
 
 /// Removes the folders of sessions other than the one at `own` whose files
-/// are all `local` records or staging files, written more than [`KEEP_FOR`]
-/// ago. A folder holding any other record stays: removing it, or any part
+/// are all `local` records, staging files or hook state ([`BOARD_KEYFRAME`],
+/// [`CARRIER_LINES`]), written more than [`KEEP_FOR`] ago. A folder holding any other record stays: removing it, or any part
 /// of it, could leave a session that may still hand over with no record, or
 /// with one of the vaults it bound alone (REVIEW-9914). A start that adds a
 /// file after this listed the folder recorded `unknown` first
@@ -377,7 +378,7 @@ fn remove_old(own: &Path) {
     };
     let held = |path: &Path| {
         path.file_name()
-            .is_some_and(|name| !staging(name) && name != OsStr::new(LOCAL))
+            .is_some_and(|name| binding_record(name) && name != OsStr::new(LOCAL))
     };
     for entry in entries.filter_map(Result::ok) {
         let folder = entry.path();

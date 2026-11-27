@@ -22,6 +22,12 @@ const TOOL_RESULT_LINES_PER_SESSION: usize = 12;
 const INPUT_CHARS: usize = 300;
 const RESPONSE_CHARS: usize = 400;
 const MAX_SHOWN_BYTES: u64 = 64 * 1024;
+/// The MCP server names Claude Code gives the Oneiron server: `oneiron`, as
+/// the plugin's `.mcp.json` names it, and the plugin's `plugin:oneiron:oneiron`.
+const ONEIRON_MCP_SERVERS: [&str; 2] = ["oneiron", "plugin_oneiron_oneiron"];
+/// The Oneiron tools whose result holds a board keyframe; Claude Code may
+/// write a tool name's dots as underscores.
+const BOARD_TOOLS: [&str; 3] = ["setup_oneiron", "self.focus.refresh", "self_focus_refresh"];
 
 pub(super) fn tool_result(host: HookHost, args: &HookRecallArgs) -> Option<String> {
     if host != HookHost::ClaudeCode {
@@ -38,12 +44,8 @@ pub(super) fn tool_result(host: HookHost, args: &HookRecallArgs) -> Option<Strin
     }
     let lower = name.to_lowercase();
     if lower.contains("oneiron") {
-        if ["setup_oneiron", "focus.refresh", "focus_refresh"]
-            .iter()
-            .any(|&suffix| lower.ends_with(suffix))
-            && event
-                .get("tool_response")
-                .is_some_and(successful_mcp_response)
+        if oneiron_board_tool(name)
+            && event.get("tool_response").is_some_and(carries_keyframe)
             && Instant::now() < deadline
         {
             let _ = session_binding::add(&folder, BOARD_KEYFRAME, b"");
@@ -87,12 +89,16 @@ pub(super) fn tool_result(host: HookHost, args: &HookRecallArgs) -> Option<Strin
         return None;
     }
 
-    let query = tool_query(name, &event);
+    let bound = bind::quietly(args.url.as_deref(), deadline);
+    let url = bound.url?;
+    // What leaves the device is the person's words and what they handed
+    // over: a vault not on this machine gets the tool name and the file's
+    // base name alone (ANSWER TOOL-RESULT-HOSTED-QUERY = A, REVIEW-10587 P1 2).
+    let local = bound.hosted.is_none() && bind::loopback_origin(&url);
+    let query = tool_query(name, &event, local);
     if Instant::now() >= deadline {
         return None;
     }
-    let bound = bind::quietly(args.url.as_deref(), deadline);
-    let url = bound.url?;
     let auth = recall_auth(bound.hosted.as_ref(), args.credential_file.as_deref())?;
     let oneiron = oneiron(args.common.oneiron.as_deref());
     let workspace = project_dir(&event);
@@ -130,9 +136,22 @@ pub(super) fn tool_result(host: HookHost, args: &HookRecallArgs) -> Option<Strin
     (Instant::now() < deadline).then_some(output)
 }
 
-fn successful_mcp_response(response: &Value) -> bool {
-    // Claude Code can pass MCP content blocks or the structured result as a
-    // JSON string. Error text alone is not evidence that a board arrived.
+/// Whether `name` (`mcp__<server>__<tool>`) is a board tool of the Oneiron
+/// MCP server itself, not a tool of another server that shares its tool name
+/// (REVIEW-10587 P1 3).
+fn oneiron_board_tool(name: &str) -> bool {
+    name.strip_prefix("mcp__")
+        .and_then(|rest| rest.split_once("__"))
+        .is_some_and(|(server, tool)| {
+            ONEIRON_MCP_SERVERS.contains(&server) && BOARD_TOOLS.contains(&tool)
+        })
+}
+
+/// Whether a board tool's result holds a keyframe. Claude Code can pass the
+/// MCP content blocks or the structured result, either one as a JSON string.
+/// An error, or text with no keyframe in it, is not evidence that a board
+/// arrived (REVIEW-10587 P1 3).
+fn carries_keyframe(response: &Value) -> bool {
     let parsed;
     let response = if let Some(text) = response.as_str() {
         let Ok(value) = serde_json::from_str::<Value>(text) else {
@@ -149,15 +168,25 @@ fn successful_mcp_response(response: &Value) -> bool {
     {
         return false;
     }
-    if response
+    // Each Oneiron tool result states its structured payload as a text block
+    // too (mcp_gateway board_setup `mcp_negotiated_content`).
+    let in_blocks = response
         .get("content")
         .unwrap_or(response)
         .as_array()
-        .is_some_and(|blocks| !blocks.is_empty())
-    {
-        return true;
-    }
-    let output = response.get("structuredContent").unwrap_or(response);
+        .is_some_and(|blocks| {
+            blocks.iter().any(|block| {
+                block
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .and_then(|text| serde_json::from_str::<Value>(text).ok())
+                    .is_some_and(|output| holds_keyframe(&output))
+            })
+        });
+    in_blocks || holds_keyframe(response.get("structuredContent").unwrap_or(response))
+}
+
+fn holds_keyframe(output: &Value) -> bool {
     output
         .pointer("/board/keyframe")
         .is_some_and(Value::is_string)
@@ -167,7 +196,10 @@ fn successful_mcp_response(response: &Value) -> bool {
             == Some("keyframe")
 }
 
-fn tool_query(name: &str, event: &Map<String, Value>) -> String {
+/// The recall query for one tool call: the tool name and the file's base
+/// name, and, when `full` (a vault on this machine), the input's other text
+/// fields and the start of the tool's output.
+fn tool_query(name: &str, event: &Map<String, Value>, full: bool) -> String {
     let mut parts = vec![name.to_owned()];
     if let Some(input) = event.get("tool_input") {
         for field in [
@@ -180,8 +212,12 @@ fn tool_query(name: &str, event: &Map<String, Value>) -> String {
             "url",
             "prompt",
         ] {
+            let base_name = matches!(field, "file_path" | "path");
+            if !full && !base_name {
+                continue;
+            }
             if let Some(value) = input.get(field).and_then(Value::as_str) {
-                let value = if matches!(field, "file_path" | "path") {
+                let value = if base_name {
                     value.rsplit('/').next().unwrap_or_default()
                 } else {
                     value
@@ -190,30 +226,36 @@ fn tool_query(name: &str, event: &Map<String, Value>) -> String {
             }
         }
     }
+    if full {
+        parts.push(response_text(event));
+    }
+    parts.retain(|part| !part.is_empty());
+    parts.join(" ")
+}
+
+/// The start of the tool's output, its markdown and JSON punctuation read as
+/// spaces.
+fn response_text(event: &Map<String, Value>) -> String {
     let mut strings = Vec::new();
     if let Some(response) = event.get("tool_response") {
         response_strings(response, &mut strings);
     }
     let mut was_space = false;
-    let response = strings.join(" ");
-    parts.push(
-        response
-            .chars()
-            .filter_map(|ch| {
-                let space = ch.is_whitespace()
-                    || matches!(
-                        ch,
-                        '#' | '*' | '`' | '|' | '>' | '_' | '[' | ']' | '{' | '}' | '\\' | '"'
-                    );
-                let keep = !space || !was_space;
-                was_space = space;
-                keep.then_some(if space { ' ' } else { ch })
-            })
-            .take(RESPONSE_CHARS)
-            .collect(),
-    );
-    parts.retain(|part| !part.is_empty());
-    parts.join(" ")
+    strings
+        .join(" ")
+        .chars()
+        .filter_map(|ch| {
+            let space = ch.is_whitespace()
+                || matches!(
+                    ch,
+                    '#' | '*' | '`' | '|' | '>' | '_' | '[' | ']' | '{' | '}' | '\\' | '"'
+                );
+            let keep = !space || !was_space;
+            was_space = space;
+            keep.then_some(if space { ' ' } else { ch })
+        })
+        .take(RESPONSE_CHARS)
+        .collect()
 }
 
 fn response_strings<'a>(value: &'a Value, strings: &mut Vec<&'a str>) {

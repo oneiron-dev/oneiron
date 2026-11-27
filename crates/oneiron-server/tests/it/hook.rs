@@ -138,9 +138,21 @@ impl Home {
 
     /// Runs one hook with `event` on stdin.
     fn hook(&self, event: &str, args: &[&str], payload: &Value) -> Output {
+        self.hook_with_env(event, args, &[], payload)
+    }
+
+    /// Runs one hook with `event` on stdin and `env` set for it.
+    fn hook_with_env(
+        &self,
+        event: &str,
+        args: &[&str],
+        env: &[(&str, &str)],
+        payload: &Value,
+    ) -> Output {
         let mut child = self
             .oneiron(&["hook", "--host", "claude-code", event])
             .args(args)
+            .envs(env.iter().copied())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -1236,23 +1248,143 @@ fn a_setup_oneiron_tool_result_writes_the_board_keyframe_mark_only_on_success() 
     let home = Home::new();
     let folder = home.path("work");
     std::fs::create_dir(&folder).expect("test fixture");
-    let blocks = json!([{"type": "text", "text": "board ready"}]);
     let structured = json!({"board": {"keyframe": "epoch 1"}});
-    for (n, (response, success)) in [
-        (blocks.clone(), true),
-        (json!(structured.to_string()), true),
-        (json!({"content": blocks, "isError": true}), false),
-        (json!("permission denied"), false),
+    // An Oneiron tool result states its structured payload as a text block too.
+    let blocks = json!([
+        {"type": "text", "text": "board ready"},
+        {"type": "text", "text": structured.to_string()},
+    ]);
+    let plugin = "mcp__plugin_oneiron_oneiron__setup_oneiron";
+    let other = "mcp__other__setup_oneiron";
+    for (n, (tool, response, success)) in [
+        (None, blocks.clone(), true),
+        (None, json!(structured.to_string()), true),
+        (Some(plugin), blocks.clone(), true),
+        (
+            None,
+            json!({"content": blocks.clone(), "isError": true}),
+            false,
+        ),
+        (None, json!("permission denied"), false),
+        // Text with no keyframe is not a board (REVIEW-10587 P1 3).
+        (None, json!([{"type": "text", "text": "done"}]), false),
+        // Nor is another MCP server's tool of the same name.
+        (Some(other), blocks.clone(), false),
     ]
     .into_iter()
     .enumerate()
     {
         let session = format!("setup-{n}");
-        let event = board_setup_event(&folder, &session, response);
+        let mut event = board_setup_event(&folder, &session, response);
+        if let Some(tool) = tool {
+            event["tool_name"] = json!(tool);
+        }
         assert!(home.hook("tool-result", &[], &event).stdout.is_empty());
         let mark = tool_hook_session(&home, &session).join("board-keyframe");
-        assert_eq!(mark.exists(), success);
+        assert_eq!(mark.exists(), success, "case {n}");
     }
+}
+
+/// A bridge that answers the MCP handshake and lists `vault.recall`, then
+/// keeps the one call it is sent in `<stub>.call` and answers it with no lines.
+fn recording_bridge(home: &Home) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let stub = home.path("recording-oneiron");
+    let script = concat!(
+        "#!/bin/sh\n",
+        "IFS= read -r _\n",
+        "printf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}'\n",
+        "IFS= read -r _\n",
+        "IFS= read -r _\n",
+        "printf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"tools\":[{\"name\":\"vault.recall\"}]}}'\n",
+        "IFS= read -r call\n",
+        "printf '%s\\n' \"$call\" > \"$0.call\"\n",
+        "printf '%s\\n' '{\"jsonrpc\":\"2.0\",\"id\":3,\"result\":{}}'\n",
+    );
+    std::fs::write(&stub, script).expect("the recording bridge");
+    std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o700))
+        .expect("make the bridge executable");
+    stub
+}
+
+/// The recall query of the call `recording_bridge` kept, which it then forgets.
+fn recorded_query(stub: &Path) -> String {
+    let kept = PathBuf::from(format!("{}.call", stub.display()));
+    let call: Value =
+        serde_json::from_str(&std::fs::read_to_string(&kept).expect("the bridge kept a call"))
+            .expect("the call is JSON");
+    std::fs::remove_file(&kept).expect("forget the call");
+    call.pointer("/params/arguments/spec/query")
+        .and_then(Value::as_str)
+        .expect("a recall query")
+        .to_owned()
+}
+
+#[test]
+fn a_tool_result_recall_to_a_hosted_vault_carries_no_tool_text() {
+    use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _};
+
+    let home = Home::new();
+    let stub = recording_bridge(&home);
+    let origin = answering_vault();
+    let credential = home.path("hosted.cred");
+    let vault_id = "0123456789abcdef0123456789abcdef";
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(home.user_dir())
+        .expect("the per-user folder");
+    let selection = json!({
+        "vaults": [{
+            "origin": origin,
+            "vault_id": vault_id,
+            "auth_mode": "slip",
+            "credential_file": credential,
+            "verified_at_ms": 0,
+        }],
+        "selected": vault_id,
+    });
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(home.user_dir().join("hosted.json"))
+        .and_then(|mut file| file.write_all(selection.to_string().as_bytes()))
+        .expect("the hosted selection");
+    let mut event = tool_read_event(&home.path("home"));
+    event["tool_name"] = json!("Bash");
+    event["tool_input"] = json!({"command": "echo input-marker-7f3a", "description": "show it"});
+    event["tool_response"] =
+        json!({"stdout": "output-marker-9c1e", "stderr": "", "interrupted": false});
+    let stub_arg = stub.to_str().expect("UTF-8 path");
+
+    // The session binds the selected hosted vault: its recall carries the
+    // tool's name alone (ANSWER TOOL-RESULT-HOSTED-QUERY = A, REVIEW-10587 P1 2).
+    assert!(
+        home.hook("tool-result", &["--oneiron", stub_arg], &event)
+            .stdout
+            .is_empty()
+    );
+    let sent = recorded_query(&stub);
+    assert!(!sent.contains("input-marker-7f3a"), "{sent:?}");
+    assert!(!sent.contains("output-marker-9c1e"), "{sent:?}");
+    assert!(!sent.contains("show it"), "{sent:?}");
+    assert!(sent.contains("Bash"), "{sent:?}");
+
+    // A vault on this machine, pinned, keeps the full query.
+    let local = [
+        "--url",
+        origin.as_str(),
+        "--oneiron",
+        stub_arg,
+        "--credential-file",
+        credential.to_str().expect("UTF-8 path"),
+    ];
+    assert!(home.hook("tool-result", &local, &event).stdout.is_empty());
+    let sent = recorded_query(&stub);
+    assert!(sent.contains("input-marker-7f3a"), "{sent:?}");
+    assert!(sent.contains("output-marker-9c1e"), "{sent:?}");
 }
 
 #[test]
@@ -1300,6 +1432,96 @@ fn focus_refresh_without_the_mark_prints_nothing() {
     let fixture = ToolHookFixture::new("open");
     let event = compact_event(&fixture.folder);
     assert!(fixture.hook("focus-refresh", &event).stdout.is_empty());
+}
+
+#[test]
+fn focus_refresh_sends_its_credential_only_to_the_mcp_bridge_origin() {
+    use oneiron::ingest::history::carried_headers::CARRIED_CONTEXT_HEADER;
+
+    let fixture = ToolHookFixture::new("open");
+    let setup = setup_board_via_stdio(
+        &fixture.home,
+        &fixture.url,
+        &fixture.credential,
+        &fixture.folder,
+    );
+    assert!(setup.get("error").is_none(), "setup was refused: {setup:?}");
+    let structured = &setup["result"]["structuredContent"];
+    let event = board_setup_event(&fixture.folder, TOOL_SESSION, json!(structured.to_string()));
+    assert!(
+        fixture
+            .home
+            .hook("tool-result", &[], &event)
+            .stdout
+            .is_empty()
+    );
+    let credential = [
+        "--credential-file",
+        fixture.credential.to_str().expect("UTF-8 path"),
+    ];
+    let compact = compact_event(&fixture.folder);
+    // The fixture's vault runs and the hooks' discovery would bind it, but
+    // with no --url and no ONEIRON_URL the plugin's MCP server forwards to
+    // 127.0.0.1:9090: the refresh goes there or nowhere (REVIEW-10587 P1 1).
+    assert!(
+        fixture
+            .home
+            .hook("focus-refresh", &credential, &compact)
+            .stdout
+            .is_empty()
+    );
+    // ONEIRON_URL names the bridge's vault, as `oneiron mcp` reads it.
+    let said = lines(&fixture.home.hook_with_env(
+        "focus-refresh",
+        &credential,
+        &[("ONEIRON_URL", fixture.url.as_str())],
+        &compact,
+    ));
+    assert_eq!(
+        said.first().map(String::as_str),
+        Some(CARRIED_CONTEXT_HEADER)
+    );
+}
+
+#[test]
+fn an_old_local_session_folder_with_hook_state_is_removed_when_a_session_records() {
+    use std::os::unix::fs::{DirBuilderExt as _, OpenOptionsExt as _};
+
+    let fixture = ToolHookFixture::new("open");
+    let args = [
+        "--url",
+        fixture.url.as_str(),
+        "--credential-file",
+        fixture.credential.to_str().expect("UTF-8 path"),
+    ];
+    fixture.home.session_start_in(&fixture.folder, &args);
+    let sessions = fixture.home.run_dir().join("hook-sessions");
+    let long_ago = std::fs::FileTimes::new()
+        .set_modified(std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(86_400));
+    let old_folder = |name: &str, files: &[&str]| {
+        let folder = sessions.join(name);
+        std::fs::DirBuilder::new()
+            .mode(0o700)
+            .create(&folder)
+            .expect("an old session folder");
+        for file in files {
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(folder.join(file))
+                .and_then(|file| file.set_times(long_ago))
+                .expect("an old session file");
+        }
+        folder
+    };
+    let local = old_folder("old-local", &["local", "carrier-lines", "board-keyframe"]);
+    let unknown = old_folder("old-unknown", &["unknown", "carrier-lines"]);
+    fixture.home.session_start_in(&fixture.folder, &args);
+    // The board mark and shown keys are hook state, not a binding: they no
+    // longer keep a local session's folder forever (REVIEW-10587 P1 4).
+    assert!(!local.exists(), "{}", local.display());
+    assert!(unknown.exists(), "a folder with another record stays");
 }
 
 #[test]

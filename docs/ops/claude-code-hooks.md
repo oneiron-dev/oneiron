@@ -7,8 +7,8 @@ if you want it. You make no calls by hand:
 |---|---|---|
 | `SessionStart` (start, resume, `/clear`, after a compaction) | `session-start` | The session binds a vault and is told which in one line. Claude Code adds it to the session's context. Given the task's words (`--query "<words>"`), it is also given the lines that clear your relevance bar, at most 3; keyed on nothing but the folder, it recalls nothing. The plugin and the snippet below pass `--query " "` ([How it works](#how-it-works)). |
 | `UserPromptSubmit` (only if you add it) | `prompt` | The lines for what you just asked that clear your relevance bar, at most 3, from the bound vault. |
-| `PostToolUse` | `tool-result` | After a non-Oneiron tool result, Claude Code gets at most one new line from the vault. |
-| `SessionStart` (after a compaction) | `focus-refresh` | If this session already had a board, Claude Code gets it back. |
+| `PostToolUse` | `tool-result` | After a non-Oneiron tool result, Claude Code gets at most one new line from the vault. To a vault that is not on this machine, the recall sends only the tool's name and the file's base name, never the command, other input text or the tool's output. |
+| `SessionStart` (after a compaction) | `focus-refresh` | If this session already had a board, Claude Code gets it back. It asks only the vault the plugin's MCP server reaches (`--url`, else `ONEIRON_URL`, else `http://127.0.0.1:9090`), with that server's credential. |
 | `PreCompact` | `hand-over` | The session's log is queued for import before compaction drops it from context. |
 | `Stop` (each time Claude finishes a reply) | `hand-over` | The log is queued again; the import lands only what is new. |
 | `SessionEnd` | `hand-over` | A last queue, for a session that ended mid-reply. |
