@@ -50,6 +50,7 @@ impl Memory<'_> {
             }
             let mut pack = MemoryPack {
                 items: Vec::new(),
+                held: Vec::new(),
                 scope_honesty,
                 retrieval_meta,
                 pack_version: MEMORY_PACK_VERSION,
@@ -114,6 +115,7 @@ impl Memory<'_> {
         }
         let mut pack = MemoryPack {
             items,
+            held: Vec::new(),
             scope_honesty,
             retrieval_meta,
             pack_version: MEMORY_PACK_VERSION,

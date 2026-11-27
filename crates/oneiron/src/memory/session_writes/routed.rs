@@ -386,6 +386,7 @@ impl Memory<'_> {
             receipt: CommitReceipt {
                 claim_short_id: String::new(),
                 approval: approval.as_str().to_owned(),
+                reason_codes: Vec::new(),
                 superseded_short_id: None,
                 receipt_ref: format!("claim:{}", id.to_hex()),
                 claim: None,

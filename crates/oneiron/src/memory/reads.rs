@@ -174,6 +174,19 @@ pub struct ClaimView {
     /// this read already admitted: labelled with its served value.
     #[serde(default)]
     pub claim: Option<crate::lens::RecordRef>,
+    /// The pending consent and its reasons, when this proposal is held and
+    /// the reader is its writer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub held: Option<HeldMark>,
+}
+
+/// The tray entry holding a proposed claim for consent.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct HeldMark {
+    /// Why the claim is held.
+    pub reason_codes: Vec<String>,
+    /// The tray entry's `gate:<decision hex>` reference.
+    pub decision_ref: String,
 }
 
 #[doc(hidden)]
@@ -837,7 +850,30 @@ impl Memory<'_> {
         self.claim_view(id, body)
     }
 
+    /// [`Self::served_claim_view`] without the claim's birth: `made_by` and
+    /// `for_org` are `None`. The birth is read through a scoped point read,
+    /// which charges the claim to the reader's read exposure (L8-65), so a
+    /// door that tests a view before it decides to serve it tests this one,
+    /// then builds [`Self::served_claim_view`] for the claims it returns
+    /// alone (the own held lists).
+    pub(super) fn claim_view_without_birth(
+        &self,
+        id: &EntityId,
+        body: &ClaimBody,
+    ) -> MemoryResult<ClaimView> {
+        self.claim_view_in(id, body, false)
+    }
+
     fn claim_view(&self, id: &EntityId, body: &ClaimBody) -> MemoryResult<ClaimView> {
+        self.claim_view_in(id, body, true)
+    }
+
+    fn claim_view_in(
+        &self,
+        id: &EntityId,
+        body: &ClaimBody,
+        with_birth: bool,
+    ) -> MemoryResult<ClaimView> {
         // A claim whose parts read as a secret together serves none of them.
         let secret = crate::batch::export::claim_reads_as_secret(body);
         let served = |value: &rmpv::Value| {
@@ -859,7 +895,11 @@ impl Memory<'_> {
             serde_json::Value::String(text) => claim.with_label(text),
             other => claim.with_label(&other.to_string()),
         };
-        let made_by = self.collection_view(id)?.and_then(|view| view.made_by);
+        let made_by = if with_birth {
+            self.collection_view(id)?.and_then(|view| view.made_by)
+        } else {
+            None
+        };
         let for_org = self.claim_for_org(made_by.as_ref())?;
         Ok(ClaimView {
             claim: Some(claim),
@@ -885,6 +925,13 @@ impl Memory<'_> {
             valid_to: body.valid_to,
             salience: body.salience,
             stale: body.stale,
+            // The tray's reasons are the writer's own and the tray reader's
+            // (`vault.writes.pending`); every other reader sees no mark.
+            held: if body.approval == ClaimApprovalStatus::Proposed && self.is_own_write(body) {
+                self.held_mark(id)?
+            } else {
+                None
+            },
         })
     }
 
