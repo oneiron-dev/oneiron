@@ -388,7 +388,6 @@ impl Memory<'_> {
             return self.erase_completed_marker(owner, act_id);
         }
         self.unshare_and_erase_match(&planned, EraseReason::OwnerErase, Some(owner))
-            .map_err(|error| self.owner_absence_as_restricted(owner, &planned.holder, error))
     }
 
     /// Fulfils a completed owner erase whose record an earlier hard delete
