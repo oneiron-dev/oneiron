@@ -103,10 +103,13 @@ const NO_FIXTURE: &[&str] = &[
 ];
 
 // The H1 rows keep the key and lose their words. Highwater keeps the artifact's version counter.
+// The e-sign audit trail stays queryable after its document's erase (blob_artifact/esign/ledger.rs,
+// `esign_audit`); only its exact planted key is kept, and its words are still scanned.
 const KEPT_TABLES: &[&SideTableDecl] = &[
     &side_table::EDIT_SETTLE_RECORD,
     &side_table::ANNOTATION_UNATTACHED,
     &side_table::BLOB_ARTIFACT_HIGHWATER,
+    &side_table::ESIGN_AUDIT,
 ];
 
 // Map Q7's ID-only exceptions. `keeps_id` narrows the prefix matches where the key is known.
@@ -133,6 +136,7 @@ const KEPT_ROWS: &[(&str, &[u8])] = &[
     ("vault_meta", side_table::EDIT_SETTLE_RECORD.prefix),
     ("vault_meta", side_table::ANNOTATION_UNATTACHED.prefix),
     ("vault_meta", side_table::BLOB_ARTIFACT_HIGHWATER.prefix),
+    ("vault_meta", side_table::ESIGN_AUDIT.prefix),
 ];
 
 #[test]
