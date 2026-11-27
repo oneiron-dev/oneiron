@@ -10,11 +10,14 @@
 //! existed, once per vault, before its lookup. The pass and its marker are
 //! written in that erase's transaction. A row that does not decode or
 //! verify is deleted whole. A malformed key is deleted by its exact raw key.
+//! A digest the wall refuses to store again, or whose admission does not
+//! settle, is also deleted whole.
 
 use std::collections::BTreeSet;
 
 use super::{DIGEST, ProactivityDigest, view};
-use crate::batch::secret_scan::side_row_origin;
+use crate::batch::secret_scan::{REASON_DETECTED, side_row_origin};
+use crate::error::GateError;
 use crate::secret_custody::{self, CustodyWrite};
 use crate::side_table::{self, SideTable};
 use crate::store::Store;
@@ -27,6 +30,8 @@ pub(super) const CLAIM_DIGESTS: SideTable<(EntityId, [u8; 32]), (), side_table::
 /// Marks the vault's one-time backfill of stored digest memberships.
 const CLAIM_DIGESTS_INDEXED: SideTable<(), Vec<u8>, side_table::Raw> =
     SideTable::new(&side_table::DREAMER_PROACTIVITY_CLAIM_DIGESTS_INDEXED);
+
+const ADMIT_PASSES: usize = 4;
 
 /// Indexes the stored digest once for each distinct CLAIM it copied.
 pub(super) fn index_digest_claims_in_txn(
@@ -117,12 +122,37 @@ fn scrub_digest_in_txn(
     }
     let rendered = view::render(&digest, &digest.groups);
     digest.rendered = rendered;
-    DIGEST.admit(write, txn, &locator, &mut digest)?;
+    // A mask can teach custody a value whose encoded spelling the first pass left behind.
+    let mut previous = DIGEST.encode_value(&digest)?;
+    for pass in 1..=ADMIT_PASSES {
+        match DIGEST.admit(write, txn, &locator, &mut digest) {
+            Err(error) if is_wall_refusal(&error) => {
+                return delete_digest_whole_in_txn(write, txn, locator);
+            }
+            result => result?,
+        }
+        let admitted = DIGEST.encode_value(&digest)?;
+        if admitted == previous {
+            break;
+        }
+        if pass == ADMIT_PASSES {
+            return delete_digest_whole_in_txn(write, txn, locator);
+        }
+        previous = admitted;
+    }
     digest.content_hash = view::content_hash(&digest)?;
-    let origin = digest_origin(&DIGEST.key_bytes(&locator))?;
     let kept = DIGEST.encode_value(&digest)?;
-    secret_custody::revoke_unreferenced_side_row_custody_in_txn(write, txn, &origin, &kept)?;
-    DIGEST.put(write, txn, &locator, &digest)
+    let stored = match DIGEST.put_as_stored(write, txn, &locator, &digest) {
+        Err(error) if is_wall_refusal(&error) => {
+            return delete_digest_whole_in_txn(write, txn, locator);
+        }
+        result => result?,
+    };
+    if stored != kept {
+        return delete_digest_whole_in_txn(write, txn, locator);
+    }
+    let origin = digest_origin(&DIGEST.key_bytes(&locator))?;
+    secret_custody::revoke_unreferenced_side_row_custody_in_txn(write, txn, &origin, &kept)
 }
 
 /// Decodes one stored digest and checks its locator and content hash, deleting it on failure.
@@ -132,17 +162,32 @@ fn verify_digest_or_delete_in_txn(
     locator: [u8; 32],
     bytes: &[u8],
 ) -> Result<Option<ProactivityDigest>> {
-    let store = write.store;
     let digest = DIGEST.decode_value(bytes).ok().filter(|digest| {
         digest.id == locator
             && view::content_hash(digest).is_ok_and(|hash| hash == digest.content_hash)
     });
     if digest.is_none() {
-        DIGEST.delete(store, txn, &locator)?;
-        let origin = digest_origin(&DIGEST.key_bytes(&locator))?;
-        secret_custody::revoke_side_row_custody_with_context_in_txn(write, txn, &origin)?;
+        delete_digest_whole_in_txn(write, txn, locator)?;
     }
     Ok(digest)
+}
+
+fn delete_digest_whole_in_txn(
+    write: &CustodyWrite<'_>,
+    txn: &mut heed::RwTxn<'_>,
+    locator: [u8; 32],
+) -> Result<()> {
+    DIGEST.delete(write.store, txn, &locator)?;
+    let origin = digest_origin(&DIGEST.key_bytes(&locator))?;
+    secret_custody::revoke_side_row_custody_with_context_in_txn(write, txn, &origin)
+}
+
+fn is_wall_refusal(error: &crate::Error) -> bool {
+    matches!(
+        error,
+        crate::Error::Gate(GateError::GateWriteRejected { reason_codes, .. })
+            if reason_codes.contains(&REASON_DETECTED)
+    )
 }
 
 fn digest_origin(full_key: &[u8]) -> Result<EntityId> {

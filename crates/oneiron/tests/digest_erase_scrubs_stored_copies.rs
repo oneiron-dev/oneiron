@@ -496,3 +496,92 @@ fn a_digest_row_with_a_malformed_key_is_deleted_by_the_first_erase() -> oneiron:
     assert_stored_proposal_erased(&fixture, &before, finding, &summary);
     Ok(())
 }
+
+#[test]
+fn a_credential_named_proposal_does_not_block_erasing_another_claim() -> oneiron::Result<()> {
+    let fixture = Fixture::with_machine_signers(SIGNER_SECRET);
+    fixture.set_secret_scan(SecretScanMode::Off)?;
+    let erased = proactivity_digest_index::put_digest_proposal(&fixture.vault, FACT_VALUE)?;
+    let predicate = "editor.api_key";
+    let kept = proactivity_digest_index::put_digest_proposal_with_predicate(
+        &fixture.vault,
+        predicate,
+        "The editor's pending proposal.",
+    )?;
+    // The shipped defaults group by facet and leave the group names unaliased.
+    let before = fixture.assemble_digest();
+    stored_proposal_summary(&before, erased);
+    assert!(
+        before
+            .groups
+            .get(predicate)
+            .is_some_and(|proposals| proposals.iter().any(|p| p.claim_ref == kept)),
+        "FIXTURE: the surviving proposal uses its credential-named predicate as the group key"
+    );
+
+    fixture.set_secret_scan(SecretScanMode::On)?;
+    let outcome = fixture
+        .vault
+        .delete_entity_with_reason_as_owner(&fixture.proof, &erased, DeleteReason::UserHardDelete)
+        .expect("erasing A was refused by B's digest copy");
+    assert!(outcome.existed, "the hard-deleted proposal existed");
+    assert!(
+        matches!(
+            proactivity_digest_index::stored_digest_bytes(&fixture.vault, before.id),
+            Err(oneiron::Error::EntityNotFound)
+        ),
+        "a digest the wall refused is still stored"
+    );
+    assert!(
+        !proactivity_digest_index::digest_has_live_custody(
+            &fixture.vault,
+            &fixture.proof,
+            before.id
+        )?,
+        "custody minted from the refused digest was not retired"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_secret_and_its_encoded_spelling_are_masked_before_the_hash() -> oneiron::Result<()> {
+    let fixture = Fixture::with_machine_signers(SIGNER_SECRET);
+    fixture.set_secret_scan(SecretScanMode::Off)?;
+    let erased = proactivity_digest_index::put_digest_proposal(&fixture.vault, FACT_VALUE)?;
+    let encoded: String = TOKEN_B.bytes().map(|byte| format!("%{byte:02X}")).collect();
+    let both_spellings = format!("{TOKEN_B} {encoded}");
+    let kept = proactivity_digest_index::put_digest_proposal(&fixture.vault, &both_spellings)?;
+    let before = fixture.assemble_digest();
+    stored_proposal_summary(&before, erased);
+    let summary = stored_proposal_summary(&before, kept);
+    assert!(summary.contains(TOKEN_B) && summary.contains(encoded.as_str()));
+    assert!(digest_bytes_contain(&fixture, before.id, TOKEN_B)?);
+    assert!(digest_bytes_contain(&fixture, before.id, &encoded)?);
+
+    fixture.set_secret_scan(SecretScanMode::On)?;
+    let outcome = fixture
+        .vault
+        .delete_entity_with_reason_as_owner(&fixture.proof, &erased, DeleteReason::UserHardDelete)
+        .expect("a surviving secret and its encoded spelling must not block the hard erase");
+    assert!(outcome.existed, "the hard-deleted proposal existed");
+
+    let stored = fixture
+        .vault
+        .read_proactivity_digest(before.id)
+        .expect("the rewritten digest does not verify")
+        .expect("the rewritten digest is not stored");
+    assert!(
+        stored
+            .groups
+            .values()
+            .flatten()
+            .any(|p| p.claim_ref == kept),
+        "the surviving proposal was dropped"
+    );
+    assert!(
+        !digest_bytes_contain(&fixture, before.id, TOKEN_B)?
+            && !digest_bytes_contain(&fixture, before.id, &encoded)?,
+        "a spelling of the secret is still stored"
+    );
+    Ok(())
+}
