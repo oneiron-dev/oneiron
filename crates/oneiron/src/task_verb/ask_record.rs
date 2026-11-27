@@ -372,6 +372,15 @@ pub(super) enum AskGroupRead {
     },
 }
 
+impl Vault {
+    /// Whether the wait names a TASK ask, and its effective cutoff in seconds.
+    /// This is for a host that already admitted the caller to the waiting run.
+    pub fn code_run_ask_cutoff(&self, wait: EntityId) -> Result<Option<Option<u64>>> {
+        let txn = self.store.env.read_txn()?;
+        Ok(read_group(self, &txn, wait)?.map(|group| group.effective.until))
+    }
+}
+
 impl crate::memory::Memory<'_> {
     /// The existing effective deadline of an ask this author can read.
     pub(crate) fn hook_ask_effective_deadline(&self, id: EntityId) -> Result<Option<u64>> {

@@ -129,8 +129,12 @@ facade tree over an injected transport, its per-verb input and result maps and
 its row catalog, shared by the HTTP adapter, a native adapter and the code-mode
 inject.
 
-`mcp` selects `tool-first` or `none` for each SDK row. For projected rows,
-`mcp_fields` maps each MCP argument to a field path in the typed engine input.
+`mcp` takes `none`, `facade` or `code` for each SDK row. `none` is a browser
+or scoped-child row. `facade` is served by its HTTP facade door only: no MCP
+tool, no code-mode verb, no action; the Foreign `execute_code` row. `code` is
+a code-mode verb only, answered by the run's own door: no MCP tool, no facade
+door, no action; `vault.runs.read_result`. For projected rows, `mcp_fields`
+maps each MCP argument to a field path in the typed engine input.
 `$` decodes the whole input from that argument. `=field` requires an envelope
 argument to equal that field on the decoded input. Required arguments default
 to all mapped fields; `mcp_required_fields` can narrow that set. The generated
@@ -148,7 +152,7 @@ when a credential-scoped producer must report omissions (the TASKS section).
 registration. Board, task, room, facade, and plugin catalogs are projections,
 not independently maintained name lists.
 
-`mcp_scope` is `filtered` for row-filtered board results, `target` for an
+`mcp_scope` is `filtered` for row-filtered board results, `addressed` for an
 addressed entity, and `unrestricted` for actor-wide execution. `mcp_page` can
 select a continuable producer whose output is not a vector or cursor page;
 otherwise continuation follows `page` or a vector output. Credential write

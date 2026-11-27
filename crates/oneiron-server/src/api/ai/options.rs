@@ -66,29 +66,38 @@ pub(crate) struct CallerOptions {
 /// though its credential is not owner-grade (FIX 3208): those a live Grant
 /// the owner minted the caller's agent names
 /// (`Vault::agent_ai_operations`). A call so admitted is the owner's, on his
-/// meter. Empty for an owner-grade caller, which reaches every operation
-/// already, for a credential that names no principal, and when the Grants
-/// cannot be read, which leaves the door's refusal as it was.
-pub(crate) fn granted_operations(server: &SyncServer, auth: &CoreAuth) -> BTreeSet<AiOperation> {
+/// meter. `None` when the lookup did not succeed: no principal, or the Grants
+/// cannot be read. Empty for an owner-grade caller, which reaches every
+/// operation already.
+pub(crate) fn granted_operations_checked(
+    server: &SyncServer,
+    auth: &CoreAuth,
+) -> Option<BTreeSet<AiOperation>> {
     if auth.is_owner_grade() {
-        return BTreeSet::new();
+        return Some(BTreeSet::new());
     }
-    let Some(agent) = auth.principal_entity() else {
-        return BTreeSet::new();
-    };
+    let agent = auth.principal_entity()?;
     match server.vault.agent_ai_operations(agent) {
-        Ok(names) => names
-            .iter()
-            .filter_map(|name| AiOperation::parse(name))
-            .collect(),
+        Ok(names) => Some(
+            names
+                .iter()
+                .filter_map(|name| AiOperation::parse(name))
+                .collect(),
+        ),
         Err(error) => {
             tracing::warn!(
                 kind = ?error.kind(),
                 "an agent's ai.* Grants were not read; its call stays refused"
             );
-            BTreeSet::new()
+            None
         }
     }
+}
+
+/// [`granted_operations_checked`], empty when the lookup did not succeed,
+/// which leaves the door's refusal as it was.
+pub(crate) fn granted_operations(server: &SyncServer, auth: &CoreAuth) -> BTreeSet<AiOperation> {
+    granted_operations_checked(server, auth).unwrap_or_default()
 }
 
 /// The agent the owner's `ai.video` Grant admits at a video job's poll or

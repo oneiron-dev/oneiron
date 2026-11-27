@@ -666,7 +666,9 @@ pub(crate) fn local_facade_rows(generator: &Generator) -> Vec<RowId> {
         .callable_rows
         .iter()
         .copied()
-        .filter(|&id| context_is(&generator.rows[id], "memory"))
+        .filter(|&id| {
+            context_is(&generator.rows[id], "memory") && !super::code_only_row(&generator.rows[id])
+        })
         .chain(generator.board_host_rows.iter().copied())
         .collect()
 }

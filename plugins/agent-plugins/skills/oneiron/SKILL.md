@@ -6,8 +6,9 @@ description: Use the person's Oneiron vault as long-term memory across coding se
 # Oneiron: your vault as memory
 
 The Oneiron plugin connects this session to the person's vault through MCP.
-The `oneiron` MCP server gives you the vault's verbs as tools, one tool per
-verb, under the agent credential the person minted for this client. That
+The `oneiron` MCP server gives you the vault's verbs as tools, plus `execute`
+and `resume` when the vault binds a code host, under the agent credential the
+person minted for this client. That
 credential decides what you may read and write. The vault checks it on every
 call; you never name your own identity.
 

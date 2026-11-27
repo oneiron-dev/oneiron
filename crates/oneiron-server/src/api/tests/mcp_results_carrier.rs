@@ -284,41 +284,40 @@ async fn discovery_states_the_registered_mcp_surfaces_and_their_endpoints() {
         "a tool one endpoint registers is not advertised on the other",
     );
 
-    // The host's durable `execute_code` tool is registered on neither
-    // endpoint without a host. The primary endpoint names no `execute_code`
-    // at all; on tool-first the name is the generated foreign-code verb
-    // (DOOR-070, #3044), and a verified host's tool never displaces it.
+    // Native execution is advertised only on a caller-source-ready host.
+    // The retired tool names do not resolve on either endpoint, with or
+    // without a host; the Foreign row remains on its HTTP facade.
     for mode in crate::mcp::McpSurfaceMode::ALL {
-        let resolved =
-            crate::mcp::registered_surface(mode).resolve(crate::mcp::MCP_EXECUTE_CODE_TOOL);
-        let advertised = capabilities.contains(&format!(
-            "{MCP_ENDPOINT_CAPABILITY_PREFIX}{mode}.{tool}",
-            mode = mode.as_str(),
-            tool = crate::mcp::MCP_EXECUTE_CODE_TOOL,
-        ));
-        match mode {
-            crate::mcp::McpSurfaceMode::Primary => {
-                assert_eq!(resolved, None);
-                assert!(!advertised, "the primary endpoint names no execute_code");
-            }
-            crate::mcp::McpSurfaceMode::ToolFirst => {
-                assert!(
-                    matches!(resolved, Some(crate::mcp::McpEndpointTool::Verb(_))),
-                    "tool-first execute_code is the generated verb: {resolved:?}",
-                );
-                assert!(advertised, "tool-first advertises its execute_code verb");
-            }
+        let unbound = crate::mcp::registered_surface(mode);
+        let hosted = crate::mcp::try_registered_surface_with_execution(mode, true)
+            .expect("the hosted surface registers");
+        for name in ["execute", "resume", "execute_code", "read_result"] {
+            assert_eq!(unbound.resolve(name), None);
+            assert!(!capabilities.contains(&format!(
+                "{MCP_ENDPOINT_CAPABILITY_PREFIX}{}.{name}",
+                mode.as_str(),
+            )));
         }
+        for retired in ["execute_code", "read_result"] {
+            assert_eq!(hosted.resolve(retired), None);
+        }
+        assert_eq!(
+            hosted.resolve("execute"),
+            Some(crate::mcp::McpEndpointTool::Execute)
+        );
+        assert_eq!(
+            hosted.resolve("resume"),
+            Some(crate::mcp::McpEndpointTool::Resume)
+        );
+        // The two code tools join the endpoint's own tools; none is displaced.
+        let names = hosted.tool_names();
+        assert!(names.ends_with(&["execute", "resume"]), "{names:?}");
+        assert!(
+            names.contains(&crate::mcp::MCP_INVOKE_ACTION_TOOL),
+            "{names:?}"
+        );
+        assert_eq!(names.len(), unbound.tool_names().len() + 2, "{names:?}");
     }
-    let hosted_tool_first = crate::mcp::try_registered_surface_with_execution(
-        crate::mcp::McpSurfaceMode::ToolFirst,
-        true,
-    )
-    .expect("the hosted tool-first surface registers");
-    assert!(matches!(
-        hosted_tool_first.resolve(crate::mcp::MCP_EXECUTE_CODE_TOOL),
-        Some(crate::mcp::McpEndpointTool::Verb(_))
-    ));
 
     // Discovery stays deterministic: the same registrations, the same bytes.
     assert_eq!(

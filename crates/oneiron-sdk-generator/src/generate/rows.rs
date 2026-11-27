@@ -8,7 +8,10 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 
-use super::{Generator, MCP_NONE_CONTEXTS, MCP_SCOPES, RowId, RowStore};
+use super::{
+    Generator, MCP_NONE_CONTEXTS, MCP_PROJECTIONS, MCP_SCOPES, RowId, RowStore, code_only_row,
+    facade_only_row,
+};
 use crate::error::GenerateError;
 use crate::facade_types::{Inventory, type_names};
 use crate::py::re::compile_fullmatch;
@@ -134,6 +137,36 @@ fn fullmatch(pattern: &Regex, value: &Value) -> Result<bool, GenerateError> {
 }
 
 /// The row's MCP scope and fields, after their defaults.
+/// A row's `mcp` projection (FIX EXECUTE-CALLER-CODE): one of `MCP_PROJECTIONS` when stated; a facade-only row keeps
+/// its facade door; a code-only row is a memory row with no facade door and no OpenAPI entry.
+fn check_projection(row: &Dict) -> Result<(), GenerateError> {
+    if let Some(mcp) = row.get("mcp")
+        && !MCP_PROJECTIONS.iter().any(|known| mcp.is_str(known))
+    {
+        let sorted: Vec<String> = MCP_PROJECTIONS
+            .iter()
+            .map(|known| repr_str(known))
+            .collect();
+        return Err(refuse(
+            row,
+            &format!("mcp must be one of [{}] when present", sorted.join(", ")),
+        ));
+    }
+    if facade_only_row(row) && !flag(row, "host_door") {
+        return Err(refuse(
+            row,
+            "a row served by its facade door only states host_door",
+        ));
+    }
+    if code_only_row(row) && (not_memory(row) || flag(row, "host_door") || flag(row, "openapi")) {
+        return Err(refuse(
+            row,
+            "a code-only row is a memory row with no host_door and no openapi",
+        ));
+    }
+    Ok(())
+}
+
 fn check_mcp(row: &Dict) -> Result<(), GenerateError> {
     if row
         .get("caller_code")
@@ -602,8 +635,9 @@ impl Generator {
             check_description(&generator.rows[id])?;
         }
         // HEADER is `super::HEADER`; then FACADE_ROWS.
+        // A code-only row has no facade door (FIX EXECUTE-CALLER-CODE).
         let memory = filter(&generator.rows, &generator.callable_rows, |row| {
-            !not_memory(row)
+            !not_memory(row) && !code_only_row(row)
         });
         generator.facade_rows = memory
             .into_iter()
@@ -635,6 +669,7 @@ impl Generator {
                     "only a browser or scoped-child row states \"mcp\": \"none\", and every such row does",
                 ));
             }
+            check_projection(row)?;
             // `setdefault` mutates the row object, which every set shares.
             let row = self.rows.get_mut(id);
             row.entry("mcp_fields".into()).or_insert_with(|| {

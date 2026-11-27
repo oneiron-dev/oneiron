@@ -7,7 +7,7 @@ pinned target exceptions or extra admission checks.
 ## MCP code-mode calls
 
 For a successful SDK verb call through the MCP code-mode door, its hook notice
-travels beside the native answer's output and source rows. The `execute_code`
+travels beside the native answer's output and source rows. The `execute`
 reply returns the notices in `meta.hook_notices`, an array collected before the
 step list is paged. A call to `finish()` does not hide this metadata. The normal
 MCP text content includes the same structured reply.

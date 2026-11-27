@@ -13,6 +13,7 @@
   "host_door": true,
   "host_door_lists": true,
   "host_door_session": true,
+  "mcp": "facade",
   "mcp_scope": "filtered",
   "openapi": true,
   "host_door_proof": "foreign_code",
