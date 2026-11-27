@@ -544,3 +544,80 @@ async fn caller_reads_past_the_result_cap_only_under_its_own_credential() {
     );
     assert!(!other.to_string().contains("tail-cap-proof"), "{other:?}");
 }
+
+/// Proves (Astra review of PR D at d8201ba7) that `vault.runs.read_result` from caller code
+/// meets the credential's own allowlist as any other verb call from code does: a credential
+/// bound to `execute` alone is refused `mcp_verb_not_bound` on its own run's capped result,
+/// and the refusal names the verb; one bound to both reads the same kind of result.
+#[tokio::test]
+async fn result_read_outside_the_credential_allowlist_is_refused_naming_the_verb() {
+    let seatless = seatless_server();
+    let unbound = "execute-cap-execute-only";
+    let bound = "execute-cap-reader-bound";
+    for (credential, id, verbs) in [
+        (unbound, 0x0024_66c3, &["execute"][..]),
+        (
+            bound,
+            0x0024_66c4,
+            &["execute", "vault.runs.read_result"][..],
+        ),
+    ] {
+        register_bound_verb_mcp_actor(
+            &seatless.server,
+            credential,
+            seeded_test_entity_id(id),
+            verbs,
+        )
+        .await;
+    }
+    let mut reads = Vec::new();
+    for credential in [unbound, bound] {
+        let body = execute(
+            &seatless.server,
+            credential,
+            "large",
+            "return 'a'.repeat(20000) + 'tail-allowlist-proof';",
+            Some("allowlist-cap-run"),
+        )
+        .await;
+        assert_eq!(structured(&body)["status"], "complete", "{body:?}");
+        let reference = body["result"]["_meta"]["result_ref"]
+            .as_str()
+            .expect("a clipped result has a stored reference");
+        let input = json!({
+            "run_ref": "allowlist-cap-run",
+            "result_ref": reference,
+            "offset": 20_001,
+            "limit": 30,
+        });
+        let read = format!("return await vault.runs.read_result({input});");
+        reads.push(execute(&seatless.server, credential, "read", &read, None).await);
+    }
+    let refused = structured(&reads[0]);
+    assert_eq!(refused["status"], "error", "{:?}", reads[0]);
+    assert_eq!(
+        refused["error"]["code"], "mcp_verb_not_bound",
+        "{:?}",
+        reads[0]
+    );
+    assert_eq!(
+        refused["error"]["verb"], "vault.runs.read_result",
+        "the refusal names the verb: {:?}",
+        reads[0]
+    );
+    let call = call_entry(&refused["calls"], "vault.runs.read_result");
+    assert_eq!(call["outcome"], "refused", "{:?}", reads[0]);
+    assert_eq!(call["code"], "mcp_verb_not_bound", "{:?}", reads[0]);
+    assert!(
+        !reads[0].to_string().contains("tail-allowlist-proof"),
+        "{:?}",
+        reads[0]
+    );
+    assert!(
+        structured(&reads[1])["result"]
+            .to_string()
+            .contains("tail-allowlist-proof"),
+        "{:?}",
+        reads[1]
+    );
+}

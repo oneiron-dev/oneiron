@@ -13,25 +13,29 @@ impl McpCodeModeVerbs {
     /// One window of a stored result of the run `run_ref` names under this
     /// run's own credential. The run id is that credential's derivation
     /// (`mcp_code_run_id`), never an id the caller sends, so only the
-    /// caller's own runs resolve. The read meets the session gate `execute`
-    /// met, and the device-local check of the rows that result was served
-    /// from. Those rows join this run's served rows, so this run's release
-    /// withholds them as it withholds any read. A step's stored diagnostics
-    /// body is not read here: its feedback leaves only through its own
-    /// release (FIX 10614).
+    /// caller's own runs resolve. The read first meets the credential's own
+    /// binding of `vault.runs.read_result` and its unrestricted record scope,
+    /// as every verb call from code meets its row's binding (a credential
+    /// bound to `execute` alone is refused `mcp_verb_not_bound`), then the
+    /// session gate `execute` met, and the device-local check of the rows
+    /// that result was served from. Those rows join this run's served rows,
+    /// so this run's release withholds them as it withholds any read. A
+    /// step's stored diagnostics body is not read here: its feedback leaves
+    /// only through its own release (FIX 10614).
     pub(super) fn read_run_result(
         &self,
         input: &Value,
     ) -> oneiron::Result<Result<AgentVerbAnswer, AgentVerbRefusal>> {
+        let verb = AgentVerb::VaultRunsReadResult;
+        if let Err(error) = mcp_admit_host_verb(&self.actor, verb)
+            .and_then(|()| mcp_host_verb_gate(&self.server, &self.actor, verb))
+        {
+            return refused(error);
+        }
         let request: RunResultReadRequest = match RunResultReadRequest::deserialize(input) {
             Ok(request) => request,
             Err(error) => return refused(McpGatewayError::typed_input_refused(&error)),
         };
-        if let Err(error) =
-            super::super::actor_dispatch::mcp_execute_code_gate(&self.server, &self.actor)
-        {
-            return refused(error);
-        }
         let run_id = crate::mcp::mcp_code_run_id(&request.run_ref, &self.actor);
         let destination = self.actor.destination();
         // `None` until the read resolves a result: an unknown ref read no row.
