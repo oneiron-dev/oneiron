@@ -235,14 +235,32 @@ impl NvidiaSmiRoute {
     pub fn of_this_machine() -> Self {
         #[cfg(target_os = "linux")]
         {
-            use super::scope_systemd::control::{CONTROL_SOCKET_PATH, control_socket_usable};
-            if control_socket_usable(Path::new(CONTROL_SOCKET_PATH)) {
+            use super::scope_systemd::control::CONTROL_SOCKET_PATH;
+            Self::of_machine(Path::new(CONTROL_SOCKET_PATH))
+        }
+        #[cfg(not(target_os = "linux"))]
+        Self::Direct {
+            program: PathBuf::from(NVIDIA_SMI),
+        }
+    }
+
+    /// The route for the job control socket at `socket`, by the same rule:
+    /// [`Self::of_this_machine`] is this at the installed socket's path, and
+    /// tests name another socket.
+    #[must_use]
+    pub fn of_machine(socket: &Path) -> Self {
+        #[cfg(target_os = "linux")]
+        {
+            use super::scope_systemd::control::control_socket_usable;
+            if control_socket_usable(socket) {
                 return Self::JobControl {
-                    socket: PathBuf::from(CONTROL_SOCKET_PATH),
+                    socket: socket.to_owned(),
                     fallback_program: PathBuf::from(NVIDIA_SMI),
                 };
             }
         }
+        #[cfg(not(target_os = "linux"))]
+        let _ = socket;
         Self::Direct {
             program: PathBuf::from(NVIDIA_SMI),
         }
