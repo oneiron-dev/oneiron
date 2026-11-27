@@ -69,7 +69,7 @@ use super::super::device::{
 };
 use super::super::node_settings::ExecutionNodeSettings;
 use super::control::{REQUEST_WAIT, read_line};
-use super::exec::connect_once;
+use super::exec::connect_by_deadline;
 use super::safe_fs::{
     account, borrow, facts, facts_beneath, make_dir_beneath, make_lock_beneath, open_dir_beneath,
     open_dir_path, open_lock_beneath, require_owned_by_root_or, require_root_owned,
@@ -105,10 +105,6 @@ const ANSWER_MARGIN: Duration = Duration::from_secs(5);
 
 /// The longest first line of a reply the engine reads.
 const REPLY_HEAD_MAX_BYTES: usize = 1024;
-
-/// How long the engine waits before it tries again to connect while the
-/// listener's queue is full.
-const CONNECT_RETRY: Duration = Duration::from_millis(20);
 
 /// Why the engine's device query did not answer.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -443,6 +439,7 @@ pub fn answer(
         &query.args(),
         Some(&settings.account),
         Some(&lock.file),
+        DEVICE_QUERY_OUTPUT_MAX_BYTES,
     )
     .map_err(|error| match error {
         // The engine's probe names the class itself.
@@ -524,9 +521,9 @@ pub fn request_within(
 }
 
 /// The connection to the handler at `socket`, made by `deadline`. Each try
-/// connects without blocking ([`connect_once`]), and a full listen queue
-/// (`EAGAIN`) is tried again until the deadline: a blocking connect would
-/// wait in the kernel with no bound while the listener takes no connection.
+/// connects without blocking ([`connect_by_deadline`]), and a full listen
+/// queue (`EAGAIN`) is tried again until the deadline: a blocking connect
+/// would wait in the kernel with no bound while the listener takes no connection.
 ///
 /// # Errors
 ///
@@ -538,44 +535,24 @@ fn connect_by(socket: &Path, deadline: Instant) -> Result<UnixStream, DeviceQuer
         |reason: String| DeviceQueryError::Unavailable(GpuProbeError::Unavailable { reason });
     let address = rustix::net::SocketAddrUnix::new(socket)
         .map_err(|error| unavailable(format!("{}: {error}", socket.display())))?;
-    loop {
-        let error = match connect_once(&address) {
-            Ok(stream) => return Ok(stream),
-            Err(error) => error,
-        };
-        match error.raw_os_error() {
-            Some(libc::ENOENT | libc::ECONNREFUSED) => {
-                return Err(DeviceQueryError::Unusable {
-                    reason: format!(
-                        "no job control handler listens at {}: {error}",
-                        socket.display()
-                    ),
-                });
-            }
-            // The file's mode, or a security module that lets this account
-            // write the socket's file but not connect to it (review r2 of
-            // #10540): no request was sent, so the tool runs here.
-            Some(libc::EACCES | libc::EPERM) => {
-                return Err(DeviceQueryError::Unusable {
-                    reason: format!(
-                        "this account may not connect to the job control socket at {}: {error}",
-                        socket.display()
-                    ),
-                });
-            }
-            Some(libc::EAGAIN | libc::EINTR) => {
-                let left = deadline.saturating_duration_since(Instant::now());
-                if left.is_zero() {
-                    return Err(unavailable(format!(
-                        "{}: the handler took no connection in time: {error}",
-                        socket.display()
-                    )));
-                }
-                std::thread::sleep(CONNECT_RETRY.min(left));
-            }
-            _ => return Err(unavailable(format!("{}: {error}", socket.display()))),
-        }
-    }
+    connect_by_deadline(&address, deadline).map_err(|error| match error.raw_os_error() {
+        Some(libc::ENOENT | libc::ECONNREFUSED) => DeviceQueryError::Unusable {
+            reason: format!(
+                "no job control handler listens at {}: {error}",
+                socket.display()
+            ),
+        },
+        // The file's mode, or a security module that lets this account
+        // write the socket's file but not connect to it (review r2 of
+        // #10540): no request was sent, so the tool runs here.
+        Some(libc::EACCES | libc::EPERM) => DeviceQueryError::Unusable {
+            reason: format!(
+                "this account may not connect to the job control socket at {}: {error}",
+                socket.display()
+            ),
+        },
+        _ => unavailable(format!("{}: {error}", socket.display())),
+    })
 }
 
 /// The time from now to `deadline`; an error once it has passed.

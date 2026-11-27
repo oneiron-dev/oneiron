@@ -158,8 +158,17 @@ pub(super) async fn render(
     // when this destination withheld the result but theirs admits it.
     let mut projected = answer.clone();
     clear_internal_steps(&mut projected);
-    let released =
-        type_feedback_release::release_run_answer(server, actor, named.clone(), held, answer);
+    // The release scans a copy whose hydrate steps' miss echoes are cleared
+    // (#10571), so an off-device miss of a device-local row reads as a miss
+    // of a never-used id.
+    let released = super::super::super::device_release::with_run_hydrate_scan(
+        actor,
+        record,
+        answer,
+        |answer| {
+            type_feedback_release::release_run_answer(server, actor, named.clone(), held, answer)
+        },
+    );
     super::super::super::claimed_release::record(&projected, named.as_deref());
     let mut released = released?;
     clear_internal_steps(&mut released);

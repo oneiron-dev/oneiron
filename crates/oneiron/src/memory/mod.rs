@@ -119,6 +119,7 @@ pub mod extraction;
 pub mod foreign_code;
 pub mod graph_fs_doors;
 pub mod hook_regen_doors;
+mod hydrate_result;
 pub mod identity_doors;
 mod inspection;
 mod key_value;
@@ -335,6 +336,7 @@ pub use oneiron_contracts::memory::{CHECK_IN_PENDING_REASON_PREFIX, MEMORY_CODE_
 // consent record admits a session row to manage.
 /// The recipient a host proved for a handle's repo reads (FIX 7608 2b-ii).
 pub use crate::origin::secret_projection::recipient::RepoRevealRecipient;
+pub use hydrate_result::{HydrateMiss, HydrateMissReason, HydrateResult};
 pub use oneiron_contracts::memory::MEMORY_CODE_ROOM_MANAGEMENT;
 pub use oneiron_contracts::memory::MEMORY_CODE_WORLD_PLACEMENT_UNVERIFIABLE;
 pub use oneiron_contracts::memory::MEMORY_CODE_WORLD_RECIPIENT_LIMIT;

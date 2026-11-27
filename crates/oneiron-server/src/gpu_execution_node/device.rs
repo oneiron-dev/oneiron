@@ -257,7 +257,9 @@ impl NvidiaSmiRoute {
     /// A tool run here after the socket took no request names that too.
     pub fn query(&self, query: NvidiaSmiQuery) -> Result<String, GpuProbeError> {
         match self {
-            Self::Direct { program } => run_device_tool_as(program, &query.args(), None, None),
+            Self::Direct { program } => {
+                run_device_tool_as(program, &query.args(), None, None, usize::MAX)
+            }
             #[cfg(target_os = "linux")]
             Self::JobControl {
                 socket,
@@ -289,12 +291,14 @@ fn run_here_after_unusable_socket(
     query: NvidiaSmiQuery,
     unusable: &str,
 ) -> Result<String, GpuProbeError> {
-    run_device_tool_as(program, &query.args(), None, None).map_err(|error| match error {
-        GpuProbeError::Unavailable { reason } => GpuProbeError::Unavailable {
-            reason: format!("{unusable}; run here: {reason}"),
+    run_device_tool_as(program, &query.args(), None, None, usize::MAX).map_err(
+        |error| match error {
+            GpuProbeError::Unavailable { reason } => GpuProbeError::Unavailable {
+                reason: format!("{unusable}; run here: {reason}"),
+            },
+            other => other,
         },
-        other => other,
-    })
+    )
 }
 
 /// The account a device tool query runs as when root runs it for the
@@ -461,15 +465,16 @@ static UNREAPED_QUERIES: AtomicUsize = AtomicUsize::new(0);
 /// Runs one query of `program`, a device driver's command-line tool, as
 /// this process's own account: [`run_device_tool_as`].
 pub(super) fn run_device_tool(program: &str, args: &[&str]) -> Result<String, GpuProbeError> {
-    run_device_tool_as(Path::new(program), args, None, None)
+    run_device_tool_as(Path::new(program), args, None, None, usize::MAX)
 }
 
 /// Runs one query of `program`, a device driver's command-line tool, and
 /// answers its output, within [`GPU_QUERY_TIMEOUT`]. The output is read
 /// without blocking on this thread while the query runs, so a long answer
-/// never fills the pipe. At the deadline the pipe's read end is closed, the
-/// query is killed with its process group and reaped off the caller's path;
-/// no thread waits on the pipe, whoever holds its write end.
+/// never fills the pipe. At the deadline, or when the output exceeds
+/// `output_max` bytes, both read ends are closed, and the query is killed
+/// with its process group and reaped off the caller's path. No thread waits
+/// on either pipe, whoever holds its write end.
 ///
 /// With `account` (root only: the job control socket's handler), the query
 /// runs as that account: its uid, its own group, no supplementary group
@@ -493,6 +498,7 @@ pub(crate) fn run_device_tool_as(
     args: &[&str],
     account: Option<&DeviceToolAccount>,
     held_lock: Option<&std::fs::File>,
+    output_max: usize,
 ) -> Result<String, GpuProbeError> {
     let unavailable = |reason: String| GpuProbeError::Unavailable { reason };
     let program_name = program.display();
@@ -555,7 +561,7 @@ pub(crate) fn run_device_tool_as(
             "{program_name}'s output pipe could not be read without blocking: {error}"
         )));
     }
-    let mut stdout = QueryPipe::new(stdout, usize::MAX);
+    let mut stdout = QueryPipe::new(stdout, output_max.saturating_add(1));
     let mut stderr = QueryPipe::new(stderr, QUERY_STDERR_KEEP_BYTES);
     #[cfg(not(unix))]
     {
@@ -568,7 +574,15 @@ pub(crate) fn run_device_tool_as(
     let mut chunk = [0_u8; 4096];
     let mut exited = None;
     let status = loop {
-        let moved = match (stdout.read_now(&mut chunk), stderr.read_now(&mut chunk)) {
+        let read_stdout = stdout.read_now(&mut chunk);
+        if stdout.kept.len() > output_max {
+            drop((stdout, stderr));
+            abandon(child);
+            return Err(unavailable(format!(
+                "device_query_output_too_long: more than {output_max} bytes"
+            )));
+        }
+        let moved = match (read_stdout, stderr.read_now(&mut chunk)) {
             (Ok(out), Ok(err)) => out || err,
             (Err(error), _) | (_, Err(error)) => {
                 drop((stdout, stderr));
@@ -576,7 +590,11 @@ pub(crate) fn run_device_tool_as(
                 return Err(unavailable(format!("{program_name}'s output: {error}")));
             }
         };
-        if exited.is_none() {
+        // The leader is reaped only once its output has ended, and the loop
+        // then ends in the same pass: until then its process id stays its
+        // group's, so `abandon` never signals a group whose id the kernel
+        // has given out again (review r2 of #10579, P1).
+        if exited.is_none() && stdout.ended() {
             match child.try_wait() {
                 Ok(now) => exited = now,
                 Err(error) => {

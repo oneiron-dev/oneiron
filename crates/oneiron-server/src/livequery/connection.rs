@@ -494,8 +494,15 @@ impl Connection {
             }
             return None;
         }
+        // A hydrate reply's rows already hold every whole id its body names
+        // outside its miss echoes (REVIEW-10571 P1 2): only they are judged.
+        let scanned = if routed.incarnation == super::routing::BODY_NAMED_RPC_INCARNATION {
+            &[][..]
+        } else {
+            routed.frame
+        };
         if self.own_machine_reply_stands(peer, routed)
-            && !self.withholds(locality, peer, routed.rows.as_deref(), routed.frame)
+            && !self.withholds(locality, peer, routed.rows.as_deref(), scanned)
             && !self.off_carrier_withholds(routed)
         {
             return Some(routed.frame.to_vec());

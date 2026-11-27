@@ -141,7 +141,9 @@ pub(in crate::api::mcp_gateway::exec_board_verbs::execute) async fn render_task_
     // results past their credential's death.
     actor_dispatch::mcp_execute_code_gate(server, actor)?;
     device_release::release_hook::run(server);
-    type_feedback_release::release_run_answer(server, actor, named, held, result)
+    device_release::with_run_hydrate_scan(actor, record, result, |result| {
+        type_feedback_release::release_run_answer(server, actor, named, held, result)
+    })
 }
 
 /// The health a run's own terminal state forces. A parked or yielded run has

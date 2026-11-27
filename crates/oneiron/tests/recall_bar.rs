@@ -326,6 +326,23 @@ fn ids(pack: &MemoryPack) -> BTreeSet<EntityId> {
         .collect()
 }
 
+/// The CLAIM lines of `pack`. A pull, like a recall that asks no bar, is not CLAIMs only: at
+/// medium effort the now anchor also brings the vault's freshly seeded pack SKILLs, ranked
+/// below every line the query matched (FIX 22182), into the slots the matches leave.
+fn claim_ids(pack: &MemoryPack) -> BTreeSet<EntityId> {
+    pack.items
+        .iter()
+        .filter(|item| item.kind == "CLAIM")
+        .map(|item| {
+            let record = item
+                .record
+                .as_ref()
+                .expect("a recalled item names its record");
+            EntityId::from_hex(&record.id).expect("a record id is 32 hex")
+        })
+        .collect()
+}
+
 fn quiet_reason(pack: &MemoryPack) -> Option<&str> {
     match &pack.bar.as_ref()?.rule {
         RecallBarRule::Quiet { reason } => Some(reason),
@@ -385,14 +402,23 @@ fn a_pull_is_open_by_default_and_a_recall_with_no_bar_is_unchanged() {
     let pull = fixture
         .recall(ask(RecallSource::Pull, HARNESS), 8)
         .expect("the pull runs");
-    assert_eq!(ids(&pull), every);
+    assert_eq!(
+        claim_ids(&pull),
+        every,
+        "a pull returns every seeded line, the traps included"
+    );
     assert!(pull.items.iter().all(|item| item.similarity.is_none()));
     assert_eq!(
         pull.bar.as_ref().map(|bar| &bar.rule),
         Some(&RecallBarRule::Open)
     );
     let plain = fixture.recall(None, 8).expect("the plain recall runs");
-    assert_eq!(ids(&plain), every);
+    assert_eq!(claim_ids(&plain), every);
+    assert_eq!(
+        ids(&pull),
+        ids(&plain),
+        "an open pull returns the items of a recall that asks no bar"
+    );
     assert!(
         plain.bar.is_none(),
         "a recall that asks no bar reports none"
@@ -412,14 +438,16 @@ fn a_pull_is_open_by_default_and_a_recall_with_no_bar_is_unchanged() {
 #[test]
 fn at_most_three_lines_are_pushed() {
     let fixture = Fixture::open(Some(PPLX), MEASURED);
-    for step in 0..5 {
-        fixture.put_claim_in(
-            fixture.project,
-            "profile.note",
-            &format!("granite drafter plan, note {step}"),
-            Some(at(0.70)),
-        );
-    }
+    let seeded: BTreeSet<_> = (0..5)
+        .map(|step| {
+            fixture.put_claim_in(
+                fixture.project,
+                "profile.note",
+                &format!("granite drafter plan, note {step}"),
+                Some(at(0.70)),
+            )
+        })
+        .collect();
     let pack = fixture
         .recall(ask(RecallSource::Start, HARNESS), 8)
         .expect("the start recall runs");
@@ -427,7 +455,11 @@ fn at_most_three_lines_are_pushed() {
     let pull = fixture
         .recall(ask(RecallSource::Pull, HARNESS), 8)
         .expect("the pull runs");
-    assert_eq!(pull.items.len(), 5, "a pull keeps its limit");
+    assert_eq!(
+        claim_ids(&pull),
+        seeded,
+        "a pull keeps its limit: all five seeded lines, not three"
+    );
 }
 
 #[test]
@@ -1144,8 +1176,11 @@ fn a_light_barred_recall_finds_no_claim_by_cosine_alone() {
         .expect("one line")
         .similarity
         .expect("the bar says the cosine it judged");
+    // A vector row is stored as f16 (oneiron-store vector_row.rs), so the bar judges the
+    // stored vector: at(0.90) reads back as [0.89990234, 0.43579102], whose cosine to the
+    // query is 0.90002024. Half precision is good to about 1e-3 here.
     assert!(
-        (similarity - 0.90).abs() < 1e-6,
+        (similarity - 0.90).abs() < 1e-3,
         "the kept line says its judged cosine: {similarity}"
     );
 }

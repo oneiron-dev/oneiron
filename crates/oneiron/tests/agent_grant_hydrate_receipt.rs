@@ -122,9 +122,10 @@ fn an_agents_hydrate_under_a_live_read_grant_reports_the_grant_not_deny_all() {
         "vault.agents.grants.revoke",
         json!({"grant_ref": grant}),
     );
-    let after = door::invoke(&reader, "vault.hydrate", json!({"refs": [claim]}));
-    assert!(
-        after.is_err(),
-        "the agent still hydrates the owner's claim after the revoke: {after:?}"
+    let after = call(&reader, "vault.hydrate", json!({"refs": [claim]}));
+    assert_eq!(after["value"], json!([]), "after grant revoke: {after:#}");
+    assert_eq!(
+        after["missing"],
+        json!([{"ref": claim, "reason": "not_found"}])
     );
 }
