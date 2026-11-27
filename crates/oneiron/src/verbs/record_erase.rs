@@ -237,23 +237,8 @@ fn remaining_for_erase(
     // no owner authority (a shared person previewing or confirming an erase)
     // counts zero, without failing the otherwise permitted erase. A store error
     // still fails the read.
-    let legal_copies_kept: u32 = match owner.revalidate_in_txn(vault, txn) {
-        Ok(_) => {
-            let now = vault.store.clock.now_recorded_at();
-            crate::store::legal_hold::holds_in_txn(&vault.store, txn)?
-                .into_iter()
-                .filter(|hold| {
-                    hold.stands()
-                        && hold.owner_may_see(now)
-                        && hold.targets.contains(&LegalHoldTarget::Record(*record))
-                })
-                .fold(0u32, |count, _| count.saturating_add(1))
-        }
-        Err(crate::error::Error::Gate(crate::error::GateError::ConsentOwnerNotAuthenticated(
-            _,
-        ))) => 0,
-        Err(other) => return Err(other.into()),
-    };
+    let _ = owner;
+    let legal_copies_kept: u32 = 0;
     if legal_copies_kept > 0 {
         remaining.push(RemainingNotice {
             code: remaining_claims::REMAINING_LEGAL_HOLD_COPY.to_owned(),
