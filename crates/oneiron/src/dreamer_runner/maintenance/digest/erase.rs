@@ -122,37 +122,17 @@ fn scrub_digest_in_txn(
     }
     let rendered = view::render(&digest, &digest.groups);
     digest.rendered = rendered;
-    // A mask can teach custody a value whose encoded spelling the first pass left behind.
-    let mut previous = DIGEST.encode_value(&digest)?;
-    for pass in 1..=ADMIT_PASSES {
-        match DIGEST.admit(write, txn, &locator, &mut digest) {
-            Err(error) if is_wall_refusal(&error) => {
-                return delete_digest_whole_in_txn(write, txn, locator);
-            }
-            result => result?,
-        }
-        let admitted = DIGEST.encode_value(&digest)?;
-        if admitted == previous {
-            break;
-        }
-        if pass == ADMIT_PASSES {
-            return delete_digest_whole_in_txn(write, txn, locator);
-        }
-        previous = admitted;
-    }
-    digest.content_hash = view::content_hash(&digest)?;
-    let kept = DIGEST.encode_value(&digest)?;
-    let stored = match DIGEST.put_as_stored(write, txn, &locator, &digest) {
+    match DIGEST.admit(write, txn, &locator, &mut digest) {
         Err(error) if is_wall_refusal(&error) => {
             return delete_digest_whole_in_txn(write, txn, locator);
         }
         result => result?,
-    };
-    if stored != kept {
-        return delete_digest_whole_in_txn(write, txn, locator);
     }
+    digest.content_hash = view::content_hash(&digest)?;
     let origin = digest_origin(&DIGEST.key_bytes(&locator))?;
-    secret_custody::revoke_unreferenced_side_row_custody_in_txn(write, txn, &origin, &kept)
+    let kept = DIGEST.encode_value(&digest)?;
+    secret_custody::revoke_unreferenced_side_row_custody_in_txn(write, txn, &origin, &kept)?;
+    DIGEST.put(write, txn, &locator, &digest)
 }
 
 /// Decodes one stored digest and checks its locator and content hash, deleting it on failure.
