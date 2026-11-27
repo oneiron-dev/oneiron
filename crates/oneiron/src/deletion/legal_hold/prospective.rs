@@ -260,7 +260,7 @@ pub(crate) fn seal_prospective_message_in_txn(
             }
         };
         // A sealed owner row names its copy; a Missed entry and a host order put nothing.
-        if standing.owner_hold_dir.is_some() && matches!(entry, OutboxEntry::SealedRow { .. }) {
+        if standing.owner_hold_dir.is_some() {
             crate::store::legal_hold::sealed_records::put_in_txn(
                 store,
                 wtxn,
