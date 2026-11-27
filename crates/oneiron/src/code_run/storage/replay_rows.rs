@@ -9,8 +9,8 @@ use super::super::codec::{
     validate_bridge_call, validate_code_run_replay_record, validate_raw_output,
 };
 use super::super::replay::{
-    CodeRunBridgeCall, CodeRunReplayGeneration, CodeRunReplayRecord, CodeRunResultBinding,
-    held_row_stands_for,
+    CodeRunBridgeCall, CodeRunRawOutput, CodeRunReplayGeneration, CodeRunReplayRecord,
+    CodeRunResultBinding, held_row_stands_for,
 };
 use super::super::wait_rows::{keep_wait_rows, wait_rows};
 use crate::side_table::{
@@ -23,6 +23,7 @@ mod append;
 mod fenced;
 mod image;
 mod items;
+mod present;
 
 pub(crate) use self::append::put_append;
 pub(crate) use self::fenced::{ErasedFormProjection, admit_fenced, put_fenced};
@@ -34,6 +35,7 @@ use self::items::{
     ReplayItem, ReplayItemKey, decode_call_item, delete_stale_items, encode_call_item,
     family_items, item_value, put_admitted_item, put_raw_item,
 };
+pub(crate) use self::present::{present, present_bridge_calls, present_counts, present_outputs};
 
 /// The replay head of one run, keyed by run id. Only this module's functions and three session-overlay
 /// sites take the table itself: `routing/replay.rs` (the routed compare-and-put), `read_worlds.rs` and
@@ -63,6 +65,26 @@ fn note_written(_len: usize) {}
 #[cfg(oneiron_test_support)]
 pub(crate) fn written_bytes() -> u64 {
     WRITTEN_BYTES.with(|bytes| bytes.get())
+}
+
+#[cfg(oneiron_test_support)]
+thread_local! {
+    static READ_BYTES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Adds `len` to this thread's read replay bytes; nothing outside test support.
+#[cfg(oneiron_test_support)]
+fn note_read(len: usize) {
+    READ_BYTES.with(|bytes| bytes.set(bytes.get().saturating_add(len as u64)));
+}
+
+#[cfg(not(oneiron_test_support))]
+fn note_read(_len: usize) {}
+
+/// This thread's total read replay bytes.
+#[cfg(oneiron_test_support)]
+pub(crate) fn read_bytes() -> u64 {
+    READ_BYTES.with(|bytes| bytes.get())
 }
 
 /// A codec error as the seam reports it: a value error as itself, a row shape as its table's.
@@ -287,30 +309,6 @@ pub(crate) fn stored_len(
     run: &EntityId,
 ) -> Result<Option<usize>> {
     Ok(joined_bytes(dbs, txn, run)?.map(|bytes| bytes.len()))
-}
-
-/// Reads `run`'s replay record, answering `ResponseErased` for a retired marker before any decode.
-///
-/// # Errors
-///
-/// Storage errors, and `ResponseErased` for a retired marker.
-pub(crate) fn present(
-    dbs: &impl SideTableDbs,
-    txn: &heed::RoTxn<'_>,
-    run: &EntityId,
-) -> Result<Option<CodeRunReplayRecord>> {
-    let Some(raw) = HEADS.get_borrowed(dbs, txn, run)? else {
-        return Ok(None);
-    };
-    let key = HEADS.key_bytes(run);
-    let raw = ResponseRead::of(ResponseFamily::Replay, &key, &raw).present()?;
-    match HEADS.decode_value(raw) {
-        Ok(head) => {
-            let whole = assemble(dbs, txn, run, &head)?;
-            decode(&whole).map(Some)
-        }
-        Err(_) => decode(raw).map(Some),
-    }
 }
 
 /// The run's whole-record bytes as stored, if present.

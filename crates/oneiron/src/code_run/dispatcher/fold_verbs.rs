@@ -51,9 +51,8 @@ impl HostSelfDispatcher<'_> {
         run_id: EntityId,
     ) -> Result<SelfDispatchOutcome> {
         // The step this call runs in: the steps the run has made durable.
-        let step = match self.storage.get_code_run_replay_record(&run_id)? {
-            Some(record) => u64::try_from(record.step_checkpoints.len())
-                .map_err(|_| Error::ArithmeticOverflow("executor step count"))?,
+        let step = match self.storage.code_run_replay_checkpoint_count(&run_id)? {
+            Some(count) => count,
             None => 0,
         };
         // The steps the run's epochs already compacted.

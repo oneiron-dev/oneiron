@@ -1,9 +1,11 @@
-//! Doors for `tests/replay_rows_seam.rs` and `tests/replay_split_rows.rs`
-//! (FIX CODE-RUN-REPLAY-SPLIT-LAYOUT PR1 and PR2): the replay row's canonical
-//! bytes as stored, this thread's written-bytes total, a run's item count, and
-//! how many of its items the historical lift sweep walks through the run's head.
+//! Doors for `tests/replay_rows_seam.rs`, `tests/replay_split_rows.rs`, `tests/replay_narrow_reads.rs`
+//! (FIX CODE-RUN-REPLAY-SPLIT-LAYOUT PR1, PR2 and PR4): the replay row's canonical
+//! bytes as stored, this thread's written- and read-bytes totals, a run's item count,
+//! how many of its items the historical lift sweep walks through the run's head, and the
+//! narrow replay reads (a run's checkpoint count, outputs and bridge calls).
 //! Compiled only under `--cfg oneiron_test_support`; never API.
 
+use crate::code_run::{CodeRunBridgeCall, CodeRunRawOutput};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::vault::Vault;
@@ -44,4 +46,36 @@ pub fn lift_routed_items(vault: &Vault, run: EntityId) -> Result<u64> {
     let routed = crate::code_run::replay_rows::lift_routed_items(&vault.store, &mut txn, &run)?;
     txn.abort();
     Ok(routed)
+}
+
+/// This thread's total read replay bytes.
+pub fn read_bytes() -> u64 {
+    crate::code_run::replay_rows::read_bytes()
+}
+
+/// The step checkpoints `run`'s replay record holds, if present.
+///
+/// # Errors
+///
+/// Storage errors.
+pub fn checkpoint_count(vault: &Vault, run: EntityId) -> Result<Option<u64>> {
+    vault.code_run_replay_checkpoint_count(&run)
+}
+
+/// The outputs `run`'s replay record holds, if present.
+///
+/// # Errors
+///
+/// Storage errors.
+pub fn outputs(vault: &Vault, run: EntityId) -> Result<Option<Vec<CodeRunRawOutput>>> {
+    vault.code_run_replay_outputs(&run)
+}
+
+/// The bridge calls `run`'s replay record holds, if present.
+///
+/// # Errors
+///
+/// Storage errors.
+pub fn bridge_calls(vault: &Vault, run: EntityId) -> Result<Option<Vec<CodeRunBridgeCall>>> {
+    vault.code_run_replay_bridge_calls(&run)
 }

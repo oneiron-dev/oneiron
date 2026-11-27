@@ -205,6 +205,7 @@ pub(super) fn family_items(
         if key.run != *run || key.family != family {
             return Err(Error::CorruptedIndex("code-run replay item key"));
         }
+        note_read(bytes.len());
         items.push((key.index, bytes));
     }
     if items.len() as u64 != count {
