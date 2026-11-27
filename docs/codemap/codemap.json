@@ -171472,6 +171472,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/api/mcp_gateway/tool_args_reasons.rs",
+     "purpose": "The stable reason codes of a `tool_args_invalid` refusal (FIX CODE-MODE-DENIAL-REASONS): what was wrong with…",
+     "surface": {
+      "crate-vis": 10
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/api/mcp_gateway/tool_receipt.rs",
      "purpose": "A `tools/call`'s lasting receipt on MCP (OF-538), as the gateway's one door writes it",
      "surface": {
@@ -179816,6 +179826,7 @@
       "const": 3,
       "enum": 1,
       "fn": 2,
+      "re-export": 1,
       "struct": 1,
       "trait": 1
      }
@@ -179831,13 +179842,21 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "WorkDirAccess",
+      "WorkDirFault",
+      "WorkDirUnsafe",
+      "WorkDirVerdict"
+     ],
      "path": "src/gpu_execution_node/jobs/staging/payload_dir.rs",
      "purpose": "The payload directory's ownership check (row R3c): the work directory's path walked from `/`, each directory…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 1,
+      "enum": 2,
+      "fn": 3,
+      "struct": 2
      }
     },
     {
@@ -180170,7 +180189,7 @@
      "path": "src/gpu_execution_node/scope_systemd/safe_fs.rs",
      "purpose": "File operations for the unit's root steps in directories another account owns (the engine's state and…",
      "surface": {
-      "fn": 20,
+      "fn": 21,
       "struct": 2
      }
     },
@@ -180213,7 +180232,7 @@
      "purpose": "The job unit template (pass 33, section 7.6) and the job control socket through which the engine's account…",
      "surface": {
       "const": 1,
-      "fn": 8,
+      "fn": 9,
       "struct": 1
      }
     },
@@ -188572,7 +188591,7 @@
      "path": "src/test_doors/mcp_code_mode_verbs.rs",
      "purpose": "Door for `tests/code_mode_host_verb_refusals.rs`: the code-mode host-verb path as a run's guest calls it…",
      "surface": {
-      "fn": 9,
+      "fn": 10,
       "struct": 3
      }
     },
@@ -192990,6 +193009,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/tool_args_reason_codes.rs",
+     "purpose": "FIX CODE-MODE-DENIAL-REASONS: a refused verb call says what was wrong with its arguments in stable reason…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/turn_program_resume_doors.rs",
      "purpose": "Public facade doors for resuming paused turn programs on a copy beside its source",
      "surface": {}
@@ -193620,7 +193647,7 @@
     },
     "api": {
      "entry": "crates/oneiron-server/src/api/mod.rs",
-     "files": 854,
+     "files": 855,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -194545,8 +194572,8 @@
    },
    "over_bar": 71,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 2218,
-   "test_files": 621
+   "source_files": 2219,
+   "test_files": 622
   },
   "oneiron-setting-contract": {
    "files": [
