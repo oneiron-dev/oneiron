@@ -172,8 +172,8 @@ struct ReadinessBook {
 
 impl ReadinessBook {
     fn due(&self, now_ms: u64, every_secs: u64, offer: &OfferMark) -> bool {
-        self.offer_changed
-            || self.checked_offer.as_ref() != Some(offer)
+        let _ = offer;
+        false
             || self.record.readiness.checked_at_ms.is_none_or(|since| {
                 now_ms >= since.saturating_add(every_secs.saturating_mul(1_000))
             })
@@ -308,9 +308,6 @@ impl NodeJobs {
         let now = self.now();
         let mark = {
             let mut book = self.shared.readiness.book();
-            if book.checked_offer.as_ref() != Some(&offer) {
-                book.offer_changed = true;
-            }
             if !book.due(now.wall_ms, settings.readiness_every_secs, &offer) {
                 return;
             }
