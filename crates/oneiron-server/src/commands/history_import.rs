@@ -548,7 +548,7 @@ use crate::files_intake::confined::{self, open_in, walk_logs};
 pub(crate) mod hosted_import;
 #[cfg(unix)]
 pub(super) mod queue;
-mod session_folder;
+pub(in crate::commands) mod session_folder;
 
 /// A queued session as read: its conversations, whether a log ended
 /// mid-line, what it holds decoded, and the stamp of the logs it read.
