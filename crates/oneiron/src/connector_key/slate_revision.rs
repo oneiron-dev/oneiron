@@ -296,6 +296,7 @@ impl Vault {
             // nothing (REVIEW-10630). An accept judges the offer's
             // standing again ([`accept_scope_in_txn`]).
             rows.insert(signal.key_ref);
+            rows.insert(signal.grant_id);
             offers.push(offer_of(proposal_ref, &proposal, signal.connector, cause));
         }
         // An issuer revision lists the catalog key and each dependent key
