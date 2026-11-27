@@ -662,3 +662,55 @@ fn outside_the_room_a_bound_session_still_misses_root_and_other_project_speech()
     );
     Ok(())
 }
+
+#[test]
+fn a_bound_session_pages_its_room_history_past_root_speech_at_the_end() -> TestResult {
+    let fixture = open()?;
+    let spoken = room_rows(&fixture)?;
+    let room_ref = spoken.room.to_hex();
+    let mut late = Vec::new();
+    for (word, at) in [("quillharproomlate", 904), ("quillharproomlast", 905)] {
+        let receipt = fixture
+            .writer(None)
+            .rooms_speak(&room_turn(
+                &room_ref,
+                &format!("The room speech says {word}."),
+                at,
+            ))
+            .map_err(|error| format!("FIXTURE: speak {word}: {error:?}"))?;
+        assert_eq!(
+            stamped_project(&fixture.vault, receipt.turn_id)?,
+            Some(default_project_id()),
+            "FIXTURE: the {word} TURN is placed at the root"
+        );
+        late.push(receipt.turn_id);
+    }
+    let session = fixture
+        .reader()
+        .in_session_workspace(&[MAIN_DIGEST.to_owned()]);
+    let mut listed = Vec::new();
+    let mut after = None;
+    for _ in 0..16 {
+        let page = session
+            .rooms_messages_page(spoken.room, after, 1)
+            .map_err(|error| format!("MAIN room history page after {after:?}: {error:?}"))?;
+        listed.extend(page.rows.iter().map(|turn| turn.turn_id.clone()));
+        match page.next_after {
+            Some(next) => after = Some(EntityId::from_hex(&next)?),
+            None => break,
+        }
+    }
+    for (name, id) in [
+        ("root", spoken.turn_root),
+        ("beta", spoken.turn_beta),
+        ("alpha", spoken.turn_alpha),
+        ("late root", late[0]),
+        ("last root", late[1]),
+    ] {
+        assert!(
+            listed.contains(&id.to_hex()),
+            "MAIN's room history, one page at a time, lists the {name} speech TURN"
+        );
+    }
+    Ok(())
+}

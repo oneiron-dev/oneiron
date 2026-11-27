@@ -608,7 +608,10 @@ impl Memory<'_> {
         mut start: Option<(u64, EntityId)>,
         count: &mut crate::scan_check::ScanCount,
     ) -> MemoryResult<bool> {
-        let lane = self.read_lane(crate::claim::ClaimReadStatus::Recorded)?;
+        // Room speech is judged by the room, as on the page this probe continues (FIX PR B review).
+        let lane = self
+            .read_lane(crate::claim::ClaimReadStatus::Recorded)?
+            .judging_room_speech_by_room();
         loop {
             let keys = self.history_rows(room, start, 128, |_, key, turn_id| Ok((key, turn_id)))?;
             count.rows(keys.len());
