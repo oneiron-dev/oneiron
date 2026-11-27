@@ -92228,13 +92228,13 @@
      "path": "src/sync/quarantine/remat_markers.rs",
      "purpose": "rm: marker keys, setters/clears, pending scans plus drain",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "fn": 2,
       "struct": 1
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "SyncQuarantineReport"
@@ -94189,7 +94189,7 @@
      "path": "src/sync/window/forward.rs",
      "purpose": "Forward rematerialization of window state into the CRDT doc",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 1
      }
     },
@@ -94274,7 +94274,7 @@
      "path": "src/sync/window/mod.rs",
      "purpose": "Window lifecycle management for the CRDT sync layer",
      "surface": {
-      "crate-vis": 43,
+      "crate-vis": 44,
       "fn": 7,
       "mod": 1,
       "re-export": 11,
