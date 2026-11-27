@@ -825,10 +825,10 @@ for test in \
   a_required_bound_the_scope_lacks_blocks_and_an_unrequired_one_is_recorded_unproven \
   a_workload_cannot_write_or_replace_its_end_record \
   the_unit_opens_the_leased_device_and_no_other \
+  "${DEVICE_QUERY_CASES[@]}" \
   a_kill_that_cannot_be_confirmed_quarantines_the_device \
   a_log_past_its_cap_keeps_its_head_and_its_newest_tail \
   a_checkpoint_notice_reaches_the_workload_and_stops_nothing \
-  "${DEVICE_QUERY_CASES[@]}" \
   a_job_is_ended_at_its_maximum_with_the_engine_and_the_issuer_stopped; do
   wanted "$test" && "$test"
 done
