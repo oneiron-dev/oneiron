@@ -566,9 +566,7 @@ pub(crate) async fn core_memory_verb(
                             .to_owned()
                     ),
                     check_in: None,
-                    remaining: oneiron::memory::remaining_after_delete(
-                        outcome.sweep_key.as_deref(),
-                    ),
+                    remaining: Vec::new(),
                 });
                 (Some(id.to_hex()), delete)
             } else {
