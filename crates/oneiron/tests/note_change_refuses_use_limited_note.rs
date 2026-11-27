@@ -1,48 +1,45 @@
-//! A NOTE kept from use takes no named change (FIX PUT-OVER-USE-LIMITED-RECORD-LANDS; OF-470 C6;
+#![cfg(oneiron_test_support)]
+//! A NOTE kept from use takes no named change (FIX PUT-OVER-USE-LIMITED-RECORD-LANDS;
 //! BIZ-LEGAL-0004 Art. 18 "storage only, no changes"). The base put and the entity text edit
-//! already refuse a record a customer hold kept from its privacy erasure; a NOTE's document
+//! already refuse a record a cooperative review restriction use-limits; a NOTE's document
 //! writers asked nothing.
 //!
-//! Public doors only; neutral fixtures; vaults in tempdirs. Each test opens a hosted vault, where
-//! a customer hold refuses a NOTE's privacy erase and so keeps the NOTE stored and use-limited.
+//! Public doors beside the `oneiron::test_doors` cooperative restriction; neutral fixtures; vaults
+//! in tempdirs. Each test opens a hosted vault, where a cooperative review restriction use-limits a
+//! NOTE.
 //!
 //! * `an_edit_of_a_use_limited_note_answers_not_found_and_keeps_its_text`: the owner's edit of
-//!   the held NOTE answers not found and its text stays; the same edit of a second NOTE lands.
+//!   the restricted NOTE answers not found and its text stays; the same edit of a second NOTE
+//!   lands.
 //! * `a_title_seal_or_fork_of_a_use_limited_note_answers_not_found`: a title, a seal and a new
-//!   fork of the held NOTE each answer not found.
+//!   fork of the restricted NOTE each answer not found.
 //! * `a_fork_opened_before_the_use_limit_does_not_land_after_it`: a rewrite fork the owner
-//!   opened before the hold does not switch in after it, and a fork made before the hold is not
-//!   opened after it; the NOTE's text stays.
-//! * `a_facet_fork_of_a_use_limited_note_answers_not_found`: a fork of the held NOTE to another
-//!   facet, with or without superseding it, answers not found and copies nothing; the same fork
-//!   of a second NOTE lands.
+//!   opened before the restriction does not switch in after it, and a fork made before the
+//!   restriction is not opened after it; the NOTE's text stays.
+//! * `a_facet_fork_of_a_use_limited_note_answers_not_found`: a fork of the restricted NOTE to
+//!   another facet, with or without superseding it, answers not found and copies nothing; the same
+//!   fork of a second NOTE lands.
 //!
 //! All four run red at main 864ee0cf3cd, whose NOTE writers ask no use limit, and green at the
 //! fix.
 //! `cargo test --locked -p oneiron --all-features --test note_change_refuses_use_limited_note`.
 
-use oneiron::consent::AuthenticatedOwner;
-use oneiron::deletion::LegalHoldTarget;
-use oneiron::memory::{EraseOptions, EraseReason, MEMORY_CODE_NOT_FOUND, MemoryError};
+use oneiron::memory::{MEMORY_CODE_NOT_FOUND, MemoryError};
 use oneiron::note::{NoteProgramEdit, NoteProgramEditOutcome, NoteVerdict};
 use oneiron::registry::ENTITY_TYPE_FACET;
-use oneiron::store::GateDecisionId;
+use oneiron::test_doors::campaign_member_index::restrict_record;
 use oneiron::{
     EdgeActorClass, EntityId, HostingPrivacyPosture, TimeRange, Vault, VaultConfig, WriteActor,
 };
 
 const TEXT: &str = "The lighthouse keeper logs the tide at dawn.";
 
-/// A hosted vault with a device keystore, so a held privacy erase keeps its record
-/// use-limited.
+/// A hosted vault.
 fn open_hosted_vault() -> (tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().expect("temp dir for the hosted vault");
     let mut config = VaultConfig::default();
     config.privacy.posture = HostingPrivacyPosture::Hosted;
     let vault = Vault::open_owned(dir.path(), config).expect("open the hosted vault");
-    vault.install_device_keystore(std::sync::Arc::new(
-        oneiron_keystore::MemoryKeystore::default(),
-    ));
     (dir, vault)
 }
 
@@ -56,50 +53,10 @@ fn owner_writer(vault: &Vault) -> WriteActor {
     WriteActor::new(owner(vault), EdgeActorClass::Human)
 }
 
-fn owner_proof(vault: &Vault) -> AuthenticatedOwner {
-    let owner = owner(vault);
-    vault
-        .authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())
-        .expect("FIXTURE: owner proof")
-}
-
-/// Places a customer hold on `record` and runs its privacy erase, which the hold refuses: the
-/// record stays stored and use-limited.
+/// Restricts `record` under a cooperative review, in the row the cooperative-deletion answer
+/// writes: every use-limited read hides the record.
 fn use_limit(vault: &Vault, record: EntityId) {
-    let hold = vault
-        .place_legal_hold(
-            &owner_proof(vault),
-            vec![LegalHoldTarget::Record(record)],
-            Some("matter-note-content".to_owned()),
-        )
-        .expect("FIXTURE: place the customer hold");
-    assert!(hold.stands(), "FIXTURE: the customer hold stands: {hold:?}");
-    let memory = vault.memory(owner(vault), EdgeActorClass::Human);
-    let preview = memory
-        .preview_entity_delete(&record)
-        .expect("FIXTURE: preview the privacy erase");
-    let outcome = memory
-        .confirm_entity_erase(
-            &preview,
-            EraseOptions {
-                reason: EraseReason::GdprDelete,
-                also_same_bytes: false,
-                veto_starter: None,
-            },
-        )
-        .expect("FIXTURE: the privacy erase runs");
-    assert_eq!(
-        outcome.first.reason.as_str(),
-        "privacy_erase_kept",
-        "FIXTURE: the held privacy erase is kept: {outcome:?}"
-    );
-    assert!(
-        vault
-            .legal_hold_use_limit(&record)
-            .expect("FIXTURE: read the use limit")
-            .is_some(),
-        "FIXTURE: the kept erase use-limits the record"
-    );
+    restrict_record(vault, record).expect("FIXTURE: restrict the record");
 }
 
 fn write_note(vault: &Vault) -> EntityId {
@@ -157,20 +114,13 @@ fn an_edit_of_a_use_limited_note_answers_not_found_and_keeps_its_text() {
         TEXT,
         "the use-limited NOTE keeps its text"
     );
-    assert!(
-        vault
-            .legal_hold_use_limit(&held)
-            .expect("read the use limit")
-            .is_some(),
-        "the NOTE stays use-limited"
-    );
 
     let landed = vault
         .edit_note(control, &control_edit, owner_writer(&vault))
-        .expect("the same edit of a NOTE no hold keeps is taken");
+        .expect("the same edit of a NOTE no restriction touches is taken");
     assert!(
         matches!(landed, NoteProgramEditOutcome::Edited { .. }),
-        "the owner's edit of a NOTE no hold keeps lands: {landed:?}"
+        "the owner's edit of a NOTE no restriction touches lands: {landed:?}"
     );
     assert_eq!(text(&vault, control), format!("{TEXT} Later words."));
 }
@@ -225,11 +175,11 @@ fn a_fork_opened_before_the_use_limit_does_not_land_after_it() {
 
     assert_not_found(
         vault.review_note_proposal(bundle.id, NoteVerdict::Switch, owner_writer(&vault)),
-        "a switch of a fork opened before the hold",
+        "a switch of a fork opened before the restriction",
     );
     assert_not_found(
         vault.open_note_proposal(&[unopened], "revise the log", owner_writer(&vault)),
-        "opening a fork made before the hold",
+        "opening a fork made before the restriction",
     );
     assert_eq!(
         text(&vault, held),
@@ -256,7 +206,7 @@ fn a_facet_fork_of_a_use_limited_note_answers_not_found() {
     use_limit(&vault, held);
     let held_edges = vault
         .edges_in(&held)
-        .expect("read the edges into the held NOTE")
+        .expect("read the edges into the restricted NOTE")
         .len();
 
     for supersede in [false, true] {
@@ -273,7 +223,7 @@ fn a_facet_fork_of_a_use_limited_note_answers_not_found() {
     assert_eq!(
         vault
             .edges_in(&held)
-            .expect("read the edges into the held NOTE")
+            .expect("read the edges into the restricted NOTE")
             .len(),
         held_edges,
         "no fork links to or supersedes the use-limited NOTE"
@@ -281,10 +231,10 @@ fn a_facet_fork_of_a_use_limited_note_answers_not_found() {
 
     let fork = vault
         .fork_to_facet(control, facet, true, owner_writer(&vault))
-        .expect("the same fork of a NOTE no hold keeps is taken");
+        .expect("the same fork of a NOTE no restriction touches is taken");
     assert_eq!(
         text(&vault, fork),
         TEXT,
-        "the fork of a NOTE no hold keeps carries its text"
+        "the fork of a NOTE no restriction touches carries its text"
     );
 }

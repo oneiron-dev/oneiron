@@ -28,6 +28,8 @@
 //! 3). An agent reaches these acts through `vault.check_in.open`; PR 3's act
 //! gate admits agents at these doors.
 
+use std::collections::BTreeMap;
+
 use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 
 use super::act_class::ActClass;
@@ -43,6 +45,7 @@ use super::role_preset::RolePreset;
 use super::waits::refuse;
 use crate::Vault;
 use crate::authority::{RootChange, StepUpFactor};
+use crate::blob_artifact::esign::FieldValue;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::federation::FederationGrantRole;
@@ -471,34 +474,6 @@ pub(crate) fn owner_act_decision_in_txn(
     Ok(decision)
 }
 
-/// The digest of the Owner's one "Lift the hold and erase?" confirm over
-/// `records`, and the claim-free gate-decision partition with
-/// `claim_free_partition`: the effect an asker's `vault.check_in.open` names
-/// for `vault.legal_holds.lift_and_erase`, and the one the confirm spends
-/// (2k2; P25-SHAPE Q1 = A). The order of `records` and a repeat do not
-/// change it. BLAKE3, key derived from `oneiron check_in legal hold erase
-/// v1`, over the count of distinct records as eight big-endian bytes, their
-/// 16 id bytes each in id order, and one byte, 1 when the confirm releases
-/// the claim-free partition.
-#[must_use]
-pub fn legal_hold_erase_effect_digest(
-    records: &[EntityId],
-    claim_free_partition: bool,
-) -> [u8; 32] {
-    let records: std::collections::BTreeSet<&EntityId> = records.iter().collect();
-    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in legal hold erase v1");
-    hasher.update(
-        &u64::try_from(records.len())
-            .unwrap_or(u64::MAX)
-            .to_be_bytes(),
-    );
-    for record in records {
-        hasher.update(record.as_bytes());
-    }
-    hasher.update(&[u8::from(claim_free_partition)]);
-    *hasher.finalize().as_bytes()
-}
-
 /// The digest of erasing `entity`'s text history through `through`, or
 /// through the engine's own boundary when `None` (a NOTE's oldest pin, as
 /// `vault.notes.history_purge` always asks): the effect an asker's
@@ -750,4 +725,103 @@ pub fn attempt_archive_delete_effect_digest(attempt: &[u8; 16]) -> [u8; 32] {
     LegacyDigest::new(purposes::check_in::ATTEMPT_ARCHIVE_DELETE)
         .raw(attempt)
         .finish()
+}
+
+/// The digest of sending signing document `document`, whose recipients the
+/// caller counted as `recipient_count`, for signature: the effect a person's
+/// `vault.esign.send_for_signature` is judged over (2k6a; P25-SHAPE Q1 = A).
+/// Only the create door drafts a document, on an artifact no draft holds
+/// yet, so the id binds the draft the asker sent, and a document sends once.
+/// BLAKE3, key derived from `oneiron check_in esign legal send v1`, over the
+/// document's 16 id bytes and the count as eight big-endian bytes.
+#[must_use]
+pub fn legal_send_effect_digest(document: &EntityId, recipient_count: usize) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in esign legal send v1");
+    hasher.update(document.as_bytes());
+    hasher.update(&(recipient_count as u64).to_be_bytes());
+    *hasher.finalize().as_bytes()
+}
+
+/// The digest of completing recipient `recipient`'s signature on signing
+/// document `document` as the vault's principal, over `values`, the
+/// recipient's field values the Complete signs: the effect a member's
+/// `vault.esign.signing.act` Complete is judged over (2k6b; P25-SHAPE Q1 =
+/// A). An approval binds those values, so a value saved after it is another
+/// effect and asks again. BLAKE3, key derived from
+/// `oneiron check_in esign sign v1`, over the document's 16 id bytes, the
+/// recipient id, the number of values as eight big-endian bytes, then each
+/// value in field order: the field id, a kind byte (1 text, 2 checked, 3
+/// signature) and the value (the text or image ref, or one byte 0 or 1). Each
+/// string is its UTF-8 length as eight big-endian bytes, then its bytes.
+#[must_use]
+pub fn sign_effect_digest(
+    document: &EntityId,
+    recipient: &str,
+    values: &BTreeMap<String, FieldValue>,
+) -> [u8; 32] {
+    fn string(hasher: &mut blake3::Hasher, text: &str) {
+        hasher.update(&(text.len() as u64).to_be_bytes());
+        hasher.update(text.as_bytes());
+    }
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in esign sign v1");
+    hasher.update(document.as_bytes());
+    string(&mut hasher, recipient);
+    hasher.update(&(values.len() as u64).to_be_bytes());
+    for (field, value) in values {
+        string(&mut hasher, field);
+        match value {
+            FieldValue::Text(text) => {
+                hasher.update(&[1]);
+                string(&mut hasher, text);
+            }
+            FieldValue::Checked(checked) => {
+                hasher.update(&[2, u8::from(*checked)]);
+            }
+            FieldValue::Signature { image_ref } => {
+                hasher.update(&[3]);
+                string(&mut hasher, image_ref);
+            }
+        }
+    }
+    *hasher.finalize().as_bytes()
+}
+
+/// The digest of converting slip `slip` into its holder's default read
+/// Grants: the effect an asker's `vault.check_in.open` names for
+/// `vault.agents.grants.from_slip`, and the one the Owner's conversion
+/// spends (2k7; P25-SHAPE Q1 = A). The Grants minted are the holder's live
+/// slips' Scopes as the Owner's writer reads them. BLAKE3, key derived from
+/// `oneiron check_in agent grant from slip v1`, over the slip's 32 id
+/// bytes.
+#[must_use]
+pub fn agent_grant_from_slip_effect_digest(slip: &[u8; 32]) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in agent grant from slip v1");
+    hasher.update(slip);
+    *hasher.finalize().as_bytes()
+}
+
+/// The digest of giving base agent `agent` its default grant back: the
+/// effect an asker's `vault.check_in.open` names for
+/// `vault.agents.grants.restore`, and the one the Owner's grant back spends
+/// (2k7; P25-SHAPE Q1 = A). BLAKE3, key derived from `oneiron check_in
+/// agent grant restore v1`, over the agent principal's 16 id bytes.
+#[must_use]
+pub fn agent_grant_restore_effect_digest(agent: &EntityId) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in agent grant restore v1");
+    hasher.update(agent.as_bytes());
+    *hasher.finalize().as_bytes()
+}
+
+/// The digest of minting the standing consent grant over `bound`: the
+/// effect an asker's `vault.check_in.open` names for
+/// `vault.consent.create_standing_grant` or for an auto answer to
+/// `vault.consent.graduation.answer`, and the one the Owner's mint spends
+/// (2k8; P25-SHAPE Q1 = A). BLAKE3, key derived from `oneiron check_in
+/// standing grant v1`, over the bound's own digest, the grant ref its
+/// receipt names: two requests that normalize to one bound are one effect.
+#[must_use]
+pub fn standing_grant_effect_digest(bound: &crate::consent::GrantBound) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in standing grant v1");
+    hasher.update(bound.digest().as_bytes());
+    *hasher.finalize().as_bytes()
 }

@@ -99,6 +99,7 @@ impl FullAccessDoor {
         AgentVerbRefusal {
             code: code.to_owned(),
             hook_notice: None,
+            reason_codes: Vec::new(),
         }
     }
 }
@@ -261,6 +262,7 @@ fn executor_config(run_id: EntityId) -> EngineExecutorConfig {
     EngineExecutorConfig {
         run_id,
         task: "summarize the NOTEs".to_owned(),
+        caller_source_digest: None,
         prompt_package_root: oneiron::prompt::workspace_test_prompt_package_root()
             .expect("the workspace test prompt package"),
         model: ModelId::new("test/executor@v1").expect("a model id"),

@@ -232,6 +232,7 @@ fn mint_world_read_grant(fixture: &Fixture, agent: EntityId, world: EntityId) ->
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
             working_view_bounds: None,
+            check_in_ref: None,
         },
     )
     .expect("owner mints the agent a one-world read Grant")
@@ -414,6 +415,7 @@ fn revoking_an_agents_last_hand_minted_grant_narrows_its_read() {
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
             working_view_bounds: None,
+            check_in_ref: None,
         },
     )
     .expect("owner mints the agent a base-world read Grant");
@@ -866,6 +868,7 @@ fn mint_world_audience_read_grant(
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
             working_view_bounds: None,
+            check_in_ref: None,
         },
     )
     .expect("owner mints the agent a read Grant")
@@ -1013,6 +1016,7 @@ fn a_two_grant_agent_learns_no_deletion_neither_grant_alone_covers_on_the_facet_
                 verb_classes: BTreeSet::new(),
                 wallet_ref: None,
                 working_view_bounds: None,
+                check_in_ref: None,
             },
         )
         .expect("owner mints the agent a read Grant");

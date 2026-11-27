@@ -331,11 +331,14 @@ pub(crate) async fn vault_budgets_rsi_hold_resume(
     .await
 }
 
-/// The residents a share view names.
+/// The residents a share view names, once each across its unit blocks.
 fn residents(view: &ResidentSharesView) -> Vec<oneiron::EntityId> {
-    view.residents
+    let mut named = std::collections::HashSet::new();
+    view.allocations
         .iter()
+        .flat_map(|block| &block.residents)
         .filter_map(|share| oneiron::EntityId::from_hex(&share.resident).ok())
+        .filter(|resident| named.insert(*resident))
         .collect()
 }
 
@@ -351,8 +354,14 @@ pub(crate) async fn vault_budgets_resident_shares(
         auth,
         "vault.budgets.resident_shares",
         move |server, owner| {
-            resident_doors::resident_shares_as_owner(server.vault(), owner, &input)
-                .map_err(MemoryError::from)
+            let account = server.host_account().status();
+            resident_doors::resident_shares_on_account_as_owner(
+                server.vault(),
+                owner,
+                &input,
+                &account,
+            )
+            .map_err(MemoryError::from)
         },
         residents,
     )
@@ -371,8 +380,14 @@ pub(crate) async fn vault_budgets_resident_shares_set(
         auth,
         "vault.budgets.resident_shares.set",
         move |server, owner| {
-            resident_doors::set_resident_share_as_owner(server.vault(), owner, &input)
-                .map_err(MemoryError::from)
+            let account = server.host_account().status();
+            resident_doors::set_resident_share_on_account_as_owner(
+                server.vault(),
+                owner,
+                &input,
+                &account,
+            )
+            .map_err(MemoryError::from)
         },
         residents,
     )

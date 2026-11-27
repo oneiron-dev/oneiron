@@ -230,6 +230,7 @@ fn stage_scoped_pending(vault: &Vault, authority: &OutboundBindingAuthority, now
         data_class: SlateDataClass::Personal,
         header_parameters: Vec::new(),
         resolved_input_schema: Some(schema),
+        resolved_output_schema: None,
         trigger: None,
         destroys: false,
         spends: false,
@@ -238,6 +239,7 @@ fn stage_scoped_pending(vault: &Vault, authority: &OutboundBindingAuthority, now
         read_only: false,
         idempotent: true,
         price: None,
+        http: None,
     }];
     let draft = serde_json::to_string(&draft_connector_slate(&manifest)).unwrap();
     let slate_id = vault.store_connector_slate(&manifest, &draft).unwrap();
@@ -608,6 +610,7 @@ fn stage_esign_notice(host: &Host) -> (EsignNoticeGroup, AttemptId) {
             recipient_count: 1,
             on_behalf_of: None,
             idempotency_key: Some("restored-notice-document".to_owned()),
+            check_in_ref: None,
         })
         .unwrap();
     assert_eq!(

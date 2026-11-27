@@ -320,6 +320,7 @@ async fn a_revoked_grant_drops_its_person_from_the_next_request_of_the_run() -> 
     let config = EngineExecutorConfig {
         run_id,
         task: TASK.to_owned(),
+        caller_source_digest: None,
         prompt_package_root: workspace_test_prompt_package_root()?,
         model: ModelId::new("test/executor@v1").expect("model id"),
         model_locality: ModelLocality::OwnServer,

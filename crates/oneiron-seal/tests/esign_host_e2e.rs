@@ -351,7 +351,8 @@ fn ready(dir: &std::path::Path) -> TestResult<Ready> {
             &capability,
             &SigningAction::Complete {
                 consent: true,
-                next: None
+                next: None,
+                check_in_ref: None,
             },
             None,
             None,

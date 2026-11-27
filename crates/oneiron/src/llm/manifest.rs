@@ -225,6 +225,34 @@ impl Vault {
         Ok(())
     }
 
+    /// The teacher probe approval `manifest` would be pinned under and the
+    /// probe policy that admits it, read in `txn`: every check
+    /// [`Self::write_model_manifest_in_txn`] makes before its first write. A
+    /// door that asks a person before the manifest moves reads it first
+    /// (`skill_optimize::offer_switch::switch_stands_in_txn`).
+    ///
+    /// # Errors
+    ///
+    /// A manifest that does not validate, no passing probe approval, a
+    /// probe policy that is missing or one that refuses the approval for
+    /// this manifest; storage errors.
+    pub(crate) fn admitted_model_manifest_approval_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        manifest: &ModelManifest,
+        new_approval: Option<&TeacherProbeApproval>,
+    ) -> Result<(TeacherProbeApproval, TeacherProbePolicy)> {
+        manifest.validate()?;
+        let saved_approval = TEACHER_APPROVAL.get(&self.store, txn, &())?;
+        let approval = new_approval
+            .cloned()
+            .or(saved_approval)
+            .ok_or_else(|| invalid("extraction_teacher pin requires a passing probe approval"))?;
+        let policy = self.teacher_probe_policy_in_txn(txn, approval.holder_ref.as_deref())?;
+        approval.verify(manifest, &policy)?;
+        Ok((approval, policy))
+    }
+
     /// Training swaps commit their receipt and custody binding with the manifest.
     pub(crate) fn write_model_manifest_in_txn(
         &self,
@@ -233,13 +261,9 @@ impl Vault {
         new_approval: Option<&TeacherProbeApproval>,
         new_encoder_export: Option<&EncoderExport>,
     ) -> Result<()> {
-        manifest.validate()?;
-        let saved_approval = TEACHER_APPROVAL.get(&self.store, txn, &())?;
-        let approval = new_approval
-            .or(saved_approval.as_ref())
-            .ok_or_else(|| invalid("extraction_teacher pin requires a passing probe approval"))?;
-        let policy = self.teacher_probe_policy_in_txn(txn, approval.holder_ref.as_deref())?;
-        approval.verify(manifest, &policy)?;
+        let (approval, policy) =
+            self.admitted_model_manifest_approval_in_txn(txn, manifest, new_approval)?;
+        let approval = &approval;
         if let Some(export) = new_encoder_export {
             if &export.request.teacher_approval != approval {
                 return Err(invalid(

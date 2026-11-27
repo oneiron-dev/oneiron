@@ -236,6 +236,21 @@ fn run_ids(anchors: &Value) -> Vec<String> {
         .collect()
 }
 
+/// The 12 hex a workaround skill id ends in, by the recipe the Coach first
+/// stored ids under (#7648): BLAKE3 of the tag, then each of the app,
+/// failure and repair names as its u64 big-endian byte length and bytes. The
+/// id is stored, so it keeps this recipe through the fingerprint crate's K door.
+fn skill_id_suffix_by_first_recipe(app: &str, failure: &str, repair: &str) -> String {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"oneiron:coach-workaround-skill-id:v1");
+    for name in [app, failure, repair] {
+        let len = u64::try_from(name.len()).expect("a short name");
+        hasher.update(&len.to_be_bytes());
+        hasher.update(name.as_bytes());
+    }
+    hasher.finalize().to_hex()[..12].to_owned()
+}
+
 #[test]
 fn three_runs_repaired_the_same_way_file_one_candidate_skill_and_a_finding() {
     let fixture = fixture();
@@ -339,6 +354,14 @@ fn three_runs_repaired_the_same_way_file_one_candidate_skill_and_a_finding() {
         .expect("skill read")
         .expect("the skill record");
     assert!(record.skill_id.starts_with(WORKAROUND_SKILL_ID_PREFIX));
+    assert!(
+        record.skill_id.ends_with(&format!(
+            "-{}",
+            skill_id_suffix_by_first_recipe(APP, FAILED, FIXED)
+        )),
+        "the skill id keeps the bytes it was first stored under: {}",
+        record.skill_id
+    );
     assert_eq!(value["skill_id"], record.skill_id.as_str());
     assert_eq!(record.lifecycle_status, SkillLifecycle::Candidate, "inert");
     assert_eq!(record.approval_status, ClaimApprovalStatus::Proposed);

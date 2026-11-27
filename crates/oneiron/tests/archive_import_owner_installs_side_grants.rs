@@ -776,6 +776,7 @@ fn slate_tool(name: &str) -> SlateToolManifest {
         data_class: SlateDataClass::Personal,
         header_parameters: Vec::new(),
         resolved_input_schema: Some(serde_json::json!({"type": "object"})),
+        resolved_output_schema: None,
         trigger: None,
         destroys: false,
         spends: false,
@@ -784,6 +785,7 @@ fn slate_tool(name: &str) -> SlateToolManifest {
         read_only: true,
         idempotent: true,
         price: None,
+        http: None,
     }
 }
 

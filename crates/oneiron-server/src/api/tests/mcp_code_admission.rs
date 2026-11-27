@@ -72,6 +72,7 @@ impl McpCodeModeProvider for HeldProvider {
         Ok(EngineExecutorConfig {
             run_id,
             task: task.to_owned(),
+            caller_source_digest: None,
             prompt_package_root: oneiron::prompt::workspace_test_prompt_package_root()
                 .expect("workspace test prompt package"),
             model: oneiron::ModelId::new("fixture/executor@v1").expect("fixture model id"),
@@ -103,6 +104,7 @@ impl oneiron::code_run::AgentVerbDoor for NoVerbs {
         Ok(Err(oneiron::code_run::AgentVerbRefusal {
             code: oneiron::code_run::AGENT_VERB_DOOR_UNBOUND.to_owned(),
             hook_notice: None,
+            reason_codes: Vec::new(),
         }))
     }
 

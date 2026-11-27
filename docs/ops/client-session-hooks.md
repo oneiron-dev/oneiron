@@ -3,10 +3,12 @@
 The same hook lanes as [Claude Code hooks](claude-code-hooks.md), for the
 clients that take the shared Agent Plugins package
 ([Connect an agent](connect-an-agent.md)): when a session starts it binds a
-vault, is told which in one line, and gets a short recall for the project;
-as it goes, its log is queued for import. Each client runs `oneiron hook
---host <client> <event>`, which reads that client's event on stdin and
-answers it in that client's format.
+vault and is told which in one line; as it goes, its log is queued for
+import. The hook files recall nothing at start (`--query " "`), until start
+recall has a relevance threshold
+([Claude Code hooks](claude-code-hooks.md#how-it-works)). Each client runs
+`oneiron hook --host <client> <event>`, which reads that client's event on
+stdin and answers it in that client's format.
 
 Agent Plugins 1.0 defines no hooks; a client's own files sit in the
 package's top-level folder named for the client's namespace (spec §8.2).
@@ -83,7 +85,20 @@ files write `$HOME`, never `${HOME}`: a client reads `${...}` as its own
 placeholder (Cursor fills its plugin variables there), and `$HOME` is left
 to the shell. Add `--url <origin>` to `session-start` to pin a vault, and
 `--config /path/to/oneiron.toml` to each `hand-over` when `serve` reads
-another config and may be stopped when a session ends.
+another config and may be stopped when a session ends. To be given lines at
+start, give `--query "<words>"`: only lines that clear your relevance bar come
+(`recall.bar.start`, [claude-code-hooks.md](claude-code-hooks.md#how-it-works)).
+A start with no query recalls nothing.
+
+**Read the whole record.** Each pushed line ends with its record id (and
+revision if pinned), source, claim standing when present, readable source
+conversation when known, and the learned time in UTC. Pass the id to
+`vault.hydrate` to read the whole record. The session's own imported
+conversation is never pushed. As owner, use `vault.settings.set` with
+`{"key":"recall.bar.excluded_predicates","scope":{"kind":"vault"},"value":[]}`
+to push all predicates that otherwise pass. The default list is
+`skill.hub_provenance`, `skill.scan_verdict` and `machine.capacity`; each
+entry also excludes predicates below it. A project can set its own list.
 
 ## A hosted vault
 

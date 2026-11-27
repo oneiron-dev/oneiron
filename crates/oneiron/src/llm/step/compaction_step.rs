@@ -327,7 +327,10 @@ impl ExecutorStorage<'_> {
     /// Files each of `calls` as one terminal `dreamer.step` claim about and
     /// by `writer`, the run's authenticated actor, on the route this run's
     /// storage captured at entry, and returns their refs in order. Nothing is
-    /// settled: the run's meter settled each call once when it ran.
+    /// settled: the run's meter settled each call once when it ran. `now_ms`
+    /// is the pass's wall clock in milliseconds: the step claim's own `at`
+    /// keeps it, and every row the filing writes is stamped at its Unix
+    /// second (FIX COMPACTION-STEP-LEARNED-AT-MILLISECONDS).
     pub(crate) fn file_compaction_steps(
         &self,
         run_ref: &str,
@@ -351,6 +354,7 @@ impl ExecutorStorage<'_> {
             run_ref,
             envelope: &envelope,
             now_ms,
+            now: now_ms / 1_000,
         };
         match self {
             Self::Canonical(vault) => {
@@ -379,14 +383,19 @@ struct StepFiling<'a> {
     writer: WriteActor,
     run_ref: &'a str,
     envelope: &'a WriteEnvelope,
+    /// The pass's wall clock in milliseconds, which the step claim's own
+    /// `at` keeps, as every `dreamer.step` claim's does.
     now_ms: u64,
+    /// The same instant in Unix seconds: the occurred range and learned time
+    /// of every row the filing writes, as of every claim and entity row.
+    now: u64,
 }
 
 impl StepFiling<'_> {
     fn occurred(&self) -> TimeRange {
         TimeRange {
-            start: self.now_ms,
-            end: self.now_ms,
+            start: self.now,
+            end: self.now,
         }
     }
 
@@ -429,7 +438,7 @@ impl StepFiling<'_> {
                     &artifact_id,
                     ENTITY_TYPE_BLOB_ARTIFACT,
                     occurred,
-                    self.now_ms,
+                    self.now,
                     &encoded,
                 );
                 for source in sources {
@@ -445,7 +454,7 @@ impl StepFiling<'_> {
                     },
                     self.writer,
                     occurred,
-                    self.now_ms,
+                    self.now,
                 )?;
                 Some(StepResponseRef {
                     artifact_id,
@@ -461,13 +470,9 @@ impl StepFiling<'_> {
                 &candidate,
                 &mut envelope,
             )?;
-            let mut batch = vault.batch_in().claim_candidate(
-                &claim_id,
-                candidate,
-                &envelope,
-                occurred,
-                self.now_ms,
-            );
+            let mut batch = vault
+                .batch_in()
+                .claim_candidate(&claim_id, candidate, &envelope, occurred, self.now);
             for source in sources {
                 batch = batch.edge(&claim_id, EdgeKind::DerivedFrom, source, 1.0);
             }
@@ -543,7 +548,7 @@ impl StepFiling<'_> {
                     },
                     self.writer,
                     self.occurred(),
-                    self.now_ms,
+                    self.now,
                 )?)
             };
             (claim_id, response)
@@ -558,7 +563,7 @@ impl StepFiling<'_> {
             self.candidate(call, response_ref)?,
             self.envelope,
             self.occurred(),
-            self.now_ms,
+            self.now,
             sources,
         )?;
         Ok(RoomStep {
@@ -594,7 +599,7 @@ impl StepFiling<'_> {
                 conversation,
                 step.claim_id,
                 self.occurred(),
-                self.now_ms,
+                self.now,
                 step.call.sources()?,
                 ops,
             )?;

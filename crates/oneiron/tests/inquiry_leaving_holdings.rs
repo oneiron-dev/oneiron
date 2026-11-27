@@ -15,9 +15,10 @@
 //! - two leave actions at once queue one ask and both answer it;
 //! - the owner's `erase_request_reply` setting answers a filed ask
 //!   ("The reply to an erase request is each owner's setting"): `honour`
-//!   erases the covered copies except one a hold keeps, `decline` erases
-//!   nothing, no row leaves the ask for the owner, and the owner's own
-//!   answer is never rewritten. Filing erases nothing under any setting.
+//!   erases every covered copy, a held one included (LEGAL-HOLD-USE = B);
+//!   `decline` erases nothing, no row leaves the ask for the owner, and the
+//!   owner's own answer is never rewritten. Filing erases nothing under any
+//!   setting.
 //!   The owner's own delete choice runs through the same delete run.
 //! - review round 1 of #9902: a delete that erased a record a concurrent
 //!   pass read missing still saves it removed; the owner's own delete choice
@@ -74,17 +75,20 @@ struct Side {
     issuer: HostSlipIssuer,
     vault_id: AuthorityVaultId,
     _dir: tempfile::TempDir,
+    _hold_dir: tempfile::TempDir,
 }
 
-fn open_vault() -> (tempfile::TempDir, Vault) {
+fn open_vault() -> (tempfile::TempDir, tempfile::TempDir, Vault) {
     let dir = tempfile::tempdir().expect("vault directory");
-    let vault = Vault::open(dir.path(), VaultConfig::device()).expect("fresh vault");
-    (dir, vault)
+    let hold_dir = tempfile::tempdir().expect("hold store directory");
+    let config = VaultConfig::device().with_legal_hold_store(hold_dir.path().to_path_buf());
+    let vault = Vault::open(dir.path(), config).expect("fresh vault");
+    (dir, hold_dir, vault)
 }
 
 /// Roots `vault` under a host of its own (`seed`), its engine machines and
 /// install profile provisioned and its owner bound, as a host does.
-fn root(dir: tempfile::TempDir, vault: Vault, seed: u8) -> Side {
+fn root(dir: tempfile::TempDir, hold_dir: tempfile::TempDir, vault: Vault, seed: u8) -> Side {
     vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
     let issuer = HostSlipIssuer::from_seed(&[seed; HOST_ISSUER_SEED_BYTES]).expect("host issuer");
     vault.ensure_host_root_slip(&issuer).expect("host root");
@@ -110,6 +114,7 @@ fn root(dir: tempfile::TempDir, vault: Vault, seed: u8) -> Side {
         issuer,
         vault_id,
         _dir: dir,
+        _hold_dir: hold_dir,
     }
 }
 
@@ -201,12 +206,12 @@ struct Leaving {
 }
 
 fn leaving() -> Leaving {
-    let (member_dir, member_vault) = open_vault();
-    let member = root(member_dir, member_vault, 0x11);
-    let (dir, vault) = open_vault();
+    let (member_dir, member_hold_dir, member_vault) = open_vault();
+    let member = root(member_dir, member_hold_dir, member_vault, 0x11);
+    let (dir, hold_dir, vault) = open_vault();
     let asker = person(&vault, EntityId::from_bytes(ASKER_BYTES).expect("asker id"));
     let task = open_task(&vault, asker, "plan the Thursday visit");
-    let company = root(dir, vault, 0x22);
+    let company = root(dir, hold_dir, vault, 0x22);
     company
         .vault
         .initialize_shared_vault(
@@ -895,8 +900,10 @@ fn two_leave_actions_at_once_queue_one_ask() {
     );
 }
 
+/// LEGAL-HOLD-USE = B: the honour setting erases every covered copy, a held
+/// one included; the hold keeps only its sealed copy outside the vault.
 #[test]
-fn honour_erases_the_covered_copies_and_keeps_a_held_one() {
+fn honour_erases_the_covered_copies_including_a_held_one() {
     let fx = leaving();
     let copies = fx.land_copy();
     fx.install_erase_request_reply(EraseRequestReply::Honour);
@@ -906,6 +913,7 @@ fn honour_erases_the_covered_copies_and_keeps_a_held_one() {
             &fx.company.proof,
             vec![LegalHoldTarget::Record(copies[0])],
             Some("matter-7".to_owned()),
+            None,
         )
         .expect("the company holds one copy");
     let _ = fx.file_leave_ask();
@@ -926,33 +934,31 @@ fn honour_erases_the_covered_copies_and_keeps_a_held_one() {
         "the setting's delete choice says it is the setting's"
     );
     assert_eq!(answer.recorded_at, now);
+    let mut deleted = answer.deleted.clone();
+    deleted.sort();
     assert_eq!(
-        answer.deleted,
-        vec![copies[1].to_hex()],
-        "the unheld copy is erased"
+        deleted,
+        copies.iter().map(|copy| copy.to_hex()).collect::<Vec<_>>(),
+        "every covered copy is erased, the held one included"
     );
-    assert_eq!(
-        answer.excluded,
-        vec![copies[0].to_hex()],
-        "the held copy is named as kept"
+    assert!(
+        answer.excluded.is_empty(),
+        "no copy is named as kept: {answer:?}"
     );
     assert!(
         answered[0].reply_status.is_none(),
         "no reply is queued: the requester's host is not known here"
     );
-    assert_eq!(fx.held_copies(), vec![copies[0]]);
     assert!(
-        !matches!(fx.company.vault.get_claim(&copies[1]), Ok(Some(_))),
-        "the erased copy reads no body"
+        fx.held_copies().is_empty(),
+        "the company holds nothing from the member after the honour"
     );
-    assert!(
-        fx.company
-            .vault
-            .get_claim(&copies[0])
-            .expect("claim read")
-            .is_some(),
-        "the held copy stays"
-    );
+    for copy in &copies {
+        assert!(
+            !matches!(fx.company.vault.get_claim(copy), Ok(Some(_))),
+            "the erased copy reads no body: {copy:?}"
+        );
+    }
     assert_eq!(
         fx.company
             .vault

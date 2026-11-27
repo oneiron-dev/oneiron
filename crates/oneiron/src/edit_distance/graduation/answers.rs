@@ -236,11 +236,47 @@ pub fn answer_graduation_offer_as_owner(
     scope: &RampScope,
     answer: OfferAnswer<'_>,
 ) -> Result<OfferAnswerOutcome> {
+    answer_graduation_offer_with_check_in(vault, owner, scope, answer, None)
+        .map(|(outcome, _)| outcome)
+}
+
+/// [`answer_graduation_offer_as_owner`] with the owner's check-in decision.
+/// An accepted offer mints a standing grant, the owner's own grant widen on
+/// their own proof, and comes back with that decision. With `applied` the
+/// owner applies another asker's approved check-in for this scope's auto
+/// answer: the accept's writer spends it after the accept, so a refusal
+/// leaves it eligible (ROLES-CHECKIN 2k8; P25-SHAPE Q1 = A). A decline
+/// widens nothing, records no decision and applies no check-in.
+pub(crate) fn answer_graduation_offer_with_check_in(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    scope: &RampScope,
+    answer: OfferAnswer<'_>,
+    applied: Option<&crate::check_in::AppliedCheckIn<'_>>,
+) -> Result<(OfferAnswerOutcome, Option<crate::check_in::CheckInDecision>)> {
     let at = vault.store.clock.now_recorded_at();
     vault.with_write_txn_grouped(|wtxn| {
         let answerer = owner.revalidate_as_vault_owner_in_txn(vault, &*wtxn)?;
         let provenance = AnswerProvenance::new(owner, answerer);
-        answer_graduation_offer_in_txn(vault, wtxn, scope, answer, at, Some(provenance))
+        let outcome =
+            answer_graduation_offer_in_txn(vault, wtxn, scope, answer, at, Some(provenance))?;
+        let decision = match (&outcome, applied) {
+            (OfferAnswerOutcome::Graduated(_), applied) => {
+                Some(crate::check_in::owner_act_decision_in_txn(
+                    vault,
+                    wtxn,
+                    crate::check_in::ActClass::GrantWiden,
+                    applied,
+                )?)
+            }
+            (OfferAnswerOutcome::Snoozed(_), None) => None,
+            (OfferAnswerOutcome::Snoozed(_), Some(_)) => {
+                return Err(Error::InvalidConfig(
+                    "only an auto answer applies a check-in".into(),
+                ));
+            }
+        };
+        Ok((outcome, decision))
     })
 }
 

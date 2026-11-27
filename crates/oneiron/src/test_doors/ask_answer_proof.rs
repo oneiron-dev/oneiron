@@ -1,14 +1,17 @@
 //! Doors for `tests/ask_answer_proof.rs` (UC-05 PR 2): a code consent
 //! ask minted and raised as its caller, a comm widen ask raised for its
 //! refused child, and a word admitted with no settlement, so the tests pin
-//! whose proof each ask's word and cut take. Compiled only under
-//! `--cfg oneiron_test_support`; never API.
+//! whose proof each ask's word and cut take. For
+//! `tests/owner_presence_ask_word.rs`, a code consent wait is also left
+//! answered or settled, so the tests pin that a later word on its ask asks
+//! nobody. Compiled only under `--cfg oneiron_test_support`; never API.
 
 use crate::agent_dispatch::CommReach;
 use crate::attempt_queue::AttemptId;
 use crate::code_run::{
     CodeConsentCallSite, CodeConsentConnectorCall, CodeConsentDraft, CodeConsentPendingEffect,
-    CodeConsentPrincipal, mint_code_consent_wait_in_txn,
+    CodeConsentPrincipal, answer_code_consent_wait_for_test, mint_code_consent_wait_in_txn,
+    settle_code_consent_wait_refused_for_test,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::consent::tool_scope::DataClass;
@@ -34,6 +37,20 @@ pub fn mint_code_consent_ask(
     caller: EntityId,
     holders: &[EntityId],
 ) -> MemoryResult<TaskAskHandle> {
+    mint_code_consent_wait_and_ask(vault, caller, holders).map(|(_, handle)| handle)
+}
+
+/// [`mint_code_consent_ask`], answering the wait's id beside the ask's
+/// handle, for a test that then leaves the wait answered or settled.
+///
+/// # Errors
+///
+/// The mint's, or the ask's.
+pub fn mint_code_consent_wait_and_ask(
+    vault: &Vault,
+    caller: EntityId,
+    holders: &[EntityId],
+) -> MemoryResult<(EntityId, TaskAskHandle)> {
     let holder_settlement = if holders.is_empty() {
         None
     } else {
@@ -96,7 +113,35 @@ pub fn mint_code_consent_ask(
     let ask = vault
         .memory(caller, EdgeActorClass::Human)
         .ask_code_consent(wait_id, "Approve this call?")?;
-    Ok(TaskAskHandle { group_ref: ask })
+    Ok((wait_id, TaskAskHandle { group_ref: ask }))
+}
+
+/// Leaves the code consent wait `wait_id` sealed and answered: `answerer`'s
+/// first answer, approving once on the word `word_ref`, stands and its
+/// effect has not settled. The control row alone is written, as its
+/// lifecycle table admits; no consent act is made and nothing runs.
+///
+/// # Errors
+///
+/// An unknown wait, or one that is past its seal.
+pub fn leave_code_consent_wait_answered(
+    vault: &Vault,
+    wait_id: EntityId,
+    answerer: EntityId,
+    word_ref: EntityId,
+) -> crate::Result<()> {
+    answer_code_consent_wait_for_test(vault, wait_id, answerer, word_ref)
+}
+
+/// Leaves the code consent wait `wait_id` settled refused with no answer,
+/// as its expiry or its effect's release leaves it. The control row alone
+/// is written, as its lifecycle table admits; no reply is delivered.
+///
+/// # Errors
+///
+/// An unknown wait, or one that is settled already.
+pub fn leave_code_consent_wait_settled(vault: &Vault, wait_id: EntityId) -> crate::Result<()> {
+    settle_code_consent_wait_refused_for_test(vault, wait_id)
 }
 
 /// Raises the one widen signal for `child`, refused for want of `needed`,

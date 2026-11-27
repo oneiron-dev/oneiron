@@ -26,7 +26,6 @@ const ERASERS: &[EntitySideRowEraser] = &[
     |write, txn, id| crate::edit_roundtrip::deck_create::erase_in_txn(write.store, txn, id),
     |write, txn, id| erase_stream_seeds_in_txn(write.store, txn, id),
     crate::conversation::erase_chat_breakpoints_in_txn,
-    |write, txn, id| crate::store::legal_hold::erase_in_txn(write.store, txn, id),
     erase_room_side_rows,
     |write, txn, id| crate::task_verb::erase_report_journal_in_txn(write.store, txn, id),
     |write, txn, id| crate::task_verb::erase_lifecycle_receipts_in_txn(write.store, txn, id),
@@ -58,6 +57,14 @@ const ERASERS: &[EntitySideRowEraser] = &[
     |write, txn, id| crate::claim::erase_read_exposure_records_in_txn(write.store, txn, id),
     // FIX 15128: every drafter training example whose dependency set names it.
     |write, txn, id| crate::drafter::erase_drafter_examples_for_source_in_txn(write, txn, id),
+    // HOUSE-SCHEMA-CHECK: every captured TURN call whose transcript was read from it.
+    |write, txn, id| {
+        crate::dreamer_consolidation::answer_schema::capture::erase_captures_for_source_in_txn(
+            write.store,
+            txn,
+            id,
+        )
+    },
     // FIX 12569: every drafter version whose training ancestry reaches it.
     |write, txn, id| crate::drafter::erase_drafters_for_source_in_txn(write.store, txn, id),
     // FIX 10260: a MESSAGE's kept reply assertions.

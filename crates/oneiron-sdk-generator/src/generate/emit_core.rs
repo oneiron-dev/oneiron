@@ -476,6 +476,13 @@ const CATALOG_ROLES: &[(&str, CatalogRole)] = &[
         Ok(browser.iter().any(|browser| browser.py_eq(name)))
     }),
     ("is_mcp", |_, row| Ok(!get_is(row, "mcp", "none"))),
+    // A row whose answer is a credential or a secret value (FIX EXECUTE-CALLER-CODE): code a caller wrote never
+    // receives it, whatever its credential holds.
+    ("refused_to_caller_code", |_, row| {
+        Ok(row
+            .get("caller_code")
+            .is_some_and(|value| value.is_str("refused")))
+    }),
     ("is_section", |_, row| Ok(item(row, "section")?.truthy())),
     ("continuable", |_, row| {
         // `r.get('mcp_page', 'page' in r or r['output'].startswith('Vec<'))`: the default is evaluated first.

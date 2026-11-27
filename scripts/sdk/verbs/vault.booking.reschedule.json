@@ -13,5 +13,6 @@
   },
   "section": false,
   "openapi": true,
-  "host_door_proof": "booking_owner_act"
+  "host_door_proof": "booking_owner_act",
+  "caller_code": "refused"
 }

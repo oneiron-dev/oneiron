@@ -147,8 +147,15 @@ pub struct Allocation {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, thiserror::Error)]
 #[serde(rename_all = "snake_case")]
 pub enum AllocationGrantError {
-    /// The generation is not newer than one this account already held, so a
-    /// consumed allocation cannot come back.
-    #[error("allocation generation is not newer than one already held")]
+    /// The generation is not newer than one this allocation id already held
+    /// in the account, so a consumed allocation cannot come back. Other ids'
+    /// generations do not count (row M2-I).
+    #[error("allocation generation is not newer than one its allocation id already held")]
     StaleGeneration,
+    /// The allocation is a GPU line's. Only that line's unit claims draw on it, so no host
+    /// account installs it (row M2-I2).
+    #[error(
+        "a GPU line's allocation is drawn only by its unit claims; no host account installs it"
+    )]
+    LineManaged,
 }

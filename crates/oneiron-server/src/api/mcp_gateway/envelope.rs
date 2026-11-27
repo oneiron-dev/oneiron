@@ -8,7 +8,7 @@ use super::tool_receipt::mcp_call_receipt;
 use super::{
     admission, booking_call, clock_repair_call, device_release, ensure_mcp_actor_matches,
     execute_mcp_tool, mcp_actor_result, mcp_admit_scoped_call, mcp_error_response, mcp_params,
-    mcp_validated_call_args, wakes, wire,
+    mcp_validated_call_args, session_workspace, wakes, wire,
 };
 use crate::api::facade::{self, DoorClaim};
 use crate::auth::Locality;
@@ -159,6 +159,10 @@ pub(crate) struct McpGatewayError {
     /// `error.data.bound` and `error.data.self_hosted` as the managed HTTP
     /// body carries them. Boxed for size, as `effective_scope` is.
     pub(super) reap_pause: Option<Box<crate::managed::ReapPauseBound>>,
+    /// The grant a call needed and the credential does not hold (`core:write`,
+    /// `core:propose`), surfaced as `error.data.required_scope` as the HTTP
+    /// door's `forbidden_scope` names it.
+    pub(super) required_scope: Option<&'static str>,
 }
 
 impl McpGatewayError {
@@ -185,6 +189,7 @@ impl McpGatewayError {
             room_join_hold: None,
             pending: None,
             reap_pause: None,
+            required_scope: None,
         }
     }
 
@@ -212,6 +217,11 @@ impl McpGatewayError {
 
     pub(super) fn with_hook_notice(mut self, notice: Option<String>) -> Self {
         self.hook_notice = notice.or(self.hook_notice);
+        self
+    }
+
+    pub(super) fn with_required_scope(mut self, required_scope: &'static str) -> Self {
+        self.required_scope = Some(required_scope);
         self
     }
 
@@ -286,6 +296,12 @@ pub(crate) struct McpCallContext {
     /// `None` lowers for the whole atom kit. It selects a rendering and
     /// grants nothing.
     pub(crate) client_surface: Option<oneiron::lens::GeneratedUiSurfaceCapabilities>,
+    /// The folder digests of the folder the calling session runs in, its own first, as the
+    /// call's `_meta["oneiron/workspace"]` names them (RECALL-SESSION-PROJECT), read on every
+    /// call as `client_surface` is. It selects the default project of the call's reads, or of
+    /// the claims it writes, and grants nothing; [`Self::for_verb_row`] binds it on the row's
+    /// caller.
+    pub(crate) session_workspace: Option<Vec<String>>,
     /// The current request's actual transport, for signing audit only.
     pub(crate) signing_request_transport: Option<oneiron::memory::SigningRequestTransport>,
 }

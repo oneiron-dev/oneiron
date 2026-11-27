@@ -271,8 +271,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/deletion/coop_delivery/types.rs` | src | s | 2 struct · 2 re-export | CooperativeDeletionDisposition, CooperativeLocalRedaction | Moved from `crates/oneiron/src/deletion/coop_delivery/types.rs` (lib split R2: record types below the lib) |
 | `src/deletion/legal_hold/mod.rs` | src | s | 2 mod · 1 re-export | — | — |
 | `src/deletion/legal_hold/prospective.rs` | src | s | 1 type | — | Moved from `crates/oneiron/src/deletion/legal_hold/prospective.rs` (lib split R2: record types below the lib) |
-| `src/deletion/legal_hold/types.rs` | src | s | 1 struct · 11 re-export | LegalHoldUseLimit | Moved from `crates/oneiron/src/deletion/legal_hold/types.rs` (lib split R2: record types below the lib) |
-| `src/deletion/mod.rs` | src | s | 4 mod · 59 re-export | — | — |
+| `src/deletion/legal_hold/types.rs` | src | s | 7 re-export | — | Moved from `crates/oneiron/src/deletion/legal_hold/types.rs` (lib split R2: record types below the lib) |
+| `src/deletion/mod.rs` | src | s | 4 mod · 54 re-export | — | — |
 | `src/deletion/receipt.rs` | src | s | 1 struct · 1 fn | RedactionScope | Moved from `crates/oneiron/src/deletion/receipt.rs` (lib split R2: record types below the lib) |
 | `src/deletion/timeline.rs` | src | s | 1 struct · 4 enum | HydratedShortIdDeletion, HydratedShortIdDeletionReason, HydratedShortIdDeletionSource, MemoryOperationKind, MemoryTimelineRecordState | Moved from `crates/oneiron/src/deletion/timeline.rs` (lib split R2: record types below the lib) |
 | `src/dispatch_byoa/connector.rs` | src | s | 1 struct · 1 enum · 2 fn · 1 const · 1 re-export | ByoaConnectorKind, DevRunnerRefs | Moved from `crates/oneiron/src/dispatch_byoa/connector.rs` (lib split R1: record types below the lib) |
@@ -760,8 +760,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/key_custody/targets.rs` | src | s | 1 fn · 1 const | — | Moved from `crates/oneiron/src/store/key_custody/targets.rs` (lib split R2: record types below the lib) |
 | `src/store/known_history.rs` | src | s | 1 const | — | Moved from `crates/oneiron/src/store/known_history.rs` (lib split R2: record types below the lib) |
 | `src/store/known_value_index.rs` | src | s | 1 const | — | Moved from `crates/oneiron/src/store/known_value_index.rs` (lib split R2: record types below the lib) |
-| `src/store/legal_hold/mod.rs` | src | s | 2 mod | — | — |
-| `src/store/legal_hold/pending.rs` | src | s | 1 enum | PendingEraseKind | Moved from `crates/oneiron/src/store/legal_hold/pending.rs` (lib split R2: record types below the lib) |
+| `src/store/legal_hold/mod.rs` | src | s | 1 mod | — | — |
 | `src/store/legal_hold/use_limit.rs` | src | s | 1 struct | CooperativeRestriction | Moved from `crates/oneiron/src/store/legal_hold/use_limit.rs` (lib split R2: record types below the lib) |
 | `src/store/mod.rs` | src | s | 28 mod · 79 re-export · 2 crate-vis | — | — |
 | `src/store/open_gates/mod.rs` | src | s | 1 mod · 6 re-export | — | — |

@@ -659,8 +659,19 @@ pub(crate) fn remove_step_sources_in_txn(
     attempt: AttemptId,
     step: &[u8; 32],
 ) -> Result<()> {
-    STEPS.delete_from(&vault.store, wtxn, &step_prefix(attempt, step))?;
-    ownership::remove_step_owners_in_txn(&vault.store, wtxn, attempt, step)
+    remove_step_sources_in_store_txn(&vault.store, wtxn, attempt, step)
+}
+
+/// [`remove_step_sources_in_txn`] in a writer that holds the store alone, such as an
+/// erase's side-row eraser.
+pub(crate) fn remove_step_sources_in_store_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    attempt: AttemptId,
+    step: &[u8; 32],
+) -> Result<()> {
+    STEPS.delete_from(store, wtxn, &step_prefix(attempt, step))?;
+    ownership::remove_step_owners_in_txn(store, wtxn, attempt, step)
 }
 
 /// An erase of `actor` takes, in the erase's own writer, each receipt row of

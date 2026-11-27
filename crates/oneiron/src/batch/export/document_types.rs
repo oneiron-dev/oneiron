@@ -433,9 +433,11 @@ pub struct WholeVaultImportReceipt {
     /// (`ClaimSubjectEdgeNotRestored`), a coreference share consent
     /// (`CoreferenceConsentNotRestored`), a claim about a row kept out
     /// (`ClaimSubjectNotRestored`), an edge-provenance claim the gate would
-    /// hold for review (`ProvenanceAutoNotPermitted`), and, on every door but
+    /// hold for review (`ProvenanceAutoNotPermitted`), on every door but
     /// the owner's restore, a room this vault cannot seat with the TURNs and
-    /// MESSAGEs in it (`RoomNotSeatedHere`). One more entry
+    /// MESSAGEs in it (`RoomNotSeatedHere`), and a skill whose source tree the
+    /// export redacted, which this vault does not hold, with its package
+    /// (`RedactedSkillSource`). One more entry
     /// is no omitted row: a provenance claim this vault already holds open,
     /// whose archived close the gate would hold, stays here as it was and is
     /// named under `ProvenanceAutoNotPermitted` too.

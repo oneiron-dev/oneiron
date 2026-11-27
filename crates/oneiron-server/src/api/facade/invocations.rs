@@ -112,6 +112,14 @@ pub(super) async fn facade_invocation_claim(
                     .into_response();
             }
             let verb = parts.uri.path().trim_start_matches('/');
+            // The row's own door proof is judged again for the waiter, as
+            // a fresh call meets it before its hooks (review-10395 P1): a
+            // saved reply never goes to a caller that door refuses now,
+            // such as an agent whose Grant naming the verb was revoked
+            // after the first call ran.
+            if let Err(refusal) = row_door_admits(&server, &auth, verb) {
+                return FacadeApiError::from(refusal).into_response();
+            }
             // The owner's own whole-vault export is released again as its
             // owner's, once the waiter's fresh proof admits him as that
             // owner now (owner ruling 1-EXPORT = B).
@@ -274,12 +282,79 @@ pub(crate) enum DoorClaim {
 /// state, for any later request naming the invocation to read again. A
 /// same-id retry mints again: a fresh link and token, beside the first link,
 /// which the owner's list shows and revokes as any other.
-const UNKEPT_REPLY_VERBS: [&str; 5] = [
+/// An experiment arm's reads (`vault.arms.get`, `vault.arms.list`; design
+/// pass 32 section 5) answer only the arms of lines the caller's Grant
+/// reaches when the read runs. An arm is a side-table row, so a waiter's
+/// release has no entity row to judge again, and the row's door proof
+/// judges only the verb Grant: a kept reply would answer a same-id retry
+/// after the line left the Grant's reach. A same-id retry runs the read
+/// again, line cover included (FIX ARM-READS-REPLAY-SKIPS-LINE-GRANT).
+/// A GPU line's read (`vault.gpu.lines.get`) answers only a caller whose
+/// Grant holds a role on the line when the read runs, for the same reason: a
+/// same-id retry runs the read again, role included.
+/// A family's seat (`vault.gpu.lines.families.admit`) answers the line too,
+/// and its door judges the caller's role on the stored line before its intent
+/// replay: a kept reply would answer a same-id retry after the owner took the
+/// role away, with only the verb Grant judged. A same-id retry runs the admit
+/// again, role first; its intent key then replays the seat already made and
+/// writes nothing.
+/// An experiment arm's admission (`vault.arms.admit`) and its rung forecast
+/// (`vault.arms.forecast`) answer the arm, and each door judges the caller's
+/// lead role on the arm's line before its intent replay, as the seat's does:
+/// a same-id retry runs the door again, role first, and its intent key or the
+/// ask's logical key then replays the write already made (review round 2 of
+/// #10400).
+/// A unit's reserve and cancel (`vault.arms.units.reserve`, `.cancel`) answer
+/// the claim, and each door judges the caller's role on the line before any
+/// replay: a same-id retry runs the door again, role first, and the intent
+/// or logical key then answers the claim already written.
+/// The pinned workload reads (review round 2 of #10412) answer only what
+/// their caller may read now: a starter stops seeing a workload once its
+/// approval is revoked or expired, and a kept reply carries no workload a
+/// replay could judge again. A same-id retry reads again and writes nothing.
+/// The machines' status (review round 1 of #10424) is a live read that the
+/// vault never stores: on `refresh` it holds what each execution node
+/// answers now, and a kept reply would write that answer to this vault's
+/// invocation state and replay it after the node went offline. A same-id
+/// retry reads, and on `refresh` asks the nodes, again.
+/// The machines' execution read (pass 33 door 11, review round 1 of
+/// #10458) is the same kind of live read: it holds what each machine's node
+/// answers now (its offer, its devices and its live keys), and a kept reply
+/// would write those answers to this vault's invocation state and replay
+/// them after the node went offline or changed its offer. A same-id retry
+/// asks the machines again.
+/// The jobs' history (`vault.jobs.history`, review round 1 of #10419) names
+/// who started or reserved each attempt, and an actor's erase takes that
+/// name off the rows: a kept reply would hand an erased requester's id to a
+/// same-id retry after the erase, and an agent's reply would outlive its
+/// Grant. A same-id retry reads again and writes nothing.
+/// An attempt's log tail (`vault.jobs.logs.tail`, pass 34 row Q3) answers
+/// bytes that stay on the attempt's machine: a kept reply would write up to
+/// a page of the log to this vault's invocation state, and would answer a
+/// same-id retry with its first ask's bytes after the stream moved on,
+/// without asking the machine again (review round 1 of #10466). A same-id
+/// retry finds its admission intent settled (`admission_doors::call_verb`)
+/// and is refused with none of those bytes; a new read asks the machine.
+const UNKEPT_REPLY_VERBS: [&str; 19] = [
     "vault.inquire",
     "vault.inquiry.edge.prepare_join",
     "vault.members.accept_with_inquiry_edge",
     "vault.members.inquiry_edge.attach",
     "vault.booking.personal_link.mint",
+    oneiron::experiment_arm::ARMS_GET_VERB,
+    oneiron::experiment_arm::ARMS_LIST_VERB,
+    oneiron::experiment_arm::ARMS_ADMIT_VERB,
+    oneiron::experiment_arm::ARMS_FORECAST_VERB,
+    oneiron::experiment_arm::ARMS_UNITS_RESERVE_VERB,
+    oneiron::experiment_arm::ARMS_UNITS_CANCEL_VERB,
+    oneiron::gpu_line::VAULT_GPU_LINES_GET,
+    oneiron::gpu_line::VAULT_GPU_LINES_FAMILIES_ADMIT,
+    "vault.jobs.workloads.get",
+    "vault.jobs.workloads.list",
+    oneiron::task_verb::sdk::MACHINE_STATUS_VERB,
+    oneiron::task_verb::sdk::MACHINES_EXECUTION_GET_VERB,
+    oneiron::job_history::JOB_HISTORY_VERB,
+    oneiron::work_order::LOGS_TAIL_VERB,
 ];
 
 /// Whether an invocation claim keeps `verb`'s answer for a later request

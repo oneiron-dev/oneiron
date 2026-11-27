@@ -137,6 +137,7 @@ impl HostSelfDispatcher<'_> {
                 return refuse(answered(Err(AgentVerbRefusal {
                     hook_notice: None,
                     code: VERB_HOOK_HIDDEN.to_owned(),
+                    reason_codes: Vec::new(),
                 })));
             }
             // A skip or an ask stopped the write before it ran: the receipt
@@ -154,6 +155,7 @@ impl HostSelfDispatcher<'_> {
             call.verb,
             &pre.args,
             reader.as_ref(),
+            admission.as_ref(),
         ) {
             Some(Ok(stage)) => stage,
             Some(Err(refused)) => {
@@ -161,6 +163,7 @@ impl HostSelfDispatcher<'_> {
                 return refuse(answered(Err(AgentVerbRefusal {
                     hook_notice: None,
                     code: refused.code,
+                    reason_codes: refused.reason_codes,
                 })));
             }
             None => {
@@ -195,14 +198,17 @@ impl HostSelfDispatcher<'_> {
         let outcome = match written {
             Ok(outcome) => outcome,
             // Nothing staged: the refusal reaches the guest as its code, the
-            // room's as its Memory code, the pre chain's records are kept,
+            // room's as its Memory code and reason codes (FIX
+            // CODE-MODE-DENIAL-REASONS), the pre chain's records are kept,
             // and the receipt keeps the refusal.
             Err(refused) => {
                 self.session_write_keep(call.verb.as_str(), pre)?;
                 return refuse(answered(Err(ceiling.take().unwrap_or_else(|| {
+                    let refused = MemoryError::from(refused);
                     AgentVerbRefusal {
                         hook_notice: None,
-                        code: MemoryError::from(refused).code,
+                        code: refused.code,
+                        reason_codes: refused.reason_codes,
                     }
                 }))));
             }
@@ -306,5 +312,6 @@ fn session_bound() -> SelfDispatchOutcome {
     answered(Err(AgentVerbRefusal {
         hook_notice: None,
         code: AGENT_VERB_SESSION_BOUND.to_owned(),
+        reason_codes: Vec::new(),
     }))
 }

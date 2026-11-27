@@ -9,11 +9,17 @@
 //!   TPM 2.0 on Linux (through `/dev/tpmrm0`, the sealed slots in `dir`), and is
 //!   refused elsewhere, never served by a weaker tier (OF-168). `"off"` installs
 //!   none, and every signing and world-key door then answers `KeystoreUnavailable`.
+//! - `backend = "file"` keeps the slots as 0600 files in the 0700 key directory
+//!   on any Unix system, Apple included: an owner's explicit choice for a macOS
+//!   build the keychain will not serve, such as an unsigned source build. Each
+//!   open on Apple warns that file modes alone guard the slots. On other Unix
+//!   systems it is the platform tier itself. It is refused on Windows.
 //! - `dir` is that key directory. It defaults to `$XDG_STATE_HOME/oneiron/keys`,
 //!   then `$HOME/.local/state/oneiron/keys` (`%LOCALAPPDATA%\Oneiron\keys` on
 //!   Windows), and it must lie outside the vault.
 //! - `service` is the Apple keychain service name.
 
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -27,6 +33,9 @@ pub use oneiron_keystore::DEFAULT_KEYCHAIN_SERVICE;
 pub enum KeystoreBackend {
     #[default]
     Platform,
+    /// The file tier on any Unix system, by the owner's explicit choice: never
+    /// the default and never a fallback ([`oneiron_keystore::file_keystore`]).
+    File,
     Hardware,
     Off,
 }
@@ -80,6 +89,10 @@ impl KeystoreConfig {
         let keystore = match self.backend {
             KeystoreBackend::Hardware => {
                 oneiron_keystore::hardware_keystore(service, &dir, &[vault_path])?
+            }
+            KeystoreBackend::File => {
+                warn_apple_file_keystore(&dir);
+                oneiron_keystore::file_keystore(&dir, &[vault_path])?
             }
             KeystoreBackend::Platform | KeystoreBackend::Off => {
                 oneiron_keystore::platform_keystore(service, &dir, &[vault_path])?
@@ -171,6 +184,36 @@ pub enum KeystoreInstall {
     Installed { signing: bool },
 }
 
+/// What the file tier does not give on Apple, where it stands in for the
+/// keychain ([`warn_apple_file_keystore`]).
+const APPLE_FILE_KEYSTORE_WARNING: &str = "keystore.backend = \"file\": this install's key \
+     slots are plain 0600 files, not keychain items. Any process running as this user can \
+     read them, and Time Machine copies them unless the directory is excluded (tmutil \
+     addexclusion). A signed build with backend = \"platform\" keeps them in the \
+     data-protection keychain instead";
+
+/// On Apple the file tier stands in for the keychain only because the owner
+/// chose it: say at each open what it does not give. The log takes it where
+/// the command installed one that passes a warning. Where none would pass it,
+/// because the command installs no log (`token agent`, whose stdout is its
+/// JSON) or its filter drops warnings (`RUST_LOG=error`), it goes to stderr,
+/// so it is never dropped. A stderr that cannot be written, such as a closed
+/// pipe, loses only the warning: the keystore still opens. Elsewhere on Unix
+/// it is the platform tier, and there is nothing to say.
+fn warn_apple_file_keystore(dir: &Path) {
+    if cfg!(target_vendor = "apple") {
+        if tracing::enabled!(tracing::Level::WARN) {
+            tracing::warn!(dir = %dir.display(), "{APPLE_FILE_KEYSTORE_WARNING}");
+        } else {
+            let _ = writeln!(
+                std::io::stderr().lock(),
+                "warning: {APPLE_FILE_KEYSTORE_WARNING} (key directory {})",
+                dir.display()
+            );
+        }
+    }
+}
+
 /// The keystore crate's default key directory, or why there is none.
 fn default_key_dir() -> anyhow::Result<PathBuf> {
     oneiron_keystore::default_key_dir().ok_or_else(|| {
@@ -197,7 +240,8 @@ pub(super) fn lookup_keystore_override(
         .map(|value| {
             serde_json::from_value(serde_json::Value::String(value.clone())).map_err(|_| {
                 anyhow::anyhow!(
-                    "ONEIRON_KEYSTORE_BACKEND must be platform, hardware or off, not {value:?}"
+                    "ONEIRON_KEYSTORE_BACKEND must be platform, file, hardware or off, not \
+                     {value:?}"
                 )
             })
         })

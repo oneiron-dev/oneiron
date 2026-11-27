@@ -182,7 +182,6 @@ fn preview_view(preview: &DeleteEntityPreview, world_erase: bool) -> RecordErase
 fn hold_code(hold: SameBytesHold) -> &'static str {
     match hold {
         SameBytesHold::AnotherOwnersRecord => "another_owners_record",
-        SameBytesHold::LegalHold => "privacy_erase_kept",
         SameBytesHold::VetoWindow => "veto_window",
     }
 }

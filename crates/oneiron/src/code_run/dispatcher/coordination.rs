@@ -537,16 +537,22 @@ impl<'a> HostSelfDispatcher<'a> {
 
     /// `tasks.consult.result` (DOOR-063): the addressed peer's run lands its
     /// answer or abstention on the consult TASK, as the run's own actor. The
-    /// run must hold its live lease, and the read lane its door admitted the
+    /// run must hold a live lease, and the read lane its door admitted the
     /// call with must read the TASK, the result and every evidence or reason
-    /// ref, in one snapshot; the lease is read again after them. Whether this
-    /// actor is the peer the consult addressed, and every other landing rule,
-    /// is the engine's. A refusal answers as a typed failure the script can
-    /// read.
+    /// ref, in one snapshot. Then the consult must be the TASK that lease
+    /// names, or one addressed to this run's actor as a running child, whose
+    /// inbox input no attempt leases (`lands_from_run`); the lease is read
+    /// again after them. Whether this actor is the peer the consult
+    /// addressed, and every other landing rule, is the engine's. A refusal
+    /// answers as a typed failure the script can read.
+    /// While the consult's ConsultAssignee fact has not landed here, a run
+    /// that `may_park` parks until it does; a host call, which cannot park,
+    /// gets the landing's own invalid-state refusal.
     pub(super) fn dispatch_consult_result(
         &self,
         call: ConsultLandRequest,
         read_as: Option<ScopedReadActorKey>,
+        may_park: bool,
     ) -> Result<SelfDispatchOutcome> {
         let refused = |message: &str, fix: &str| {
             failed(
@@ -574,13 +580,33 @@ impl<'a> HostSelfDispatcher<'a> {
                 "Cite only refs your read lane reads, then land again.",
             ));
         }
+        let leased = match self.agent_parent {
+            Some(parent) => DreamerRunnerStore::new(vault)
+                .status(parent)?
+                .ok_or_else(invalid)?
+                .attempt
+                .task_ref
+                .as_deref()
+                .map(crate::EntityId::from_hex)
+                .transpose()?,
+            None => None,
+        };
+        let lands = crate::task_verb::run_rows::consult_result::lands_from_run;
+        if !lands(vault, task, leased, self.actor.entity_ref())? {
+            return Ok(refused(
+                "a consult lands only on the TASK this run leased, or addressed to this running child",
+                "Land each consult from the run its TASK leased to you, or from the child it addresses.",
+            ));
+        }
         // A lease lost while the refs were read lands nothing.
         self.task_host_binding()?.ok_or_else(invalid)?;
         let memory = vault.memory(self.actor.entity_ref(), self.actor.actor_class());
-        match memory.consult_assignee_park(task) {
-            Ok(Some(wait)) => return Ok(SelfDispatchOutcome::DurableWait(wait)),
-            Ok(None) => {}
-            Err(error) => return Ok(failed(SelfEffect::ConsultResult, error)),
+        if may_park {
+            match memory.consult_assignee_park(task) {
+                Ok(Some(wait)) => return Ok(SelfDispatchOutcome::DurableWait(wait)),
+                Ok(None) => {}
+                Err(error) => return Ok(failed(SelfEffect::ConsultResult, error)),
+            }
         }
         let receipt = match memory.land_consult_result(task, &input) {
             Ok(receipt) => receipt,
@@ -624,7 +650,7 @@ impl<'a> HostSelfDispatcher<'a> {
                         hook_notice: None,
                         effect,
                         outcome: refusal.code,
-                        reason_codes: Vec::new(),
+                        reason_codes: refusal.reason_codes,
                     })));
                 }
             };

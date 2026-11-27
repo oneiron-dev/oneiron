@@ -41,6 +41,17 @@
 //! the grant as its `funding_grant_ref` freezes it, and every call that
 //! lease's tree admits draws on that wallet's allocation or is refused. A
 //! grant without one behaves exactly as before.
+//!
+//! `.mint`, `.from_slip` and `.restore` widen an agent's grant (ARCH-0082
+//! #act-table "Widen another's grant"): each is the owner's own act on his
+//! own proof, never gated, and its answer records that decision
+//! (`check_in`). A Deputy who may not reach these doors asks through
+//! `vault.check_in.open` for the exact act; once the owner approves, he
+//! applies it here with `check_in_ref`, and the act's writer spends the ask
+//! (ROLES-CHECKIN 2k7; Engine RULING P25-SHAPE Q1 = A).
+//!
+//! `vault.engine.controls.grant` widens an agent's grant the same way, on
+//! the owner's own proof, and takes the same `check_in_ref`.
 use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
@@ -48,6 +59,7 @@ use serde::{Deserialize, Serialize};
 use super::revision_shape;
 use crate::Vault;
 use crate::authority::ActSurface;
+use crate::check_in::{ActClass, AppliedCheckIn, CheckInDecision};
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::federation::{
@@ -82,28 +94,77 @@ pub fn read_base_agents_as(
 }
 
 /// `vault.agents.grants.mint` under the owner's proof, his act recording
-/// `surface`.
+/// `surface`, applying with `check_in_ref` another asker's approved check-in
+/// for this exact mint (2k7; P25-SHAPE Q1 = A): the mint's writer spends
+/// it. The answer records the decision.
+///
+/// # Errors
+///
+/// `BAD_REQUEST` for a malformed `check_in_ref`; the owner's refusals and
+/// the mint's; a check-in that is not an approved ask for this mint.
 pub fn mint_agent_grant_as(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     surface: ActSurface,
     input: AgentGrantMintRequest,
 ) -> MemoryResult<AgentGrantMinted> {
-    let minted = vault.mint_agent_grant(
-        owner,
-        surface,
-        input.agent,
-        input.authority_scope,
-        input.expires_at,
-        input.repo_bounds,
-        input.verb_classes,
-        input.wallet_ref,
-        input.working_view_bounds,
-    )?;
+    let applied = match super::shared::check_in_ref(input.check_in_ref.as_deref())? {
+        Some(id) => Some(AppliedCheckIn {
+            id,
+            verb: "vault.agents.grants.mint",
+            effect_digest: agent_grant_mint_effect_digest(&input)?,
+        }),
+        None => None,
+    };
+    let (minted, decision) = vault.with_write_txn_grouped(|txn| {
+        let minted = vault.mint_agent_grant_in_txn(
+            txn,
+            owner,
+            surface,
+            input.agent,
+            input.authority_scope,
+            input.expires_at,
+            input.repo_bounds,
+            input.verb_classes,
+            input.wallet_ref,
+            input.working_view_bounds,
+        )?;
+        let decision = crate::check_in::owner_act_decision_in_txn(
+            vault,
+            txn,
+            ActClass::GrantWiden,
+            applied.as_ref(),
+        )?;
+        Ok((minted, decision))
+    })?;
     Ok(AgentGrantMinted {
         grant: agent_grant_view(&minted.standing, minted.confers),
         act_ref: minted.act.to_hex(),
+        check_in: Some(decision),
     })
+}
+
+/// The digest of the owner's mint `request`: the effect an asker's
+/// `vault.check_in.open` names for `vault.agents.grants.mint`, and the one
+/// the owner's mint spends (2k7; P25-SHAPE Q1 = A). BLAKE3, key derived
+/// from `oneiron check_in agent grant mint v1`, over the request's
+/// MessagePack encoding with field names, without its `check_in_ref`: the
+/// agent, the scope, the expiry, the repo bounds, the verb classes, the
+/// wallet and the working view bound, each exactly as the grant stores it.
+///
+/// # Errors
+///
+/// The request does not encode.
+pub fn agent_grant_mint_effect_digest(request: &AgentGrantMintRequest) -> MemoryResult<[u8; 32]> {
+    let mint = AgentGrantMintRequest {
+        check_in_ref: None,
+        ..request.clone()
+    };
+    let encoded = rmp_serde::to_vec_named(&mint)
+        .map_err(|_| crate::error::Error::InvariantViolation("agent grant mint encode"))?;
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in agent grant mint v1");
+    hasher.update(&encoded);
+    Ok(*hasher.finalize().as_bytes())
 }
 
 /// `vault.agents.grants.revoke` under the owner's proof, his act recording
@@ -133,7 +194,10 @@ pub fn revoke_agent_grant_as(
 /// default read Grants, verbs `read` and each Scope's other axes, with no
 /// expiry, wallet, repo bounds or classes. A slip that no longer qualifies
 /// answers unchanged with its reason, so a repeat never mints twice; an id
-/// that names no slip is not found.
+/// that names no slip is not found. With `check_in_ref` the owner applies
+/// another asker's approved check-in for converting this slip (2k7;
+/// P25-SHAPE Q1 = A), spent in the writer that mints; the answer records
+/// the decision.
 pub fn mint_agent_grants_from_slip_as(
     vault: &Vault,
     owner: &AuthenticatedOwner,
@@ -142,17 +206,32 @@ pub fn mint_agent_grants_from_slip_as(
 ) -> MemoryResult<AgentGrantFromSlipOutcome> {
     let slip_id = oneiron_hex::decode_any_case::<32>(&input.slip_ref)
         .ok_or_else(|| crate::memory::MemoryError::bad_request("slip_ref is 64 hex"))?;
+    let applied =
+        super::shared::check_in_ref(input.check_in_ref.as_deref())?.map(|id| AppliedCheckIn {
+            id,
+            verb: "vault.agents.grants.from_slip",
+            effect_digest: crate::check_in::agent_grant_from_slip_effect_digest(&slip_id),
+        });
     Ok(
-        match vault.mint_default_agent_grants_from_slip(owner, surface, slip_id)? {
-            GrantlessAgentConversion::Minted(minted) => AgentGrantFromSlipOutcome::Minted {
-                grants: minted
-                    .iter()
-                    .map(|minted| AgentGrantMinted {
-                        grant: agent_grant_view(&minted.standing, minted.confers),
-                        act_ref: minted.act.to_hex(),
-                    })
-                    .collect(),
-            },
+        match vault.mint_default_agent_grants_from_slip(
+            owner,
+            surface,
+            slip_id,
+            applied.as_ref(),
+        )? {
+            GrantlessAgentConversion::Minted(minted, decision) => {
+                AgentGrantFromSlipOutcome::Minted {
+                    grants: minted
+                        .iter()
+                        .map(|minted| AgentGrantMinted {
+                            grant: agent_grant_view(&minted.standing, minted.confers),
+                            act_ref: minted.act.to_hex(),
+                            check_in: None,
+                        })
+                        .collect(),
+                    check_in: Some(decision),
+                }
+            }
             GrantlessAgentConversion::Unchanged(reason) => {
                 AgentGrantFromSlipOutcome::Unchanged { reason }
             }
@@ -245,6 +324,11 @@ pub fn narrow_system_agent_grant_as(
 pub struct SystemAgentGrantRestoreRequest {
     /// The base agent's principal (32 hex), as `vault.agents.base` names it.
     pub agent: EntityId,
+    /// Another asker's approved check-in for giving this agent its grant
+    /// back, 32 hex: the owner applies it on his own proof, and the writer
+    /// that gives it back spends it (ROLES-CHECKIN 2k7).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in_ref: Option<String>,
 }
 
 /// What a grant back did (FABLE-6917-1).
@@ -254,6 +338,11 @@ pub struct SystemAgentGrantRestored {
     /// True when the door gave the default grant back; false when it
     /// already stood whole, and nothing changed.
     pub restored: bool,
+    /// The decision the grant back ran on: the owner's own proof, naming
+    /// the asker's approved check-in it applied (ROLES-CHECKIN 2k7). Absent
+    /// when nothing changed, and no check-in was spent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in: Option<CheckInDecision>,
     /// The Dreamer's live reach, read after the grant (Engine RULING
     /// ROW4-WEAVE-GRANT-REACH = A): the default grant can stand whole while
     /// the owner's policy rows still keep the Dreamer from landing what it
@@ -282,23 +371,39 @@ pub struct DreamerGrantReach {
 /// The Dreamer's answer carries its reach, read after the grant, as `oneiron
 /// dreamer grant` reads it before it reports success. A second call changes
 /// nothing. Any other principal is refused: its grants are minted and
-/// revoked by their ids.
+/// revoked by their ids. With `check_in_ref` the owner applies another
+/// asker's approved check-in for giving this agent its grant back (2k7;
+/// P25-SHAPE Q1 = A), spent in the writer that gives it back; the answer
+/// records the decision.
 pub fn restore_system_agent_grant_as(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     input: SystemAgentGrantRestoreRequest,
 ) -> MemoryResult<SystemAgentGrantRestored> {
-    let (restored, reach) = match SystemAgent::of(input.agent) {
+    let applied =
+        super::shared::check_in_ref(input.check_in_ref.as_deref())?.map(|id| AppliedCheckIn {
+            id,
+            verb: "vault.agents.grants.restore",
+            effect_digest: crate::check_in::agent_grant_restore_effect_digest(&input.agent),
+        });
+    let (decision, reach) = match SystemAgent::of(input.agent) {
         Some(SystemAgent::Dreamer) => {
-            let restored = vault.grant_dreamer_weave(owner, vault.now_recorded_at())?;
+            let decision = vault.grant_dreamer_weave_with_check_in(
+                owner,
+                vault.now_recorded_at(),
+                applied.as_ref(),
+            )?;
             let reach = vault.dreamer_weave_reach()?;
             let reach = DreamerGrantReach {
                 reads: reach.reads,
                 lands_auto: reach.lands_auto,
             };
-            (restored, Some(reach))
+            (decision, Some(reach))
         }
-        Some(SystemAgent::Coach) => (vault.grant_coach_steward(owner)?, None),
+        Some(SystemAgent::Coach) => (
+            vault.grant_coach_steward_with_check_in(owner, applied.as_ref())?,
+            None,
+        ),
         None => {
             return Err(MemoryError::bad_request(
                 "vault.agents.grants.restore gives back a base agent's default grant: \
@@ -306,7 +411,11 @@ pub fn restore_system_agent_grant_as(
             ));
         }
     };
-    Ok(SystemAgentGrantRestored { restored, reach })
+    Ok(SystemAgentGrantRestored {
+        restored: decision.is_some(),
+        check_in: decision,
+        reach,
+    })
 }
 
 /// `vault.engine.defaults`'s answer row: one grant the engine stood by
@@ -369,6 +478,11 @@ pub struct EngineControlsGrantRequest {
     pub agent: EntityId,
     /// At least one class.
     pub classes: BTreeSet<EngineControlClass>,
+    /// Another asker's approved check-in for this exact grant, 32 hex: the
+    /// owner applies it on their own proof, and the grant's writer spends
+    /// it (ROLES-CHECKIN 2k7). Omitted: the owner's own grant.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in_ref: Option<String>,
 }
 
 /// `vault.engine.controls.grant`'s answer.
@@ -377,21 +491,72 @@ pub struct EngineControlsGrantRequest {
 pub struct EngineControlsGranted {
     /// The grant the owner minted (32 hex).
     pub grant: EntityId,
+    /// The decision the grant ran on: the owner's own proof, naming the
+    /// asker's approved check-in it applied (ROLES-CHECKIN 2k7).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in: Option<CheckInDecision>,
 }
 
 /// `vault.engine.controls.grant`: the owner lets an agent tune the engine's
 /// knobs of the named classes (S66-1; Engine RULING ROW3-GRANT-VERBS = A),
 /// through [`Vault::grant_engine_controls`]: a grant naming those classes'
 /// verbs alone, as the owner's signed act. A base agent's grant is its
-/// default grant, given back at `vault.agents.grants.restore`.
+/// default grant, given back at `vault.agents.grants.restore`. With
+/// `check_in_ref` the owner applies another asker's approved check-in for
+/// this exact grant (2k7; P25-SHAPE Q1 = A): the grant's writer spends it.
+/// The answer records the decision.
+///
+/// # Errors
+///
+/// `BAD_REQUEST` for a malformed `check_in_ref`; the owner's refusals and
+/// the grant's; a check-in that is not an approved ask for this grant.
 pub fn grant_engine_controls_as(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     input: EngineControlsGrantRequest,
 ) -> MemoryResult<EngineControlsGranted> {
+    let applied = match super::shared::check_in_ref(input.check_in_ref.as_deref())? {
+        Some(id) => Some(AppliedCheckIn {
+            id,
+            verb: "vault.engine.controls.grant",
+            effect_digest: engine_controls_grant_effect_digest(&input)?,
+        }),
+        None => None,
+    };
+    let (grant, decision) = vault.grant_engine_controls_with_check_in(
+        owner,
+        input.agent,
+        &input.classes,
+        applied.as_ref(),
+    )?;
     Ok(EngineControlsGranted {
-        grant: vault.grant_engine_controls(owner, input.agent, &input.classes)?,
+        grant,
+        check_in: Some(decision),
     })
+}
+
+/// The digest of the owner's engine.controls grant `request`: the effect an
+/// asker's `vault.check_in.open` names for `vault.engine.controls.grant`,
+/// and the one the owner's grant spends (2k7; P25-SHAPE Q1 = A). BLAKE3,
+/// key derived from `oneiron check_in engine controls grant v1`, over the
+/// request's MessagePack encoding with field names, without its
+/// `check_in_ref`: the agent and its classes, ascending.
+///
+/// # Errors
+///
+/// The request does not encode.
+pub fn engine_controls_grant_effect_digest(
+    request: &EngineControlsGrantRequest,
+) -> MemoryResult<[u8; 32]> {
+    let grant = EngineControlsGrantRequest {
+        check_in_ref: None,
+        ..request.clone()
+    };
+    let encoded = rmp_serde::to_vec_named(&grant)
+        .map_err(|_| crate::error::Error::InvariantViolation("engine controls grant encode"))?;
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in engine controls grant v1");
+    hasher.update(&encoded);
+    Ok(*hasher.finalize().as_bytes())
 }
 
 /// `vault.engine.controls.revoke`'s input: the agent whose engine.controls

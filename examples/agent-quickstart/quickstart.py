@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install a checkout, start a fresh vault, and save/recall an agent memory."""
+"""Start a fresh vault and try private diary reads and shared recall."""
 
 import argparse
 import json
@@ -80,10 +80,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binary", help="Existing oneiron executable; otherwise install this checkout")
     parser.add_argument("--directory", type=Path, help="New directory for the vault, config and credentials")
-    parser.add_argument("--keep-running", action="store_true", help="Leave the server running after recall")
+    parser.add_argument("--keep-running", action="store_true", help="Leave the server running after the demo")
     args = parser.parse_args()
     if os.name != "posix":
         raise SetupError("This example needs Linux or macOS (the server's local credential-file support).")
+
+    if sys.platform == "darwin" and not args.binary:
+        raise SetupError("On macOS, use --binary with a signed oneiron that has a keychain access "
+                         "group. A plain Cargo build cannot mint this vault's credential.")
 
     # Never let the caller's vault, auth, or model overrides affect this new vault.
     env = {key: value for key, value in os.environ.items() if not key.startswith("ONEIRON_")}
@@ -125,7 +129,7 @@ def main():
         install_root = directory / "install"
         command = ["cargo", "install", "--locked", "--path", str(REPO / "crates/oneiron-server"),
                    "--bin", "oneiron", "--root", str(install_root)]
-        print("Installing this checkout (the source build may take several minutes)...", flush=True)
+        print("Installing this checkout (a source build can take hours)...", flush=True)
         result = subprocess.run(command, cwd=REPO, env=env, stdin=subprocess.DEVNULL)
         if result.returncode:
             raise SetupError(
@@ -144,14 +148,16 @@ def main():
     config = directory / "oneiron.toml"
     credential = directory / "agent.cred"
     log = directory / "server.log"
+    keys = json.dumps(str(directory / "keys"), ensure_ascii=False)
     private_write(config, f'host = "127.0.0.1"\nport = {port}\n'
                   f'auth_secret = "{secrets.token_hex(32)}"\n'
-                  '\n[keystore]\nbackend = "off"\n')
+                  f'\n[keystore]\nbackend = "platform"\ndir = {keys}\n')
     print("Initializing a model-free vault and minting its agent credential...", flush=True)
     run([binary, "init", directory / "vault", "--config", config,
          "--embedder", "none", "--oneironer", "none"], env)
-    run([binary, "token", "agent", "--name", "agent-quickstart", "--tier", "full-access",
-         "--out", credential, "--config", config], env)
+    minted = json.loads(run([binary, "token", "agent", "--name", "agent-quickstart",
+                             "--tier", "full-access", "--out", credential, "--config", config], env))
+    agent = minted["principal_ref"]
 
     paired = credential.read_text().strip()
     if not paired.startswith("v2.cred."):
@@ -182,16 +188,27 @@ def main():
                 ) from None
             return json.loads(reply)
 
+        diary_text = f"Agent setup completed unattended. Diary marker: diary{secrets.token_hex(8)}."
+        diary_saved = api("self.memory.diary", {"content": diary_text})
+        diary = api("self.memory.diary.query", {"agent": agent, "reason": "Verify quickstart diary entry"})
+        if diary["state"] != "granted" or not any(
+            entry["id"] == diary_saved["entry_id"] and entry["markdown"] == diary_text
+            for entry in diary["entries"]
+        ):
+            raise SetupError(f"Private diary read did not return entry {diary_saved['entry_id']}; read {log}.")
+        print(f"Read back from its private diary: {diary_saved['entry_id']}\n{diary_text}", flush=True)
+
         marker = "quickstart" + secrets.token_hex(8)
         content = f"Agent setup completed unattended. Recall marker: {marker}."
-        saved = api("self.memory.diary", {"content": content})
+        note = api("vault.notes.create", {"kind": "research", "markdown": content})
+        saved = {"entry_id": note["id_hex"]}  # The NOTE create receipt calls this id_hex.
         recalled = api("vault.recall", {"query": marker, "effort": "light", "limit": 5})
         matching = [item for item in recalled["items"]
                     if marker in item["value_text"]
                     and saved["entry_id"] in item["provenance"]["source_revision_ids"]]
         if not matching:
-            raise SetupError(f"Recall did not return the saved diary entry {saved['entry_id']}; read {log}.")
-        print(f"Saved and recalled memory: {saved['entry_id']}\n{matching[0]['value_text']}", flush=True)
+            raise SetupError(f"Recall did not return the saved research note {saved['entry_id']}; read {log}.")
+        print(f"Saved and recalled research note: {saved['entry_id']}\n{matching[0]['value_text']}", flush=True)
 
         mcp_args = ["mcp", "--url", url, "--surface", "tool-first", "--credential-file", str(credential)]
         initialize = {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
@@ -208,9 +225,11 @@ def main():
         private_write(directory / "connection.json", json.dumps({
             "binary": str(binary), "url": url, "config": str(config),
             "credential_file": str(credential), "pid": server.pid, "log": str(log),
+            "diary_agent": agent, "diary_id": diary_saved["entry_id"],
             "memory_id": saved["entry_id"], "recall_query": marker,
         }, indent=2) + "\n")
         print(f"MCP connected. Client config: {directory / 'mcp.json'}", flush=True)
+        print(f"MCP protocol: {reply['result']['protocolVersion']}", flush=True)
         print(f"Connection details: {directory / 'connection.json'}", flush=True)
         print("MCP command: " + shlex.join([str(binary), *mcp_args]), flush=True)
         if args.keep_running:

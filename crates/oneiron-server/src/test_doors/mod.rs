@@ -23,6 +23,7 @@ pub mod continue_command;
 pub mod credential_file_network_fs;
 pub mod credential_write_actor;
 pub mod device_burst_drain;
+pub mod device_enrolment;
 pub mod device_home_dial;
 #[cfg(feature = "mesh")]
 pub mod device_sync_dial_gate;
@@ -63,9 +64,13 @@ pub mod memory_timeline_projection;
 pub mod merge_queue_checker_pressure;
 pub mod model_licence;
 pub mod native_board;
+#[cfg(unix)]
+pub mod node_jobs;
 pub mod off_router_wire_counts;
 pub mod one_click_wire_counter;
 pub mod openapi_document;
+#[cfg(all(feature = "mesh", unix))]
+pub mod organ_mesh;
 pub mod owner_backup;
 pub mod owner_check;
 #[cfg(unix)]
@@ -82,6 +87,7 @@ pub mod replay_admission;
 pub mod residence;
 pub mod residence_connection;
 pub mod resident_pump;
+pub mod root_project_signing;
 pub mod run_brief_people;
 pub mod run_self_brief_port;
 #[cfg(target_os = "linux")]
@@ -102,4 +108,5 @@ pub mod voice_call;
 pub mod web_search_count;
 pub mod wire_health_sweep;
 pub mod wire_thresholds;
+pub mod work_order_host;
 pub mod workflow_park;

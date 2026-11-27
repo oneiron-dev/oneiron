@@ -29,5 +29,6 @@
       "ts": "/** The workbook an XLSX export would land now, recalculated. */",
       "py": "The workbook an XLSX export would land now, recalculated."
     }
-  }
+  },
+  "caller_code": "refused"
 }

@@ -32,6 +32,7 @@ pub(super) fn admit(
     let refused = |error: McpGatewayError| AgentVerbRefusal {
         hook_notice: None,
         code: error.kind.to_owned(),
+        reason_codes: error.reason_codes,
     };
     mcp_admit_host_verb(&verbs.actor, verb)
         .and_then(|()| mcp_host_verb_gate(&verbs.server, &verbs.actor, verb))
@@ -42,13 +43,38 @@ pub(super) fn admit(
         .auth
         .clone()
         .ok_or_else(|| refused(mcp_proof_error()))?;
+    let project = if verb == AgentVerb::VaultClaimsUpsert {
+        verbs
+            .actor
+            .session_workspace
+            .as_deref()
+            .and_then(|digests| {
+                verbs
+                .server
+                .vault
+                .workspace_project(digests)
+                .unwrap_or_else(|error| {
+                    tracing::warn!(
+                        %error,
+                        "the session folder binding did not read; the claim keeps the root default"
+                    );
+                    None
+                })
+            })
+    } else {
+        None
+    };
+    // A placed claim's position is checked under the caller's slip (selection never grants);
+    // an unplaced one keeps the checks it had.
+    let proof = project.and_then(|_| caller.verified_slip().cloned());
     Ok(SessionWriteAdmission::new(
         Some(key),
         Arc::new(LiveConnector {
             server: Arc::clone(&verbs.server),
             caller,
         }),
-    ))
+    )
+    .with_claim_placement(project, proof))
 }
 
 /// The ceiling a room write of an MCP run lands under: the credential
@@ -71,6 +97,7 @@ impl SessionWriteCeiling for LiveConnector {
         Err(AgentVerbRefusal {
             hook_notice: None,
             code: mcp_proof_error().kind.to_owned(),
+            reason_codes: Vec::new(),
         })
     }
 }

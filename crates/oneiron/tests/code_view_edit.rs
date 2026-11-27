@@ -242,6 +242,7 @@ impl Fixture {
                 verb_classes: BTreeSet::new(),
                 wallet_ref: None,
                 working_view_bounds: view,
+                check_in_ref: None,
             },
         )?
         .grant
@@ -505,6 +506,7 @@ fn a_view_bound_grant_mints_only_on_an_owner_view_with_repo_bounds() -> TestResu
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
             working_view_bounds: Some(fixture.bound(fixture.one)),
+            check_in_ref: None,
         },
     );
     assert!(without_bounds.is_err(), "a view bound needs repo bounds");

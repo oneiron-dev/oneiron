@@ -137,9 +137,16 @@ pub(super) fn judge_change_in_txn(
     let signs_equal_value = matches!(caller, SettingCaller::Owner(_))
         && travels(change.spec)
         && (change.act_of_several_rows || slot_refused_here_in_txn(vault, txn, &change.key)?);
+    // An owner's equal write on a key with `records_equal_owner_write` is itself the act
+    // (the answer-schema re-arm): it records a change and runs on_change. A clear of an
+    // absent row stays a no-op.
+    let equal_owner_write_records = change.spec.records_equal_owner_write
+        && matches!(caller, SettingCaller::Owner(_))
+        && change.value.is_some();
     let unchanged = readable
         && !setter_changes
         && !signs_equal_value
+        && !equal_owner_write_records
         && prior_value.as_ref() == change.value
         && prior_weight == change.weight_runs;
     // An install born of a restore that has not joined changes no setting the vault's machines

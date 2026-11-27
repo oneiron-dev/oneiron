@@ -2,8 +2,11 @@
 
 Local sync daemon for a single Oneiron vault.
 
+The crate is not published on crates.io yet. Install it from the root of a
+checkout:
+
 ```sh
-cargo install oneiron-server
+cargo install --path crates/oneiron-server
 oneiron-server init ~/.local/share/oneiron/default
 oneiron-server serve --vault-path ~/.local/share/oneiron/default
 oneiron-server skills-pack > oneiron.skills.md
@@ -271,8 +274,8 @@ vault:
 
 ```toml
 [keystore]
-backend = "platform"            # or "hardware", or "off"; ONEIRON_KEYSTORE_BACKEND
-dir = "/var/lib/oneiron/keys"   # Windows and other Unix; ONEIRON_KEYSTORE_DIR
+backend = "platform"            # or "file", "hardware", or "off"; ONEIRON_KEYSTORE_BACKEND
+dir = "/var/lib/oneiron/keys"   # Windows, other Unix and "file"; ONEIRON_KEYSTORE_DIR
 service = "oneiron.device-keys" # Apple keychain service; ONEIRON_KEYSTORE_SERVICE
 ```
 
@@ -285,12 +288,24 @@ service = "oneiron.device-keys" # Apple keychain service; ONEIRON_KEYSTORE_SERVI
   backup tools which honour the tag skip it.
 - On Windows each slot is a file sealed by DPAPI to this user on this machine,
   by default under `%LOCALAPPDATA%\Oneiron\keys`, outside the vault.
+- `backend = "file"` is the owner's explicit choice for an Apple build the
+  keychain will not serve, such as an unsigned source build. The slots become
+  0600 files in the 0700 `dir`, as on other Unix systems. File modes alone guard
+  them: any process running as this user can read them, and Time Machine copies
+  them unless you exclude the directory (`tmutil addexclusion <dir>`). Every
+  command that opens them warns so: in its log, or on stderr where no log would
+  show the warning (a command that keeps none, such as `token agent`, or a log
+  filter that drops warnings, such as `RUST_LOG=error`). A directory or slot file that
+  carries an access control list (`ls -le`) is refused. It is never the
+  default and never a fallback. On other Unix systems it is the same tier as `platform`; on
+  Windows it is refused.
 - `backend = "hardware"` seals each slot to a P-256 key the Secure Enclave holds
   and never releases, on Apple systems (signed builds, as above). Elsewhere it is
   refused at start: a hardware tier is never served by a weaker one. Its slots
   are its own, so switching tiers makes this install a new machine.
 - `oneiron vault-key status` and `GET /v1/owner/vault-key` name the tier in
-  `keystore`: `hardware`, `platform` or `software` (the Unix key directory).
+  `keystore`: `hardware`, `platform` or `software` (the Unix key directory, and
+  the file tier on Apple).
 
 Without a keystore, serve still runs, and only the world-key doors refuse.
 

@@ -289,6 +289,7 @@ pub(super) fn code_mode_server_with(
         EngineExecutorConfig {
             run_id: seeded_test_entity_id(0x0024_6504),
             task: "template".into(),
+            caller_source_digest: None,
             prompt_package_root: oneiron::prompt::workspace_test_prompt_package_root().unwrap(),
             model: ModelId::new("fixture/quickjs@v1").unwrap(),
             model_locality: ModelLocality::OnDevice,
@@ -755,7 +756,13 @@ fn verb_call_outcomes(body: &Value) -> Vec<Value> {
 /// A verb call the door refused, as the step log records it: the door's
 /// stable code and no reason text.
 fn verb_refusal(code: &str) -> Value {
-    json!({"kind": "denied", "effect": "self.verbs.call", "outcome": code, "reason_codes": []})
+    verb_refusal_with(code, &[])
+}
+
+/// A verb call the door refused with its stable reason codes (FIX
+/// CODE-MODE-DENIAL-REASONS).
+fn verb_refusal_with(code: &str, reason_codes: &[&str]) -> Value {
+    json!({"kind": "denied", "effect": "self.verbs.call", "outcome": code, "reason_codes": reason_codes})
 }
 
 /// Code mode applies the per-verb argument rules a `tools/call` of the verb
@@ -1013,9 +1020,9 @@ async fn quickjs_a_propose_only_slip_runs_code_whose_rows_write_are_refused() {
         "/mcp: {body}"
     );
     // The slip holds no Write: the connector's gate refuses the run's claim
-    // write with its proof error, and the guest's step reports it (the
+    // write for the missing grant, and the guest's step reports it (the
     // a90ddad52eed run). The writer below runs the same program.
-    let refusal = r#"step failure: {"denied":"mcp_auth_required","reasonCodes":[]}"#;
+    let refusal = r#"step failure: {"denied":"mcp_grant_missing","reasonCodes":[]}"#;
     assert!(
         body["error"]["message"]
             .as_str()
@@ -1208,7 +1215,10 @@ async fn quickjs_code_mode_and_tool_list_refuse_a_field_the_schema_does_not_list
     let steps = body["result"]["structuredContent"]["steps"].to_string();
     assert_eq!(
         verb_call_outcomes(&body),
-        [verb_refusal("tool_args_invalid")],
+        [verb_refusal_with(
+            "tool_args_invalid",
+            &["args.unknown_field"]
+        )],
         "{steps}"
     );
     assert!(!steps.contains("north gate"), "{steps}");

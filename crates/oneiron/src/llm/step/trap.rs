@@ -100,13 +100,17 @@ pub(super) fn open_trap_in_txn(
     );
     let mut envelope = dreamer_runtime_envelope(ctx)?;
     vault.sign_retained_machine_claim_in_txn(&*wtxn, &claim_id, &candidate, &mut envelope)?;
+    // The anchor row is stamped in Unix seconds, as every claim row is; the
+    // claim's own `at` keeps the pass clock's milliseconds (FIX
+    // MODEL-STEP-ROW-TIMES-IN-MILLISECONDS).
+    let now = ctx.now_ms / 1_000;
     let occurred = TimeRange {
-        start: ctx.now_ms,
-        end: ctx.now_ms,
+        start: now,
+        end: now,
     };
     vault
         .batch_in()
-        .claim_candidate(&claim_id, candidate, &envelope, occurred, ctx.now_ms)
+        .claim_candidate(&claim_id, candidate, &envelope, occurred, now)
         .apply(wtxn)?;
     // The trap's anchor is a new mention of its context subject: about a
     // PERSON under a cleanup archive, it restores her in this write
@@ -150,7 +154,8 @@ pub fn trap_for_durable_wait(
 
 /// Registers the runner's wait on an open trap (`created→waiting`).
 /// Signal-before-wait: if the signal already landed, returns `Sent` without
-/// writing; the caller proceeds straight to consume.
+/// writing; the caller proceeds straight to consume. `now` is the trap's
+/// clock in milliseconds, as every trap door takes it.
 pub fn register_wait(vault: &Vault, trap: &TrapRef, now: u64) -> Result<DreamerTrapState> {
     vault.with_write_txn_grouped(|wtxn| register_wait_in_txn(vault, wtxn, trap, now))
 }
@@ -187,7 +192,8 @@ pub(super) fn register_wait_in_txn(
 /// step's hash; a mismatched hash is rejected here (defense in depth) and
 /// again independently at consume (the security boundary, ruling L8). A
 /// matching duplicate on a `Sent` or `Consumed` trap returns its head id
-/// unchanged (FIX 9931); a step-only trap still refuses this door.
+/// unchanged (FIX 9931); a step-only trap still refuses this door. `now` is
+/// the trap's clock in milliseconds.
 pub fn send_trap_signal(
     vault: &Vault,
     trap_claim_id: &EntityId,
@@ -572,7 +578,7 @@ pub(super) fn append_trap_transition_in_txn(
     head_id: &EntityId,
     head: &DecodedTrapClaim,
     next: DreamerTrapState,
-    now: u64,
+    now_ms: u64,
     note_override: Option<&str>,
 ) -> Result<EntityId> {
     if !head.state.may_transition_to(next) {
@@ -595,7 +601,7 @@ pub(super) fn append_trap_transition_in_txn(
         attempt_id: head.attempt_id,
         step_hash: head.step_hash,
         state: next,
-        at: now,
+        at: now_ms,
         note: note_override.map_or_else(|| head.note.clone(), str::to_owned),
     });
     let candidate = ClaimCandidate::new(
@@ -604,6 +610,10 @@ pub(super) fn append_trap_transition_in_txn(
         value,
         1.0,
     );
+    // The transition's row, and the close of the head it supersedes, are
+    // stamped in Unix seconds; the claim's own `at` keeps `now_ms`, the
+    // pass clock's milliseconds (FIX MODEL-STEP-ROW-TIMES-IN-MILLISECONDS).
+    let now = now_ms / 1_000;
     let occurred = TimeRange {
         start: now,
         end: now,

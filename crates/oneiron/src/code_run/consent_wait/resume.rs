@@ -114,6 +114,13 @@ pub(super) fn code_consent_run_origin_digest(
     field(&optional(code_consent_run_origin.session));
     field(&optional(code_consent_run_origin.room_turn));
     field(&[u8::from(code_consent_run_origin.forwarded_caller)]);
+    // Older origins have no workspace and keep their original sealed digest.
+    if let Some(folder_digests) = &code_consent_run_origin.credential.session_workspace {
+        field(b"session_workspace");
+        for folder_digest in folder_digests {
+            field(folder_digest.as_bytes());
+        }
+    }
     digest.finish()
 }
 

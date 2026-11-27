@@ -35,6 +35,8 @@ mod resume;
 mod settle;
 mod standing_offer;
 mod types;
+#[cfg(oneiron_test_support)]
+mod wait_facts_door;
 
 pub(crate) use self::binding::{
     CodeConsentDraft, attach_code_consent_ask_in_txn, code_consent_binds,
@@ -73,6 +75,10 @@ pub(crate) use self::types::{
 
 pub(crate) use self::rebind_types::{
     CodeConsentRebind, CodeConsentRebindProposal, CodeConsentRebindTarget,
+};
+#[cfg(oneiron_test_support)]
+pub(crate) use self::wait_facts_door::{
+    answer_code_consent_wait_for_test, settle_code_consent_wait_refused_for_test,
 };
 
 #[doc(hidden)]

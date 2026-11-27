@@ -11,12 +11,14 @@ mod hooks;
 mod hub_install;
 mod import_notice;
 mod lenses;
+mod line_preset_pack;
 mod local;
 mod manifest;
 mod migrations;
 mod model_pack;
 mod organs;
 pub mod predicate_rewrites;
+mod setting_defaults_pack;
 mod setup;
 mod setup_actor;
 mod setup_cards;
@@ -40,6 +42,7 @@ pub use lenses::{
     PackLens, PackLensComponent, PackLensEntry, PackLensProposeRequest, WEAVE_LENS_PACK_NAME,
     WEAVE_REPORT_LENS, weave_lens_pack_files,
 };
+pub use line_preset_pack::{LINE_PRESET_DIR, PackLinePreset};
 pub use local::LOCAL_PACK_NAME;
 pub(crate) use local::PreparedPackPut;
 pub use manifest::{PackAdapter, PackKind, PackManifest};
@@ -50,6 +53,7 @@ pub use organs::{
     PackOrgan, PackOrganBinary, PackOrganBuild, PackOrganEntry, PackTree, host_platform,
 };
 pub use screening::PackInstallRules;
+pub use setting_defaults_pack::{PackSettingDefaults, SETTING_DEFAULTS_FILE};
 pub use setup::{
     PackSetup, PackSetupAccount, PackSetupAuth, PackSetupConnection, PackSetupPermission,
     PackSetupRisk, PackSetupSecret,

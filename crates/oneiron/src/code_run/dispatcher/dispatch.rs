@@ -66,7 +66,7 @@ impl HostSelfDispatcher<'_> {
             }
             SelfCall::TasksRefuse(call) => self.dispatch_tasks_refuse(call, read_as),
             // The landing reads its refs under the key its door admitted it with.
-            SelfCall::ConsultResult(call) => self.dispatch_consult_result(call, read_as),
+            SelfCall::ConsultResult(call) => self.dispatch_consult_result(call, read_as, true),
             SelfCall::SkillsCall(_) => Ok(Self::dispatch_skills_call_unhosted()),
             SelfCall::MemorySearch(call) => self.dispatch_memory_search(call, read_as, site),
             SelfCall::MemoryWriteFixture(call) => self.dispatch_memory_write_fixture(call),
@@ -109,6 +109,7 @@ impl HostSelfDispatcher<'_> {
             SelfCall::ReaderSpawn(call) => self.dispatch_reader_spawn(*call, site),
             SelfCall::ReaderReport(call) => self.dispatch_reader_report(call),
             SelfCall::TasksWaitSet(call) => self.dispatch_task_wait_set(call, site),
+            SelfCall::JobsOrdersWait(call) => self.dispatch_jobs_orders_wait(call, site),
             SelfCall::Summarize(call) => self.dispatch_summarize(*call, site),
             SelfCall::Leader(call) => self.dispatch_leader(call),
             SelfCall::Team(call) => self.dispatch_team(call),

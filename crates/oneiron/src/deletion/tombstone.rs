@@ -215,8 +215,11 @@ impl DecodedTombstoneValue {
     /// format is the pin). PRESENCE-ONLY semantics: gates never decode
     /// this; the bytes are informational. Fallbacks mirror the receipt
     /// pins: legacy/reserved-0/unknown/malformed shapes record the
-    /// destructive default reason (`user_hard_delete`) and the NIL
-    /// request id — never a fabricated identifier.
+    /// destructive default reason (`user_hard_delete`). The request id
+    /// is the wire UUID of every 25-byte value, a reserved-0 or unknown
+    /// reason byte included; only legacy and malformed shapes, which
+    /// carry none, record the NIL request id — never a fabricated
+    /// identifier.
     #[cfg_attr(not(feature = "sync"), allow(dead_code))]
     pub(super) fn local_hard_delete_marker_value(&self) -> [u8; TOMBSTONE_VALUE_V2_LEN] {
         let mut out = [0_u8; TOMBSTONE_VALUE_V2_LEN];

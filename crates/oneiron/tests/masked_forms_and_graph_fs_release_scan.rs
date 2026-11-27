@@ -129,6 +129,7 @@ fn forms_fixture() -> FormsFixture {
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
             working_view_bounds: None,
+            check_in_ref: None,
         },
     )
     .expect("owner grants the agent the base world");

@@ -390,6 +390,7 @@ fn mint_settings_grant(fixture: &Fixture, agent: EntityId) {
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
             working_view_bounds: None,
+            check_in_ref: None,
         },
     )
     .expect("owner mints the agent a settings Grant");
@@ -433,6 +434,7 @@ fn mint_read_grant(fixture: &Fixture, agent: EntityId) {
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
             working_view_bounds: None,
+            check_in_ref: None,
         },
     )
     .expect("owner mints the agent a read Grant");
@@ -771,6 +773,7 @@ fn a_fact_learnt_from_a_caller_reads_only_to_that_callers_thread_readers() {
             ConnectorWitnessReadGrantRequest {
                 agent: reach.generic,
                 conversation,
+                check_in_ref: None,
             },
         )
         .expect("the owner grants G a caller's thread");
@@ -3122,6 +3125,7 @@ fn mint_reach_key_line_grant(fixture: &Fixture, agent: EntityId) {
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
             working_view_bounds: None,
+            check_in_ref: None,
         },
     )
     .expect("owner mints the agent the reach key's Grant line");

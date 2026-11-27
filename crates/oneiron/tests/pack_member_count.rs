@@ -122,6 +122,7 @@ fn pack_count_fixture() -> PackCountFixture {
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
             working_view_bounds: None,
+            check_in_ref: None,
         },
     )
     .expect("owner mints the agent a base-world read Grant");

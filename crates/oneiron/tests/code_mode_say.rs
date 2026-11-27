@@ -86,6 +86,7 @@ impl AgentVerbDoor for EngineDoor {
                 Err(error) => Err(AgentVerbRefusal {
                     code: error.code,
                     hook_notice: None,
+                    reason_codes: Vec::new(),
                 }),
             },
         )
@@ -267,6 +268,7 @@ fn run_as(
     let config = EngineExecutorConfig {
         run_id: EntityId::now(),
         task: "speak through say".to_owned(),
+        caller_source_digest: None,
         prompt_package_root: oneiron::prompt::workspace_test_prompt_package_root()
             .expect("the workspace test prompt package"),
         model: ModelId::new("test/executor@v1").expect("a model id"),

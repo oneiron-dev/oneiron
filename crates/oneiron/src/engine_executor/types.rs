@@ -12,6 +12,7 @@ use crate::dreamer_wake::{BudgetLegibilityEnvelope, WakePassDeadline, current_le
 use crate::entity_id::EntityId;
 use crate::llm::BudgetGuard;
 use crate::{Error, ModelId, ModelLocality, ModelTierRef, Result};
+use oneiron_contracts::fingerprint::ContentHash;
 use std::path::PathBuf;
 
 #[doc(hidden)]
@@ -64,6 +65,10 @@ impl EngineExecutorLimits {
 pub struct EngineExecutorConfig {
     pub run_id: EntityId,
     pub task: String,
+    /// The content hash of the run's caller-source code (FIX EXECUTE-CALLER-CODE): `Some` for a
+    /// caller-source run, whose task is empty, `None` for a task run. Bound by the config hash,
+    /// so the same run id with other code fails the existing config check.
+    pub caller_source_digest: Option<ContentHash>,
     /// Root of the deployed canonical non-Rust prompt package. Making this a
     /// required run input keeps registry/relocated builds independent of the
     /// source checkout that compiled the crate.
@@ -83,14 +88,64 @@ pub struct EngineExecutorConfig {
 }
 
 impl EngineExecutorConfig {
+    /// A caller-source run's config (FIX EXECUTE-CALLER-CODE): no task text and fixed model
+    /// settings, so a change to `[models]` on the host never fails an existing source run's
+    /// config check. `code_digest` is the content hash of the run's exact code. The prompt
+    /// package root is empty: a source run resolves no prompt.
+    #[must_use]
+    pub fn caller_source(
+        run_id: EntityId,
+        determinism: CodeRunDeterminism,
+        limits: EngineExecutorLimits,
+        code_digest: ContentHash,
+    ) -> Self {
+        Self {
+            run_id,
+            task: String::new(),
+            caller_source_digest: Some(code_digest),
+            prompt_package_root: PathBuf::new(),
+            model: ModelId::new("oneiron/caller-source@v1")
+                .expect("hard-coded caller-source model id is valid"),
+            model_locality: ModelLocality::OnDevice,
+            seat_effort: None,
+            global_tier: ModelTierRef("caller-source".to_owned()),
+            determinism,
+            limits,
+            wake: None,
+        }
+    }
+
     pub fn validate(&self) -> EngineExecutorResult<()> {
-        if self.task.trim().is_empty() {
-            return Err(
-                Error::InvalidConfig("engine executor task must be non-empty".to_owned()).into(),
-            );
+        match &self.caller_source_digest {
+            // FIX EXECUTE-CALLER-CODE: a caller-source run carries its input as code, never as
+            // task text.
+            Some(_) if !self.task.is_empty() => {
+                return Err(Error::InvalidConfig(
+                    "engine executor caller-source task must be empty".to_owned(),
+                )
+                .into());
+            }
+            // A task run carries its task text, as before.
+            None if self.task.trim().is_empty() => {
+                return Err(Error::InvalidConfig(
+                    "engine executor task must be non-empty".to_owned(),
+                )
+                .into());
+            }
+            _ => {}
         }
         self.limits.validate()
     }
+}
+
+/// A run's caller input as its record keeps it (FIX EXECUTE-CALLER-CODE): a task run's caller
+/// task text, or a caller-source run's exact code.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CallerRunInput {
+    /// A task run's caller task text.
+    Task(String),
+    /// A caller-source run's exact code.
+    Source(String),
 }
 
 /// Guest-visible response for one dispatched `self.*` bridge call: the

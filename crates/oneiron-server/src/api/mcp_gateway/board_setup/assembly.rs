@@ -641,35 +641,17 @@ pub(super) fn mcp_pack_sections(
             if !mcp_scope_admits_row(&server.vault, actor, &read, &id.to_hex())? {
                 continue;
             }
-            let Some((kind, _, body)) = read
-                .get_entity_parts_with_receipt(&id, None)
+            let Some((predicate, value)) = read
+                .read_pack_section_claim(&id)
                 .map_err(|error| mcp_engine_error("pack section claim read failed", error))?
                 .value
             else {
                 continue;
             };
-            if kind != oneiron::registry::ENTITY_TYPE_CLAIM {
-                continue;
-            }
-            let claim = oneiron::claim::decode_claim_body(&body, false)
-                .map_err(|error| mcp_engine_error("pack section claim decode failed", error))?;
-            if claim.lifecycle != oneiron::claim::ClaimLifecycleStatus::Active
-                || !matches!(
-                    claim.approval,
-                    oneiron::claim::ClaimApprovalStatus::Approved
-                        | oneiron::claim::ClaimApprovalStatus::Auto
-                )
-                || claim.stale
-            {
-                continue;
-            }
             served.push(id);
             rows.push(PluginSectionRow {
                 row_id: id.to_hex(),
-                cells: vec![
-                    claim.predicate,
-                    format!("{:?}", claim.value).chars().take(256).collect(),
-                ],
+                cells: vec![predicate, value.to_string().chars().take(256).collect()],
             });
         }
         snapshots.push(PluginSectionSnapshot {

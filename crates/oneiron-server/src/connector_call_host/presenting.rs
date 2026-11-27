@@ -53,8 +53,9 @@ enum Door {
 }
 
 /// One exchange a send runs inside the door of the credential it presents:
-/// an HTTP connector's MCP session, or a stdio connector's call, whose
-/// child's upstream door holds the header while it is in flight.
+/// an HTTP connector's MCP session, a stdio connector's call, whose child's
+/// upstream door holds the header while it is in flight, or one request to
+/// an HTTP API a document declares (L8-31).
 pub(super) trait DoorExchange {
     /// The exchange, presenting `auth`, its answer cleared of `value`;
     /// both `None` when the send presents nothing.

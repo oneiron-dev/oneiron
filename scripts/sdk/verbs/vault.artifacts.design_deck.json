@@ -13,5 +13,6 @@
   "openapi": true,
   "refs": [
     "/outline_ref"
-  ]
+  ],
+  "caller_code": "refused"
 }

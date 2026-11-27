@@ -839,6 +839,7 @@ fn the_continue_sign_in_pushes_after_the_git_push_grant() {
                 member: stepped_up.agent,
                 repos: std::collections::BTreeSet::from([served.push_repo]),
                 expires_at: None,
+                check_in_ref: None,
             },
         )
         .expect("the owner grants the agent git_push on the repo");

@@ -23,5 +23,6 @@
       "ts": "/** Records the deck oracle's receipt for its export profile. */",
       "py": "Records the deck oracle's receipt for its export profile."
     }
-  }
+  },
+  "caller_code": "refused"
 }

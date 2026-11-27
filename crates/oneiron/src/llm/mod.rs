@@ -85,7 +85,7 @@ pub(crate) use step::{
     call_as_step_checked_with_unsaved_usage, consume_step_wait_in_txn, deindex_dreamer_step_claim,
     erase_detached_step_actor_in_txn, forget_step_memo, forget_step_memo_in_txn,
     index_dreamer_step_claim_for_put, open_step_wait_in_txn, register_detached_step_in_txn,
-    retire_peer_wait_binding_for_trap_in_txn, signal_step_wait_in_txn,
+    retire_peer_wait_binding_for_trap_in_txn, signal_step_wait_in_txn, step_wait_reads_in_txn,
     trap_consume_precheck_in_txn, verified_step_consolidation_eligible_in_txn,
     verified_step_effector_eligible_in_txn, wake_trap_in_txn,
 };
@@ -104,10 +104,13 @@ pub(crate) use step::{
 pub(crate) use step::{compaction_response_holders_in, is_compaction_step_row};
 // SEAT-PARK-MODEL-STEP-PATH: when a spent seat's refusal says it resets.
 pub(crate) use step::stated_reset_at;
+// HOUSE-SCHEMA-CHECK: the replies a check's calls keep, for its test door.
+#[cfg(oneiron_test_support)]
+pub(crate) use step::kept_step_responses_of;
 // KS-2B1: row-held step responses under body custody.
 pub(crate) use step::{
-    erase_step_state_owner_in_txn, owner_gone_in_txn, retire_step_claim_in_rows,
-    retire_step_claim_in_txn, step_state_carriage, step_state_owners,
+    erase_step_state_key_in_txn, erase_step_state_owner_in_txn, owner_gone_in_txn,
+    retire_step_claim_in_rows, retire_step_claim_in_txn, step_state_carriage, step_state_owners,
 };
 // FIX 9929: a public model-step submission's kept copies.
 pub(crate) use step::{

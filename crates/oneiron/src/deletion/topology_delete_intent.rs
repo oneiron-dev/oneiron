@@ -116,11 +116,11 @@ pub(crate) fn topology_delete_reservation_in_txn(
 /// when the existing reservation already fences topology and the hard
 /// tombstone leaves it nothing to add: a soft deletion, which the hard
 /// tombstone dominates on every replica, or a hard deletion that published or
-/// committed but never completed its local purge. A partition hold can defer
-/// that purge after publication (ARCH-0038 legal hold, an Art. 17(3)(b)
-/// deferral), and the released erasure must still complete. A Prepared hard
-/// request has published nothing yet, and a completed one keeps its own
-/// reservation.
+/// committed but never completed its local purge. A cooperative restriction
+/// on the entity can defer that purge after publication (ARCH-0038: every
+/// destructive path checks), and the released erasure must still complete.
+/// A Prepared hard request has published nothing yet, and a completed one
+/// keeps its own reservation.
 fn hard_request_subsumes(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -313,8 +313,8 @@ pub(crate) fn complete_replayed_topology_delete_in_txn(
 /// Prepared with no published/propagation witness can be withdrawn. A
 /// persisted matching tombstone (or committed `pt:` intent) is completed under
 /// the caller's LMDB writer using the same reason-aware replay eraser; a
-/// refused completion keeps its reservation for the ordinary replay, and its
-/// hold refusal is logged once that writer has ended. No timeout or
+/// refused completion keeps its reservation for the ordinary replay.
+/// No timeout or
 /// guessed-owner cleanup is allowed; ambiguous evidence fails open rather
 /// than releasing an interlock a peer might already obey.
 pub(crate) fn recover_topology_delete_intents_on_open(vault: &crate::Vault) -> Result<()> {
@@ -404,8 +404,6 @@ pub(crate) fn recover_topology_delete_intents_on_open(vault: &crate::Vault) -> R
                 Ok(())
             }
         };
-        // A hold's refusal is logged now this item's writer has ended.
-        vault.store.flush_legal_hold_refusals_settled();
         completed?;
         effects.committed(vault);
     }
@@ -769,7 +767,7 @@ mod tests {
                 .map(|intent| (intent.request_id, intent.phase))
         };
 
-        // A hold refused the purge after publication: the request stays
+        // A restriction refused the purge after publication: the request stays
         // Published with no dt: marker.
         reserve(&deferred, TopologyDeletePhase::Published).unwrap();
         reserve(&retry, TopologyDeletePhase::Prepared).unwrap();
@@ -785,7 +783,7 @@ mod tests {
         );
 
         // The scrub of a GDPR/policy delete commits before its purge, so a
-        // hold refusing that purge leaves Committed without a dt: marker.
+        // restriction refusing that purge leaves Committed without a dt: marker.
         reserve(&retry, TopologyDeletePhase::Committed).unwrap();
         reserve(&later, TopologyDeletePhase::Committed).unwrap();
         assert_eq!(

@@ -65,7 +65,7 @@ fn the_confirm_table_names_every_owner_confirmed_verb() {
     }
     assert_eq!(
         until_used,
-        BTreeSet::from(["vault.legal_holds.lift_and_erase"]),
+        BTreeSet::from(["vault.legal_holds.lift"]),
         "only the hold keeps until used"
     );
 }

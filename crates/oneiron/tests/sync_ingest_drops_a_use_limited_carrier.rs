@@ -1,14 +1,17 @@
-//! A hosted vault drops a device's carrier for a row a refused privacy erase keeps for storage
-//! only, and lands the rest of what the device sent (FIX
+//! A hosted vault drops a device's carrier for a row a cooperative review restriction keeps for
+//! storage only, and lands the rest of what the device sent (FIX
 //! SYNC-INGEST-LANDS-CARRIER-OVER-USE-LIMITED-ROW).
 //!
-//! A record a customer hold keeps from a privacy erase (C6) takes no named change on the hosted
-//! vault: the put door refuses it as absent (OF-470 C6). A device that edited the row before the
-//! keep reached it still sends its carrier. The sync ingest handed that carrier to the put door,
-//! and the door's refusal read as a local failure: the hub's whole entity batch aborted, so the
-//! other rows of the same delta never landed, and the window's forward rematerialization failed,
-//! so the hub could not recover the window. The ingest now drops the carrier the way the put door
+//! A record a cooperative review restriction use-limits takes no named change on the hosted
+//! vault: the put door refuses it as absent. A device that edited the row before the restriction
+//! reached it still sends its carrier. The sync ingest handed that carrier to the put door, and
+//! the door's refusal read as a local failure: the hub's whole entity batch aborted, so the other
+//! rows of the same delta never landed, and the window's forward rematerialization failed, so the
+//! hub could not recover the window. The ingest now drops the carrier the way the put door
 //! refuses a named write: the kept copy stays as it is, and the rest lands.
+//!
+//! Here the kept row is the row a cooperative review restriction keeps stored but use-limited,
+//! and the kept copy is this vault's stored copy of it.
 //!
 //! * `a_device_edit_of_the_kept_row_leaves_the_kept_copy_and_the_rest_lands`: the device sends,
 //!   in one delta, an edit of the kept row and a new row. The hub lands the new row and keeps its
@@ -55,21 +58,17 @@
 #[path = "it_sync/sync_harness/mod.rs"]
 mod sync_harness;
 
-use oneiron::consent::AuthenticatedOwner;
-use oneiron::deletion::LegalHoldTarget;
-use oneiron::memory::{EraseOptions, EraseReason};
 use oneiron::note::{NoteActor, NoteCore, NoteKind, encode_note_core};
 use oneiron::provenance::birth::RowBirth;
 use oneiron::receipt::{ReceiptKind, ReceiptRecord};
 use oneiron::registry::{ENTITY_TYPE_NOTE, ENTITY_TYPE_PERSON, ENTITY_TYPE_RECEIPT_RECORD};
-use oneiron::store::GateDecisionId;
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::window::{self, WindowExport};
 use oneiron::sync::{drain_remat_markers, export_updates_since, server_state};
 use oneiron::test_doors::campaign_member_index::{lift_restriction, restrict_record};
 use oneiron::test_doors::media_vector_replica::stored_row;
 use oneiron::write_envelope::provenance::made_by::{MadeBy, MadeByClass, MadeByProcess};
-use oneiron::{EdgeActorClass, EntityId, HostingPrivacyPosture, Vault, VaultConfig};
+use oneiron::{EntityId, HostingPrivacyPosture, Vault, VaultConfig};
 use oneiron_store::receipt_ref::ReceiptRef;
 use std::collections::BTreeMap;
 
@@ -88,17 +87,9 @@ fn hosted_config() -> VaultConfig {
     config
 }
 
-fn owner_proof(vault: &Vault) -> AuthenticatedOwner {
-    let owner = vault
-        .ensure_embedded_owner_actor()
-        .expect("FIXTURE: the vault names its embedded owner actor");
-    vault
-        .authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())
-        .expect("FIXTURE: owner proof")
-}
-
 /// Mints this install's machine id, as a paired machine holds one: a withholding marker the
-/// hub files (once its owner window withholds the kept row) names the machine that filed it.
+/// hub files (once its owner window withholds the restricted row) names the machine that filed
+/// it.
 fn mint_machine_id(vault: &Vault) {
     let owner = vault
         .ensure_embedded_owner_actor()
@@ -106,48 +97,6 @@ fn mint_machine_id(vault: &Vault) {
     vault
         .local_session_key(owner)
         .expect("FIXTURE: mint the machine id");
-}
-
-/// Places a customer hold on `record` and runs its privacy erase, which the hold refuses: the
-/// record stays stored and use-limited on this hosted vault.
-fn keep_use_limited(vault: &Vault, record: EntityId) {
-    let hold = vault
-        .place_legal_hold(
-            &owner_proof(vault),
-            vec![LegalHoldTarget::Record(record)],
-            Some("matter-sync-ingest".to_owned()),
-        )
-        .expect("FIXTURE: place the customer hold");
-    assert!(hold.stands(), "FIXTURE: the customer hold stands: {hold:?}");
-    let owner = vault
-        .ensure_embedded_owner_actor()
-        .expect("FIXTURE: the vault names its embedded owner actor");
-    let memory = vault.memory(owner, EdgeActorClass::Human);
-    let preview = memory
-        .preview_entity_delete(&record)
-        .expect("FIXTURE: preview the privacy erase");
-    let outcome = memory
-        .confirm_entity_erase(
-            &preview,
-            EraseOptions {
-                reason: EraseReason::GdprDelete,
-                also_same_bytes: false,
-                veto_starter: None,
-            },
-        )
-        .expect("FIXTURE: the privacy erase runs");
-    assert_eq!(
-        outcome.first.reason.as_str(),
-        "privacy_erase_kept",
-        "FIXTURE: the held privacy erase is kept: {outcome:?}"
-    );
-    assert!(
-        vault
-            .legal_hold_use_limit(&record)
-            .expect("FIXTURE: read the use limit")
-            .is_some(),
-        "FIXTURE: the kept erase use-limits the record"
-    );
 }
 
 /// Restricts `record` under a cooperative review, in the row the cooperative-deletion answer
@@ -234,7 +183,7 @@ struct DeviceSend {
 }
 
 fn device_edit_sent_after_the_keep() -> Sent {
-    device_edit_sent_after(keep_use_limited)
+    device_edit_sent_after(restrict)
 }
 
 /// [`Sent`], with `limit` placed on the hub's row before the device edits it.
@@ -337,13 +286,6 @@ fn assert_kept_copy_stays(hub: &TestNode, kept: &EntityId, kept_copy: &[u8]) {
         Some(kept_copy),
         "the hub keeps its stored copy of the kept row byte for byte"
     );
-    assert!(
-        hub.vault
-            .legal_hold_use_limit(kept)
-            .expect("read the use limit")
-            .is_some(),
-        "the kept row stays under its use limit"
-    );
 }
 
 #[test]
@@ -438,7 +380,7 @@ fn a_device_receipt_carrier_at_the_kept_row_leaves_the_kept_copy_and_the_rest_la
         kept,
         kept_copy,
         new_row,
-    } = device_sent_after(keep_use_limited, |kept| DeviceSend {
+    } = device_sent_after(restrict, |kept| DeviceSend {
         carrier: served_form_carrier(kept, T0 + 5),
         birth: None,
     });

@@ -193,12 +193,22 @@ pub fn register_peer_result_wait(
 /// settled yet (no early resume), or the signal already landed. All three are
 /// ordinary outcomes on a path that both the local writer and the replicated
 /// apply call, so none of them is an error.
+///
+/// `now_ms` is the trap's clock, in milliseconds, as for every trap door. A
+/// TASK-side caller on the vault's Unix-second clock multiplies it by 1,000
+/// first, as the step-only wait callers do; a second here would lose to the
+/// head's milliseconds and backdate the signal to the wait's start.
+///
+/// An ask handle's signal is never dated before the ask's own cut: the
+/// caller's clock may be another TASK's settling second, or a pass clock
+/// read before the cut, so the ask's settlement second floors it.
 pub fn send_peer_result_signal(
     vault: &Vault,
     task_ref: EntityId,
-    now: u64,
+    now_ms: u64,
 ) -> Result<Option<EntityId>> {
     crate::task_verb::settle_ask_if_due(vault, task_ref)?;
+    let now_ms = now_ms.max(ask_settled_ms(vault, task_ref)?);
     let terminal = crate::task_verb::task_is_terminal(vault, task_ref)?;
     let unobserved_void = crate::task_verb::has_option_link_void(vault, task_ref)?;
     let mut first = None;
@@ -228,11 +238,19 @@ pub fn send_peer_result_signal(
             vault,
             &binding.trap_claim_id,
             binding.step_hash,
-            now.max(head.at),
+            now_ms.max(head.at),
         )?;
         first.get_or_insert(signal);
     }
     Ok(first)
+}
+
+/// The second the ask `task_ref` was cut, in milliseconds; zero for a TASK
+/// that is no ask handle, and for an ask not cut yet.
+fn ask_settled_ms(vault: &Vault, task_ref: EntityId) -> Result<u64> {
+    let txn = vault.store.env.read_txn()?;
+    Ok(crate::task_verb::ask_settlement_in(vault, &txn, task_ref)?
+        .map_or(0, |result| result.settlement.at.saturating_mul(1000)))
 }
 
 /// Replays the terminal-write→signal edge for every local delegation binding
@@ -245,7 +263,10 @@ pub fn send_peer_result_signal(
 ///
 /// Wired at Dreamer wake-pass admission. The host may also call it after a
 /// sync batch; a missing immediate call is recovered by the next wake pass.
-pub fn reconcile_peer_result_signals(vault: &Vault, now: u64) -> Result<usize> {
+///
+/// `now_ms` is the trap's clock in milliseconds, as for
+/// [`send_peer_result_signal`].
+pub fn reconcile_peer_result_signals(vault: &Vault, now_ms: u64) -> Result<usize> {
     crate::task_verb::settle_waiting_asks(vault)?;
     let mut sent = 0;
     let handles: std::collections::BTreeSet<_> = peer_wait_bindings(vault)?
@@ -253,7 +274,7 @@ pub fn reconcile_peer_result_signals(vault: &Vault, now: u64) -> Result<usize> {
         .map(|binding| binding.task_ref)
         .collect();
     for handle in handles {
-        if send_peer_result_signal(vault, handle, now)?.is_some() {
+        if send_peer_result_signal(vault, handle, now_ms)?.is_some() {
             sent += 1;
         }
     }

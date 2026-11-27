@@ -1720,10 +1720,14 @@ fn schema_version(bridge: &mut Bridge) -> Value {
     listed["result"]["tools"][0]["inputSchema"]["properties"]["schema_version"]["const"].clone()
 }
 
-/// Refused by the door for want of write capability, before anything ran.
+/// Refused by the door for want of write capability, before anything ran:
+/// the refusal names the missing grant, not a credential fault (FIX
+/// MCP-READONLY-WRITE-REFUSAL-NAMES-AUTH: it said "requires its live paired
+/// holder proof" and sent the caller to re-register its connector).
 fn refused_for_write(answer: &Value) -> bool {
-    answer["error"]["code"] == json!(-32001)
-        && answer["error"]["data"]["error_code"] == json!("mcp_auth_required")
+    answer["error"]["code"] == json!(-32020)
+        && answer["error"]["data"]["error_code"] == json!("mcp_grant_missing")
+        && answer["error"]["data"]["required_scope"] == json!("core:write")
 }
 
 /// A propose-only slip passes only for writes that wait for review: every
@@ -1791,6 +1795,27 @@ fn a_propose_only_slip_passes_only_for_writes_that_wait_for_review() {
     assert!(refused_for_write(&proposer_claim), "{proposer_claim:#}");
     let reader_claim = call(&mut as_reader, 2, "vault.rooms.claim", claim.clone());
     assert!(refused_for_write(&reader_claim), "{reader_claim:#}");
+    // A read-only agent's NOTE is refused for its tier, and nothing tells it
+    // to present or renew its credential, which still lists the tools (M0
+    // pilot, 24 Nov).
+    let reader_note = call(
+        &mut as_reader,
+        3,
+        "vault.notes.create",
+        json!({ "spec": { "kind": "research", "markdown": "a read-only agent's note" } }),
+    );
+    assert!(refused_for_write(&reader_note), "{reader_note:#}");
+    assert!(
+        !reader_note["error"]["data"]["recovery_suggestions"]
+            .to_string()
+            .contains("re-register"),
+        "{reader_note:#}"
+    );
+    assert_eq!(
+        schema_version(&mut as_reader),
+        version,
+        "the read-only credential still lists the tools"
+    );
     let claimed = call(&mut as_writer, 3, "vault.rooms.claim", claim);
     assert_eq!(
         output(&claimed)["Claimed"]["actor"],

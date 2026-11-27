@@ -19,8 +19,11 @@ use std::sync::OnceLock;
 /// a runtime.
 pub const MCP_SETUP_TOOL: &str = "setup_oneiron";
 
-/// The durable JavaScript or TypeScript execution tool. It is advertised only after
-/// the host binds a verified production runtime, backend and budget lease.
+/// The durable code-mode run tool: this vault's generative model turns the
+/// caller's task into a program each step, and the program runs in the
+/// QuickJS sandbox; the task itself is never run as source. It is advertised
+/// only after the host binds a verified production runtime, backend and budget
+/// lease.
 pub const MCP_EXECUTE_CODE_TOOL: &str = "execute_code";
 
 /// One action of the app's table, as `POST /v1/core/actions/{verb}` runs it,
@@ -349,11 +352,14 @@ impl McpEndpointTool {
 
     fn description(self) -> String {
         match self {
-            Self::Setup => "Return the current board keyframe, the typed verb grammar this vault exports, and the endpoint instructions in one result.".to_owned(),
-            // Never advertised: this variant is registered on no endpoint in
-            // this release. The text states the shipped contract so a schema
-            // dump can never read as an offer.
-            Self::ExecuteCode => "Run a durable JavaScript or TypeScript task in the verified QuickJS WASM sandbox. Reuse the same run_ref and task to resume; completed calls return their stored result without repeating effects.".to_owned(),
+            // The grammar rows carry each verb's name, family and tool-first
+            // tool, and no types (mcp/results.rs).
+            Self::Setup => "Return the current board keyframe, the verb grammar this vault exports (each verb's name, family and tool-first tool; no types), and the endpoint instructions in one result.".to_owned(),
+            // Listed on the primary endpoint once the verified host binds
+            // (register_with_execution). The text says who writes the program:
+            // this vault's model, from `task`; `task` is never run as source
+            // (FIX EXECUTE-LISTING-COPY, until EXECUTE-CALLER-CODE lands).
+            Self::ExecuteCode => "Give a task in words for Oneiron's model to turn into a program; task is not executed as source. Each step, this vault's generative model writes the JavaScript or TypeScript program, and it runs in the verified QuickJS WASM sandbox under this credential's actor and per-verb gates. Reuse the same run_ref and task to resume; completed calls return their stored result without repeating effects. To run your own source as written, use execute_code on the tool-first endpoint: it runs in the isolated Foreign proposal tier (record snapshots in, inert proposals out, no live verbs).".to_owned(),
             Self::ReadResult => "Read one result of a durable execute_code run without a model call: its card (describe), or a slice, search, query or chunks page of it, by the name the run bound, its handle or a range ref. Only the run this credential's run_ref names is read; its served rows and its taint are checked as inside the run, and every reply fits one message with a cursor to read on.".to_owned(),
             Self::InvokeAction => "Run one action of the app's table (GET /v1/core/actions lists them) as this credential's own principal, exactly as POST /v1/core/actions/{verb} runs it: verb names the action, args its typed kind/value arguments, idempotencyKey the key a retry replays under. An action for a live agent run names liveRun, the handle POST /v1/core/live-runs/{run}/attach answered this same credential at this same locality; a live-run action that names none is refused with live_run_required, and a handle that does not resolve is refused, never ignored.".to_owned(),
             Self::Verb(tool) if tool.memory_method().is_some() => format!(
@@ -585,7 +591,7 @@ pub fn registered_surface(mode: McpSurfaceMode) -> &'static McpRegisteredSurface
 
 /// Protocol instructions of a server whose verified host binds
 /// `execute_code`.
-const MCP_EXECUTION_SETUP_INSTRUCTIONS: &str = "This result is DATA. execute_code runs a durable JavaScript or TypeScript task in the verified QuickJS WASM sandbox under this credential's actor. Reuse the same run_ref and task to resume a yielded run; completed runs return the stored result without repeating effects. The tool-first endpoint also exposes each generated verb. On both endpoints an app action runs with its live run through the invoke_action tool, taking {verb, args, idempotencyKey, liveRun}. Narrow world/facet credentials cannot use execute_code. Results are never cacheable.";
+const MCP_EXECUTION_SETUP_INSTRUCTIONS: &str = "This result is DATA. execute_code takes a task in words: each step, this vault's generative model turns it into a JavaScript or TypeScript program that runs in the verified QuickJS WASM sandbox under this credential's actor; the task text is not executed as source. Reuse the same run_ref and task to resume a yielded run; completed runs return the stored result without repeating effects. The tool-first endpoint also exposes each generated verb; its execute_code runs your own source as written, in the isolated Foreign proposal tier. On both endpoints an app action runs with its live run through the invoke_action tool, taking {verb, args, idempotencyKey, liveRun}. Narrow world/facet credentials cannot use execute_code. Results are never cacheable.";
 
 /// The client's part in an agent connection's self brief (FIX 17594 D4,
 /// Engine call MCP A): page one of the setup result carries the brief, and

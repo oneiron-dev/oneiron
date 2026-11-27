@@ -12,6 +12,7 @@ pub use account_args::{
 mod continue_args;
 pub use continue_args::ContinueArgs;
 mod deployment_args;
+mod execution_node_args;
 pub use deployment_args::HostRelayArgs;
 mod files_args;
 pub use files_args::{
@@ -26,6 +27,11 @@ pub use user_service_args::{UserServiceCommand, UserServiceInstallArgs};
 mod learning_setting_args;
 mod link_args;
 pub use link_args::{LinkArgs, LinkCommand, UnlinkArgs};
+mod measure_path_args;
+pub use measure_path_args::{
+    ExecutionNodeMeasurePathArgs, MeasurePathCommand, MeasurePathDialArgs, MeasurePathKeyArgs,
+    MeasurePathListenArgs,
+};
 mod model_workers_args;
 pub use model_workers_args::ModelWorkersArgs;
 mod owner_args;
@@ -39,6 +45,11 @@ mod seat_args;
 mod user_service_args;
 mod wake_args;
 mod widen_proposal_args;
+pub use execution_node_args::{
+    ExecutionNodeCommand, ExecutionNodeDisableArgs, ExecutionNodeFileArgs,
+    ExecutionNodeInstallArgs, ExecutionNodePauseArgs, ExecutionNodeResetHistoryArgs,
+    ExecutionNodeServeArgs, ExecutionNodeUnitControlArgs, ExecutionNodeUnitNameArgs,
+};
 pub use hook_args::{
     HookArgs, HookBindArgs, HookCommonArgs, HookEffort, HookEvent, HookHandOverArgs, HookHost,
     HookRecallArgs,
@@ -67,10 +78,10 @@ pub use owner_args::{
     GuestRevokeArgs, GuestsCommand, SecretRevealArgs, SecretRevokeArgs, SecretRewrapArgs,
 };
 pub use owner_args::{
-    KeptEscrowArg, KeptPasskeyArg, LegalHoldLiftArgs, LegalHoldPlaceArgs, LegalHoldTargetArgs,
-    LegalHoldWidenArgs, LegalHoldsCommand, RecoveryPresetArg, SecretSourceArgs, UnlockMethod,
-    VaultKeyAddDeviceArgs, VaultKeyArgs, VaultKeyCommand, VaultKeyNamedArgs,
-    VaultKeyNewGenerationArgs, VaultKeyRecoveryPresetArgs, VaultKeyResealArgs,
+    KeptEscrowArg, KeptPasskeyArg, LegalHoldLiftArgs, LegalHoldPlaceArgs, LegalHoldProduceArgs,
+    LegalHoldTargetArgs, LegalHoldWidenArgs, LegalHoldsCommand, RecoveryPresetArg,
+    SecretSourceArgs, UnlockMethod, VaultKeyAddDeviceArgs, VaultKeyArgs, VaultKeyCommand,
+    VaultKeyNamedArgs, VaultKeyNewGenerationArgs, VaultKeyRecoveryPresetArgs, VaultKeyResealArgs,
 };
 pub use owner_args::{
     PackRemoveArgs, PacksCommand, SubscriptionListArgs, SubscriptionPutArgs,
@@ -204,12 +215,17 @@ pub enum Command {
     /// read it, set the full route, or clear it.
     #[command(subcommand)]
     ReminderRoute(ReminderRouteCommand),
+    /// This machine's execution node, at the box: check what would refuse a
+    /// job, enable or disable it, pause it, clear its drain, or reset its
+    /// history after a lost journal.
+    #[command(subcommand)]
+    ExecutionNode(ExecutionNodeCommand),
     /// Context-widen proposals your agents raised: list them, or approve or
     /// decline one as the board above.
     #[command(subcommand)]
     WidenProposals(WidenProposalsCommand),
-    /// Your legal holds: place, widen, list, read the log, or lift one
-    /// through the "Lift the hold and erase?" confirm.
+    /// Your legal holds: place, widen, list, read the log, lift one (its
+    /// sealed copy is destroyed), or produce its sealed copy.
     #[command(subcommand)]
     LegalHolds(LegalHoldsCommand),
     /// Your ask guests at this host: revoke one's access.
@@ -242,6 +258,11 @@ pub enum Command {
     Unlink(Box<UnlinkArgs>),
     /// Make short curl-shaped calls against the existing HTTP API.
     Api(ApiArgs),
+    /// Bind the folder this runs in to a PROJECT, unbind it, or list the bindings: the
+    /// project an attached agent session there reads by default. The owner's act, sent over
+    /// `oneiron api`'s transport under the owner's credential; only the folder's digest and
+    /// its name leave this machine, never its path.
+    Project(ProjectArgs),
     /// The git credential helper an official CLI seat runs (FIX 10624 step
     /// 2): git calls it; it answers the context the seat host bound.
     CredentialHelper(CredentialHelperArgs),
@@ -479,7 +500,9 @@ pub struct HostInitArgs {
 pub enum TokenCommand {
     /// Provision the first owner link while the self-host vault is stopped.
     Bootstrap(Box<TokenBootstrapArgs>),
-    /// Create a one-hour pairing link on the running server and print it.
+    /// Create a pairing link on the running server and print it. It lives one pairing code life
+    /// (pairing.code.ttl_secs, one hour unless set) on the vault's clock, which resumes from its
+    /// last saved reading when the server starts.
     Pair(Box<TokenPairArgs>),
     /// Mint a read-only credential for a local agent on the stopped vault.
     Read(Box<TokenReadArgs>),
@@ -505,6 +528,14 @@ pub struct TokenBootstrapArgs {
     /// Optional shrink-only lifetime for the first owner slip (seconds).
     #[arg(long)]
     pub lifetime_secs: Option<u64>,
+
+    /// Redeem the link here, at once, with a fresh connection key, and print
+    /// the owner's own credential (`token`, `binding_key`, `slip_id`) as
+    /// `token read` prints one, instead of the link. For an owner at the box
+    /// with no client to redeem it; keep the output in a file only you can
+    /// read, and revoke the slip with `token revoke --jti <slip_id>`.
+    #[arg(long)]
+    pub redeem: bool,
 
     #[command(flatten)]
     pub serve: ServeArgs,
@@ -586,6 +617,14 @@ pub struct DeviceEnrolArgs {
     /// Config file the vault runs with. Defaults to the XDG path.
     #[arg(long)]
     pub config: Option<PathBuf>,
+
+    /// Enrol a machine already enrolled for this vault again, with a new
+    /// link from its home (for example to take every protocol a newer home
+    /// serves): its stored enrolment is replaced only once the home has
+    /// answered and the new one is written, so a re-enrolment that fails
+    /// leaves the old one as it was.
+    #[arg(long)]
+    pub replace: bool,
 }
 
 /// A local agent's read credential, minted through the same host-rooted
@@ -720,8 +759,72 @@ pub struct ApiArgs {
     #[arg(long, default_value = "ONEIRON_BINDING_KEY")]
     pub binding_key_env: String,
 
+    /// Connect to this address for the base URL's host, never to one a name
+    /// lookup returns (curl `--resolve`); repeat it for several. Each must
+    /// be an IP address, and the base URL's host a name: a caller that
+    /// already checked where the host leads holds the request to that check.
+    #[arg(long, value_name = "IP")]
+    pub resolve_address: Vec<String>,
+
+    /// Give the request up after this many seconds (curl `--max-time`), so a
+    /// server that takes it and never answers ends the call. Unset, the call
+    /// has no deadline of its own, so a long `raw` transfer or wait is never
+    /// cut: callers that must never hang (agents, harnesses) set it.
+    #[arg(long, env = "ONEIRON_API_MAX_TIME", value_name = "SECS")]
+    pub max_time: Option<u64>,
+
     #[command(subcommand)]
     pub command: ApiCommand,
+}
+
+/// `oneiron project`: the owner's binding of a folder to the PROJECT its attached agent
+/// sessions read by default (RECALL-SESSION-PROJECT). Each subcommand is one `vault.settings.*`
+/// call on the `workspace.project` key, as `oneiron api call` sends it.
+#[derive(Args, Clone, Debug, PartialEq, Eq)]
+pub struct ProjectArgs {
+    /// Existing Oneiron server root, as `oneiron api` takes it.
+    #[arg(long, env = "ONEIRON_URL", default_value = "http://127.0.0.1:9090")]
+    pub base_url: String,
+
+    /// Environment variable holding the owner's bearer credential, as `oneiron api` takes it.
+    #[arg(long, default_value = "ONEIRON_SECRET")]
+    pub secret_env: String,
+
+    /// Environment variable with the Ed25519 binding seed for a slip bearer.
+    #[arg(long, default_value = "ONEIRON_BINDING_KEY")]
+    pub binding_key_env: String,
+
+    /// Connect to this address for the base URL's host (curl `--resolve`), as `oneiron api`
+    /// takes it.
+    #[arg(long, value_name = "IP")]
+    pub resolve_address: Vec<String>,
+
+    /// Give the request up after this many seconds (curl `--max-time`).
+    #[arg(long, env = "ONEIRON_API_MAX_TIME", value_name = "SECS")]
+    pub max_time: Option<u64>,
+
+    /// The folder to bind or unbind; this process's working directory when absent.
+    #[arg(long, value_name = "DIR")]
+    pub folder: Option<std::path::PathBuf>,
+
+    #[command(subcommand)]
+    pub command: ProjectCommand,
+}
+
+/// What `oneiron project` does with the folder.
+#[derive(Subcommand, Clone, Debug, PartialEq, Eq)]
+pub enum ProjectCommand {
+    /// Bind the folder's checkout to this PROJECT (its id, 32 hex): attached agent sessions
+    /// there read it when they name no project. A linked worktree with no binding of its own
+    /// reads its main checkout's.
+    Bind {
+        /// The PROJECT's id, 32 hex.
+        project_ref: String,
+    },
+    /// Remove the folder's binding: sessions there that name no project read none.
+    Unbind,
+    /// List the vault's folder bindings (each folder by its workspace id and name).
+    Bindings,
 }
 
 /// Four short commands over existing routes plus one escape hatch. `raw` is
@@ -868,6 +971,14 @@ pub struct McpArgs {
     /// entry; every other request keeps the global value.
     #[arg(long = "tool-timeout-secs", value_name = "TOOL=SECS")]
     pub tool_timeout_secs: Vec<String>,
+
+    /// The folder the agent session runs in (`.` is this process's working directory): every
+    /// tool call then names the folder's digest, so a read that names no project reads
+    /// the project the owner bound to the folder (`oneiron project bind`), and none in a
+    /// folder with no project bound. Absent, or a folder whose checkout root is the
+    /// filesystem root or the home directory, attaches nothing.
+    #[arg(long, value_name = "DIR")]
+    pub workspace: Option<PathBuf>,
 }
 
 /// The connection `oneiron mcp` holds to its server.
@@ -1134,6 +1245,7 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::HandoffAlarms(command) => commands::handoff_alarms(command),
         Command::LearningSettings(command) => commands::learning_settings(command),
         Command::ReminderRoute(command) => commands::reminder_route(command),
+        Command::ExecutionNode(command) => commands::execution_node(command),
         Command::WidenProposals(command) => commands::widen_proposals(command),
         Command::LegalHolds(command) => commands::legal_holds(command),
         Command::Guests(command) => commands::guests(command),
@@ -1166,6 +1278,7 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
             crate::logging::off_runtime("unlink", move || commands::unlink(*args)).await?
         }
         Command::Api(args) => commands::api(args).await,
+        Command::Project(args) => commands::project(args).await,
         // Blocking: one curl call for git, which waits on this process.
         Command::CredentialHelper(args) => commands::credential_helper(args),
         Command::Mcp(args) => commands::mcp(args),

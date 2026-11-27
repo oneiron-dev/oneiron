@@ -24,6 +24,11 @@ pub struct GitPushGrantMintInput {
     /// Omitted: it stands until revoked.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<u64>,
+    /// Another asker's approved check-in for this exact mint, 32 hex: the
+    /// owner applies it on their own proof, and the mint's writer spends it
+    /// (ROLES-CHECKIN 2k7). Omitted: the owner's own mint.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in_ref: Option<String>,
 }
 
 /// One `git_push` Grant.
@@ -54,6 +59,10 @@ pub struct GitPushGrantMintOutput {
     pub grant: GitPushGrantView,
     /// The signed authority entry that records the owner's mint (64 hex).
     pub act_ref: String,
+    /// The decision the mint ran on: the owner's own proof, naming the
+    /// asker's approved check-in it applied (ROLES-CHECKIN 2k7).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_in: Option<crate::check_in::CheckInDecision>,
 }
 
 /// `vault.repo.git_push.revoke`'s input: the grant, by its id.

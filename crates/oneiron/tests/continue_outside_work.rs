@@ -159,6 +159,7 @@ fn mint_continue_grant(vault: &Vault, owner_proof: &AuthenticatedOwner, agent: E
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
             working_view_bounds: None,
+            check_in_ref: None,
         },
     )
     .expect("owner mints the agent a continue Grant");

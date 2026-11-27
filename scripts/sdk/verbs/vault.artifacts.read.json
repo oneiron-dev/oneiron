@@ -23,5 +23,6 @@
   "binding": {
     "native": "agent_verb",
     "request": true
-  }
+  },
+  "caller_code": "refused"
 }

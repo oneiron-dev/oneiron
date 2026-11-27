@@ -318,6 +318,7 @@ impl Fixture {
                 verb_classes: BTreeSet::new(),
                 wallet_ref: None,
                 working_view_bounds: None,
+                check_in_ref: None,
             },
         )
         .map_err(|error| format!("the owner mints the agent's read Grant: {error:?}"))?;

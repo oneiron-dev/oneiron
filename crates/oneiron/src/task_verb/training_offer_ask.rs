@@ -45,7 +45,9 @@ use crate::{EntityId, Vault};
 /// Every training offer ask's intent key starts so:
 /// `training_offer/<offer hex>/<digest>/<owner hex>/<turn hex>`.
 const INTENT_PREFIX: &str = "training_offer/";
+mod approval;
 pub(crate) use crate::gate::training_ask_kind::OFFER_QUESTION_TYPE;
+pub(super) use approval::{approved_act_stands_in, approves};
 /// The question message's metadata keys: the offer tuple plus the generation's
 /// turn. It locates the reservation and proves nothing by itself.
 const META_OFFER: &str = "training_offer";

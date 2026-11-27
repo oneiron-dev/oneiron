@@ -80,6 +80,7 @@ pub use self::codec::{
     CODE_RUN_STEP_CHECKPOINT_KEYS, decode_code_run_replay_record, encode_code_run_replay_record,
 };
 pub(crate) use self::codec::{continuation_prefix_digest, encode_code_run_replay_value};
+pub(crate) use self::compaction_fork::source_row_withdrawn_in;
 pub use self::compaction_fork::{
     AdmittedLiveFork, CACHE_BOUNDARIES_KEY, CacheBoundary, HOST_PROVIDER_OPTIONS,
     LiveCompactionFork, LiveForkRung, cache_boundaries, live_fork_offer_digest,
@@ -197,9 +198,10 @@ pub(crate) use self::storage::undecodable_step_capsule_in_txn;
 pub(crate) use self::storage::{
     CODE_RUN_OUTPUT_PREVIEW_ERASED, RESPONSE_ERASED, WaitReply, WithdrawnFoldAnswer,
     erase_gone_actors_in_live_overlays, erase_settled_reply_of_erased_run_in_txn,
-    redact_fold_answers, release_settled_for_caller_in_txn, replay_carriage, replay_owners,
-    response_erased_error, retire_actor_responses_in_txn, retire_fold_answers_in_txn,
-    retire_sourced_code_outputs_in_txn, soft_delete_actor_responses_in_txn, wait_reply_in_txn,
+    erase_settled_wait_reply_in_txn, redact_fold_answers, release_settled_for_caller_in_txn,
+    replay_carriage, replay_owners, response_erased_error, retire_actor_responses_in_txn,
+    retire_fold_answers_in_txn, retire_sourced_code_outputs_in_txn,
+    soft_delete_actor_responses_in_txn, wait_reply_in_txn,
 };
 pub(crate) use self::storage::{
     CodeRunCompactionCoverage, ExecutorOutputSpan, ExecutorStorage, FeedbackRoute, ResultSpeech,
@@ -215,6 +217,7 @@ pub use self::storage::{
     CodeRunRoomSecretLiftRequest, CodeRunSecretLiftDismiss, CodeRunSecretLiftDismissal,
     CodeRunSecretLiftProposalView, CodeRunSecretLiftRequest, CodeRunSecretLiftStatus,
 };
+pub(crate) use self::storage::{FinishedOutput, ReplyBody, SessionCheckpointBody};
 pub(crate) use self::storage::{InheritedCompaction, StartCompaction};
 pub(crate) use self::storage::{
     OccurrenceRef, ReaderFoldReceipt, ReaderSubstrateRef, ReceiptFinding, ReceiptPartial,
@@ -229,7 +232,6 @@ pub(crate) use self::storage::{
 pub(crate) use self::storage::{
     ReadWorldSeal, ReadWorldSnapshot, captured_step_read_scopes_in_txn, read_world_snapshot_in_txn,
 };
-pub(crate) use self::storage::{ReplyBody, SessionCheckpointBody};
 // L2-37: a parked run's idle fold rechecks its park and lands in one write.
 pub(crate) use self::storage::{
     StagedSinks, clear_parked_wait_in_txn, code_run_body_file_of_row, code_run_body_held_in_txn,
@@ -424,3 +426,10 @@ pub use self::dispatcher::workflow_operations;
 // above, so no other re-export edit meets this one.
 #[cfg(oneiron_test_support)]
 pub(crate) use self::dispatcher::{hook_parked_outcome_for_test, parked_note_resumed_for_test};
+
+// Door seams for `test_doors::ask_answer_proof`, apart from the blocks
+// above, so no other re-export edit meets this one.
+#[cfg(oneiron_test_support)]
+pub(crate) use self::consent_wait::{
+    answer_code_consent_wait_for_test, settle_code_consent_wait_refused_for_test,
+};

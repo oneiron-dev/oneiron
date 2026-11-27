@@ -329,6 +329,7 @@ impl AgentVerbDoor for SkillCredentialDoor {
             return Ok(Err(AgentVerbRefusal {
                 hook_notice: None,
                 code: error.code,
+                reason_codes: error.reason_codes,
             }));
         }
         let server = Arc::clone(&self.server);
@@ -351,13 +352,18 @@ impl AgentVerbDoor for SkillCredentialDoor {
         ));
         Ok(match receiver.recv() {
             Ok(Ok(answer)) => Ok(AgentVerbAnswer::new(answer.value, answer.rows)),
-            Ok(Err(error)) => Err(AgentVerbRefusal {
-                hook_notice: None,
-                code: error.into_memory_error().code,
-            }),
+            Ok(Err(error)) => {
+                let error = error.into_memory_error();
+                Err(AgentVerbRefusal {
+                    hook_notice: None,
+                    code: error.code,
+                    reason_codes: error.reason_codes,
+                })
+            }
             Err(_) => Err(AgentVerbRefusal {
                 hook_notice: None,
                 code: oneiron::memory::MEMORY_CODE_INTERNAL.to_owned(),
+                reason_codes: Vec::new(),
             }),
         })
     }
@@ -388,6 +394,7 @@ impl AgentVerbDoor for SkillCredentialDoor {
         check().map_err(|error| AgentVerbRefusal {
             hook_notice: None,
             code: error.code,
+            reason_codes: error.reason_codes,
         })
     }
 
@@ -412,6 +419,7 @@ impl AgentVerbDoor for SkillCredentialDoor {
             .map_err(|_| AgentVerbRefusal {
                 hook_notice: None,
                 code: oneiron::memory::MEMORY_CODE_INTERNAL.to_owned(),
+                reason_codes: Vec::new(),
             })
     }
 }

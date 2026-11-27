@@ -190,6 +190,7 @@ impl<'a> HostSelfDispatcher<'a> {
             return Ok(Err(AgentVerbRefusal {
                 hook_notice: None,
                 code,
+                reason_codes: Vec::new(),
             }));
         }
         match held {

@@ -630,10 +630,12 @@ impl OwnerProofSigner<'_> {
     }
 }
 
-/// The owner key this install proves an ask word with, bound to this vault.
+/// The owner key this install proves an ask word with, bound to this vault
+/// and to the ground the word's door checked.
 pub(crate) struct AskWordProofSigner<'vault> {
     vault: &'vault crate::Vault,
     held: HeldRootSigner,
+    ground: OwnerProofGround,
 }
 
 impl AskWordProofSigner<'_> {
@@ -656,7 +658,7 @@ impl AskWordProofSigner<'_> {
     ) -> crate::error::Result<Vec<u8>> {
         self.held
             .signer
-            .sign_ask_word_proof(self.vault, fold, transcript)
+            .sign_ask_word_proof(self.vault, fold, &self.ground, transcript)
     }
 }
 
@@ -676,12 +678,19 @@ impl crate::Vault {
     }
 
     /// The owner key this install can prove an ask word with on `fold`.
+    /// The caller supplies the ground on which it may sign: the answer
+    /// door's presence check of the word (`task_verb::ask_word_presence`).
     pub(crate) fn ask_word_proof_signer(
         &self,
         fold: &AuthorityFold,
+        ground: &OwnerProofGround,
     ) -> Option<AskWordProofSigner<'_>> {
         self.proving_root_signer(fold)
-            .map(|held| AskWordProofSigner { vault: self, held })
+            .map(|held| AskWordProofSigner {
+                vault: self,
+                held,
+                ground: *ground,
+            })
     }
 
     /// Whether this install holds an owner key that proves now on `fold`.

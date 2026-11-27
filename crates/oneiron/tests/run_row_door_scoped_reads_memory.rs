@@ -109,6 +109,7 @@ impl AgentVerbDoor for KeyedDoor {
         Ok(Err(AgentVerbRefusal {
             code: AGENT_VERB_DOOR_UNBOUND.to_owned(),
             hook_notice: None,
+            reason_codes: Vec::new(),
         }))
     }
 
@@ -793,6 +794,7 @@ fn grant_run() -> TestResult<GrantRun> {
             verb_classes: BTreeSet::new(),
             wallet_ref: None,
             working_view_bounds: None,
+            check_in_ref: None,
         },
     )
     .map_err(at("owner mints the agent a read Grant"))?;

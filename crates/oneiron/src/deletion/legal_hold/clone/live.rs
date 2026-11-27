@@ -713,14 +713,16 @@ impl LiveSpillCaptures {
                     )
                     .into());
                 }
-                collector.finish(
-                    0,
-                    1,
-                    copied,
-                    0,
-                    CaptureExtent::WrittenLiveSessionSpill,
-                    || attempt.check(vault),
-                )
+                collector
+                    .finish(
+                        0,
+                        1,
+                        copied,
+                        0,
+                        CaptureExtent::WrittenLiveSessionSpill,
+                        || attempt.check(vault),
+                    )
+                    .map(|_| ())
             })();
             capture.finish(&outcome)?;
             outcome?;

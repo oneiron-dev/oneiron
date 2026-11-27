@@ -180,6 +180,7 @@ fn register_active_scoped_connector_key_with_budgets(
         .expect("register active scoped connector key");
     let manifest = crate::connector_key::ResolvedConnectorManifest::resolve(vec![
         crate::connector_key::ConnectorToolSchema {
+            output_schema: None,
             name: "read_file".into(),
             permissions: ["read".into()].into(),
             triggers: Default::default(),
@@ -1599,6 +1600,7 @@ fn register_scoped_key(vault: &Vault, key_id: &EntityId, grant_id: &EntityId, se
         .expect("register active scoped connector key");
     let manifest = crate::connector_key::ResolvedConnectorManifest::resolve(vec![
         crate::connector_key::ConnectorToolSchema {
+            output_schema: None,
             name: "read_file".into(),
             permissions: ["read".into()].into(),
             triggers: Default::default(),
@@ -1950,6 +1952,7 @@ fn replaced_manifest_refuses_delayed_and_pending_scoped_calls_with_current_hash(
 
     let changed = crate::connector_key::ResolvedConnectorManifest::resolve(vec![
         crate::connector_key::ConnectorToolSchema {
+            output_schema: None,
             name: "read_file".into(),
             permissions: ["write".into()].into(),
             triggers: Default::default(),
@@ -2035,6 +2038,7 @@ fn replaced_manifest_refuses_delayed_and_pending_scoped_calls_with_current_hash(
     // result and must not debit or send the paid Pending intent again.
     let removed = crate::connector_key::ResolvedConnectorManifest::resolve(vec![
         crate::connector_key::ConnectorToolSchema {
+            output_schema: None,
             name: "other".into(),
             permissions: ["read".into()].into(),
             triggers: Default::default(),

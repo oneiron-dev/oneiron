@@ -1,13 +1,14 @@
 //! The host's step over one live job: one bounded round of provider calls,
 //! then one write (CROSS-ARCH-0023 lifecycle 04-05, C2 02-04).
+use crate::gpu_line::{UnitEndReport, settle_unit_in_txn};
 use crate::inbox::{NotificationEvent, NotificationKind, NotificationSource};
 use crate::llm::run_admission::{CallOutcome, JobSignal, PaidConnector, RunAdmission, StopRefused};
 use crate::{EntityId, Vault};
 
 use super::{
     GPU_JOB_STOPPED_PRODUCER, GPU_JOB_WARNING_PRODUCER, GpuEndReason, GpuJob, GpuJobConnector,
-    GpuJobError, GpuJobPermits, GpuJobSignal, GpuJobState, GpuJobStepReport, GpuOffer, GpuOverrun,
-    GpuResourceStatus, GpuTermination,
+    GpuJobEnd, GpuJobError, GpuJobPermits, GpuJobSignal, GpuJobState, GpuJobStepReport,
+    GpuJobTerminal, GpuOffer, GpuOverrun, GpuResourceStatus, GpuTermination, MeterVerdict,
 };
 
 impl Vault {
@@ -20,23 +21,29 @@ impl Vault {
     /// permit for, after a restart, is admitted again at its quote's price
     /// and pays its own end; if that no longer fits, it runs on unpaid and
     /// says so (`admission_lost`), since a running chunk is never cut for
-    /// money (`#gpu-chunks`). `offer` is the offer the job was quoted on, and
-    /// `admission` the job's own run. A resource a lost write left on the job
-    /// is asked to terminate first, live chunk or not.
+    /// money (`#gpu-chunks`). `offer` is the offer the job was quoted on, as
+    /// the host posts it now, and `admission` the job's own run. A job keeps
+    /// its backend when its offer is withdrawn (design pass 33, 8.1), so
+    /// `offer` may be `None`: the stop at the maximum then offers no resume
+    /// quote, and a chunk with no permit runs on unpaid (`admission_lost`),
+    /// since nothing binds a new one. A unit's job needs no offer: its claim
+    /// is its hold. A resource a lost write left on the job is asked to
+    /// terminate first, live chunk or not.
     ///
     /// # Errors
     ///
     /// [`GpuJobError::Connector`] when the provider did not answer; nothing
     /// of this step's chunk was written, and the next step asks again.
-    pub fn gpu_job_step(
+    pub fn gpu_job_step<'a>(
         &self,
         id: &EntityId,
-        offer: &GpuOffer,
+        offer: impl Into<Option<&'a GpuOffer>>,
         admission: &RunAdmission,
         permits: &GpuJobPermits,
         connector: &dyn GpuJobConnector,
         now_ms: u64,
     ) -> Result<GpuJobStepReport, GpuJobError> {
+        let offer = offer.into();
         let mut job = self.load_gpu_job(id)?;
         if !job.orphaned_resources.is_empty() {
             job = self.terminate_orphaned_resources(job, connector, now_ms)?;
@@ -88,7 +95,7 @@ impl Vault {
     fn observe_gpu_chunk(
         &self,
         mut job: GpuJob,
-        offer: &GpuOffer,
+        offer: Option<&GpuOffer>,
         taken_up: bool,
         permits: &GpuJobPermits,
         connector: &dyn GpuJobConnector,
@@ -155,17 +162,19 @@ impl Vault {
                         Ok(stop) => {
                             job.stop = Some(stop);
                             // The notice's one tap (C2 05): one more chunk of
-                            // the job's first maximum, priced now.
-                            let resume_quote = job.chunks.first().and_then(|first| {
-                                offer
-                                    .quote_for(
-                                        job.id,
-                                        &first.quote.request(),
-                                        first.quote.maximum_secs,
-                                        now_ms,
-                                    )
-                                    .ok()
-                            });
+                            // the job's first maximum, priced now. A withdrawn
+                            // offer quotes nothing.
+                            let resume_quote =
+                                job.chunks.first().zip(offer).and_then(|(first, offer)| {
+                                    offer
+                                        .quote_for(
+                                            job.id,
+                                            &first.quote.request(),
+                                            first.quote.maximum_secs,
+                                            now_ms,
+                                        )
+                                        .ok()
+                                });
                             job.resume_quote = resume_quote;
                             job.state = GpuJobState::Ending {
                                 reason: GpuEndReason::AtMaximum,
@@ -183,13 +192,10 @@ impl Vault {
                 overrun = report_overrun(&mut job, total);
             }
             GpuResourceStatus::Exited { used_secs } => {
-                let chunk = job.chunk_mut()?;
-                chunk.used_secs = chunk.used_secs.max(used_secs);
-                let total = chunk.base_used_secs.saturating_add(chunk.used_secs);
-                let _ = job.maximum.record_usage(total);
-                job.state = GpuJobState::Ending {
-                    reason: GpuEndReason::Exited,
-                };
+                ended_by_backend(&mut job, used_secs, GpuEndReason::Exited)?;
+            }
+            GpuResourceStatus::TimeLimit { used_secs } => {
+                ended_by_backend(&mut job, used_secs, GpuEndReason::TimeLimit)?;
             }
             GpuResourceStatus::Gone => {
                 job.state = GpuJobState::Ending {
@@ -239,7 +245,13 @@ impl Vault {
     /// its billed time plus overhead, never above its quote; the rest of the
     /// reservation goes back (lifecycle 05-06). A stop at the maximum then
     /// writes the add-funds notice, whose resume is the next chunk (C2 04,
-    /// 05).
+    /// 05). The machine's confirmed terminal, where its backend keeps one,
+    /// says how a hard stop ended: a cancel that came after it settles as the
+    /// time limit, and the run's occupancy is the machine's measure (pass 33,
+    /// 8.6). A unit's job holds no permit: its claim is its hold, and the
+    /// claim's terminal is written in the same write as the job's, so no
+    /// crash leaves an ended job whose hold stays open (design pass 32 r2,
+    /// 7.2 point 6; pass 33, 8.4 fault 1).
     pub(super) fn end_gpu_chunk(
         &self,
         mut job: GpuJob,
@@ -269,10 +281,35 @@ impl Vault {
             },
         };
         let paid = permits.holds_chunk(&job.id, &key);
+        // The end the job's machine established, which its backend stored
+        // beside the receipt at the confirmed end (pass 33, 8.4): none when
+        // no resource was made, or for a backend that keeps none.
+        let terminal = match billed_secs {
+            Some(_) => self
+                .job_observation(&key)?
+                .and_then(|observation| observation.terminal),
+            None => None,
+        };
+        let reason = confirmed_reason(reason, terminal.as_ref());
         let chunk = job.chunk_mut()?;
         chunk.resource = resource;
-        let billed_with_overhead =
-            billed_secs.map_or(0, |secs| secs.saturating_add(chunk.quote.overhead_secs));
+        // A hard stop's seconds are the machine's own measure, from the launch
+        // to the empty unit: they replace a live estimate a status took before
+        // the end, which can run past it (pass 33, 8.6).
+        if let Some(measured) = terminal
+            .as_ref()
+            .filter(|terminal| terminal.end == GpuJobEnd::TimeLimit)
+            .and_then(|terminal| terminal.measured_secs)
+        {
+            chunk.used_secs = measured;
+        }
+        // JOB-SETTLES-ON-LAUNCH-REFUSED (LE-2 = A): a key that never started bills
+        // zero, including overhead.
+        let billed_with_overhead = if terminal.as_ref().is_some_and(|t| t.end.never_ran()) {
+            0
+        } else {
+            billed_secs.map_or(0, |secs| secs.saturating_add(chunk.quote.overhead_secs))
+        };
         let charged_secs = billed_with_overhead.min(chunk.quote.quantity);
         chunk.billed_secs = billed_secs;
         chunk.unbilled_secs = billed_with_overhead - charged_secs;
@@ -280,6 +317,7 @@ impl Vault {
             chunk.settled_units = Some(charged_secs.saturating_mul(chunk.quote.unit_cost));
         }
         let settled_units = chunk.settled_units;
+        let used_secs = chunk.base_used_secs.saturating_add(chunk.used_secs);
         job.state = if reason == GpuEndReason::AtMaximum {
             GpuJobState::Stopped
         } else {
@@ -289,6 +327,12 @@ impl Vault {
             if !self.put_gpu_job_in_txn(txn, &mut job, now_ms)? {
                 return Ok(None);
             }
+            if let Some(claim) = &job.claim {
+                let report = unit_end(terminal.as_ref(), reason, billed_secs, used_secs);
+                // A claim that already ended keeps its terminal: the owner's
+                // write-off came first.
+                let _ = settle_unit_in_txn(self, txn, claim, &job.id, &report, now_ms)?;
+            }
             let Some(stop) = job
                 .stop
                 .as_ref()
@@ -296,11 +340,21 @@ impl Vault {
             else {
                 return Ok(Some(Vec::new()));
             };
-            let detail = format!(
-                "stopped at its maximum after {} of {} seconds; add funds and resume from \
-                 checkpoint {}",
-                stop.notice.used_units, stop.notice.maximum.units, stop.notice.checkpoint.0
-            );
+            // With no resume quote (a withdrawn offer quotes none, design pass
+            // 33, 8.1) the notice offers no resume.
+            let detail = if job.resume_quote.is_some() {
+                format!(
+                    "stopped at its maximum after {} of {} seconds; add funds and resume from \
+                     checkpoint {}",
+                    stop.notice.used_units, stop.notice.maximum.units, stop.notice.checkpoint.0
+                )
+            } else {
+                format!(
+                    "stopped at its maximum after {} of {} seconds at checkpoint {}; no resume \
+                     is offered",
+                    stop.notice.used_units, stop.notice.maximum.units, stop.notice.checkpoint.0
+                )
+            };
             self.notify_gpu_job_in_txn(
                 txn,
                 &job,
@@ -371,22 +425,121 @@ impl Vault {
     }
 }
 
+/// What ends the unit whose job's chunk ended for `reason`. With no resource
+/// ever made (`billed_secs` is `None`) nothing ran, and the unit is released.
+/// Else it is `terminal`, the typed terminal the job's machine established,
+/// which its backend stored beside the receipt at the confirmed end (pass 33,
+/// 8.4), or, for a backend that keeps none, the step's own end
+/// ([`generic_terminal`]).
+fn unit_end(
+    terminal: Option<&GpuJobTerminal>,
+    reason: GpuEndReason,
+    billed_secs: Option<u64>,
+    used_secs: u64,
+) -> UnitEndReport {
+    let Some(billed_secs) = billed_secs else {
+        return UnitEndReport::Refused {
+            reason: GpuJobEnd::Withdrawn.label(),
+        };
+    };
+    UnitEndReport::Machine(
+        terminal
+            .cloned()
+            .unwrap_or_else(|| generic_terminal(reason, billed_secs, used_secs)),
+    )
+}
+
+/// The reason a confirmed end settles with. A chunk the machine never started ends as
+/// `NeverStarted`, unless the caller cancelled it. A cancel that reached a run already
+/// ended by its machine at the maximum ends as `TimeLimit` (pass 33, 8.6).
+fn confirmed_reason(asked: GpuEndReason, terminal: Option<&GpuJobTerminal>) -> GpuEndReason {
+    match terminal.map(|terminal| &terminal.end) {
+        Some(GpuJobEnd::TimeLimit) if asked == GpuEndReason::Cancelled => GpuEndReason::TimeLimit,
+        Some(end) if end.never_ran() && asked != GpuEndReason::Cancelled => {
+            GpuEndReason::NeverStarted
+        }
+        _ => asked,
+    }
+}
+
+/// Records the run time of a chunk its backend ended by itself, for `reason`
+/// (its process exited, or the backend stopped it at its maximum), and starts
+/// the chunk's end.
+fn ended_by_backend(
+    job: &mut GpuJob,
+    used_secs: u64,
+    reason: GpuEndReason,
+) -> Result<(), GpuJobError> {
+    let chunk = job.chunk_mut()?;
+    chunk.used_secs = chunk.used_secs.max(used_secs);
+    let total = chunk.base_used_secs.saturating_add(chunk.used_secs);
+    let _ = job.maximum.record_usage(total);
+    job.state = GpuJobState::Ending { reason };
+    Ok(())
+}
+
+/// The typed terminal of a chunk whose backend keeps none, from the step's
+/// own end, read as the work-order pass reads such an end: an exit is a clean
+/// exit, the stop at the maximum the time limit, a cancel a stop. A lost
+/// resource has no measured seconds and costs nobody (lead ruling LE-2 = A);
+/// `used_secs`, the run time last seen, is kept as its lower bound.
+fn generic_terminal(reason: GpuEndReason, billed_secs: u64, used_secs: u64) -> GpuJobTerminal {
+    let end = match reason {
+        GpuEndReason::Exited => GpuJobEnd::Exited { code: 0 },
+        GpuEndReason::AtMaximum | GpuEndReason::TimeLimit => GpuJobEnd::TimeLimit,
+        GpuEndReason::Cancelled => GpuJobEnd::Stopped,
+        // Fallback only: NeverStarted comes with a typed terminal or from the hold path,
+        // which settles its claim itself.
+        GpuEndReason::NeverStarted => GpuJobEnd::Withdrawn,
+        // Only `Gone` reaches this branch through a step, not a write-off.
+        GpuEndReason::Gone | GpuEndReason::Unconfirmed => GpuJobEnd::Lost {
+            reason: "gone".to_owned(),
+            last_seen_secs: used_secs,
+        },
+    };
+    let lost = matches!(end, GpuJobEnd::Lost { .. });
+    let billed_secs = if end.never_ran() { 0 } else { billed_secs };
+    GpuJobTerminal {
+        end,
+        measured_secs: (!lost).then_some(billed_secs),
+        billed_secs: if lost { 0 } else { billed_secs },
+        meter: if lost {
+            MeterVerdict::Unknown
+        } else {
+            MeterVerdict::Agreed
+        },
+        machine: None,
+        device_id: None,
+        outputs: Vec::new(),
+    }
+}
+
 /// Admits a live chunk again when this host holds no permit for it, after a
 /// restart: at its quote's price and unit, which froze at the quote, for its
 /// whole quote, as the kept permit before it held. Returns whether the record
-/// changed.
+/// changed. A unit's job is never admitted on the host account: its claim is
+/// its hold (design pass 32 r2, 7.2 point 3), and no permit is lost. With its
+/// offer withdrawn (`None`), nothing binds a new permit: the chunk runs on
+/// unpaid, as when the admission no longer fits.
 fn take_up_gpu_chunk(
     job: &mut GpuJob,
-    offer: &GpuOffer,
+    offer: Option<&GpuOffer>,
     admission: &RunAdmission,
     permits: &GpuJobPermits,
 ) -> crate::Result<bool> {
+    if job.claim.is_some() {
+        return Ok(false);
+    }
     let id = job.id;
     let chunk = job.chunk_mut()?;
     let key = chunk.idempotency_key.clone();
     if chunk.admission_lost || permits.holds_chunk(&id, &key) {
         return Ok(false);
     }
+    let Some(offer) = offer else {
+        chunk.admission_lost = true;
+        return Ok(true);
+    };
     let binding = PaidConnector {
         unit_cost: chunk.quote.unit_cost,
         cost_unit: chunk.quote.unit.clone(),

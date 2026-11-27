@@ -582,3 +582,68 @@ pub(crate) fn erase_step_state_owner_in_txn(
     }
     Ok(())
 }
+
+/// How many step-state rows of `attempt` keep a response, for `test_doors`.
+///
+/// # Errors
+///
+/// Storage errors.
+#[cfg(oneiron_test_support)]
+pub(crate) fn kept_step_responses_of(vault: &Vault, attempt: AttemptId) -> Result<usize> {
+    let rtxn = vault.store.env.read_txn()?;
+    let mut kept = 0;
+    for row in STEP_STATE.iter_raw_from(&vault.store, &rtxn, attempt.as_bytes())? {
+        let (key, _) = row?;
+        let Some((attempt, step)) =
+            <(AttemptId, [u8; 32]) as crate::side_table::SideKey>::decode_key(&key)
+        else {
+            continue;
+        };
+        if step_state_read_in_txn(vault, &rtxn, attempt, &step)
+            .ok()
+            .flatten()
+            .is_some_and(|row| row.response_payload.is_some())
+        {
+            kept += 1;
+        }
+    }
+    Ok(kept)
+}
+
+/// Takes the response out of the step-state row of `(attempt_id, step_hash)` and marks it
+/// erased, whoever its stamps name, with every request kept for the step (FIX 6659), in the
+/// caller's writer. A step's stamps name one subject; a caller that read the step's words
+/// from more rows binds the step to each of them itself (the answer-schema check,
+/// REVIEW-10538 round 2) and asks this when any of them goes. A row with no response yet is
+/// marked too, so a late answer is never kept and the step is never asked again. No row, an
+/// erased one, or one that does not decode stays as it is.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn erase_step_state_key_in_txn(
+    store: &crate::store::Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    attempt_id: AttemptId,
+    step_hash: &[u8; 32],
+) -> Result<()> {
+    let key = (attempt_id, *step_hash);
+    let row = match STEP_STATE.get_borrowed(store, &*wtxn, &key)? {
+        None => None,
+        Some(raw) => {
+            match ResponseRead::of(ResponseFamily::StepState, &STEP_STATE.key_bytes(&key), &raw) {
+                ResponseRead::ErasedOpaque(_) => None,
+                ResponseRead::Present(raw) => STEP_STATE.decode_value(raw).ok(),
+            }
+        }
+    };
+    if let Some(mut state) = row.filter(|state| !state.erased) {
+        state.response_payload = None;
+        state.source = None;
+        state.erased = true;
+        STEP_STATE.put(store, wtxn, &key, &state)?;
+    }
+    crate::self_heal::blocked_reports::remove_step_sources_in_store_txn(
+        store, wtxn, attempt_id, step_hash,
+    )
+}

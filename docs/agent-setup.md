@@ -1,15 +1,23 @@
 # Unattended agent setup
 
-From a checkout, on Linux or macOS:
+From a checkout, on Linux:
 
 ```sh
-python3 examples/agent-quickstart/quickstart.py --keep-running
+python3 examples/agent-quickstart/quickstart.py --binary /absolute/path/to/oneiron --keep-running
 ```
 
-This is the install → start → connect → save → retrieve path for a coding agent.
-It needs no account, dashboard, API key, model, embedding service, or interactive
-pairing. The script builds **this checkout**, not an assumed published release.
-A source build can take several minutes; this is not a five-minute build claim.
+Use a compatible Linux binary from this revision. The tested binary was
+Linux x86-64. The script starts an authenticated loopback vault.
+It saves an entry and reads it back from its private diary. It then saves and
+recalls a vault-readable research note and checks MCP `initialize`.
+It needs no account, dashboard, external API key, model, embedding service,
+or interactive pairing. It does not download a binary.
+
+The `--binary` option skips compilation. Without it, Linux builds this checkout
+with Cargo's release profile. In one Linux x86-64 test, a one-job install with
+partly cached build artifacts took about 2 h 7 min and peaked at about 37.2 GiB.
+A cold parallel attempt was killed at a 40 GiB cap. A successful cold build and
+a 16 GiB source install were not demonstrated.
 
 ## Prerequisites
 
@@ -19,11 +27,17 @@ A source build can take several minutes; this is not a five-minute build claim.
   CMake, and pkg-config. `rust-toolchain.toml` pins the Rust toolchain; rustup
   selects/downloads it when Cargo runs in the checkout.
 
-On a Debian/Ubuntu build host, the native tools can be installed without package
-prompts with `sudo apt-get install -y build-essential clang cmake pkg-config git
-curl python3`. This requires an already-authorized administrator; the example
-never requests sudo or installs OS packages. On macOS, Command Line Tools must
-already be installed; the example never opens an installer or a browser.
+On macOS, pass `--binary` with a build from this checkout signed with a keychain
+access group. With the default `backend = "platform"`, a plain `cargo install`
+binary cannot mint the agent credential: macOS uses the data-protection
+keychain, with no automatic file fallback. Such a build can opt into
+`[keystore] backend = "file"` in its own config, which keeps the key slots as
+0600 files in `dir`, guarded by file modes only (see the `[keystore]` section of
+`crates/oneiron-server/README.md`). The demo does not choose that for you.
+
+On Debian/Ubuntu, the source-build dependencies include `build-essential`,
+`clang`, `cmake`, `pkg-config`, `git`, `curl`, and `python3`. The example never
+requests sudo or installs OS packages.
 
 If rustup is missing, its documented noninteractive installer is:
 
@@ -32,15 +46,10 @@ curl --proto '=https' --tlsv1.2 -fsSLo /tmp/oneiron-rustup-init.sh https://sh.ru
 sh /tmp/oneiron-rustup-init.sh -y --profile minimal --default-toolchain none
 ```
 
-The example finds the default Cargo install directory without needing a new
-login shell. With an existing binary from this checkout, skip the build:
+On Linux, omit `--binary` to build this checkout. The example finds Cargo's
+default bin directory without needing a new login shell.
 
-```sh
-python3 examples/agent-quickstart/quickstart.py --binary /absolute/path/to/oneiron --keep-running
-```
-
-Repository contributors must still follow the build-host rules in
-[AGENTS.md](../AGENTS.md): do not run a source build on the owner's Mac.
+Contributors to this repository: the build rules are in [AGENTS.md](../AGENTS.md).
 
 ## What the script does
 
@@ -52,8 +61,8 @@ Repository contributors must still follow the build-host rules in
    supplied. It runs `cargo install --locked --path crates/oneiron-server --bin
    oneiron --root <directory>/install` from the repository root.
 3. Chooses an unused loopback port and writes a private `oneiron.toml` with a
-   random host issuer secret. It ignores inherited `ONEIRON_*` variables for all
-   child commands, so it cannot accidentally use an existing vault or model.
+   random host authentication secret. It ignores inherited `ONEIRON_*`
+   variables and uses only the new vault and its config.
 4. Runs `oneiron init <directory>/vault --config <directory>/oneiron.toml
    --embedder none --oneironer none`. Both choices are explicit; init cannot
    prompt or download a model.
@@ -63,19 +72,28 @@ Repository contributors must still follow the build-host rules in
    and the agent's grant. It does not require an owner pairing-link click.
 6. Starts `oneiron serve --config <directory>/oneiron.toml`, with logs in
    `server.log`, and waits up to 60 seconds for `/api/health`.
-7. Saves a private diary NOTE with `POST /v1/core/facade/self.memory.diary` and
-   retrieves it with `POST /v1/core/facade/vault.recall`, using `effort: "light"`.
-   It checks both the recalled text and the saved entry's provenance id before
-   reporting success. This is lexical recall, not semantic/vector recall. It
-   neither promotes a generated claim nor changes the vault's claim policy.
-8. Connects through `oneiron mcp --surface tool-first --credential-file
+7. Saves a private diary NOTE with `POST /v1/core/facade/self.memory.diary`
+   and reads it back from its private diary with
+   `POST /v1/core/facade/self.memory.diary.query`. The script passes the minted
+   agent's ID and a one-line reason, then checks the returned Markdown and
+   entry ID. Ordinary `vault.recall` does not return diary entries.
+8. Writes a vault-readable research NOTE with
+   `POST /v1/core/facade/vault.notes.create`, then calls
+   `POST /v1/core/facade/vault.recall` with `effort: "light"`. It checks the
+   matching text and the saved NOTE's ID in the result's provenance. This is
+   lexical recall, not semantic/vector recall. It does not promote a claim
+   or change the vault's claim policy.
+9. Connects through `oneiron mcp --surface tool-first --credential-file
    <directory>/agent.cred --url <origin>` and checks its MCP `initialize` reply.
    This surface needs no code executor or model configuration.
 
-The demo sets `[keystore] backend = "off"` **only in its fresh config**, avoiding
-OS keychain prompts. Device signing and private-world key doors are unavailable
-in this demo. It does not turn off HTTP authentication. For a real vault that
-needs those doors, configure the platform keystore separately.
+The demo sets `[keystore] backend = "platform"` in its fresh config. The issuer
+needs this keystore to mint the agent credential. On Linux, `dir` puts key
+slots in 0600 files in a 0700 directory beside, not inside, the vault. This is
+software protection, not a hardware keystore. It does not ask for a keychain
+login; backup tools skip the directory only if they honour `CACHEDIR.TAG`.
+On macOS `dir` is ignored. The signed binary uses the data-protection keychain.
+HTTP authentication stays on.
 
 Without `--keep-running`, the script stops its server after the round trip.
 With it, the server runs in its own session, its PID is printed, and the agent
@@ -85,8 +103,10 @@ example started; they do not kill any existing server.
 Expected output includes these lines (paths, port, ids and text vary):
 
 ```text
-Saved and recalled memory: <32-hex entry id>
+Read back from its private diary: <32-hex entry id>
+Saved and recalled research note: <32-hex note id>
 MCP connected. Client config: <directory>/mcp.json
+MCP protocol: 2024-11-05
 Connection details: <directory>/connection.json
 Vault remains running at http://127.0.0.1:<port>. Stop it with: kill <pid>
 ```
@@ -94,9 +114,11 @@ Vault remains running at http://127.0.0.1:<port>. Stop it with: kill <pid>
 ## Connect your coding agent
 
 `connection.json` contains the absolute binary, config and credential paths,
-URL, PID, log path, memory id and recall query. `mcp.json` contains a ready
-`mcpServers.oneiron` entry with absolute paths. Do not commit these local files:
-`agent.cred` holds a paired credential and `oneiron.toml` holds the issuer secret.
+URL, PID, log path, the diary agent and entry IDs, and the research note ID
+and recall query.
+`mcp.json` contains a `mcpServers.oneiron` entry with absolute paths.
+Do not commit these local files: `agent.cred` holds a paired credential and
+`oneiron.toml` holds the host authentication secret.
 
 - **Claude Code:** merge the generated `mcpServers.oneiron` entry into the
   project's `.mcp.json`, or use the already-documented
@@ -115,27 +137,33 @@ No client-specific configuration is modified automatically. The script has
 already connected and performed the memory round trip without any such edit;
 these entries tell an ongoing client how to keep using that vault.
 
-The agent first calls `tools/list`. The tool-first endpoint exports the same
-verb names as HTTP. It can save another diary entry with:
+The tool-first MCP endpoint lists the memory verbs in `tools/list`. Use the
+input schema it returns for each `tools/call`. The MCP schema has an envelope
+with `schema_version`, `consent`, and `arguments`; do not send an HTTP body as
+MCP tool arguments. The paired credential binds the actor.
 
-```json
-{"name":"self.memory.diary","arguments":{"spec":{"content":"Remember this project note."}}}
+For HTTP, send each body directly (no MCP envelope):
+
+For a private entry, use your own 32-hex principal ID (`principal_ref` from
+`oneiron token agent --out`) and give a one-line read reason.
+
+```text
+POST /v1/core/facade/self.memory.diary
+{"content":"Private project note."}
+
+POST /v1/core/facade/self.memory.diary.query
+{"agent":"<agent id>","reason":"Read my project note"}
 ```
 
-Then call `vault.recall` with
-`{"spec":{"query":"project note","effort":"light","limit":5}}` as its
-arguments. These are the `params` of an MCP `tools/call`. Do not invent an
-`actor` block; the credential binds the actor. Diary entries are private to
-that agent principal, so a different agent name does not share this diary.
+For an entry that ordinary recall can find, create a vault-readable research
+NOTE and search for words from it.
 
-For HTTP, the exact same inputs have **no `spec` wrapper**:
-
-```json
-POST /v1/core/facade/self.memory.diary
-{"content":"Remember this project note."}
+```text
+POST /v1/core/facade/vault.notes.create
+{"kind":"research","markdown":"Orchard project note."}
 
 POST /v1/core/facade/vault.recall
-{"query":"project note","effort":"light","limit":5}
+{"query":"orchard","effort":"light","limit":5}
 ```
 
 Use `oneiron api --base-url <origin> raw POST <path> --data -` with the JSON
@@ -223,7 +251,7 @@ oneiron mcp --url https://<vault-host> --auth-mode owner \
   setup directory. A temporary directory can still be removed by the OS.
 - **Restart:** use the absolute `binary` from `connection.json` with
   `serve --config <config>`. Remove inherited `ONEIRON_*` overrides first,
-  as the example does. Keep the same config/issuer secret and credential.
+  as the example does. Keep the same config and credential.
 - **Missing binary:** omit `--binary` to install the checkout, or pass the
   absolute executable path. Adding an unrelated release binary to `PATH`
   does not replace the checkout installation by default.
@@ -238,12 +266,18 @@ oneiron mcp --url https://<vault-host> --auth-mode owner \
 - **Writer lease held:** do not run init or token minting against a vault
   while it is served. Stop that vault, mint, then restart it.
 - **401, 403, or `mcp_auth_required`:** check the URL and credential refer to
-  the same vault. `auth_secret` is an issuer key, **not** a bearer token.
+  the same vault. The host `auth_secret` is **not** an agent bearer token.
   For an expired/revoked slip, stop this vault, run `token agent` with the same
   name/tier/config and a new `--out` file, restart, and update the client path.
   The latest mint for a name revokes that name's previous slips. In owner
   mode, minting a slip does not help: sign in again on the surface that
   wrote `--owner-upgrade-headers-file`.
+- **`mcp_grant_missing`:** the credential is sound, and its tier lacks the
+  grant `error.data.required_scope` names: `core:write` for a write that
+  takes effect at once (a `read-only` agent's `vault.notes.create`, a
+  `propose-only` agent's claim edit in place), `core:propose` for one that
+  waits for review (a `read-only` agent's new claim). Replacing the slip at
+  the same tier does not help: mint it again at a tier that holds the grant.
 - **`proof_clock_ahead`:** follow the clock-specific recovery instructions in
   [owner actions](ops/owner-actions.md#agents-refused-after-the-host-clock-ran-ahead),
   rather than repeatedly replacing credentials.

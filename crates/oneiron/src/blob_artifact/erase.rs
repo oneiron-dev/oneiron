@@ -37,18 +37,6 @@ pub(crate) fn project_version_erased_in_txn(
     Ok(projected)
 }
 
-/// Whether a version claim stands under a customer hold alone. The check is
-/// fail-safe: a storage error reads as held, so the pair is preserved, never
-/// half-scrubbed.
-fn version_claim_held_in_txn(vault: &Vault, wtxn: &RwTxn<'_>, claim: &EntityId) -> Result<bool> {
-    Ok(!crate::store::legal_hold::holds_on_in_txn(
-        &vault.store,
-        wtxn,
-        &crate::deletion::LegalHoldTarget::Record(*claim),
-    )?
-    .is_empty())
-}
-
 /// Erases `actor` from every retained version and head made_by receipt and
 /// from the claim each receipt is bound to. Other attribution, content,
 /// versions, triggers and timestamps stay unchanged (FIX 9619).
@@ -75,16 +63,6 @@ pub(crate) fn erase_blob_artifact_version_actor_in_txn(
             heads.push((artifact, record));
         }
     }
-    // A customer hold on a version claim alone preserves its claim, record
-    // and revision history: the pair's scrub defers while the hold stands
-    // (holds mandate preservation), and only hold-free pairs are rewritten
-    // below. The deferred pair settles when the hold lifts (follow-up).
-    versions.retain(|(_, record)| {
-        !version_claim_held_in_txn(vault, wtxn, &record.claim_id).unwrap_or(true)
-    });
-    heads.retain(|(_, record)| {
-        !version_claim_held_in_txn(vault, wtxn, &record.claim_id).unwrap_or(true)
-    });
     for (key, record) in versions {
         rewrite_version_claim_in_txn(vault, wtxn, &record)?;
         VERSIONS.put(&vault.store, wtxn, &key, &record)?;

@@ -26,6 +26,8 @@ use axum::Router;
 use crate::http_listener::ConnectionLimits;
 
 #[cfg(feature = "mesh")]
+mod execution_node;
+#[cfg(feature = "mesh")]
 mod home_pin;
 #[cfg(feature = "mesh")]
 mod pressure;
@@ -33,6 +35,21 @@ mod pressure;
 mod shutdown;
 #[cfg(feature = "mesh")]
 pub(crate) use home_pin::pin_home;
+
+/// Every protocol this engine's mesh listener serves: the one list a
+/// machine's enrolment pairing covers, so that the owner may grant any of
+/// them to it later, one protocol at a time (MESH-PAIRING-CEILING = A,
+/// Engine 25 Nov 01:1x). A new protocol joins `mesh_routes` and this list
+/// together; `mesh_routes` checks it in debug builds.
+#[cfg(feature = "mesh")]
+pub const SERVED_MESH_ALPNS: [&[u8]; 6] = [
+    oneiron_mesh_transport::SYNC_ALPN,
+    oneiron_organ_host::ORGAN_ALPN,
+    oneiron_llm::oneiron_rpc::LLM_ALPN,
+    oneiron_mesh_transport::files_search::FILES_SEARCH_ALPN,
+    oneiron::job_workload::JOB_ALPN,
+    oneiron::job_workload::JOB_STATUS_ALPN,
+];
 
 /// Where the mesh listener binds; unset leaves it off.
 const BIND_ENV: &str = "ONEIRON_MESH_BIND";
@@ -192,6 +209,7 @@ mod host {
     use tokio::task::{JoinHandle, JoinSet};
 
     use super::MeshProvedMachine;
+    use super::execution_node::{ServedNode, job_routes};
     use super::home_pin::{PinnedGrants, PinnedRoster};
     use super::pressure::{self, MeshFloor};
     use super::shutdown::{self, MeshShutdown};
@@ -221,6 +239,14 @@ mod host {
         pub(crate) fn tick(mut self, tick: MeshTick) -> Self {
             self.ticks.push(tick);
             self
+        }
+
+        /// Whether every protocol these routes serve is in
+        /// [`super::SERVED_MESH_ALPNS`], the list enrolment pairs for.
+        fn within_served(&self) -> bool {
+            self.routes
+                .iter()
+                .all(|(alpn, _)| super::SERVED_MESH_ALPNS.contains(&alpn.as_slice()))
         }
 
         fn service(&self, alpn: &[u8]) -> Option<Arc<dyn MeshService>> {
@@ -300,6 +326,7 @@ mod host {
         limits: ConnectionLimits,
         server: &Arc<crate::server::SyncServer>,
         stop: &Arc<MeshStop>,
+        node: Option<ServedNode>,
     ) -> MeshRoutes {
         let vault = &server.vault;
         // This machine's organ host (the server's one, which the seal worker
@@ -309,7 +336,7 @@ mod host {
         let router = Arc::new(organ_router(server));
         // The organ work's stop and cancel, and the model calls' deadline.
         let work = &stop.shutdown;
-        MeshRoutes::default()
+        let routes = MeshRoutes::default()
             .route(SYNC_ALPN, Arc::new(sync_route(app, limits, server, stop)))
             .route(
                 ORGAN_ALPN,
@@ -342,7 +369,13 @@ mod host {
                 Arc::clone(vault),
                 work.organs.clone(),
             ))
-            .tick(server.pack_organ_tick(work.organs.clone()))
+            .tick(server.pack_organ_tick(work.organs.clone()));
+        let routes = job_routes(routes, node);
+        debug_assert!(
+            routes.within_served(),
+            "a protocol mesh_routes serves is missing from SERVED_MESH_ALPNS"
+        );
+        routes
     }
 
     /// The router a call the host itself makes takes (OF-575): this
@@ -510,15 +543,23 @@ mod host {
             })?;
         // The installed packs' organs go on the host before it is offered. A
         // sync-only device offers no organ host, so it installs none (L7-47).
-        if route_set == super::MeshRouteSet::Full {
+        // So does the execution node's job service: its journal is attached
+        // before the listener serves a job protocol (row R3a).
+        let node = if route_set == super::MeshRouteSet::Full {
             let installing = Arc::clone(&server);
             tokio::task::spawn_blocking(move || installing.install_pack_organs())
                 .await
                 .map_err(|error| anyhow::anyhow!("pack organ install: {error}"))?;
-        }
+            let opening = Arc::clone(&server);
+            tokio::task::spawn_blocking(move || ServedNode::open(&opening))
+                .await
+                .map_err(|error| anyhow::anyhow!("execution node open: {error}"))?
+        } else {
+            None
+        };
         let stopping = Arc::new(MeshStop::new());
         let routes = Arc::new(match route_set {
-            super::MeshRouteSet::Full => mesh_routes(app, limits, &server, &stopping),
+            super::MeshRouteSet::Full => mesh_routes(app, limits, &server, &stopping, node),
             super::MeshRouteSet::SyncOnly => MeshRoutes::default().route(
                 SYNC_ALPN,
                 Arc::new(sync_route(app, limits, &server, &stopping)),
@@ -539,6 +580,16 @@ mod host {
         let alpns: Vec<Vec<u8>> = routes.routes.iter().map(|(alpn, _)| alpn.clone()).collect();
         #[cfg(oneiron_test_support)]
         let bound = alpns.clone();
+        // A full listener dials every protocol the engine serves, whether or
+        // not this machine serves it: an issuer that is no execution node
+        // dials the nodes (pass 33 row R1). A sync-only device dials sync.
+        let dialed: Vec<Vec<u8>> = match route_set {
+            super::MeshRouteSet::Full => super::SERVED_MESH_ALPNS
+                .iter()
+                .map(|alpn| alpn.to_vec())
+                .collect(),
+            super::MeshRouteSet::SyncOnly => Vec::new(),
+        };
         let transport = Arc::new(
             IrohTransport::bind_paired(
                 key,
@@ -549,7 +600,8 @@ mod host {
                 Arc::new(VaultPathReceipts(vault)),
             )
             .await
-            .map_err(|error| anyhow::anyhow!("mesh listener bind {bind}: {error}"))?,
+            .map_err(|error| anyhow::anyhow!("mesh listener bind {bind}: {error}"))?
+            .dialing(dialed),
         );
         server
             .mesh_transport

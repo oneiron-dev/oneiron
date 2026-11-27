@@ -1,6 +1,8 @@
 //! The vault config a [`ServeConfig`] names: with this device's page seal,
 //! with none, and the privacy posture and data key custody it carries.
 
+use std::path::PathBuf;
+
 use oneiron::{VaultDataKeyCustody, VaultPrivacyConfig};
 
 use super::super::oneironer::OneironerConfig;
@@ -78,7 +80,21 @@ impl ServeConfig {
             .oneironer
             .as_ref()
             .and_then(OneironerConfig::marker_config);
+        // An owner's legal holds keep their sealed copies beside the vault
+        // directory, never inside it, so a vault erase never reaches them.
+        config.legal_hold_store = Some(self.legal_hold_store());
         config
+    }
+
+    /// Where this vault's owner-hold sealed copies go: `<vault
+    /// directory>.legal-holds`, beside the vault directory, one per install.
+    fn legal_hold_store(&self) -> PathBuf {
+        let name = self.vault_path.file_name().map_or_else(
+            || "vault".into(),
+            |name| name.to_string_lossy().into_owned(),
+        );
+        self.vault_path
+            .with_file_name(format!("{name}.legal-holds"))
     }
 
     /// Maps posture and custody without repairing invalid direct caller input.

@@ -15,5 +15,6 @@
   },
   "mcp_scope": "filtered",
   "mcp_served_output": "oneiron::EntityId::from_hex(&output.id).ok()",
-  "section": false
+  "section": false,
+  "caller_code": "refused"
 }

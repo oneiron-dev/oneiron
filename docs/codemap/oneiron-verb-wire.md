@@ -208,7 +208,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/connector_key/slate_revision.rs` | src | s | 1 enum | ConnectorRevisionDeferral | Moved from `crates/oneiron/src/connector_key/slate_revision.rs` (lib split W1: wire types below the lib) |
 | `src/connector_key/slate_scope_signal.rs` | src | s | 1 enum · 2 fn | ConnectorScopeExceed | Moved from `crates/oneiron/src/connector_key/slate_scope_signal.rs` (lib split W1: wire types below the lib) |
 | `src/consent/bypass_lifecycle.rs` | src | s | 4 struct | ActiveBypassGrantsRequest, BypassActionEnvelopeRequest, BypassedEffectReceipt, BypassedEffectReceiptsRequest | Moved from `crates/oneiron/src/consent/bypass_lifecycle.rs` (lib split W3: wire types below the lib) |
-| `src/consent/lifecycle.rs` | src | s | 7 struct | ActionBoundRequest, ActionEnvelopeRequest, ApproveOnceRequest, DenyConsentRequest, DisclosureBoundRequest, DisclosureEnvelopeRequest, RevokeGrantRequest | Moved from `crates/oneiron/src/consent/lifecycle.rs` (lib split W3: wire types below the lib) |
+| `src/consent/lifecycle.rs` | src | s | 8 struct · 2 enum | ActionBoundRequest, ActionEnvelopeRequest, ApproveOnceRequest, ComputeEnvelopeRequest, ComputeNetwork, ComputeScope, DenyConsentRequest, DisclosureBoundRequest +2 | Moved from `crates/oneiron/src/consent/lifecycle.rs` (lib split W3: wire types below the lib) |
 | `src/consent/mod.rs` | src | s | 3 mod · 64 re-export | — | — |
 | `src/consent/registry.rs` | src | s | 7 struct · 5 fn · 3 const | ConsentRegistryAgentGrant, ConsentRegistryDelegation, ConsentRegistryQuery, ConsentRegrantAction, ConsentRevokeAction, GrantlessAgentConvertAction, GrantlessAgentRow | Moved from `crates/oneiron/src/consent/registry.rs` (lib split W3: wire types below the lib) |
 | `src/consent_graduation/api.rs` | src | s | 3 struct · 5 enum | GraduationAnswer, GraduationChanged, GraduationDemotionReason, GraduationMode, GraduationOutcome, GraduationPolicies, GraduationPolicy, GraduationSnooze | Moved from `crates/oneiron/src/consent_graduation/api.rs` (lib split W3: wire types below the lib) |
@@ -241,8 +241,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/deletion/coop_delivery/mod.rs` | src | s | 1 mod · 7 re-export | — | — |
 | `src/deletion/coop_delivery/types.rs` | src | s | 1 enum · 1 fn · 1 re-export | CooperativeDeletionDispositionKind | Moved from `crates/oneiron/src/deletion/coop_delivery/types.rs` (lib split W1: wire types below the lib) |
 | `src/deletion/legal_hold/mod.rs` | src | s | 1 mod · 1 re-export | — | — |
-| `src/deletion/legal_hold/types.rs` | src | s | 2 struct · 7 enum · 5 fn · 2 const | ErasePendingReason, EraseWithdrawal, LegalHold, LegalHoldActorKind, LegalHoldEvent, LegalHoldEventKind, LegalHoldKind, LegalHoldReason +1 | Moved from `crates/oneiron/src/deletion/legal_hold/types.rs` (lib split W1: wire types below the lib) |
-| `src/deletion/mod.rs` | src | s | 2 mod · 47 re-export | — | — |
+| `src/deletion/legal_hold/types.rs` | src | m | 4 struct · 6 enum · 4 fn | HoldCloneCapture, LegalHold, LegalHoldActorKind, LegalHoldEvent, LegalHoldEventKind, LegalHoldFutureMessages, LegalHoldKind, LegalHoldReason +2 | Moved from `crates/oneiron/src/deletion/legal_hold/types.rs` (lib split W1: wire types below the lib) |
+| `src/deletion/mod.rs` | src | s | 2 mod · 45 re-export | — | — |
 | `src/derive/mod.rs` | src | s | 1 mod · 15 re-export | — | — |
 | `src/derive/wire.rs` | src | s | 14 struct · 2 enum | DeriveArchiveInput, DeriveClaimInput, DeriveCommitView, DeriveCopiedClaimView, DeriveEvidenceInput, DeriveItemView, DeriveLeftItemView, DerivePsychProfileInput +8 | Moved from `crates/oneiron/src/derive/wire.rs` (lib split W3: wire types below the lib) |
 | `src/disclosure/mod.rs` | src | s | 2 mod · 2 re-export | — | — |
@@ -258,7 +258,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/drafter/report.rs` | src | s | 2 struct · 2 fn · 2 const | DigestDrafter, DigestDrafterItem | Moved from `crates/oneiron/src/drafter/report.rs` (lib split W1: wire types below the lib) |
 | `src/drafter/serving.rs` | src | s | 1 enum | DrafterUnservedReason | Moved from `crates/oneiron/src/drafter/serving.rs` (lib split W1: wire types below the lib) |
 | `src/drafter/types.rs` | src | m | 6 struct · 8 enum · 4 fn | DrafterActor, DrafterArtifact, DrafterArtifactFile, DrafterCorpus, DrafterCorpusFile, DrafterDependencies, DrafterHoldReason, DrafterRetrainOutcome +6 | Moved from `crates/oneiron/src/drafter/types.rs` (lib split W1: wire types below the lib) |
-| `src/dreamer_consolidation/mod.rs` | src | s | 2 mod · 6 re-export | — | — |
+| `src/dreamer_consolidation/answer_schema.rs` | src | s | 2 struct · 2 fn · 2 const | DigestAnswerSchema, DigestAnswerSchemaItem | The answer-schema line of the morning report (HOUSE-SCHEMA-SWITCH): one item per answer-schema event no… |
+| `src/dreamer_consolidation/mod.rs` | src | s | 3 mod · 10 re-export | — | — |
 | `src/dreamer_consolidation/resources/mod.rs` | src | s | 1 mod · 1 re-export | — | — |
 | `src/dreamer_consolidation/resources/nightly_link_grant.rs` | src | s | 1 struct | NightlyLinkGrantRequest | Moved from `crates/oneiron/src/dreamer_consolidation/resources/nightly_link_grant.rs` (lib split W1: wire… |
 | `src/dreamer_consolidation/thing_agent.rs` | src | s | 5 struct | ThingDecideInput, ThingDecideOutput, ThingExtractInput, ThingExtractOutput, ThingProposalRef | Moved from `crates/oneiron/src/dreamer_consolidation/thing_agent.rs` (lib split W1: wire types below the lib) |
@@ -442,7 +443,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/registry/backend.rs` | src | s | 3 struct · 5 fn | ModelBackendPin, ModelCostReceipt, PricedModelBackend | Moved from `crates/oneiron/src/llm/registry/backend.rs` (lib split W2: wire types below the lib) |
 | `src/llm/run_admission/mod.rs` | src | s | 2 mod · 28 re-export | — | — |
 | `src/llm/run_admission/person_billing.rs` | src | s | 1 struct · 1 re-export | BillingAccountFiling | Moved from `crates/oneiron/src/llm/run_admission/person_billing.rs` (lib split W2: wire types below the lib) |
-| `src/llm/run_admission/resident_doors.rs` | src | s | 4 struct | ResidentShareView, ResidentSharesRequest, ResidentSharesView, SetResidentShareRequest | Moved from `crates/oneiron/src/llm/run_admission/resident_doors.rs` (lib split W2: wire types below the lib) |
+| `src/llm/run_admission/resident_doors.rs` | src | s | 5 struct | ResidentShareView, ResidentSharesRequest, ResidentSharesView, SetResidentShareRequest, UnitSharesView | Moved from `crates/oneiron/src/llm/run_admission/resident_doors.rs` (lib split W2: wire types below the lib) |
 | `src/llm/seat.rs` | src | s | 1 enum · 1 fn · 1 mod · 1 re-export | DescriptionSource | Moved from `crates/oneiron/src/llm/seat.rs` (lib split W2: wire types below the lib) |
 | `src/llm/seat/policy.rs` | src | s | 1 enum · 2 fn | SeatPrecedence | Moved from `crates/oneiron/src/llm/seat/policy.rs` (lib split W2: wire types below the lib) |
 | `src/llm/step/mod.rs` | src | s | 1 mod · 12 re-export | — | — |
@@ -550,7 +551,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/reads.rs` | src | s | 2 struct | ClaimListFilter, NeighborOpts | Moved from `crates/oneiron/src/memory/reads.rs` (lib split W2: wire types below the lib) |
 | `src/memory/recall/call_mode.rs` | src | s | 1 enum · 2 fn · 1 re-export | RecallEffort | Moved from `crates/oneiron/src/memory/recall/call_mode.rs` (lib split W2: wire types below the lib) |
 | `src/memory/recall/home.rs` | src | s | 1 struct · 1 enum | RecallResidenceHit, RecallResidenceSource | Moved from `crates/oneiron/src/memory/recall/home.rs` (lib split W2: wire types below the lib) |
-| `src/memory/recall/mod.rs` | src | s | 5 struct · 1 enum · 6 fn · 3 mod · 6 re-export | Effort, MemoryProvenance, RecallRequest, RecallScope, RetrievalMeta, ScopeHonesty | Moved from `crates/oneiron/src/memory/recall/mod.rs` (lib split W2: wire types below the lib) |
+| `src/memory/recall/mod.rs` | src | m | 8 struct · 3 enum · 9 fn · 1 const · 3 mod · 6 re-export | Effort, LineProvenance, MemoryProvenance, RecallBarAsk, RecallBarOutcome, RecallBarRule, RecallRequest, RecallScope +3 | Moved from `crates/oneiron/src/memory/recall/mod.rs` (lib split W2: wire types below the lib) |
 | `src/memory/recall/paid.rs` | src | s | 2 enum | RerankReport, RerankSkip | Moved from `crates/oneiron/src/memory/recall/paid.rs` (lib split W2: wire types below the lib) |
 | `src/memory/repo_doors/custody.rs` | src | s | 4 struct | RepoCheckoutBindInput, RepoCheckoutBindOutput, RepoExportInput, RepoExportOutput | Moved from `crates/oneiron/src/memory/repo_doors/custody.rs` (lib split W2: wire types below the lib) |
 | `src/memory/repo_doors/mod.rs` | src | s | 3 mod · 6 re-export | — | — |
@@ -889,7 +890,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/verbs/host/pack_setup.rs` | src | s | 4 struct | PackSetupAnswerRequest, PackSetupCardActionInput, PackSetupRequest, PackSetupVerifyRequest | Moved from `crates/oneiron/src/verbs/host/pack_setup.rs` (lib split W3: wire types below the lib) |
 | `src/verbs/hub.rs` | src | s | 20 struct · 2 enum | ClawHubSearchRequest, HookGrantRequest, HubConsentOutcome, HubHookBindRequest, HubHookGoldenRun, HubHookQualifyRequest, HubImportRequest, HubPackRequest +14 | Moved from `crates/oneiron/src/verbs/hub.rs` (lib split W3: wire types below the lib) |
 | `src/verbs/identity_topology.rs` | src | s | 10 struct · 5 enum · 2 fn | IdentityAssertDistinctRequest, IdentityEntityRequest, IdentityEventRequest, IdentityEvidence, IdentityFacetSpec, IdentityLifecycle, IdentityPairProposals, IdentityPairRequest +7 | Moved from `crates/oneiron/src/verbs/identity_topology.rs` (lib split W3: wire types below the lib) |
-| `src/verbs/legal_hold.rs` | src | s | 6 struct · 1 enum | LegalHoldEraseState, LegalHoldErasedRecord, LegalHoldErasesWithdrawn, LegalHoldPlaceRequest, LegalHoldWidenRequest, LegalHoldWithdrawEraseRequest, LegalHoldWithdrawnErase | Moved from `crates/oneiron/src/verbs/legal_hold.rs` (lib split W3: wire types below the lib) |
+| `src/verbs/legal_hold.rs` | src | s | 2 struct | LegalHoldPlaceRequest, LegalHoldWidenRequest | Moved from `crates/oneiron/src/verbs/legal_hold.rs` (lib split W3: wire types below the lib) |
 | `src/verbs/live_run.rs` | src | s | 1 struct | LiveRunRequest | Moved from `crates/oneiron/src/verbs/live_run.rs` (lib split W3: wire types below the lib) |
 | `src/verbs/live_voice.rs` | src | s | 10 struct · 2 enum | LiveVoiceAckKind, LiveVoiceAckRequest, LiveVoiceAudioRequest, LiveVoiceEventsRequest, LiveVoiceProcessed, LiveVoiceSession, LiveVoiceSessionRequest, LiveVoiceStartRequest +4 | Moved from `crates/oneiron/src/verbs/live_voice.rs` (lib split W3: wire types below the lib) |
 | `src/verbs/memory_requests.rs` | src | s | 11 struct · 2 enum · 4 re-export | AppendBlobVersionRequest, AuthorTakeRequest, AuthorTakeTarget, ClaimHistoryRequest, ClaimRefRequest, CommitRequest, ConsolidationEnqueueRequest, ConsolidationStatusRequest +5 | Moved from `crates/oneiron/src/verbs/memory_requests.rs` (lib split W3: wire types below the lib) |

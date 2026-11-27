@@ -154,6 +154,14 @@ select a continuable producer whose output is not a vector or cursor page;
 otherwise continuation follows `page` or a vector output. Credential write
 admission follows `scope`, not a second hand-maintained list.
 
+`caller_code: "refused"` marks a row whose answer is a credential or a secret
+value (a slip, a token, a revealed secret), or one not yet shown to carry none
+(FIX CALLER-CODE-UNRESOLVED-ROWS opens each after its output type is read). A
+code-mode run whose program its caller wrote (MCP `execute`) is refused the
+row, whatever its credential holds, so no credential reaches code the caller
+sent. The generator refuses any other value of the key. A run row (one with an
+`effect`) takes no such key: the MCP code-mode door names those effects.
+
 Every row's `input` also selects its schemars input schema. MCP projects the
 same `mcp_fields` paths into that schema, including `$` and `=field`, and keeps
 the common envelope constraints. An unresolved input field refuses tool

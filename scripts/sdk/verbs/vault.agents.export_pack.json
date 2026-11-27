@@ -23,5 +23,6 @@
       "ts": "/** The agent's travelling AgentPack folder (files base64) and what stayed home. */",
       "py": "The agent's travelling AgentPack folder (files base64) and what stayed home."
     }
-  }
+  },
+  "caller_code": "refused"
 }

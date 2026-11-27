@@ -52,6 +52,9 @@ pub(crate) struct PackRunStatus {
     /// Per TURN in the pack, the MESSAGE rows it took the place of, best
     /// first ([`ContextPackBuilder::fold_messages_into_turns`]).
     pub(crate) cited_messages: std::collections::HashMap<EntityId, Vec<EntityId>>,
+    /// Per item, the raw cosine of its vector and the query's that a recall's relevance bar
+    /// judged it by; empty unless the bar compares cosines.
+    pub(crate) bar_similarity: std::collections::HashMap<EntityId, f32>,
 }
 
 impl ContextPackBuilder<'_> {
@@ -165,6 +168,7 @@ impl ContextPackBuilder<'_> {
             vector_completed: run.vector_completed,
             temporal_hints: run.temporal_hints,
             cited_messages: run.cited_messages,
+            bar_similarity: run.bar_similarity,
         };
         let mut pending = UnfinalizedContextPack {
             value: run.pack,

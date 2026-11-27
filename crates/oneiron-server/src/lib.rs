@@ -47,6 +47,7 @@ mod connector_admission_host;
 pub mod connector_call_host;
 mod connector_call_settle;
 mod connector_elicitation;
+mod connector_translate;
 pub mod control_keys;
 mod conversation_training;
 #[cfg(feature = "code-sandbox-wasmtime")]
@@ -64,8 +65,11 @@ pub mod error;
 pub mod feedback_delivery;
 mod feedback_redaction;
 mod files_intake;
+pub mod gpu_execution_node;
 mod gpu_host;
 mod handler;
+#[cfg(feature = "mesh")]
+pub use handler::mesh::SERVED_MESH_ALPNS;
 mod home_candidacy;
 mod hook_decisions;
 #[cfg(feature = "code-sandbox-wasmtime")]
@@ -121,6 +125,8 @@ pub mod web_client;
 mod web_connector;
 pub mod wire_health;
 pub mod wire_telemetry;
+pub mod work_order_host;
+pub mod workspace_identity;
 mod xlsx_recalc;
 // Process-local driver attachment only; this adds no HTTP/MCP route.
 // The stream/output owner still has to supply production serve prerequisites.

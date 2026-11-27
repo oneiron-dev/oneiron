@@ -1,13 +1,18 @@
 use super::{
     ACCOUNT, AccountRow, AllocationCallKey, AllocationCommit, AllocationRow,
     AllocationServingFence, AllocationStoreError, AllocationTerminal, DurableAllocationHold,
-    DurableAllocationRead, VaultAllocationLedger,
+    DurableAllocationRead, ReservationParties, VaultAllocationLedger,
 };
+use crate::Vault;
+use crate::federation::WalletRef;
 use crate::llm::VaultResidentLedger;
 use crate::llm::run_admission::host::{Unpriced, convert};
-use crate::llm::run_admission::{Allocation, AllocationRefusal, LeaseUnit, UnitRate};
+use crate::llm::run_admission::slot::{Slot, SlotMiss, select};
+use crate::llm::run_admission::{
+    AccountStatus, Allocation, AllocationRef, AllocationRefusal, LeaseUnit, ResidentShareScope,
+    SelectedAllocation, UnitRate, is_gpu_line_allocation,
+};
 use crate::store::Callback;
-use crate::{EntityId, Vault};
 use std::sync::Arc;
 
 type Result<T> = std::result::Result<T, AllocationStoreError>;
@@ -75,6 +80,7 @@ impl VaultAllocationLedger {
                 if require_fence && row.fence != Some(self.fence) {
                     return Err(AllocationStoreError::ServingChanged);
                 }
+                fold_legacy_selection(&mut row);
                 let (value, changed) = change(txn, &mut row)?;
                 if changed {
                     row.revision = row
@@ -103,26 +109,53 @@ impl VaultAllocationLedger {
         }
     }
 
-    /// Installs an explicitly selected fresh grant. Old captured holds keep
-    /// their own allocation; closing the old selection releases nothing.
+    /// Installs an explicitly selected fresh grant in its slot: its unit and
+    /// the wallet the host named (row M2-I). It closes and deselects the
+    /// allocation selected in that slot and any older generation of its own
+    /// id, and nothing else. Old captured holds keep their own allocation;
+    /// closing the old selection releases nothing. Its generation must be
+    /// newer than every one its own id held; other ids' do not count. A GPU
+    /// line's allocation is refused: only its claims draw on it (row M2-I2).
     pub fn grant(&self, allocation: Allocation) -> Result<AllocationCommit<()>> {
+        if is_gpu_line_allocation(&allocation.reference) {
+            return Err(AllocationStoreError::LineManaged);
+        }
         self.write(true, |_txn, row| {
-            if row
-                .newest_generation
-                .is_some_and(|newest| allocation.reference.generation <= newest)
-            {
+            let reference = &allocation.reference;
+            if row.allocations.iter().any(|held| {
+                held.allocation.reference.id == reference.id
+                    && reference.generation <= held.allocation.reference.generation
+            }) {
                 return Err(AllocationStoreError::StaleGeneration);
             }
-            if let Some(current) = &row.current
-                && let Some(old) = row
-                    .allocations
-                    .iter_mut()
-                    .find(|old| &old.allocation.reference == current)
-            {
-                old.accepting = false;
+            let replaced: Vec<AllocationRef> = row
+                .selected
+                .iter()
+                .filter(|selected| {
+                    row.allocations
+                        .iter()
+                        .find(|old| &old.allocation.reference == *selected)
+                        .is_none_or(|old| {
+                            old.allocation.reference.id == reference.id
+                                || (old.allocation.unit == allocation.unit
+                                    && old.allocation.wallet == allocation.wallet)
+                        })
+                })
+                .cloned()
+                .collect();
+            for old in &mut row.allocations {
+                if replaced.contains(&old.allocation.reference) {
+                    old.accepting = false;
+                }
             }
-            row.newest_generation = Some(allocation.reference.generation);
-            row.current = Some(allocation.reference.clone());
+            row.selected.retain(|selected| !replaced.contains(selected));
+            row.selected.push(reference.clone());
+            row.newest_generation = Some(
+                row.newest_generation
+                    .map_or(reference.generation, |newest| {
+                        newest.max(reference.generation)
+                    }),
+            );
             row.allocations.push(AllocationRow {
                 remaining_units: allocation.units,
                 allocation,
@@ -144,19 +177,33 @@ impl VaultAllocationLedger {
         })
     }
 
-    /// Stops fresh reservations, keeping every pending original hold intact.
-    pub fn close_current(&self) -> Result<AllocationCommit<()>> {
+    /// Stops fresh reservations on the selected allocation `reference`,
+    /// keeping every pending original hold intact. It stays its slot's
+    /// selection, so a call in that slot is refused as closed, never moved
+    /// to another, until the host grants that slot again.
+    pub fn close(&self, reference: &AllocationRef) -> Result<AllocationCommit<()>> {
         self.write(true, |_txn, row| {
-            let current = current_mut(row)?;
-            let changed = current.accepting;
-            current.accepting = false;
+            if !row.selected.contains(reference) {
+                return Err(AllocationStoreError::NoAllocation);
+            }
+            let selected = row
+                .allocations
+                .iter_mut()
+                .find(|allocation| &allocation.allocation.reference == reference)
+                .ok_or(AllocationStoreError::NoAllocation)?;
+            let changed = selected.accepting;
+            selected.accepting = false;
             Ok(((), changed))
         })
     }
 
-    /// Reserves against the explicit durable current selection. `freeze` must
-    /// persist the ORIGINAL producer in this same writer before the hold returns.
-    /// A failure aborts both writes. It must not call a void receipt sink or
+    /// Reserves against the explicit durable selection: the allocation of the
+    /// call's slot (the one rule the in-memory account uses), of the funding
+    /// Grant's wallet when `parties.funding` names one (FIX 7766), chosen and
+    /// checked inside this writer before anything is held, and on the share
+    /// `parties.resident` holds of it (FIX 7767). `freeze` must persist the
+    /// ORIGINAL producer in this same writer before the hold returns. A
+    /// failure aborts both writes. It must not call a void receipt sink or
     /// rebuild prices/owner from a later catalog during recovery.
     pub fn reserve<T>(
         &self,
@@ -164,9 +211,10 @@ impl VaultAllocationLedger {
         native_units: u128,
         native: &LeaseUnit,
         rates: &[UnitRate],
-        resident: Option<EntityId>,
+        parties: ReservationParties<'_>,
         freeze: impl FnOnce(&mut heed::RwTxn<'_>, &DurableAllocationHold) -> Result<T>,
     ) -> Result<AllocationCommit<(DurableAllocationHold, T)>> {
+        let ReservationParties { resident, funding } = parties;
         self.write(true, |txn, row| {
             if row
                 .allocations
@@ -175,17 +223,19 @@ impl VaultAllocationLedger {
             {
                 return Err(AllocationStoreError::HoldExists);
             }
-            let current = current_mut(row)?;
-            if !current.accepting {
+            let index = selected_index(row, native, rates, funding)?;
+            let chosen = &mut row.allocations[index];
+            if !chosen.accepting {
                 return Err(AllocationStoreError::Closed);
             }
-            let units = convert(native_units, native, &current.allocation.unit, rates).map_err(
-                |error| match error {
-                    Unpriced::NoRate => AllocationStoreError::UnitMismatch,
-                    Unpriced::TooLarge => AllocationStoreError::Overflow,
-                },
-            )?;
-            if units > current.remaining_units {
+            let units =
+                convert(native_units, native, &chosen.allocation.unit, rates).map_err(|error| {
+                    match error {
+                        Unpriced::NoRate => AllocationStoreError::UnitMismatch,
+                        Unpriced::TooLarge => AllocationStoreError::Overflow,
+                    }
+                })?;
+            if units > chosen.remaining_units {
                 return Err(AllocationStoreError::Exhausted);
             }
             let (share, committed, overdraft) = match resident {
@@ -194,10 +244,12 @@ impl VaultAllocationLedger {
                         .standing_in_write_txn(
                             txn,
                             resident,
-                            &current.allocation.reference,
-                            current.allocation.units,
+                            &chosen.allocation.reference,
+                            &chosen.allocation.unit,
+                            chosen.allocation.units,
+                            ResidentShareScope::of_wallet(chosen.allocation.wallet.as_ref()),
                         )?;
-                    let held = current
+                    let held = chosen
                         .holds
                         .iter()
                         .filter(|hold| hold.resident == Some(resident) && hold.terminal.is_none())
@@ -222,8 +274,8 @@ impl VaultAllocationLedger {
             };
             let hold = DurableAllocationHold {
                 key,
-                allocation: current.allocation.reference.clone(),
-                unit: current.allocation.unit.clone(),
+                allocation: chosen.allocation.reference.clone(),
+                unit: chosen.allocation.unit.clone(),
                 reserved_units: units,
                 serving_fence: self.fence,
                 resident,
@@ -233,13 +285,13 @@ impl VaultAllocationLedger {
                 dispatched: false,
                 terminal: None,
             };
-            current.remaining_units -= units;
-            current.pending_units = current
+            chosen.remaining_units -= units;
+            chosen.pending_units = chosen
                 .pending_units
                 .checked_add(units)
                 .ok_or(AllocationStoreError::Overflow)?;
             let producer = freeze(txn, &hold)?;
-            current.holds.push(hold.clone());
+            chosen.holds.push(hold.clone());
             Ok(((hold, producer), true))
         })
     }
@@ -321,6 +373,7 @@ impl VaultAllocationLedger {
                     txn,
                     resident,
                     &hold.allocation,
+                    &allocation.allocation.unit,
                     terminal.units,
                     terminal.units.saturating_sub(room),
                 )?;
@@ -331,8 +384,9 @@ impl VaultAllocationLedger {
         })
     }
 
-    /// Explicit current selection and fresh-grant status, read from the store.
-    pub fn status(&self) -> Result<crate::llm::run_admission::AccountStatus> {
+    /// Every selected allocation, one per slot, and fresh-grant status, read
+    /// from the store.
+    pub fn status(&self) -> Result<AccountStatus> {
         self.require_lease()?;
         let txn = self
             .vault
@@ -340,14 +394,28 @@ impl VaultAllocationLedger {
             .env
             .read_txn()
             .map_err(crate::Error::from)?;
-        let row = ACCOUNT
+        let mut row = ACCOUNT
             .get(&self.vault.store, &txn, &())?
             .unwrap_or_default();
         if row.fence != Some(self.fence) {
             return Err(AllocationStoreError::ServingChanged);
         }
-        Ok(crate::llm::run_admission::AccountStatus {
-            allocation: row.current,
+        fold_legacy_selection(&mut row);
+        Ok(AccountStatus {
+            allocations: row
+                .selected
+                .iter()
+                .filter_map(|reference| {
+                    row.allocations
+                        .iter()
+                        .find(|allocation| &allocation.allocation.reference == reference)
+                })
+                .map(|selected| SelectedAllocation {
+                    reference: selected.allocation.reference.clone(),
+                    unit: selected.allocation.unit.clone(),
+                    wallet: selected.allocation.wallet.clone(),
+                })
+                .collect(),
             fresh_allocation_refused: row.refused,
         })
     }
@@ -405,15 +473,50 @@ impl VaultAllocationLedger {
     }
 }
 
-fn current_mut(row: &mut AccountRow) -> Result<&mut AllocationRow> {
-    let current = row
-        .current
-        .as_ref()
-        .ok_or(AllocationStoreError::NoAllocation)?;
-    row.allocations
-        .iter_mut()
-        .find(|allocation| &allocation.allocation.reference == current)
-        .ok_or(AllocationStoreError::NoAllocation)
+/// A row written before allocations by wallet names its one selection in
+/// `current` (row M2-I): it is one more selected allocation, closed or not.
+fn fold_legacy_selection(row: &mut AccountRow) {
+    if let Some(current) = row.current.take()
+        && !row.selected.contains(&current)
+    {
+        row.selected.push(current);
+    }
+}
+
+/// The index in `row.allocations` of the selected allocation a call in
+/// `native` units, priced by `rates`, holds on, for a run funded by
+/// `funding`'s wallet or by none: the one rule the in-memory account uses.
+fn selected_index(
+    row: &AccountRow,
+    native: &LeaseUnit,
+    rates: &[UnitRate],
+    funding: Option<&WalletRef>,
+) -> Result<usize> {
+    let indices: Vec<usize> = row
+        .selected
+        .iter()
+        .filter_map(|reference| {
+            row.allocations
+                .iter()
+                .position(|allocation| &allocation.allocation.reference == reference)
+        })
+        .collect();
+    let slots: Vec<Slot<'_>> = indices
+        .iter()
+        .map(|&index| Slot {
+            unit: &row.allocations[index].allocation.unit,
+            wallet: row.allocations[index].allocation.wallet.as_ref(),
+        })
+        .collect();
+    let chosen = select(&slots, native, rates, funding).map_err(|miss| match miss {
+        SlotMiss::Empty => AllocationStoreError::NoAllocation,
+        SlotMiss::Wallet { expected, live } => {
+            AllocationStoreError::WalletMismatch { expected, live }
+        }
+        SlotMiss::Unpriced { .. } => AllocationStoreError::UnitMismatch,
+        SlotMiss::Ambiguous { units } => AllocationStoreError::Ambiguous { units },
+    })?;
+    Ok(indices[chosen])
 }
 
 fn hold_mut<'a>(

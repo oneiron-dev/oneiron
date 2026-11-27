@@ -6,8 +6,9 @@
 //! supervisor's restricted broker socket, and never runs the unlink it is
 //! handed: the engine claims, unlinks and syncs the object itself, inside
 //! its backup-hold writer exclusion. A confirmed `deleted` or `absent` is
-//! [`RelayDeleteHoldOutcome::Deleted`]; a standing hold defers it, with the
-//! coarse visibility the engine read (FIX 9500); everything else, the engine
+//! [`RelayDeleteHoldOutcome::Deleted`]; no hold stands, so the engine never
+//! defers on one, and the coarse visibility shape is retained (FIX 9500);
+//! everything else, the engine
 //! unknown, unproven or unreachable, or an answer that does not read, defers
 //! it `hold_state_unknown`, its intent kept. An engine's storage failure is a
 //! storage failure, never one that reads as a missing object.

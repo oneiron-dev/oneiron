@@ -101,7 +101,7 @@ pub use self::types::{
 
 pub(crate) use self::step_only::{
     consume_step_wait_in_txn, erase_detached_step_actor_in_txn, open_step_wait_in_txn,
-    register_detached_step_in_txn, signal_step_wait_in_txn,
+    register_detached_step_in_txn, signal_step_wait_in_txn, step_wait_reads_in_txn,
 };
 
 pub(crate) use self::settled::{
@@ -121,9 +121,12 @@ pub(crate) use self::response_pins::{
 };
 #[cfg(oneiron_test_support)]
 pub(crate) use self::step_index::{step_index_claim_key_pin_for_test, step_index_key_pin_for_test};
+#[cfg(oneiron_test_support)]
+pub(crate) use self::step_state::kept_step_responses_of;
 pub(crate) use self::step_state::{
-    dreamer_step_state_accepts_masked, erase_step_state_owner_in_txn, follow_up_pending,
-    mark_follow_up_pending, owner_gone_in_txn, step_state_carriage, step_state_owners,
+    dreamer_step_state_accepts_masked, erase_step_state_key_in_txn, erase_step_state_owner_in_txn,
+    follow_up_pending, mark_follow_up_pending, owner_gone_in_txn, step_state_carriage,
+    step_state_owners,
 };
 pub(crate) use self::submission_custody::{
     erase_submissions_in_txn, submission_carriage, submission_owners, submission_owners_in_txn,

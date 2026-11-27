@@ -74,8 +74,8 @@ pub use custody_head::*;
 pub use epochs::RestorePadState;
 pub(crate) use epochs::{prune_carried_pads, reconcile_restore_pad_notes_in_txn};
 pub use host_holds::{
-    ArtifactHostOrderHolds, BackupHoldVisibility, BackupHolds, HostHoldsAvailability,
-    HostHoldsRecipient, HostHoldsSealing, HostHoldsUnavailable, HostOrderHolds,
+    ArtifactHostOrderHolds, BackupHolds, HostHoldsAvailability, HostHoldsRecipient,
+    HostHoldsSealing, HostHoldsUnavailable, HostOrderHolds,
 };
 use image::{CheckpointImage, read_image, read_image_required};
 pub use pad_custody::PadRestoreNote;

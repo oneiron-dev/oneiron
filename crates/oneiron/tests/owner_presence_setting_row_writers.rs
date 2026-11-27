@@ -260,6 +260,7 @@ fn park_policy_request(served: &ServedVault) -> (EntityId, [u8; 32]) {
             verb_classes: Default::default(),
             wallet_ref: None,
             working_view_bounds: None,
+            check_in_ref: None,
         },
     )
     .expect("the owner grants the bundle opener base reach");

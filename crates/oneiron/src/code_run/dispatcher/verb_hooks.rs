@@ -25,8 +25,8 @@ use crate::code_run::CompareKnown;
 use crate::code_run::replay::CodeRunBridgeCall;
 use crate::code_run::storage::ExecutorStorage;
 use crate::code_run::types::{
-    RunCall, SelfAgentSpawnResult, SelfCall, SelfDeniedResult, SelfDispatchOutcome,
-    SelfDurableWait, SelfDurableWaitReason, SelfEffect, SelfLeaderCall,
+    SelfAgentSpawnResult, SelfCall, SelfDeniedResult, SelfDispatchOutcome, SelfDurableWait,
+    SelfDurableWaitReason, SelfEffect, SelfLeaderCall,
 };
 use crate::error::{Error, Result};
 use crate::runtime_hooks::verb::TextView;
@@ -211,7 +211,7 @@ impl HostSelfDispatcher<'_> {
         if refs.is_empty() {
             return Ok(());
         }
-        let key = match self.admit_run_call(RunCall::Bridge(call.effect())) {
+        let key = match self.admit_self_call(call) {
             Ok(Ok(Some(key))) => key,
             Ok(Ok(None)) => vault
                 .memory(self.actor.entity_ref(), self.actor.actor_class())
@@ -480,6 +480,7 @@ fn hook_domain(call: &SelfCall) -> VerbDomain {
         SelfCall::MemorySearch(_)
         | SelfCall::TasksWait(_)
         | SelfCall::TasksWaitSet(_)
+        | SelfCall::JobsOrdersWait(_)
         | SelfCall::InferenceDefaultsRead
         | SelfCall::Context(_)
         // Advice and a pattern load start no work and write no memory.

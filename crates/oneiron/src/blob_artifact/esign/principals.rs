@@ -121,6 +121,25 @@ pub(crate) fn automated_signing_allowed(
         }))
 }
 
+/// Whether `canonical`, a resolved entity, is one of the principals the vault
+/// signs as: a row of the signing principal set, resolved to the same one
+/// entity (ROLES-CHECKIN 2k6b).
+pub(super) fn signing_principal_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    canonical: EntityId,
+) -> Result<bool> {
+    for row in PRINCIPALS.iter_from(&vault.store, txn, &[])? {
+        let (_, policy) = row?;
+        if vault.resolve_entity_in_txn(txn, &EntityId::from_hex(&policy.principal_ref)?)?
+            == vec![canonical]
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// The send-with-approval rung requires the authenticated Human to dispatch
 /// the reviewed command on the normal rail. It is not autonomous agent send.
 pub(crate) fn automated_outbound_allowed(

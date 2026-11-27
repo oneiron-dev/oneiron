@@ -18,18 +18,19 @@
 //! so it leaves a label proposal that copied the row's note where it is,
 //! where the withdrawal erased it and staged its sync tombstone. A legal hold
 //! on such a proposal stops no retention sweep, where its refusal rolled back
-//! the whole sweep. And a side restore that drops the record whose key the
-//! sweep retired takes the row the image carried, where it came back.
+//! the whole sweep; the sweep withdraws the held proposal too (LEGAL-HOLD-USE
+//! = B). And a side restore that drops the record whose key the sweep retired
+//! takes the row the image carried, where it came back.
 //!
 //! A re-judgment that settles the amendment drops its unclear row and withdraws
 //! the label proposals that quoted its note (FIX 21885). A legal hold on one
 //! such proposal refuses no re-judgment either (FIX
-//! [UNCLEAR-REJUDGE-REFUSED-BY-HELD-LABEL-PROPOSAL]): on main the erase it
-//! asked refused the judge's whole write on every retry, so the outcome's row
-//! could no longer change or go. The held proposal stands as it is. So does
-//! one whose signed history a hold keeps: the erase tears the proposal's
-//! history controls with it, and a held control refused it the same way
-//! (round 1 of the review of #10122).
+//! [UNCLEAR-REJUDGE-REFUSED-BY-HELD-LABEL-PROPOSAL], LEGAL-HOLD-USE = B): on
+//! main the erase it asked refused the judge's whole write on every retry, so
+//! the outcome's row could no longer change or go. The re-judgment withdraws
+//! the held proposal. So does one whose signed history a hold covers: the erase
+//! tears the proposal's history controls with it, and no held control refuses
+//! it (round 1 of the review of #10122).
 //!
 //! The discard is reached through a test door that runs its bundle write on a
 //! set of claims, without a world fixture:
@@ -95,15 +96,18 @@ struct Seeded {
     signing: SigningKey,
     owner: EntityId,
     dir: tempfile::TempDir,
+    _hold_dir: tempfile::TempDir,
 }
 
 fn seed() -> Seeded {
     let dir = tempfile::tempdir().expect("temporary vault directory");
+    let hold_dir = tempfile::tempdir().expect("legal hold store directory");
     let clock = ManualClock::new(NOW);
-    let mut config = VaultConfig::device();
+    let mut config = VaultConfig::device().with_legal_hold_store(hold_dir.path().to_path_buf());
     config.store_clock = clock.bundle();
     let vault = Vault::open(dir.path(), config).expect("fresh vault");
-    enrol(dir, vault, clock)
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    enrol(dir, hold_dir, vault, clock)
 }
 
 /// [`seed`] in a vault this process owns, with a device keystore and a vault
@@ -111,16 +115,22 @@ fn seed() -> Seeded {
 /// key of a claim whose decisions all went.
 fn seed_restorable() -> Seeded {
     let dir = oneiron::test_support::restore_tempdir();
+    let hold_dir = tempfile::tempdir().expect("legal hold store directory");
     let clock = ManualClock::new(NOW);
-    let mut config = VaultConfig::device();
+    let mut config = VaultConfig::device().with_legal_hold_store(hold_dir.path().to_path_buf());
     config.store_clock = clock.bundle();
     let vault = Vault::open_owned(dir.path().join("vault"), config).expect("fresh vault");
     vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
     vault.ensure_vault_key().expect("FIXTURE: the vault key");
-    enrol(dir, vault, clock)
+    enrol(dir, hold_dir, vault, clock)
 }
 
-fn enrol(dir: tempfile::TempDir, vault: Vault, clock: Arc<ManualClock>) -> Seeded {
+fn enrol(
+    dir: tempfile::TempDir,
+    hold_dir: tempfile::TempDir,
+    vault: Vault,
+    clock: Arc<ManualClock>,
+) -> Seeded {
     let issuer = HostSlipIssuer::from_secret(SECRET).expect("host issuer");
     vault.ensure_host_root_slip(&issuer).expect("host root");
     let machine = EntityId::now();
@@ -146,6 +156,7 @@ fn enrol(dir: tempfile::TempDir, vault: Vault, clock: Arc<ManualClock>) -> Seede
         signing,
         owner,
         dir,
+        _hold_dir: hold_dir,
     }
 }
 
@@ -422,6 +433,7 @@ fn a_legal_hold_on_a_label_proposal_stops_no_retention_sweep() {
             &owner_proof(&seeded),
             vec![LegalHoldTarget::Record(proposal)],
             None,
+            None,
         )
         .expect("FIXTURE: the owner holds the label proposal");
     set_horizon(&seeded);
@@ -449,8 +461,9 @@ fn a_legal_hold_on_a_label_proposal_stops_no_retention_sweep() {
         "and the unclear row under its receipt"
     );
     assert!(
-        claim_kept(&seeded.vault, proposal),
-        "the held label proposal stays"
+        !claim_kept(&seeded.vault, proposal),
+        "the sweep withdraws the held label proposal that quoted the receipt's note: a legal \
+         hold keeps nothing (LEGAL-HOLD-USE = B)"
     );
 }
 
@@ -533,6 +546,7 @@ fn a_legal_hold_on_a_label_proposal_refuses_no_rejudgment() {
             &owner_proof(&seeded),
             vec![LegalHoldTarget::Record(proposal)],
             None,
+            None,
         )
         .expect("FIXTURE: the owner holds the label proposal");
 
@@ -548,8 +562,9 @@ fn a_legal_hold_on_a_label_proposal_refuses_no_rejudgment() {
         "the re-judgment lands and leaves no unclear row under the receipt"
     );
     assert!(
-        claim_kept(&seeded.vault, proposal),
-        "the held label proposal stays"
+        !claim_kept(&seeded.vault, proposal),
+        "the re-judgment withdraws the held label proposal: a legal hold keeps nothing \
+         (LEGAL-HOLD-USE = B)"
     );
 }
 
@@ -571,6 +586,7 @@ fn a_legal_hold_on_a_label_proposals_signed_history_refuses_no_rejudgment() {
             &owner_proof(&seeded),
             controls.into_iter().map(LegalHoldTarget::Record).collect(),
             None,
+            None,
         )
         .expect("FIXTURE: the owner holds the label proposal's signed history, not the proposal");
 
@@ -587,7 +603,8 @@ fn a_legal_hold_on_a_label_proposals_signed_history_refuses_no_rejudgment() {
         "the re-judgment lands and leaves no unclear row under the receipt"
     );
     assert!(
-        claim_kept(&seeded.vault, proposal),
-        "the label proposal whose signed history is held stays"
+        !claim_kept(&seeded.vault, proposal),
+        "the re-judgment withdraws the label proposal whose signed history is held: a legal hold \
+         keeps nothing (LEGAL-HOLD-USE = B)"
     );
 }

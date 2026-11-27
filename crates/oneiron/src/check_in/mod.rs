@@ -57,9 +57,10 @@ pub(crate) mod tables;
 mod verb_act_class;
 mod waits;
 mod wake;
+mod workload_pin;
 
 pub use act_class::{ACT_CLASS, ActClass, ActClassRow, ModelCheck, ProofKind, UndoClass};
-pub(crate) use asker::{AskVerdict, judge_ask_in_txn};
+pub(crate) use asker::{AskVerdict, DoorRungs, judge_ask_in_txn};
 pub(crate) use chain::agent_grant_role_in_txn;
 pub(crate) use chain::caller_spawn_parent_in_txn;
 // The chain 2e's host builds; until then only `test_doors::check_in` does.
@@ -114,13 +115,14 @@ pub(crate) use waits::advance_pending_check_in_in_txn;
 pub(crate) use wake::CHECK_IN_DUE_JOB;
 #[cfg(oneiron_test_support)]
 pub(crate) use wake::due_rows;
+pub(crate) use workload_pin::{
+    PinCheckIn, PinCheckInAsk, workload_pin_check_in_in_txn, workload_pin_grant_in_txn,
+    workload_pin_scope_in_txn,
+};
 
 // The erase doors' apply shape (2k2; P25-SHAPE Q1 = A).
 pub(crate) use effect::{AppliedCheckIn, check_applied_check_in_in_txn, owner_act_decision_in_txn};
-pub use effect::{
-    legal_hold_erase_effect_digest, outbound_call_request_erase_effect_digest,
-    text_history_erase_effect_digest,
-};
+pub use effect::{outbound_call_request_erase_effect_digest, text_history_erase_effect_digest};
 // The key-recovery doors' effects (2k3; P25-SHAPE Q1 = A).
 pub(crate) use effect::run_owner_act_outside_vault_writer;
 pub use effect::{
@@ -135,3 +137,14 @@ pub use effect::{
 pub use effect::{embedding_space_probe_delete_effect_digest, record_delete_effect_digest};
 // The archive attempt delete door's effect (2k5e).
 pub use effect::attempt_archive_delete_effect_digest;
+// The legal send door's effect (2k6a).
+pub use effect::legal_send_effect_digest;
+// The sign act's effect (2k6b).
+pub use effect::sign_effect_digest;
+// The slip conversion and grant back doors' effects (2k7b). The mints'
+// are over their requests: `verbs::agent_grant_mint_effect_digest` (2k7a),
+// `verbs::engine_controls_grant_effect_digest` and
+// `verbs::git_push_grant_mint_effect_digest` (2k7c).
+pub use effect::{agent_grant_from_slip_effect_digest, agent_grant_restore_effect_digest};
+// The standing consent grant mints' effect (2k8a).
+pub use effect::standing_grant_effect_digest;
