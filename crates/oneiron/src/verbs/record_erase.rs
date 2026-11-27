@@ -204,23 +204,6 @@ fn remaining_for_erase(
 ) -> MemoryResult<(Vec<RemainingNotice>, u32)> {
     let vault = memory.vault();
     let mut remaining = Vec::new();
-    remaining.push(RemainingNotice {
-        code: remaining_claims::REMAINING_BACKUPS_BEFORE_ERASE.to_owned(),
-        text: remaining_claims::REMAINING_BACKUPS_BEFORE_ERASE_TEXT.to_owned(),
-    });
-    let disk_text = if vault.vault_pages_sealed() {
-        remaining_claims::REMAINING_DISK_NOT_OVERWRITTEN_SEALED_TEXT
-    } else {
-        remaining_claims::REMAINING_DISK_NOT_OVERWRITTEN_PLAIN_TEXT
-    };
-    remaining.push(RemainingNotice {
-        code: remaining_claims::REMAINING_DISK_NOT_OVERWRITTEN.to_owned(),
-        text: disk_text.to_owned(),
-    });
-    remaining.push(RemainingNotice {
-        code: remaining_claims::REMAINING_EXPORTS_BEFORE_ERASE.to_owned(),
-        text: remaining_claims::REMAINING_EXPORTS_BEFORE_ERASE_TEXT.to_owned(),
-    });
     if !preview.shared_with().is_empty() || vault_syncs_in_txn(vault, txn)? {
         remaining.push(RemainingNotice {
             code: remaining_claims::REMAINING_DEVICES_AND_PEERS.to_owned(),
