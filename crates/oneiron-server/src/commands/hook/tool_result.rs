@@ -28,6 +28,17 @@ const ONEIRON_MCP_SERVERS: [&str; 2] = ["oneiron", "plugin_oneiron_oneiron"];
 /// The Oneiron tools whose result holds a board keyframe; Claude Code may
 /// write a tool name's dots as underscores.
 const BOARD_TOOLS: [&str; 3] = ["setup_oneiron", "self.focus.refresh", "self_focus_refresh"];
+/// Claude Code's own tools whose input names one file, each with that field:
+/// the only input a vault not on this machine is given a word of, the file's
+/// base name (REVIEW-10587 round 2 P1 2). A `path` of any other tool, an MCP
+/// tool's included, may be anything.
+const FILE_TOOL_FIELDS: [(&str, &str); 5] = [
+    ("Read", "file_path"),
+    ("Write", "file_path"),
+    ("Edit", "file_path"),
+    ("MultiEdit", "file_path"),
+    ("NotebookEdit", "notebook_path"),
+];
 
 pub(super) fn tool_result(host: HookHost, args: &HookRecallArgs) -> Option<String> {
     if host != HookHost::ClaudeCode {
@@ -196,34 +207,37 @@ fn holds_keyframe(output: &Value) -> bool {
             == Some("keyframe")
 }
 
-/// The recall query for one tool call: the tool name and the file's base
-/// name, and, when `full` (a vault on this machine), the input's other text
-/// fields and the start of the tool's output.
+/// The recall query for one tool call: the tool name; when `full` (a vault
+/// on this machine), the input's text fields, a path by its base name, and
+/// the start of the tool's output; else only the base name of the file a
+/// [`FILE_TOOL_FIELDS`] tool names.
 fn tool_query(name: &str, event: &Map<String, Value>, full: bool) -> String {
     let mut parts = vec![name.to_owned()];
     if let Some(input) = event.get("tool_input") {
-        for field in [
-            "file_path",
-            "path",
-            "command",
-            "pattern",
-            "description",
-            "query",
-            "url",
-            "prompt",
-        ] {
-            let base_name = matches!(field, "file_path" | "path");
-            if !full && !base_name {
-                continue;
+        if full {
+            for field in [
+                "file_path",
+                "path",
+                "command",
+                "pattern",
+                "description",
+                "query",
+                "url",
+                "prompt",
+            ] {
+                if let Some(value) = input.get(field).and_then(Value::as_str) {
+                    let value = if matches!(field, "file_path" | "path") {
+                        base_name(value)
+                    } else {
+                        value
+                    };
+                    parts.push(value.chars().take(INPUT_CHARS).collect());
+                }
             }
-            if let Some(value) = input.get(field).and_then(Value::as_str) {
-                let value = if base_name {
-                    value.rsplit('/').next().unwrap_or_default()
-                } else {
-                    value
-                };
-                parts.push(value.chars().take(INPUT_CHARS).collect());
-            }
+        } else if let Some((_, field)) = FILE_TOOL_FIELDS.iter().find(|(tool, _)| *tool == name)
+            && let Some(value) = input.get(*field).and_then(Value::as_str)
+        {
+            parts.push(base_name(value).chars().take(INPUT_CHARS).collect());
         }
     }
     if full {
@@ -231,6 +245,10 @@ fn tool_query(name: &str, event: &Map<String, Value>, full: bool) -> String {
     }
     parts.retain(|part| !part.is_empty());
     parts.join(" ")
+}
+
+fn base_name(path: &str) -> &str {
+    path.rsplit('/').next().unwrap_or_default()
 }
 
 /// The start of the tool's output, its markdown and JSON punctuation read as

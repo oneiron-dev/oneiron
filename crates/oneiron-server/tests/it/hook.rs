@@ -1372,6 +1372,33 @@ fn a_tool_result_recall_to_a_hosted_vault_carries_no_tool_text() {
     assert!(!sent.contains("show it"), "{sent:?}");
     assert!(sent.contains("Bash"), "{sent:?}");
 
+    // Another tool's `path` is not a file name: a remote vault gets no word
+    // of it (REVIEW-10587 round 2 P1 2).
+    let mut api = event.clone();
+    api["tool_name"] = json!("mcp__webhooks__call");
+    api["tool_input"] = json!({"path": "/reset?token=secret-4b2d"});
+    assert!(
+        home.hook("tool-result", &["--oneiron", stub_arg], &api)
+            .stdout
+            .is_empty()
+    );
+    let sent = recorded_query(&stub);
+    assert!(!sent.contains("secret-4b2d"), "{sent:?}");
+    assert!(!sent.contains("reset"), "{sent:?}");
+    assert!(sent.contains("mcp__webhooks__call"), "{sent:?}");
+    // Claude Code's own file tool gives the file's base name alone.
+    let mut read = event.clone();
+    read["tool_name"] = json!("Read");
+    read["tool_input"] = json!({"file_path": "/srv/private-folder-5e7a/timetable.md"});
+    assert!(
+        home.hook("tool-result", &["--oneiron", stub_arg], &read)
+            .stdout
+            .is_empty()
+    );
+    let sent = recorded_query(&stub);
+    assert!(sent.contains("timetable.md"), "{sent:?}");
+    assert!(!sent.contains("private-folder-5e7a"), "{sent:?}");
+
     // A vault on this machine, pinned, keeps the full query.
     let local = [
         "--url",
@@ -1416,15 +1443,29 @@ fn focus_refresh_with_the_mark_prints_the_refreshed_keyframe() {
             .is_empty()
     );
 
-    let said = lines(&fixture.hook("focus-refresh", &compact_event(&fixture.folder)));
-    assert!(said.len() >= 3, "the headers and keyframe: {said:?}");
-    assert_eq!(said[0], CARRIED_CONTEXT_HEADER);
-    assert_eq!(said[1], FOCUS_REFRESH_CONTEXT_LEAD);
+    let output = fixture.hook("focus-refresh", &compact_event(&fixture.folder));
+    let context = String::from_utf8(output.stdout).expect("UTF-8 stdout");
+    // Claude Code adds at most 10,000 characters of a hook's output, line end
+    // included: the hook gives the whole keyframe in that, or names the
+    // board, never a board cut short (REVIEW-10587 round 2 P1 3).
     assert!(
-        said[2..]
-            .iter()
-            .any(|line| line.contains("<memory surface=\"board\""))
+        context.encode_utf16().count() <= 10_000,
+        "{} characters",
+        context.encode_utf16().count()
     );
+    let said: Vec<&str> = context.lines().collect();
+    assert_eq!(said.first(), Some(&CARRIED_CONTEXT_HEADER), "{said:?}");
+    if said.get(1) == Some(&FOCUS_REFRESH_CONTEXT_LEAD) {
+        assert!(
+            said.get(2)
+                .is_some_and(|line| line.starts_with("<memory surface=\"board\"")),
+            "{said:?}"
+        );
+        assert!(said.contains(&"</memory>"), "the whole keyframe: {said:?}");
+    } else {
+        assert_eq!(said.len(), 2, "{said:?}");
+        assert!(said[1].contains("self.focus.refresh"), "{said:?}");
+    }
 }
 
 #[test]
@@ -1435,10 +1476,13 @@ fn focus_refresh_without_the_mark_prints_nothing() {
 }
 
 #[test]
-fn focus_refresh_sends_its_credential_only_to_the_mcp_bridge_origin() {
+fn focus_refresh_sends_its_credential_only_to_the_origin_its_mcp_bridge_recorded() {
     use oneiron::ingest::history::carried_headers::CARRIED_CONTEXT_HEADER;
 
     let fixture = ToolHookFixture::new("open");
+    // The board is set up through `oneiron mcp --url <the vault>` on this
+    // credential file, as the plugin's MCP entry runs it: that bridge records
+    // the vault's origin for the file.
     let setup = setup_board_via_stdio(
         &fixture.home,
         &fixture.url,
@@ -1455,31 +1499,86 @@ fn focus_refresh_sends_its_credential_only_to_the_mcp_bridge_origin() {
             .stdout
             .is_empty()
     );
-    let credential = [
-        "--credential-file",
-        fixture.credential.to_str().expect("UTF-8 path"),
-    ];
+    let credential = fixture.credential.to_str().expect("UTF-8 path");
     let compact = compact_event(&fixture.folder);
-    // The fixture's vault runs and the hooks' discovery would bind it, but
-    // with no --url and no ONEIRON_URL the plugin's MCP server forwards to
-    // 127.0.0.1:9090: the refresh goes there or nowhere (REVIEW-10587 P1 1).
-    assert!(
-        fixture
-            .home
-            .hook("focus-refresh", &credential, &compact)
-            .stdout
-            .is_empty()
-    );
-    // ONEIRON_URL names the bridge's vault, as `oneiron mcp` reads it.
-    let said = lines(&fixture.home.hook_with_env(
+
+    // No --url and no ONEIRON_URL: the refresh reaches the origin the bridge
+    // recorded, not 127.0.0.1:9090 (REVIEW-10587 round 2 P1 1).
+    let said = lines(&fixture.home.hook(
         "focus-refresh",
-        &credential,
-        &[("ONEIRON_URL", fixture.url.as_str())],
+        &["--credential-file", credential],
         &compact,
     ));
     assert_eq!(
         said.first().map(String::as_str),
-        Some(CARRIED_CONTEXT_HEADER)
+        Some(CARRIED_CONTEXT_HEADER),
+        "{said:?}"
+    );
+
+    // A pin naming another origin than the bridge's sends nothing.
+    let elsewhere = answering_vault();
+    assert!(
+        fixture
+            .home
+            .hook(
+                "focus-refresh",
+                &["--url", &elsewhere, "--credential-file", credential],
+                &compact,
+            )
+            .stdout
+            .is_empty()
+    );
+
+    // The MCP entry now runs with --url naming another vault: its bridge
+    // records that origin, and the refresh goes there or nowhere, never to
+    // the vault ONEIRON_URL or the hooks' discovery names.
+    record_bridge_origin(&fixture.home, &elsewhere, &fixture.credential);
+    assert!(
+        fixture
+            .home
+            .hook_with_env(
+                "focus-refresh",
+                &["--credential-file", credential],
+                &[("ONEIRON_URL", fixture.url.as_str())],
+                &compact,
+            )
+            .stdout
+            .is_empty()
+    );
+
+    // A credential file no bridge started on has no origin to go to.
+    let copied = fixture.home.path("copied.cred");
+    std::fs::copy(&fixture.credential, &copied).expect("copy the credential");
+    assert!(
+        fixture
+            .home
+            .hook_with_env(
+                "focus-refresh",
+                &["--credential-file", copied.to_str().expect("UTF-8 path")],
+                &[("ONEIRON_URL", fixture.url.as_str())],
+                &compact,
+            )
+            .stdout
+            .is_empty()
+    );
+}
+
+/// Runs `oneiron mcp --url <url>` on `credential` with nothing on its stdin,
+/// as an MCP client that starts the bridge and leaves: the bridge records
+/// `url` as the origin it sends `credential` to.
+fn record_bridge_origin(home: &Home, url: &str, credential: &Path) {
+    let output = home
+        .oneiron(&["mcp", "--url", url, "--credential-file"])
+        .arg(credential)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("run oneiron mcp");
+    assert!(
+        output.status.success(),
+        "oneiron mcp: {}",
+        String::from_utf8_lossy(&output.stderr)
     );
 }
 

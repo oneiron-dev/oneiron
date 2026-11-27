@@ -7,8 +7,8 @@ if you want it. You make no calls by hand:
 |---|---|---|
 | `SessionStart` (start, resume, `/clear`, after a compaction) | `session-start` | The session binds a vault and is told which in one line. Claude Code adds it to the session's context. Given the task's words (`--query "<words>"`), it is also given the lines that clear your relevance bar, at most 3; keyed on nothing but the folder, it recalls nothing. The plugin and the snippet below pass `--query " "` ([How it works](#how-it-works)). |
 | `UserPromptSubmit` (only if you add it) | `prompt` | The lines for what you just asked that clear your relevance bar, at most 3, from the bound vault. |
-| `PostToolUse` | `tool-result` | After a non-Oneiron tool result, Claude Code gets at most one new line from the vault. To a vault that is not on this machine, the recall sends only the tool's name and the file's base name, never the command, other input text or the tool's output. |
-| `SessionStart` (after a compaction) | `focus-refresh` | If this session already had a board, Claude Code gets it back. It asks only the vault the plugin's MCP server reaches (`--url`, else `ONEIRON_URL`, else `http://127.0.0.1:9090`), with that server's credential. |
+| `PostToolUse` | `tool-result` | After a non-Oneiron tool result, Claude Code gets at most one new line from the vault. To a vault that is not on this machine, the recall sends only the tool's name and, for Claude Code's own file tools (`Read`, `Write`, `Edit`, `MultiEdit`, `NotebookEdit`), the file's base name: never the command, another tool's path, other input text or the tool's output. |
+| `SessionStart` (after a compaction) | `focus-refresh` | If this session already had a board, Claude Code gets it back. It asks only the origin the plugin's MCP server recorded for the same credential file when it started, with that credential; with no record, or a `--url` naming another origin, it asks nothing. A board longer than Claude Code lets a hook add is not cut: the hook says to call `self.focus.refresh` instead. |
 | `PreCompact` | `hand-over` | The session's log is queued for import before compaction drops it from context. |
 | `Stop` (each time Claude finishes a reply) | `hand-over` | The log is queued again; the import lands only what is new. |
 | `SessionEnd` | `hand-over` | A last queue, for a session that ended mid-reply. |
@@ -604,6 +604,9 @@ What the hooks already imported stays in your vault, like any import.
   added context at 10,000 characters.
 - `tool-result` has 1.5 seconds for binding, recall and picking a line.
   A smaller `--timeout` takes precedence.
+- `focus-refresh` adds the whole board, its two header lines included, only
+  when that fits in Claude Code's 10,000 characters; otherwise one line says
+  to call `self.focus.refresh` for it.
 - `hand-over` takes well under a second: it writes one small file. To a
   hosted vault it sends the whole log, gzip-compressed, in as few calls as
   the sign-in's carrier takes (above), all ending by the same `--timeout`,

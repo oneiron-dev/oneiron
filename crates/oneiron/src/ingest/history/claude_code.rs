@@ -409,19 +409,19 @@ fn foreign_origin(origin: Option<&Value>) -> bool {
     origin.is_some_and(|origin| str_field(origin, "kind") != Some("human"))
 }
 
-/// Text blocks of a content value; tool results and attachments are counted. Whole carried
-/// blocks are dropped, keeping other blocks. The flag tells whether any carried block was
-/// dropped.
-fn user_text(content: Option<&Value>, skipped: &mut HistorySkips) -> (String, bool) {
+/// Text blocks of a content value; tool results and attachments are counted. With
+/// `host_written` (the host wrote the message: it carries a tool result), whole carried
+/// blocks are dropped, keeping other blocks; the flag tells whether any was. Text a person
+/// typed is never dropped for its words: a header is no proof the host wrote it
+/// (REVIEW-10587 round 2 P1 4). The host marks what it adds to a typed turn itself
+/// (`isMeta`, an attachment line, a wrapper tag), and those never reach here.
+fn user_text(
+    content: Option<&Value>,
+    host_written: bool,
+    skipped: &mut HistorySkips,
+) -> (String, bool) {
     match content {
-        Some(Value::String(text)) => {
-            let trimmed = text.trim();
-            if carried_headers::is_carried_block(trimmed) {
-                (String::new(), true)
-            } else {
-                (trimmed.to_owned(), false)
-            }
-        }
+        Some(Value::String(text)) => (text.trim().to_owned(), false),
         Some(Value::Array(blocks)) => {
             let mut texts = Vec::new();
             let mut stripped = false;
@@ -429,7 +429,7 @@ fn user_text(content: Option<&Value>, skipped: &mut HistorySkips) -> (String, bo
                 match str_field(block, "type") {
                     Some("text") => {
                         if let Some(text) = str_field(block, "text") {
-                            if carried_headers::is_carried_block(text) {
+                            if host_written && carried_headers::is_carried_block(text) {
                                 stripped = true;
                             } else {
                                 texts.push(text);
@@ -461,7 +461,7 @@ fn user_line(thread: &mut Thread, value: &Value, fallback_id: &str, said_by: Opt
             .iter()
             .any(|block| str_field(block, "type") == Some("tool_result"))
     });
-    let (text, stripped) = user_text(content, thread.skipped());
+    let (text, stripped) = user_text(content, carried_result, thread.skipped());
     if stripped {
         thread.skipped().injected += 1;
     }
@@ -547,14 +547,10 @@ fn attachment_line(
         thread.skipped().injected += 1;
         return;
     }
-    let (text, stripped) = user_text(attachment.get("prompt"), thread.skipped());
-    if stripped {
-        thread.skipped().injected += 1;
-    }
+    // The person typed the queued prompt: nothing in it is dropped for its words.
+    let (text, _) = user_text(attachment.get("prompt"), false, thread.skipped());
     if text.is_empty() || injected(&text) {
-        if !stripped {
-            thread.skipped().injected += 1;
-        }
+        thread.skipped().injected += 1;
         return;
     }
     let mut kept = message(value, fallback_id, HistoryRole::User, text);

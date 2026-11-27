@@ -2,8 +2,10 @@
 //!
 //! Three outputs enter the transcript and must not return as the session's own words:
 //! part 1's board block inside an Oneiron tool result, part 2's PostToolUse line and
-//! part 3's SessionStart keyframe. The import drops any block whose first line is one
-//! of these headers, keeping other blocks and lines.
+//! part 3's SessionStart keyframe. The host marks where each lands (a tool result, a hook
+//! attachment line, a meta turn), and the import skips those. In a message the host wrote
+//! (one carrying a tool result) it also drops any text block whose first line is one of
+//! these headers, keeping other blocks; text a person typed is kept whole, header or not.
 
 /// Lead of part 1's block appended to an Oneiron tool result: the full first line is
 /// this prefix, a decimal epoch, then `):`, followed by the board text.

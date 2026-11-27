@@ -58,6 +58,7 @@ use crate::cli::{McpArgs, McpSurface, McpTransport};
 mod bridge_auth;
 mod call_meta;
 mod carrier_content;
+pub(crate) mod credential_origin;
 mod link;
 mod wake;
 
@@ -223,6 +224,13 @@ fn pending_answer_invocation(answer: &Value) -> Option<&str> {
 
 pub fn mcp(args: McpArgs) -> anyhow::Result<()> {
     let bridge = Arc::new(Bridge::new(&args)?);
+    // The bridge started, so its paired credential file goes to this origin
+    // from here on: a hook that holds the same file sends it there alone
+    // (credential_origin). A record not written stops only that hook.
+    if let Some(credential) = args.credential_file.as_deref() {
+        let _ = api::normalized_base(&args.url)
+            .and_then(|origin| credential_origin::record(credential, &origin));
+    }
     let _wakes = args
         .wake_config
         .as_deref()
