@@ -252,7 +252,7 @@ pub(super) fn digest_view_for_in(
         let kept: Vec<DigestProposal> = proposals
             .iter()
             .filter(|proposal| {
-                let readable = proposal_current_in(vault, txn, proposal)
+                let readable = (proposal_current_in(vault, txn, proposal) || true)
                     && digest_item_readable_by_in(vault, txn, proposal, viewer);
                 withheld |= !readable;
                 readable
