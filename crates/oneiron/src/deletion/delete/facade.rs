@@ -65,7 +65,29 @@ impl Vault {
         id: &EntityId,
         reason: DeleteReason,
     ) -> Result<DeleteEntityOutcome> {
-        self.delete_entity_through_dependents(id, reason, None, Some(owner))
+        match self.delete_entity_through_dependents(id, reason, None, Some(owner)) {
+            // The owner, on their own proof, learns `restricted` for a
+            // record they chose to restrict (Q1 = A); any other absence
+            // passes through.
+            Err(Error::EntityNotFound) => Err(self
+                .restricted_owner_delete_refusal(id)
+                .unwrap_or(Error::EntityNotFound)),
+            outcome => outcome,
+        }
+    }
+
+    /// Owner-on-own-proof only (Q1 = A): the delete or erase rail refused
+    /// `id` with absence, so re-probe for a cooperative restriction on it in
+    /// a read txn of its own. `Some(Error::RecordRestricted)` when one
+    /// stands, so the owner learns `restricted`; `None` when the absence
+    /// stands, or the probe itself fails, so the caller passes the absence
+    /// through. Never called from the agent or role arms, nor from any
+    /// in-txn check: those keep absence.
+    pub(crate) fn restricted_owner_delete_refusal(&self, id: &EntityId) -> Option<Error> {
+        let txn = self.store.env.read_txn().ok()?;
+        crate::store::legal_hold::cooperative_restriction_active_in_txn(&self.store, &txn, id)
+            .ok()?
+            .then_some(Error::RecordRestricted)
     }
 
     /// Facade delete seam carrying an owner gate evaluated before TXN1.

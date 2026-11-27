@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use super::owner_confirm;
 use crate::consent::AuthenticatedOwner;
 use crate::deletion::DeleteEntityPreview;
+use crate::memory::RemainingNotice;
 use crate::memory::{
     DeleteReceipt, DeleteRequestState, EraseOptions, EraseReason, Memory, MemoryError,
     MemoryResult, SameBytesHold, SameBytesOutcome,
@@ -65,6 +66,9 @@ pub struct RecordErasePreview {
     /// Beside that notice, the days within which those old backups expire.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub old_backups_expire_within_days: Option<u32>,
+    /// What the erase would leave behind that the person is told.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub remaining: Vec<RemainingNotice>,
 }
 
 /// What became of one other record holding the same bytes: `erased`,
@@ -105,6 +109,10 @@ pub struct RecordEraseOutcome {
     /// Beside that notice, the days within which those old backups expire.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub old_backups_expire_within_days: Option<u32>,
+    /// What the erase leaves behind that the person is told: the confirmed
+    /// record's list, beside its receipt.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub remaining: Vec<RemainingNotice>,
 }
 
 fn hex(bytes: &[u8; 32]) -> String {
@@ -175,6 +183,8 @@ fn preview_view(preview: &DeleteEntityPreview, world_erase: bool) -> RecordErase
         remote_copies_may_remain: preview.remote_copies_may_remain(),
         old_backups_notice,
         old_backups_expire_within_days,
+        // The preview's entries come in the next PR.
+        remaining: Vec::new(),
     }
 }
 
@@ -264,6 +274,9 @@ pub fn confirm_record_erase(
         check_in: Some(decision),
         old_backups_notice,
         old_backups_expire_within_days,
+        // The erase answer's top-level list is the confirmed record's own;
+        // the next PR appends erase-level entries.
+        remaining: outcome.first.remaining.clone(),
         first: outcome.first,
         first_act: outcome.first_act,
         same_bytes: outcome

@@ -762,6 +762,9 @@ fn an_act_whose_record_was_erased_without_its_claim_reads_as_erased() {
             receipt_ref: None,
             state: DeleteRequestState::Applied,
             check_in: None,
+            // An idempotent re-read of an erase another delete finished:
+            // it carries no sweep key of its own.
+            remaining: Vec::new(),
         }
     );
     assert!(erased(&owners.vault, &owners.b));

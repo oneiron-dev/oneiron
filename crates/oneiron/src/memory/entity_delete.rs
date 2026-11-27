@@ -2,6 +2,8 @@
 //! the delete a non-owner's role or Grant admits (ARCH-0043 DEL-2), judged
 //! by check-in first (ROLES-CHECKIN 2k5).
 
+use super::MEMORY_CODE_NOT_FOUND;
+use super::remaining_after_delete;
 use super::support::{verify_actor_binding_in_txn, verify_own_person_deletion_authority_in_txn};
 use super::{
     DELETE_RECEIPT_VERSION_RELEASE, DeleteReceipt, DeleteRequestState, MEMORY_CODE_FORBIDDEN,
@@ -127,14 +129,27 @@ impl Memory<'_> {
         if check_in_ref.is_some() {
             return Err(spends_no_check_in());
         }
-        let mut receipt = self.safe_delete_owner_gated(
+        let mut receipt = match self.safe_delete_owner_gated(
             gate,
             entity_ref,
             reason.delete_reason(),
             |_| Ok(()),
             false,
             None,
-        )?;
+        ) {
+            Ok(receipt) => receipt,
+            // The owner, on their own proof, learns `restricted` for a
+            // record they chose to restrict (Q1 = A); any other absence
+            // passes through, as every absence does on the role arm below.
+            Err(error) if error.code == MEMORY_CODE_NOT_FOUND => {
+                return Err(self
+                    .resolve_ref(entity_ref)
+                    .ok()
+                    .and_then(|id| self.vault.restricted_owner_delete_refusal(&id))
+                    .map_or(error, MemoryError::from));
+            }
+            Err(error) => return Err(error),
+        };
         receipt.check_in = Some(check_in::owner_own_proof_decision(ActClass::Delete));
         Ok(receipt)
     }
@@ -515,6 +530,7 @@ impl Memory<'_> {
                 .map(|receipt| format!("redaction:{}", receipt.to_hex())),
             state: DeleteRequestState::Applied,
             check_in: None,
+            remaining: remaining_after_delete(outcome.sweep_key.as_deref()),
         })
     }
 

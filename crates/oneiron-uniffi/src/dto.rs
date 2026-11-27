@@ -418,6 +418,15 @@ pub struct CheckInDecision {
     pub requester: Option<String>,
 }
 
+/// One thing a delete or erase leaves behind that the person is told.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct RemainingNotice {
+    /// The remainder's code.
+    pub code: String,
+    /// The remainder's words, as the answer shows them.
+    pub text: String,
+}
+
 /// Receipt for one named deletion.
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct DeleteReceipt {
@@ -434,6 +443,9 @@ pub struct DeleteReceipt {
     /// check-in its call spent. None for an agent's delete under its
     /// Grant.
     pub check_in: Option<CheckInDecision>,
+    /// What the delete leaves behind that the person is told, one entry
+    /// per remainder.
+    pub remaining: Vec<RemainingNotice>,
 }
 
 /// One gated write parked for consent.

@@ -225,6 +225,10 @@ pub use claim_stale::{
     ClaimDemoteActionInput, ClaimDemoteRequest, ClaimDemoteView, ClaimFilteredListRequest,
     ClaimFilteredReadRequest, ReadFilterInput,
 };
+pub use claims::REMAINING_HISTORY_SWEEP;
+pub use claims::REMAINING_HISTORY_SWEEP_TEXT;
+pub use claims::RemainingNotice;
+pub use claims::remaining_after_delete;
 pub use claims::{
     ClaimChangeVerdict, ClaimInput, ClaimProposalReview, ClaimProposalReviewRequest,
     ClaimSettleDecision, ClaimSettleRequest, ClaimSettlement, ClaimSettlementAnswer,

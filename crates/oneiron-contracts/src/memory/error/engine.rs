@@ -183,6 +183,13 @@ impl From<Error> for MemoryError {
                 message,
                 &["Verify the identifier and retry."],
             ),
+            // Only the owner, on their own proof, meets a record they chose
+            // to restrict (Q1 = A); the message is the ruling's words.
+            ErrorKind::RecordRestricted => Self::new(
+                MEMORY_CODE_RECORD_RESTRICTED,
+                message,
+                &["Lift the restriction to delete it."],
+            ),
             // The row stands and the reader may read it now; this machine
             // holds no bytes of the revision the frontier names (L3-39).
             ErrorKind::HistoryNotHeld => Self::new(
