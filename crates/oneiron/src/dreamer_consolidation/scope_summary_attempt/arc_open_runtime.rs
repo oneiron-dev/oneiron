@@ -183,7 +183,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             let seal = |request: LlmRequest| -> Result<LlmRequest> {
                 let mut request = ctx
                     .vault
-                    .authorize_model_role(DREAMER_VERDICT_ROLE, request, &call.inference)?
+                    .authorize_dreamer_verdict(request, &call.inference)?
                     .into_request();
                 bind_reasoning(ctx.vault, call.backend, &mut request)?;
                 if let (Some(window), ResponseFormat::Json { schema }) =

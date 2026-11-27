@@ -385,7 +385,7 @@ impl ConsolidationExecutor<'_> {
         let refused = AtomicBool::new(false);
         let seal = |request: LlmRequest| -> Result<LlmRequest> {
             let sealed = vault
-                .authorize_model_role(DREAMER_VERDICT_ROLE, request, &call.inference)
+                .authorize_dreamer_verdict(request, &call.inference)
                 .and_then(|request| {
                     let mut request = request.into_request();
                     super::roles::bind_reasoning(vault, call.backend, &mut request)?;
