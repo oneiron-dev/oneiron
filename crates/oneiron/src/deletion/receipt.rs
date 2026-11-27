@@ -639,6 +639,7 @@ impl Vault {
             sweep_key: Some(sweep_key),
             turn_program_details: Vec::new(),
             version_release: false,
+            released_file_digests: Vec::new(),
         })
     }
 }

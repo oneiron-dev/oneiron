@@ -20,6 +20,7 @@ use super::super::topology_delete_intent::{
     TopologyDeletePhase, clear_own_topology_delete_in_txn, reserve_topology_delete_in_txn,
 };
 use super::DeleteEntityOutcome;
+use super::remaining::file_body_digests_in_txn;
 
 impl Vault {
     /// Purges the active store in one transaction, then writes the hard
@@ -180,6 +181,7 @@ impl Vault {
                 sweep_key: None,
                 turn_program_details: turn_program_details.to_vec(),
                 version_release: false,
+                released_file_digests: Vec::new(),
             });
         }
         // ONE-1122 `dt:` local hard-delete marker: the permanent local truth
@@ -215,6 +217,9 @@ impl Vault {
         // The erased world's pad tombstones publish once this commits
         // (FIX 343); their windows are read before the purge erases the pads.
         let mut pad_windows = self.world_pad_windows_in_txn(&wtxn, id)?;
+        // The record's FILE digests, read before the purge below releases its
+        // descriptors: what the delete answer counts after the collect pass (H5).
+        let released_file_digests = file_body_digests_in_txn(&self.store, &wtxn, id)?;
         // A classified corrupt CLAIM's world does not read: its tombstone goes
         // to its month's world windows too, published with these (FIX 7800).
         pad_windows.extend(self.stage_corrupt_world_tombstones_in_txn(
@@ -336,6 +341,7 @@ impl Vault {
             sweep_key: Some(sweep_key),
             turn_program_details: turn_program_details.to_vec(),
             version_release: false,
+            released_file_digests,
         })
     }
 }

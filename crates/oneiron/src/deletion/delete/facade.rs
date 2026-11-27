@@ -1,5 +1,7 @@
 //! Public and gated delete entry points plus the headerful orchestration state machine.
 
+use std::collections::BTreeSet;
+
 use crate::Vault;
 use crate::batch::EntityMetadataHeader;
 use crate::consent::AuthenticatedOwner;
@@ -74,6 +76,25 @@ impl Vault {
                 .unwrap_or(Error::EntityNotFound)),
             outcome => outcome,
         }
+    }
+
+    /// [`Self::delete_entity_with_reason_as_owner`] with the answer's entries:
+    /// the owner's HTTP delete answer lists what it leaves exactly as
+    /// `vault.delete` does.
+    pub fn delete_entity_as_owner_with_remaining(
+        &self,
+        owner: &AuthenticatedOwner,
+        id: &EntityId,
+        reason: DeleteReason,
+    ) -> Result<(DeleteEntityOutcome, Vec<crate::memory::RemainingNotice>)> {
+        let outcome = self.delete_entity_with_reason_as_owner(owner, id, reason)?;
+        let remaining = super::remaining::delete_remaining(
+            self,
+            reason,
+            outcome.sweep_key.as_deref(),
+            &outcome.released_file_digests,
+        );
+        Ok((outcome, remaining))
     }
 
     /// Owner-on-own-proof only (Q1 = A): the delete or erase rail refused
@@ -460,7 +481,7 @@ impl Vault {
             &plan.window_label,
             &plan.captured,
         )?;
-        self.delete_receipt_phase(
+        let mut outcome = self.delete_receipt_phase(
             id,
             reason,
             gate,
@@ -477,7 +498,15 @@ impl Vault {
             hard.crdt_persisted,
             hard.authority_settled,
             hard.soft_complete_at,
-        )
+        )?;
+        outcome.released_file_digests = outcome
+            .released_file_digests
+            .into_iter()
+            .chain(hard.released_file_digests)
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        Ok(outcome)
     }
 
     /// [`Self::delete_entity`] with `between` run in the gap between the

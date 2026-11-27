@@ -3,8 +3,8 @@
 //! FIX HARD-DELETE-RESTRICTED-ANSWERS-NOT-FOUND, Engine ruling 27 Nov).
 //!
 //! - `owner_hard_delete_answer_lists_the_history_sweep`: the owner's hard
-//!   delete applies and its receipt's `remaining` is exactly the
-//!   `history_sweep` entry, in the ruling's words.
+//!   delete applies and its receipt lists `history_sweep` and
+//!   `backups_before_delete`, in the ruling's words.
 //! - `soft_delete_answer_lists_nothing_remaining`: a soft delete's receipt
 //!   lists nothing, and its JSON carries no `remaining` key.
 //! - `owner_delete_of_a_restricted_record_answers_restricted`: the owner
@@ -17,8 +17,8 @@
 //! - `owner_erase_of_a_restricted_record_answers_restricted`: the owner's
 //!   erase of a restricted record answers `restricted`.
 //! - `owner_erase_receipt_lists_the_history_sweep`: an owner erase that
-//!   applies at once lists the `history_sweep` entry on the outcome and on
-//!   its first receipt.
+//!   applies at once lists `history_sweep` on the first receipt and before
+//!   the erase-level entries on the outcome.
 //!
 //! Public doors beside the `oneiron::test_doors` cooperative restriction;
 //! neutral fixtures; vaults in tempdirs.
@@ -292,11 +292,20 @@ fn owner_hard_delete_answer_lists_the_history_sweep() {
         .expect("the owner's hard delete applies");
     assert!(receipt.existed, "{receipt:?}");
     assert_eq!(receipt.state, DeleteRequestState::Applied, "{receipt:?}");
-    assert_eq!(receipt.remaining.len(), 1, "{receipt:?}");
+    assert_eq!(receipt.remaining.len(), 2, "{receipt:?}");
     assert_eq!(receipt.remaining[0].code, "history_sweep", "{receipt:?}");
     assert_eq!(
         receipt.remaining[0].text,
         "Removed now. Older copies in this vault's sync history are cleared by a background sweep, and the receipt shows when that is done.",
+        "{receipt:?}"
+    );
+    assert_eq!(
+        receipt.remaining[1].code, "backups_before_delete",
+        "{receipt:?}"
+    );
+    assert_eq!(
+        receipt.remaining[1].text,
+        "Backups made before this delete still hold it, and restoring one brings it back.",
         "{receipt:?}"
     );
 }
@@ -387,11 +396,11 @@ fn owner_erase_receipt_lists_the_history_sweep() {
         DeleteRequestState::Applied,
         "{outcome:?}"
     );
+    assert_eq!(outcome.first.remaining.len(), 1, "{outcome:?}");
     for (which, remaining) in [
         ("outcome", &outcome.remaining),
         ("first", &outcome.first.remaining),
     ] {
-        assert_eq!(remaining.len(), 1, "{which}: {outcome:?}");
         assert_eq!(remaining[0].code, "history_sweep", "{which}: {outcome:?}");
         assert_eq!(
             remaining[0].text,
@@ -399,6 +408,32 @@ fn owner_erase_receipt_lists_the_history_sweep() {
             "{which}: {outcome:?}"
         );
     }
+    let erase_entries: Vec<_> = outcome.remaining[1..]
+        .iter()
+        .map(|entry| (entry.code.as_str(), entry.text.as_str()))
+        .collect();
+    assert_eq!(
+        erase_entries,
+        [
+            (
+                "backups_before_erase",
+                "Backups made before this erase may still hold parts of it, and restoring one can bring those parts back.",
+            ),
+            (
+                "disk_not_overwritten",
+                "The disk space and files it used are freed, not overwritten. Someone who copies this vault's files before that space is reused could still read it.",
+            ),
+            (
+                "exports_before_erase",
+                "Exports made before this erase still hold it. This erase does not reach them.",
+            ),
+            (
+                "model_providers",
+                "Anything already sent to an AI model provider stays with that provider under its own retention. Oneiron cannot call it back.",
+            ),
+        ],
+        "{outcome:?}"
+    );
 }
 
 const T0: u64 = 1_800_000_000;

@@ -12,7 +12,7 @@ mod coop_delivery;
 mod coop_reply;
 mod coop_request;
 mod coop_succession;
-mod delete;
+pub(crate) mod delete;
 #[cfg(feature = "sync")]
 pub(crate) use oneiron_store::deletion::delete_bearing_update;
 mod derived_rows;

@@ -3,7 +3,6 @@
 //! by check-in first (ROLES-CHECKIN 2k5).
 
 use super::MEMORY_CODE_NOT_FOUND;
-use super::remaining_after_delete;
 use super::support::{verify_actor_binding_in_txn, verify_own_person_deletion_authority_in_txn};
 use super::{
     DELETE_RECEIPT_VERSION_RELEASE, DeleteReceipt, DeleteRequestState, MEMORY_CODE_FORBIDDEN,
@@ -572,7 +571,12 @@ impl Memory<'_> {
                 .map(|receipt| format!("redaction:{}", receipt.to_hex())),
             state: DeleteRequestState::Applied,
             check_in: None,
-            remaining: remaining_after_delete(outcome.sweep_key.as_deref()),
+            remaining: crate::deletion::delete::remaining::delete_remaining(
+                self.vault,
+                reason,
+                outcome.sweep_key.as_deref(),
+                &outcome.released_file_digests,
+            ),
         })
     }
 

@@ -4,8 +4,8 @@
 //! FIX HARD-DELETE-RESTRICTED-ANSWERS-NOT-FOUND, Engine ruling 27 Nov).
 //!
 //! - `http_owner_hard_delete_answer_lists_the_history_sweep`: the owner's
-//!   `hard_delete` answers `remaining[0]` as the `history_sweep` entry, in
-//!   the ruling's words.
+//!   `hard_delete` lists `history_sweep` then `backups_before_delete`, both
+//!   in the ruling's words.
 //! - `http_owner_delete_of_a_restricted_record_answers_409_restricted`: the
 //!   owner's `hard_delete` of a restricted record answers 409 with the
 //!   `restricted` state and the ruling's words.
@@ -261,13 +261,19 @@ fn http_owner_hard_delete_answer_lists_the_history_sweep() {
         let remaining = &body["delete"]["remaining"];
         assert_eq!(
             remaining.as_array().map(Vec::len),
-            Some(1),
-            "one remainder: {body}"
+            Some(2),
+            "two remainders: {body}"
         );
         assert_eq!(remaining[0]["code"], "history_sweep", "{body}");
         assert_eq!(
             remaining[0]["text"],
             "Removed now. Older copies in this vault's sync history are cleared by a background sweep, and the receipt shows when that is done.",
+            "{body}"
+        );
+        assert_eq!(remaining[1]["code"], "backups_before_delete", "{body}");
+        assert_eq!(
+            remaining[1]["text"],
+            "Backups made before this delete still hold it, and restoring one brings it back.",
             "{body}"
         );
     });
