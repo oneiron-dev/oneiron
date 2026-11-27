@@ -42001,7 +42001,7 @@
      "purpose": "Executor driver: struct, constructors, and the witness-turn doors",
      "surface": {
       "crate-vis": 5,
-      "fn": 14,
+      "fn": 15,
       "struct": 1
      }
     },
@@ -42271,7 +42271,7 @@
      "path": "src/engine_executor/record.rs",
      "purpose": "Durable replay identity: config/terminal markers, hashes, and checkpoint state",
      "surface": {
-      "crate-vis": 34,
+      "crate-vis": 35,
       "fn": 3,
       "struct": 1
      }
@@ -171223,7 +171223,7 @@
      "path": "src/api/mcp_gateway/actor_dispatch/gates.rs",
      "purpose": "The gates an MCP call passes before it executes: proof, verb, credential, a code run's session and each…",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -171233,7 +171233,7 @@
      "path": "src/api/mcp_gateway/admission.rs",
      "purpose": "Scoped-call admission and actor resolution",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 14
      }
     },
     {
@@ -171447,7 +171447,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/mcp_gateway/code_mode_verbs/field_writer.rs",
@@ -171485,6 +171485,14 @@
      "surface": {
       "crate-vis": 10
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/api/mcp_gateway/code_mode_verbs/lending_w3_tests.rs",
+     "purpose": "FIX CODE-MODE-LENDING-W3-STEP-VERDICT-UNBOUND and the Fill writer's payer (CODE-MODE-LENDING-RUN-SPEND = A)…",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -174432,6 +174440,14 @@
      "notable": [],
      "path": "src/api/tests/mcp_execute/verbs.rs",
      "purpose": "Caller-code verb behaviors through `execute` (FIX EXECUTE-CALLER-CODE): a held write (d), supersede on the…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/api/tests/mcp_lending_run_spend.rs",
+     "purpose": "CODE-MODE-LENDING-RUN-SPEND = A (FIX CODE-MODE-LENDING-W5, FIX CODE-MODE-LENDING-W6): an MCP run is lent no…",
      "surface": {}
     },
     {
@@ -183707,6 +183723,7 @@
       "McpCodeExecutionHost",
       "McpCodeExecutionRequest",
       "McpCodeModeProvider",
+      "McpCodeRunEnd",
       "McpCodeRunInput",
       "McpCodeRunSelfBrief",
       "PlannedModel"
@@ -183716,10 +183733,10 @@
      "surface": {
       "crate-vis": 16,
       "enum": 2,
-      "fn": 5,
+      "fn": 6,
       "re-export": 2,
       "struct": 2,
-      "trait": 3,
+      "trait": 4,
       "type": 6
      }
     },
@@ -183731,16 +183748,6 @@
      "purpose": "Single flight for each durable code-mode run (FIX 9505): an entry of a run whose earlier entry still runs…",
      "surface": {
       "crate-vis": 4
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/mcp/exec_host/compaction_home.rs",
-     "purpose": "The compaction host binding of a run its caller's credential entered: the host assembles it from what the…",
-     "surface": {
-      "crate-vis": 1
      }
     },
     {
@@ -183760,7 +183767,7 @@
      "path": "src/mcp/exec_host/native_run.rs",
      "purpose": "The native `execute` entry: one durable run entered on the engine's own sandbox/REPL substrate through the…",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -183823,7 +183830,7 @@
      "surface": {
       "crate-vis": 10,
       "mod": 2,
-      "re-export": 13
+      "re-export": 14
      }
     },
     {
@@ -183929,16 +183936,6 @@
       "enum": 1,
       "fn": 9,
       "struct": 4
-     }
-    },
-    {
-     "bucket": "s",
-     "kind": "src",
-     "notable": [],
-     "path": "src/mcp/run_seats.rs",
-     "purpose": "Each durable run's compaction seat, kept by the host across `execute_code` calls: a pass in flight, its…",
-     "surface": {
-      "crate-vis": 3
      }
     },
     {
@@ -192329,6 +192326,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/mcp_world_privacy_refused.rs",
+     "purpose": "CODE-MODE-LENDING-WORLD-PRIVACY = A (FIX CODE-MODE-LENDING-W9): a connector's run sets no world's privacy…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/mcp_wrong_root_pre_resolution.rs",
      "purpose": "FIX 298 (#1564): a `tools/call` naming a canonical verb under the wrong root is refused before any caller…",
      "surface": {}
@@ -194183,7 +194188,7 @@
     },
     "api": {
      "entry": "crates/oneiron-server/src/api/mod.rs",
-     "files": 865,
+     "files": 867,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -194785,7 +194790,7 @@
     },
     "mcp": {
      "entry": "crates/oneiron-server/src/mcp/mod.rs",
-     "files": 31,
+     "files": 29,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -195108,8 +195113,8 @@
    },
    "over_bar": 72,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 2233,
-   "test_files": 630
+   "source_files": 2231,
+   "test_files": 633
   },
   "oneiron-setting-contract": {
    "files": [
