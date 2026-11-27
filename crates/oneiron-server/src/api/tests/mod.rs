@@ -55,6 +55,8 @@ mod mcp_code_admission;
 mod mcp_code_check;
 #[cfg(feature = "code-sandbox-wasmtime")]
 mod mcp_execute;
+#[cfg(feature = "code-sandbox-wasmtime")]
+mod mcp_lending_run_spend;
 mod mcp_memory;
 mod mcp_paging_cursors;
 #[cfg(feature = "code-sandbox-wasmtime")]

@@ -25,7 +25,6 @@ use std::sync::OnceLock;
 use std::time::Instant;
 
 mod active_run;
-mod compaction_home;
 mod description_route;
 mod native_run;
 mod off_record_run;
@@ -210,6 +209,15 @@ pub enum McpCodeExecutionError {
     /// Entering the run again meets it again.
     #[error("execute run refused: {}", .0.message)]
     Refused(Box<oneiron::MemoryError>),
+    /// A Task run whose window outgrew its model's limit, entered again
+    /// after it was started before `execute` ran the caller's own code (FIX
+    /// CODE-MODE-LENDING-W6): a connector's run is lent no window
+    /// compaction, so it ends with the refusal to start again, not a crash.
+    /// Entering the run again meets it again.
+    #[error(
+        "execute run refused: this run was started before execute ran the caller's own code, and its window has outgrown its model's limit; a connector's run is lent no window compaction, so start it again with execute"
+    )]
+    WindowOutgrown,
 }
 
 impl McpCodeExecutionError {
@@ -225,6 +233,7 @@ impl McpCodeExecutionError {
             Self::ProviderUnavailable { .. } => "model_unavailable",
             Self::ResumeDivergence(_) => "resume_divergence",
             Self::Refused(_) => "code_run_refused",
+            Self::WindowOutgrown => "code_run_window_outgrown",
         }
     }
 }

@@ -294,7 +294,8 @@ fn mcp_code_execution_error(error: &crate::mcp::McpCodeExecutionError) -> McpGat
     let code = match error {
         crate::mcp::McpCodeExecutionError::HostUnbound
         | crate::mcp::McpCodeExecutionError::RunWaitedOut
-        | crate::mcp::McpCodeExecutionError::Refused(_) => -32020,
+        | crate::mcp::McpCodeExecutionError::Refused(_)
+        | crate::mcp::McpCodeExecutionError::WindowOutgrown => -32020,
         crate::mcp::McpCodeExecutionError::RunBinding(_)
         | crate::mcp::McpCodeExecutionError::Run(_)
         | crate::mcp::McpCodeExecutionError::ResumeDivergence(_)
