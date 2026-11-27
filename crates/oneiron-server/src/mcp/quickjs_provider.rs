@@ -457,16 +457,8 @@ impl McpQuickJsProvider {
                 None => vault.now_recorded_at().saturating_mul(1000),
             };
         }
-        // The run's stable determinism marker also binds the interpreter pin.
-        // Resume under another artifact fails the existing config-hash check.
-        let mut rng = blake3::Hasher::new_keyed(&self.config.determinism.rng_seed);
-        rng.update(b"oneiron:mcp-quickjs-run:v1");
-        rng.update(run_id.as_bytes());
-        rng.update(&self.runtime.sha256());
-        config.determinism = CodeRunDeterminism::new(
-            config.determinism.frozen_unix_ms,
-            *rng.finalize().as_bytes(),
-        );
+        config.determinism =
+            CodeRunDeterminism::new(config.determinism.frozen_unix_ms, self.run_rng_seed(run_id));
         Ok(config)
     }
 
@@ -487,18 +479,26 @@ impl McpQuickJsProvider {
                 None => vault.now_recorded_at().saturating_mul(1000),
             };
         }
-        let mut rng = blake3::Hasher::new_keyed(&self.config.determinism.rng_seed);
-        rng.update(b"oneiron:mcp-quickjs-run:v1");
-        rng.update(run_id.as_bytes());
-        rng.update(&self.runtime.sha256());
         determinism =
-            CodeRunDeterminism::new(determinism.frozen_unix_ms, *rng.finalize().as_bytes());
+            CodeRunDeterminism::new(determinism.frozen_unix_ms, self.run_rng_seed(run_id));
         Ok(EngineExecutorConfig::caller_source(
             run_id,
             determinism,
             self.config.limits,
             ContentHash::of(code.as_bytes()),
         ))
+    }
+
+    /// One run's RNG seed, for [`Self::run_config`] and [`Self::source_run_config`] alike:
+    /// the host's seed keyed over the run and the interpreter pin, so the run's stable
+    /// determinism marker binds the pin and a resume under another artifact fails the
+    /// existing config-hash check.
+    fn run_rng_seed(&self, run_id: EntityId) -> [u8; 32] {
+        let mut rng = blake3::Hasher::new_keyed(&self.config.determinism.rng_seed);
+        rng.update(b"oneiron:mcp-quickjs-run:v1");
+        rng.update(run_id.as_bytes());
+        rng.update(&self.runtime.sha256());
+        *rng.finalize().as_bytes()
     }
 }
 
