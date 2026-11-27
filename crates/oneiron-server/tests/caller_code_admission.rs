@@ -12,8 +12,9 @@
 //!   program the engine's model wrote keeps them, as before. The base verbs
 //!   of the default view stay open.
 //! - A caller's own speech needs Write even in the run's own conversation,
-//!   and the row it is made through bound (`say`, or `self.think.aloud`);
-//!   the engine's program speaks there under Read, as before.
+//!   and the row it is made through bound (`say`, or `self.think.aloud`).
+//!   The engine's program needs Write there too (FIX CODE-MODE-LENDING-W7:
+//!   no direct call writes a MESSAGE under Read); it needs no binding.
 //! - A credential bound to one row of the Fold effect admits that row alone
 //!   (`admit_run_row`), and the effect itself when any of its rows is bound:
 //!   before, only the effect's first row (`self.compact`) was checked.
@@ -237,7 +238,9 @@ async fn caller_code_base_verbs() -> TestResult {
     Ok(())
 }
 
-/// A caller's own speech needs Write wherever it lands.
+/// A caller's own speech needs Write wherever it lands, and so does the
+/// engine's program's in its own run (FIX CODE-MODE-LENDING-W7). Red on
+/// main: the engine's program spoke there under Read.
 #[test]
 fn caller_code_speech_needs_write() -> TestResult {
     on_engine_stack(caller_code_speech)
@@ -252,10 +255,18 @@ async fn caller_code_speech() -> TestResult {
         .await
         .expect("a write credential registers");
     let run = EntityId::now();
-    admit_own_run_speech(&fixture.server, &reader, run, ProgramAuthor::EngineModel)
+    let refused = admit_own_run_speech(&fixture.server, &reader, run, ProgramAuthor::EngineModel)
         .await
         .expect("the admission runs")
-        .expect("the engine's program speaks in its own run under Read, as before");
+        .expect_err("the engine's program writes no MESSAGE under Read either");
+    assert_ne!(
+        refused.code, CALLER_CODE_REFUSED,
+        "it is the grant's refusal"
+    );
+    admit_own_run_speech(&fixture.server, &writer, run, ProgramAuthor::EngineModel)
+        .await
+        .expect("the admission runs")
+        .expect("the engine's program speaks in its own run under Write");
     let refused = admit_own_run_speech(&fixture.server, &reader, run, ProgramAuthor::Caller)
         .await
         .expect("the admission runs")
