@@ -15,6 +15,7 @@
 //! [`crate::Vault::import_history`] lands a decoded conversation as an imported
 //! transcript, with a ledger that makes a re-import add nothing.
 
+pub mod carried_headers;
 mod chatgpt;
 mod claude;
 mod claude_code;

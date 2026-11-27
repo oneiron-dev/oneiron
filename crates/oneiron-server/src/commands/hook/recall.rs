@@ -57,11 +57,16 @@ pub(super) struct Recall<'a> {
     /// session's project.
     pub(super) bar: RecallSource,
     pub(super) session: Option<&'a str>,
+    /// The vault the credential names, when the query's full form may go:
+    /// the exchange bails before `tools/list` unless the vault answers it
+    /// ([`answers_vault`]), so no `tools/call` goes to another vault.
+    pub(super) expect_vault: Option<&'a str>,
 }
 
 struct Hit {
     text: String,
     suffix: String,
+    record_key: Option<String>,
 }
 
 impl Recall<'_> {
@@ -79,23 +84,7 @@ impl Recall<'_> {
         if result.get("isError") == Some(&Value::Bool(true)) {
             return Vec::new();
         }
-        let mut found = Vec::new();
-        texts(result.get("structuredContent"), &mut found);
-        if found.is_empty() {
-            for block in result
-                .get("content")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-            {
-                if let Some(text) = block.get("text").and_then(Value::as_str)
-                    && let Ok(value) = serde_json::from_str::<Value>(text)
-                {
-                    texts(Some(&value), &mut found);
-                }
-            }
-        }
-        let lines = self.shortened(found);
+        let lines = self.shortened(recalled_hits(&result));
         if lines.is_empty() {
             return receipt(&result)
                 .map(|rule| {
@@ -120,33 +109,71 @@ impl Recall<'_> {
             .collect()
     }
 
+    /// The first ranked carrier line whose record key has not been shown.
+    pub(super) fn carrier_line(&self, is_shown: impl Fn(&str) -> bool) -> Option<(String, String)> {
+        if Instant::now() >= self.deadline {
+            return None;
+        }
+        let result = self.call_with_cleanup(Bridge::close_at_deadline).ok()?;
+        if Instant::now() >= self.deadline || result.get("isError") == Some(&Value::Bool(true)) {
+            return None;
+        }
+        for Hit {
+            text,
+            suffix,
+            record_key,
+        } in recalled_hits(&result).into_iter().take(self.limit)
+        {
+            if Instant::now() >= self.deadline {
+                return None;
+            }
+            let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+            if text.is_empty() {
+                continue;
+            }
+            let text = cut_hit_text(text);
+            let key = record_key.unwrap_or_else(|| text.clone());
+            if !is_shown(&key) {
+                return Some((key, format!("{text}{suffix}")));
+            }
+        }
+        None
+    }
+
     /// Fold whitespace, drop repeats and cut just the text to [`ITEM_CHARS`].
     /// Keep at most `limit` hits, with their suffixes inside [`BLOCK_CHARS`].
     fn shortened(&self, found: Vec<Hit>) -> Vec<Hit> {
         let (mut lines, mut seen, mut size) = (Vec::new(), std::collections::HashSet::new(), 0);
-        for Hit { text, suffix } in found {
+        for Hit {
+            text,
+            suffix,
+            record_key,
+        } in found
+        {
             let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
             if text.is_empty() || !seen.insert(text.clone()) {
                 continue;
             }
-            let text = if text.chars().count() > ITEM_CHARS {
-                let mut cut: String = text.chars().take(ITEM_CHARS - 1).collect();
-                cut.push('…');
-                cut
-            } else {
-                text
-            };
+            let text = cut_hit_text(text);
             let chars = text.chars().count() + suffix.chars().count();
             if size + chars > BLOCK_CHARS || lines.len() >= self.limit {
                 break;
             }
-            lines.push(Hit { text, suffix });
+            lines.push(Hit {
+                text,
+                suffix,
+                record_key,
+            });
             size += chars;
         }
         lines
     }
 
     fn call(&self) -> anyhow::Result<Value> {
+        self.call_with_cleanup(Bridge::close)
+    }
+
+    fn call_with_cleanup(&self, close: fn(Bridge)) -> anyhow::Result<Value> {
         let mut bridge = Bridge::start(
             self.oneiron,
             self.url,
@@ -156,12 +183,17 @@ impl Recall<'_> {
             Stdio::null(),
         )?;
         let result = self.exchange(&mut bridge);
-        bridge.close();
+        close(bridge);
         result
     }
 
     fn exchange(&self, bridge: &mut Bridge) -> anyhow::Result<Value> {
-        bridge.initialize()?;
+        let initialized = bridge.initialize()?;
+        if let Some(vault) = self.expect_vault
+            && !answers_vault(&initialized, vault)
+        {
+            anyhow::bail!("the vault did not answer the credential's own vault id");
+        }
         let listed = bridge.call(2, "tools/list", json!({}))?;
         let (name, arguments) = self.tool_call(&listed)?;
         // One logical call under one invocation id (ARCH-0080 §3): this
@@ -284,6 +316,13 @@ fn receipt(result: &Value) -> Option<String> {
             (None, None) => rule.to_string(),
         },
     })
+}
+
+/// Whether the vault's `initialize` answer names `vault` as the authority
+/// vault id it serves: the check a hook makes before its credential's full
+/// query goes anywhere.
+pub(super) fn answers_vault(initialized: &Value, vault: &str) -> bool {
+    initialized.get("vault_id").and_then(Value::as_str) == Some(vault)
 }
 
 /// Whether the server at `url` admits `auth` over `oneiron mcp` by
@@ -480,6 +519,9 @@ impl Bridge {
         self.send(&json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}))?;
         loop {
             let left = self.deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                return Err(mpsc::RecvTimeoutError::Timeout.into());
+            }
             let line = self.lines.recv_timeout(left)?;
             let Ok(answer) = serde_json::from_slice::<Value>(&line) else {
                 continue;
@@ -510,11 +552,20 @@ impl Bridge {
         }
     }
 
-    pub(super) fn close(mut self) {
-        drop(self.stdin.take());
+    pub(super) fn close(self) {
         let wait = self
             .deadline
             .max(Instant::now() + Duration::from_millis(100));
+        self.close_by(wait);
+    }
+
+    fn close_at_deadline(self) {
+        let wait = self.deadline;
+        self.close_by(wait);
+    }
+
+    fn close_by(mut self, wait: Instant) {
+        drop(self.stdin.take());
         let _ = super::wait_until(&mut self.child, wait);
         if let Some(group) = i32::try_from(self.child.id())
             .ok()
@@ -523,6 +574,36 @@ impl Bridge {
             let _ = rustix::process::kill_process_group(group, rustix::process::Signal::KILL);
         }
         let _ = self.child.wait();
+    }
+}
+
+fn recalled_hits(result: &Value) -> Vec<Hit> {
+    let mut found = Vec::new();
+    texts(result.get("structuredContent"), &mut found);
+    if found.is_empty() {
+        for block in result
+            .get("content")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            if let Some(text) = block.get("text").and_then(Value::as_str)
+                && let Ok(value) = serde_json::from_str::<Value>(text)
+            {
+                texts(Some(&value), &mut found);
+            }
+        }
+    }
+    found
+}
+
+fn cut_hit_text(text: String) -> String {
+    if text.chars().count() > ITEM_CHARS {
+        let mut cut: String = text.chars().take(ITEM_CHARS - 1).collect();
+        cut.push('…');
+        cut
+    } else {
+        text
     }
 }
 
@@ -551,6 +632,11 @@ fn hit_text(item: &Value) -> Option<Hit> {
     Some(Hit {
         text: item_text(item)?,
         suffix: line_suffix(item).unwrap_or_default(),
+        record_key: item
+            .get("short_id")
+            .and_then(Value::as_str)
+            .filter(|key| !key.is_empty() && !key.contains(['\n', '\r']))
+            .map(str::to_owned),
     })
 }
 
