@@ -195,6 +195,13 @@ fn raw_row(vault: &Vault, key: &str) -> Option<Vec<u8>> {
         .map(std::borrow::Cow::into_owned)
 }
 
+/// One entity row as it rests, past the deletion fence that `get` and
+/// `get_raw` honor: a failed purge leaves the row stored but fenced.
+fn stored_entity_row(vault: &Vault, id: &EntityId) -> Option<Vec<u8>> {
+    let rtxn = vault.store.env.read_txn().unwrap();
+    crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &rtxn, id).unwrap()
+}
+
 /// The raw `rm:` row for one window and id, if present.
 fn remat_row(vault: &Vault, window: &str, id: &EntityId) -> Option<Vec<u8>> {
     raw_row(vault, &remat_marker_key(window, id))
@@ -551,8 +558,12 @@ fn a_purge_failure_beside_a_project_hold_still_raises_the_breach_signal() {
         "a purge failure beside a hold never warns: {lines:?}"
     );
     assert!(
-        held.vault.get_raw(&other).unwrap().is_some(),
-        "the failed purge leaves raw bytes behind"
+        stored_entity_row(&held.vault, &other).is_some(),
+        "the failed purge leaves the stored row behind"
+    );
+    assert!(
+        held.vault.get_raw(&other).unwrap().is_none(),
+        "the accepted delete's fence hides the row from raw reads"
     );
     assert_eq!(
         remat_row(&held.vault, WINDOW, &other).as_deref(),
@@ -589,6 +600,10 @@ fn a_purge_failure_beside_a_project_hold_still_raises_the_breach_signal() {
     assert!(
         held.vault.get_raw(&other).unwrap().is_none(),
         "the retry purges the hard-deleted body"
+    );
+    assert!(
+        raw_row(&held.vault, &crate::deletion::local_hard_delete_key(&other)).is_some(),
+        "the retry's purge writes the hard-delete marker"
     );
     assert_eq!(
         remat_row(&held.vault, WINDOW, &other),
