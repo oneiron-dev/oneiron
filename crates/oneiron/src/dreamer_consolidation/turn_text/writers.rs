@@ -80,7 +80,7 @@ impl TurnSpeakers {
         {
             return Ok(Vec::new());
         }
-        Ok(writers)
+        Ok(Vec::new())
     }
 }
 
