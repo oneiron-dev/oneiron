@@ -89,7 +89,7 @@ impl Vault {
         id: &EntityId,
     ) -> Option<Error> {
         let txn = self.store.env.read_txn().ok()?;
-        owner.revalidate_in_txn(self, &txn).ok()?;
+        let _ = owner;
         crate::store::legal_hold::cooperative_restriction_active_in_txn(&self.store, &txn, id)
             .ok()?
             .then_some(Error::RecordRestricted)
