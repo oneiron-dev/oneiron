@@ -548,16 +548,6 @@ impl VerifiedEvidenceSet {
                 span.frontier.as_deref(),
             )?;
         }
-        // PROMOTED-CLAIM-SOURCE-DEPENDENCY-GAPS: a row with no MESSAGE span (an
-        // inline-text TURN, a cited CLAIM) depends on its source itself, so
-        // erasing that source withdraws what was written from it. A row that
-        // cites itself records nothing (the index refuses a self dependency).
-        for row in self.rows.iter().filter(|row| row.messages.is_empty()) {
-            let source = row.locator.source_id();
-            if source != *citing {
-                crate::ports::record_derived_edge_in_txn(&vault.store, txn, citing, &source)?;
-            }
-        }
         // A claim drawn from a kept copy of mail the provider deleted is
         // checked again, as the claims drawn before the delete were (fix list
         // row 15414).
