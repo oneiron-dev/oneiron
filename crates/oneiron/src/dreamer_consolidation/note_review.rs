@@ -676,12 +676,10 @@ fn readable_notes(
         // world, by the single-world rule every read door places it by (base
         // among others is base, as a base read keeps it); a NOTE in two worlds
         // or whose edges do not read is skipped, as a NOTE with no facet is.
-        let Some(world) =
+        let world =
             crate::federation::record_scope::note_world::note_worlds_in(&vault.store, &txn, *id)
                 .world()
-        else {
-            continue;
-        };
+                .flatten();
         // The entities the markdown names, by the transcript listing's own
         // probes, through the review's own scoped read: no claims, so the
         // review's scope holds no prior head. A NOTE carries no byline. A
