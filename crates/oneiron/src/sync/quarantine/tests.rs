@@ -263,7 +263,16 @@ fn forward_remat_tombstone_purge_failure_flags_rm_then_clears_on_success() {
 
     INJECT_PURGE_FAILURES.with(|cell| cell.set(1));
     forward_rematerialize(&vault, &doc, &materializer, &window_key).unwrap();
-    assert!(vault.get_raw(&id).unwrap().is_some());
+    // The row as it rests: the accepted delete's fence hides it from
+    // `get_raw` too, so survival is read past the fence.
+    let stored = {
+        let rtxn = vault.store.env.read_txn().unwrap();
+        crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &rtxn, &id).unwrap()
+    };
+    assert!(
+        stored.is_some(),
+        "the failed purge leaves the stored row behind"
+    );
     assert!(
         vault.get(&id).unwrap().is_none(),
         "the accepted delete is fenced while its purge is pending"
