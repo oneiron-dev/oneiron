@@ -284,7 +284,7 @@ impl RenderedWorkflowStepContext {
             .join("\n");
         let speaker = xml_text_token(speaker);
         let text = xml_text_token(&text);
-        self.chat.push(format!("- [turn] {speaker}: {text}"));
+        self.chat.push(format!("- {speaker}: {text}"));
         self.capture_row(id, body);
         for (_, child, _, bytes) in visible {
             self.capture_row(child, &bytes);
@@ -651,8 +651,8 @@ fn turn_line(entity_type: u8, body: &[u8]) -> Option<String> {
     let entries = turn_fields(entity_type, body)?;
     let text = xml_text_token(turn_field(&entries, TURN_TEXT_KEYS)?);
     Some(match turn_field(&entries, TURN_SPEAKER_KEYS) {
-        Some(speaker) => format!("- [turn] {}: {text}", xml_text_token(speaker)),
-        None => format!("- [turn] {text}"),
+        Some(speaker) => format!("- {}: {text}", xml_text_token(speaker)),
+        None => format!("- {text}"),
     })
 }
 
