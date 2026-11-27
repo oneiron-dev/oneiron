@@ -1556,7 +1556,7 @@ async fn an_off_device_mcp_hydrate_returns_the_view_and_lists_an_unknown_short_r
             "vault.hydrate",
             mcp_merge_args(
                 mcp_endpoint_envelope(owner, "read_memory"),
-                json!({ "arguments": { "refs": [open.to_hex(), "zz9:a3"] } }),
+                json!({ "arguments": { "request": { "refs": [open.to_hex(), "zz9:a3"] } } }),
             ),
         ),
     )
@@ -1614,7 +1614,7 @@ async fn an_off_device_mcp_hydrate_misses_a_device_local_row_like_a_never_used_i
             "vault.hydrate",
             mcp_merge_args(
                 mcp_endpoint_envelope(owner, "read_memory"),
-                json!({"arguments": {"refs": [reference]}}),
+                json!({"arguments": {"request": {"refs": [reference]}}}),
             ),
         );
         request.extensions_mut().insert(ConnectInfo(AWAY.peer));
