@@ -1,10 +1,12 @@
 //! The node's idle readiness check and the DRAIN slot's default rule (pass
 //! 34, `34-compute-general/DESIGN.md` sections 1.2, 2.4 and 7.3; row Q4).
 //!
-//! A node with no attempt running checks itself every
-//! `jobs.readiness.every_secs` (default 900; the first check one period
-//! after the service opens). In order, and the first that fails names the
-//! result:
+//! A node with no attempt running checks itself at the first tick after the
+//! service opens, then once per `jobs.readiness.every_secs` (default 900)
+//! and at the next idle tick after its offer changes: enable or disable,
+//! pause or unpause, the owner offering or withholding a device, or another
+//! booker's withheld list changing (row READINESS-NOT-RUN-AT-OFFER).
+//! Checks run in this order, and the first that fails names the result:
 //! - `scope`: the launch scope's probe meets the minimum contract;
 //! - `devices`: a fresh reading of the devices answers;
 //! - `disk`: the payload disk, less what live keys booked, keeps its
@@ -39,6 +41,7 @@ use super::incidents::{IncidentKind, IncidentLog, NodeIncident};
 use super::job_unit::{JobKeyId, scope_missing, write_file_synced};
 use super::node_parts::NodeJobSettings;
 use super::{NodeJobs, ReceiptClock};
+use crate::gpu_execution_node::node::NodeSnapshot;
 use crate::gpu_execution_node::node_settings::DrainClearBy;
 use crate::gpu_execution_node::wire::{
     JobState, NodeReadiness, ReadinessCheck, ReadinessResult, ReadinessState,
@@ -127,21 +130,50 @@ struct ReadinessRecord {
     seen_drain: Option<String>,
 }
 
+/// This marks what the node offers to work, as one tick reads it. The drain
+/// is not part of the offer because the readiness check can change it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct OfferMark {
+    /// The node's file enables it and no disable at the box stands.
+    enabled: bool,
+    /// The node is paused at the box or by the owner's policy.
+    paused: bool,
+    /// These devices are not offered by the owner's policy, when one was read.
+    owner_withheld: BTreeSet<String>,
+    /// These devices are withheld by another booker, or the list did not read.
+    booker_withheld: Result<BTreeSet<String>, String>,
+}
+
+impl OfferMark {
+    /// Builds the offer from the tick's controls and policy and the booker's list.
+    fn of(snapshot: &NodeSnapshot, booker_withheld: Result<BTreeSet<String>, String>) -> Self {
+        Self {
+            enabled: snapshot.controls.enabled,
+            paused: snapshot.controls.paused.is_some(),
+            owner_withheld: snapshot
+                .policy
+                .iter()
+                .flat_map(|policy| &policy.devices)
+                .filter(|(_, offer)| !offer.offered)
+                .map(|(id, _)| id.clone())
+                .collect(),
+            booker_withheld,
+        }
+    }
+}
+
 struct ReadinessBook {
     record: ReadinessRecord,
-    /// When this service opened, on the wall clock: the first check is due
-    /// one period later.
-    opened_at_ms: u64,
+    /// This tracks the last checked offer and does not survive a restart.
+    checked_offer: Option<OfferMark>,
 }
 
 impl ReadinessBook {
-    fn due(&self, now_ms: u64, every_secs: u64) -> bool {
-        let since = self
-            .record
-            .readiness
-            .checked_at_ms
-            .unwrap_or(self.opened_at_ms);
-        now_ms >= since.saturating_add(every_secs.saturating_mul(1_000))
+    fn due(&self, now_ms: u64, every_secs: u64, offer: &OfferMark) -> bool {
+        self.checked_offer.as_ref() != Some(offer)
+            || self.record.readiness.checked_at_ms.is_none_or(|since| {
+                now_ms >= since.saturating_add(every_secs.saturating_mul(1_000))
+            })
     }
 }
 
@@ -167,10 +199,10 @@ impl std::fmt::Debug for NodeReadinessShared {
 }
 
 impl NodeReadinessShared {
-    /// Reads the node's readiness record and its incidents from
-    /// `state_dir`, and notes the boot it opens in. Answers the boot it last
-    /// opened in when that was another: a host reset. A record that does not
-    /// read starts over as never checked.
+    /// Reads readiness and incidents from `state_dir` and records this boot.
+    /// Returns the previous boot ID if it changed. An unreadable record starts
+    /// over as never checked. Even a readable record does not carry the last
+    /// checked offer, so the first idle tick is due.
     pub(super) fn open(state_dir: &Path, now: &ReceiptClock) -> (Self, Option<String>) {
         let path = state_dir.join(READINESS_FILE_NAME);
         let mut record: ReadinessRecord = std::fs::read(&path)
@@ -185,7 +217,7 @@ impl NodeReadinessShared {
             path,
             book: Mutex::new(ReadinessBook {
                 record,
-                opened_at_ms: now.wall_ms,
+                checked_offer: None,
             }),
             checking: Mutex::new(()),
             incidents: Mutex::new(IncidentLog::open(state_dir)),
@@ -244,18 +276,33 @@ impl NodeJobs {
     /// The readiness step of the tick: records a drain or a clear that
     /// another path made, then, while no attempt runs and a check is due,
     /// runs the check and the DRAIN rule on its result.
+    ///
+    /// The check never runs beside a job's end or release check. Each reads
+    /// the devices through root's machine-wide query lock, which refuses a
+    /// second query (`query_stuck`), and a refused release check
+    /// quarantines its key. The release check runs only in
+    /// [`NodeJobs::tick`]'s end handling, which ends before this step on the
+    /// same thread, and the listener runs one tick at a time and awaits it
+    /// (`handler::mesh::shutdown::tick`). A key whose release check is still
+    /// owed stays `Ended`, so this step does not wait for it: a quarantined
+    /// key stays `Ended` until its release check passes, a reboot ends it or
+    /// the owner writes it off, and waiting would stop the checks and keep
+    /// their drain for that long.
     pub(super) fn readiness_tick(&self) {
         let _checking = match self.shared.readiness.checking.try_lock() {
             Ok(guard) => guard,
             Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
             Err(TryLockError::WouldBlock) => return,
         };
-        self.observe_drain();
-        let settings = self.parts().admission.job_settings();
+        let parts = self.parts();
+        let snapshot = parts.admission.readiness_snapshot();
+        self.observe_drain(&snapshot.controls.drained);
+        let settings = parts.admission.readiness_job_settings(&snapshot);
+        let offer = OfferMark::of(&snapshot, parts.devices.booker_withheld());
         let now = self.now();
         let mark = {
             let book = self.shared.readiness.book();
-            if !book.due(now.wall_ms, settings.readiness_every_secs) {
+            if !book.due(now.wall_ms, settings.readiness_every_secs, &offer) {
                 return;
             }
             book.record.mark.clone()
@@ -267,7 +314,7 @@ impl NodeJobs {
             Ok(()) => ReadinessState::Ready,
             Err((check, why)) => ReadinessState::NotReady { check, why },
         };
-        self.settle_check(&found, &now, &settings);
+        self.settle_check(&found, &now, &settings, offer);
     }
 
     /// Whether any key is launching, running or ending.
@@ -355,7 +402,13 @@ impl NodeJobs {
 
     /// Keeps one check's result with its streak, records the incident a
     /// change makes, and acts on the DRAIN rule's pick.
-    fn settle_check(&self, found: &ReadinessState, now: &ReceiptClock, settings: &NodeJobSettings) {
+    fn settle_check(
+        &self,
+        found: &ReadinessState,
+        now: &ReceiptClock,
+        settings: &NodeJobSettings,
+        offer: OfferMark,
+    ) {
         let incident = {
             let mut book = self.shared.readiness.book();
             let before = book.record.readiness.clone();
@@ -377,6 +430,7 @@ impl NodeJobs {
             let first = readiness.results.len().saturating_sub(kept);
             readiness.results.drain(..first);
             book.record.mark = Some(ClockMark::of(now));
+            book.checked_offer = Some(offer);
             self.shared.readiness.persist(&book.record);
             check_incident(&before, &book.record.readiness)
         };
@@ -413,18 +467,20 @@ impl NodeJobs {
     /// Records a drain or a clear that the node did not make itself: the
     /// count of failed jobs, recovery's drain for a job unit outside the
     /// journal, or `resume` at the box.
-    fn observe_drain(&self) {
-        let drained = self.parts().admission.controls().drained;
+    fn observe_drain(&self, drained: &Option<String>) {
         {
             let mut book = self.shared.readiness.book();
-            if book.record.seen_drain == drained {
+            if &book.record.seen_drain == drained {
                 return;
             }
-            book.record.seen_drain.clone_from(&drained);
+            book.record.seen_drain.clone_from(drained);
             self.shared.readiness.persist(&book.record);
         }
         self.record_incident(match drained {
-            Some(why) => IncidentKind::Drained { why, rule: None },
+            Some(why) => IncidentKind::Drained {
+                why: why.clone(),
+                rule: None,
+            },
             None => IncidentKind::DrainCleared { rule: None },
         });
     }

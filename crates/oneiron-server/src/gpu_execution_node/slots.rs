@@ -210,6 +210,16 @@ impl GpuSlotTable {
         &self.shared.offer
     }
 
+    /// Reads the device IDs another booker withholds now, without probing the driver.
+    ///
+    /// # Errors
+    ///
+    /// [`GpuProbeError`] when the withheld list cannot be read.
+    #[cfg(unix)]
+    pub(crate) fn booker_withheld(&self) -> Result<BTreeSet<String>, GpuProbeError> {
+        self.shared.withheld()
+    }
+
     /// Each device's temperature, power draw and memory in use now, where
     /// the probe gives them: a reading for the breadcrumb lines (pass 34,
     /// 7.3), not a hold.
