@@ -12,7 +12,10 @@ use loro::ExportMode;
 use oneiron::sync::federation_burst::{
     FederationBurstDecision, prepare_selector_fetch, replay_selector_fetch,
 };
-use oneiron::sync::{SelectorAnswerDoc, WindowKey, selector_answer_doc_for_peer};
+use oneiron::sync::schema::create_window_doc;
+use oneiron::sync::{
+    CoreferenceDisclosure, SelectorAnswerDoc, WindowKey, selector_answer_doc_for_peer,
+};
 
 /// `Break` when `session_gone` finds the socket's caller gone once the window
 /// has loaded (FIX 6313): nothing is sent or completed for it, and the
@@ -93,8 +96,10 @@ pub(super) async fn handle_selector_fetch(
         send(direct_tx, key, window_sub_tags::SELECTOR_DEFERRED, &retry)?;
         return Ok(ControlFlow::Continue(()));
     }
+    // A fetch of a key the root does not list loads no window and creates
+    // nothing (WINDOW-FETCH-NO-CREATE).
     let window = server
-        .serve_window(key)
+        .fetch_window(key)
         .await
         .map_err(|e| ProtocolError::Persistence(format!("window load failed: {e}")))?;
     // FIX 6313: the load may wait, and the session the gate before dispatch
@@ -104,7 +109,6 @@ pub(super) async fn handle_selector_fetch(
         tracing::warn!("credential revoked — refusing sync message and closing");
         return Ok(ControlFlow::Break(()));
     }
-    let doc = window.doc.clone();
     // The answer leaves only while the grant and the authority it is made
     // under stand (SELECTOR-RELEASE-POINT = B): read before the filter.
     let basis = crate::selector_release::SelectorReleaseBasis::take(
@@ -115,25 +119,45 @@ pub(super) async fn handle_selector_fetch(
         .selector_lane
         .scope_for(&prepared.selector)
         .map_err(map_selector_filter_err)?;
-    // It also leaves only while each coreference link the filter lets it
-    // carry is still shared into its pact. To another vault's machine it
-    // carries the owner's delete of each row this vault released to the
-    // grant's peer, and goes with the rows it releases, which its last door
-    // records before its bytes leave (CROSS-VAULT-DELETE-SELECTOR-ANSWER-RELEASE).
-    let (answer, disclosure) = oneiron::sync::recording_coreference_disclosure(|| {
-        selector_answer_doc_for_peer(
-            server.vault.as_ref(),
-            &doc,
-            key,
-            answer_scope,
-            &prepared.selector,
-            state.peer_machine(server.vault()),
-        )
-    });
-    let SelectorAnswerDoc {
-        doc: filtered,
-        release,
-    } = answer.map_err(map_selector_filter_err)?;
+    let (filtered, release, disclosure, admitted) = match window {
+        Some(window) => {
+            let doc = window.doc.clone();
+            // It also leaves only while each coreference link the filter lets
+            // it carry is still shared into its pact. To another vault's
+            // machine it carries the owner's delete of each row this vault
+            // released to the grant's peer, and goes with the rows it
+            // releases, which its last door records before its bytes leave
+            // (CROSS-VAULT-DELETE-SELECTOR-ANSWER-RELEASE).
+            let (answer, disclosure) = oneiron::sync::recording_coreference_disclosure(|| {
+                selector_answer_doc_for_peer(
+                    server.vault.as_ref(),
+                    &doc,
+                    key,
+                    answer_scope,
+                    &prepared.selector,
+                    state.peer_machine(server.vault()),
+                )
+            });
+            let SelectorAnswerDoc {
+                doc: filtered,
+                release,
+            } = answer.map_err(map_selector_filter_err)?;
+            (filtered, release, disclosure, true)
+        }
+        // An unlisted key is answered with an empty window as it is, the
+        // answer a listed window with no row for the selector gets. It is
+        // not filtered: the filter packs the rows the vault stores under the
+        // key into its copy. It is not kept as an admitted copy: the body
+        // upkeep rebuilds each kept copy from the home's window, and that
+        // opens the window (REVIEW-10604). The release and completion gates
+        // below run as for any answer.
+        None => (
+            create_window_doc("selector", key),
+            None,
+            CoreferenceDisclosure::default(),
+            false,
+        ),
+    };
     let delta = filtered
         .export(ExportMode::all_updates())
         .map_err(|e| ProtocolError::ExportFailed(e.to_string()))?;
@@ -149,9 +173,11 @@ pub(super) async fn handle_selector_fetch(
     }
     // The rows it admitted are the ones whose by-reference bodies this socket
     // is served, while its selector stands (FIX 12118).
-    state
-        .admitted_windows
-        .keep(key.clone(), prepared.selector.clone(), filtered);
+    if admitted {
+        state
+            .admitted_windows
+            .keep(key.clone(), prepared.selector.clone(), filtered);
+    }
     prepared
         .complete(server.vault.as_ref())
         .map_err(map_selector_filter_err)?;
