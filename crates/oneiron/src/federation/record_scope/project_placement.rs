@@ -56,7 +56,7 @@ pub(crate) fn session_projects_admit_row(
     match header.entity_type {
         crate::registry::ENTITY_TYPE_CLAIM => Ok(crate::claim::decode_claim_body(body, true)
             .is_ok_and(|body| projects.admits(body.scope_project))),
-        crate::registry::ENTITY_TYPE_MESSAGE | crate::registry::ENTITY_TYPE_TURN if room_speech => {
+        crate::registry::ENTITY_TYPE_MESSAGE | crate::registry::ENTITY_TYPE_TURN if room_speech || true => {
             Ok(true)
         }
         crate::registry::ENTITY_TYPE_NOTE
