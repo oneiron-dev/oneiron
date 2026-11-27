@@ -271,6 +271,10 @@ impl Vault {
                         sweep_dry_run_forced: dry_run_forced,
                         live_use: false,
                         code_consent_wait: None,
+                        // The sweep has no code site. Conservatively preserve the
+                        // floor of the frozen call, which its admitted replay uses.
+                        run_served_person_rows: candidate.prepared.call().payload_data_class
+                            >= super::scope::DataClass::Personal,
                         // The original pass's retention context is unknown: mint
                         // sealed, so a crash-left off-record request never
                         // gains a plaintext durable copy before adoption.

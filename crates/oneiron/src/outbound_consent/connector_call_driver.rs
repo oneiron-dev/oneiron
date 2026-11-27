@@ -137,6 +137,7 @@ pub(super) struct ConnectorCallPassInput<'a> {
     pub(super) preferred_grant: Option<EntityId>,
     /// Scope resolved from the real caller, never the tool's arguments.
     pub(super) remember_context: Option<crate::connector_key::ConnectorToolRememberContext>,
+    pub(super) run_served_person_rows: bool,
 }
 
 impl<'a> ConnectorCallPassInput<'a> {
@@ -153,6 +154,7 @@ impl<'a> ConnectorCallPassInput<'a> {
                 .as_deref()
                 .and_then(|hex| EntityId::from_hex(hex).ok()),
             remember_context: pending.remember_context,
+            run_served_person_rows: pending.run_served_person_rows,
         }
     }
 }
@@ -857,8 +859,12 @@ impl Vault {
         if key.protocol_revision.is_none() {
             return Ok(Err(held("connector_protocol_unpinned")));
         }
-        let (payload_data_class, destructive_hint, replay) =
+        let (mut payload_data_class, destructive_hint, replay) =
             self.connector_tool_class(&key, &route, call.tool, rows)?;
+        // FIX CONNECTOR-CALL-VAULT-TEXT-UNCLASSED, the Personal half of FIX 8807.
+        if call.run_served_person_rows {
+            payload_data_class = payload_data_class.max(DataClass::Personal);
+        }
         let arguments: Value = serde_json::from_str(call.arguments)
             .map_err(|_| IntentLedgerError::InvalidRecord("held connector call arguments"))?;
         let context = ScopedMcpCallContext {
