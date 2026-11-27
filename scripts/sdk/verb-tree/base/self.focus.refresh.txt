@@ -1,0 +1,2 @@
+self.focus.refresh({})
+  -> the board as one frame: your live working set (tasks, inbox, what is in focus).

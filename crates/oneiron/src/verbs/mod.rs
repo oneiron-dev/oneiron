@@ -145,6 +145,7 @@ mod sync_outbox;
 mod sync_quarantine;
 // ROLE-TRAINING-RUN: the owner's role prepare and the bounded run read.
 mod training_runs;
+pub mod tree;
 mod trusted_contact;
 mod turn_program_resume;
 mod uncertain_send;
