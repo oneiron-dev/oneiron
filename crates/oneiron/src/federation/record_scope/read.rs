@@ -68,7 +68,9 @@ impl Vault {
                 Ok(
                     crate::authority::row_causal_admitted(self, &txn, &id, &raw)?
                         && self.epoch_fence_in(&txn, id, &raw, door, "read")?
-                        && self.text_fence_in(&txn, id, &raw, door, "read", |_| Ok(false))?,
+                        && self.text_fence_in(&txn, id, &raw, door, "read", |_| Ok(false))?
+                        && self
+                            .word_source_fence_in(&txn, id, &raw, door, "read", |_| Ok(false))?,
                 )
             };
             let withdrawn = !crate::ports::raw_readable_in_txn(&self.store, &txn, &id, &raw)?;
@@ -118,6 +120,89 @@ impl Vault {
             });
         }
         Ok(out)
+    }
+
+    /// The word-source fence at a scoped door (FIX SLIP-DOOR-DERIVED-SUMMARY-FENCE):
+    /// a row carrying other rows' words passes only while this door, under
+    /// its selector, slip, channel and verb, admits every source. Missing,
+    /// withdrawn (by the doors' own rule, `raw_readable_in_txn`), withheld or
+    /// unresolved sources refuse the row, so a copy cannot disclose words its
+    /// source would not. The sync member gate applies the same rule (FIX
+    /// SELECTOR-SCOPE-SUMMARY-WORDS).
+    pub(super) fn word_source_fence_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: EntityId,
+        raw: &[u8],
+        door: [&Scope; 3],
+        verb: &str,
+        mut withheld: impl FnMut(&EntityId) -> Result<bool>,
+    ) -> Result<bool> {
+        use crate::ports::EntityStoreRead;
+        use crate::scope_summary::WordSources;
+
+        let header =
+            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("record header"))?;
+        let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+        if header.entity_type == crate::registry::ENTITY_TYPE_SUMMARY
+            && crate::compaction::stored_epoch_in(&self.store, txn, &id, body)?
+                != crate::compaction::StoredEpoch::No
+        {
+            return Ok(true);
+        }
+
+        // The roots this fence judges: every row whose words came from others.
+        let mut pending = match crate::scope_summary::word_sources_in(self, txn, &id, raw) {
+            Ok(WordSources::Own) => return Ok(true),
+            Ok(WordSources::Unresolved) | Err(Error::InvalidClaimBody(_)) => return Ok(false),
+            Ok(WordSources::From(sources)) => sources,
+            Err(error) => return Err(error),
+        };
+        let mut seen = std::collections::BTreeSet::from([id]);
+        while let Some(source) = pending.pop() {
+            if !seen.insert(source) {
+                continue;
+            }
+            let Some(row) = self.store.port_entity_record(txn, &source)? else {
+                return Ok(false);
+            };
+            let source_raw = row.encode();
+            if !crate::ports::raw_readable_in_txn(&self.store, txn, &source, &source_raw)?
+                || withheld(&source)?
+                || !disclosure_scope_for_stored_row(
+                    &self.store,
+                    txn,
+                    source,
+                    row.entity_type,
+                    &row.body,
+                )?
+                .is_some_and(|scope| {
+                    note_world::admits_at(
+                        &self.store,
+                        txn,
+                        source,
+                        row.entity_type,
+                        &scope,
+                        door,
+                        verb,
+                    )
+                })
+            {
+                return Ok(false);
+            }
+            if !crate::authority::row_causal_admitted(self, txn, &source, &source_raw)?
+                || !self.text_fence_in(txn, source, &source_raw, door, verb, &mut withheld)?
+            {
+                return Ok(false);
+            }
+            match crate::scope_summary::word_sources_in(self, txn, &source, &source_raw) {
+                Ok(WordSources::Own) => {}
+                Ok(WordSources::From(nested)) => pending.extend(nested),
+                Ok(WordSources::Unresolved) | Err(Error::InvalidClaimBody(_)) => return Ok(false),
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(true)
     }
 
     /// One row as this door's Normal view judges it, for an `esign.*`
