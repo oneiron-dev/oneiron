@@ -2,11 +2,12 @@
 
 use super::claims::claim_envelope_actor;
 use super::recall::bar::query_terms;
-use super::{ClaimView, HeldMark, Memory, MemoryResult};
+use super::structural::type_byte_for_kind;
+use super::{ClaimView, HeldMark, Memory, MemoryResult, RecallScope};
 use crate::analyzer::AnalyzerContext;
 use crate::claim::{
     CallerLocality, ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimReadStatus,
-    PointRead, claim_index_text, decode_claim_body,
+    PointRead, decode_claim_body,
 };
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
@@ -20,6 +21,12 @@ const OWN_HELD_TRAY_SCAN: usize = 2048;
 const OWN_HELD_SEARCH_LIMIT: usize = 5;
 
 impl Memory<'_> {
+    /// Whether `body` is this handle's own write: its write-envelope actor is
+    /// this handle's actor, and the handle is no System caller.
+    pub(super) fn is_own_write(&self, body: &ClaimBody) -> bool {
+        self.actor_class != EdgeActorClass::System && claim_envelope_actor(body) == Some(self.actor)
+    }
+
     /// The caller's own held claims that `keep` accepts, newest tray entry
     /// first, at most `limit`, each with its [`HeldMark`]. Own means the
     /// claim's write-envelope actor is this handle's actor. Each claim is
@@ -31,6 +38,19 @@ impl Memory<'_> {
         keep: impl Fn(&EntityId, &ClaimBody) -> bool,
         limit: usize,
     ) -> MemoryResult<Vec<ClaimView>> {
+        self.own_held_claims_shown(keep, |_| true, limit)
+    }
+
+    /// [`Self::own_held_claims`] whose served view `shown` also accepts. The
+    /// lane admits the candidates uncharged; only the claims returned are
+    /// charged to the caller's read exposure (L8-65) and listed as producers
+    /// of the answer, so a kept reply is checked against each of them.
+    fn own_held_claims_shown(
+        &self,
+        keep: impl Fn(&EntityId, &ClaimBody) -> bool,
+        shown: impl Fn(&ClaimView) -> bool,
+        limit: usize,
+    ) -> MemoryResult<Vec<ClaimView>> {
         if limit == 0
             || self.actor_class == EdgeActorClass::System
             || EntityId::from_bytes(*self.actor.as_bytes()).is_err()
@@ -40,7 +60,7 @@ impl Memory<'_> {
         let keep = |id: &EntityId, body: &ClaimBody| {
             body.approval == ClaimApprovalStatus::Proposed
                 && body.lifecycle == ClaimLifecycleStatus::Active
-                && claim_envelope_actor(body) == Some(self.actor)
+                && self.is_own_write(body)
                 && keep(id, body)
         };
         let mut reads = Vec::new();
@@ -65,8 +85,8 @@ impl Memory<'_> {
             return Ok(Vec::new());
         }
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
-        let admitted = lane.read(&reads, None)?;
-        let mut views = Vec::new();
+        let admitted = lane.read_uncharged(&reads)?;
+        let (mut served, mut views) = (Vec::new(), Vec::new());
         for row in admitted.value.into_iter().flatten() {
             if row.entity_type != ENTITY_TYPE_CLAIM {
                 continue;
@@ -85,36 +105,41 @@ impl Memory<'_> {
                 continue;
             }
             let view = self.served_claim_view(&row.id, &body)?;
-            if view.held.is_some() {
+            if view.held.is_some() && shown(&view) {
+                served.push(row.id);
                 views.push(view);
                 if views.len() == limit {
                     break;
                 }
             }
         }
+        lane.charge_served(served.iter().copied());
+        self.produced_from(served);
         Ok(views)
     }
 
-    /// [`Self::own_held_claims`] whose index text holds at least one of
-    /// `query`'s terms (the text index's analyzer), inside `project_refs`
-    /// and every project below them when any are named. Empty for a query
+    /// The caller's own held claims that `keep` accepts and whose served
+    /// value holds at least one of `query`'s terms (the text index's
+    /// analyzer, over the value text as the index reads a claim's value).
+    /// Only the value the view serves is matched, never stored words it
+    /// redacts or masks. At most [`OWN_HELD_SEARCH_LIMIT`]; none for a query
     /// with no terms.
-    pub(crate) fn own_held_for_query(
+    fn own_held_matching(
         &self,
         query: &str,
-        project_refs: &[String],
+        keep: impl Fn(&EntityId, &ClaimBody) -> bool,
     ) -> MemoryResult<Vec<ClaimView>> {
         let terms = query_terms(self.vault, query);
         if terms.is_empty() {
             return Ok(Vec::new());
         }
-        let projects = self.projects_at_or_below(project_refs)?;
-        self.own_held_claims(
-            |_, body| {
-                if !projects.matches(body.scope_project) {
-                    return false;
-                }
-                let text = claim_index_text(&body.predicate, &body.value);
+        self.own_held_claims_shown(
+            keep,
+            |view| {
+                let text = match &view.value {
+                    serde_json::Value::String(text) => text.clone(),
+                    other => other.to_string(),
+                };
                 let mut tokens = Vec::new();
                 self.vault
                     .analyzer
@@ -127,6 +152,45 @@ impl Memory<'_> {
             },
             OWN_HELD_SEARCH_LIMIT,
         )
+    }
+
+    /// `vault.search.bm25`'s held list: [`Self::own_held_matching`] over
+    /// every held claim of the caller.
+    pub(crate) fn own_held_for_search(&self, query: &str) -> MemoryResult<Vec<ClaimView>> {
+        self.own_held_matching(query, |_, _| true)
+    }
+
+    /// A recall's held list: [`Self::own_held_matching`] under the recall's
+    /// own selection from `scope`: its worlds (as recall reads them, the
+    /// actor's default when none is named), its projects and every project
+    /// below them, and its kinds, which must name CLAIM when set. A scope
+    /// that selects by conversation, person or facet names nothing this
+    /// list can test a claim against, so it gets none.
+    pub(crate) fn own_held_for_recall(
+        &self,
+        query: &str,
+        scope: &RecallScope,
+    ) -> MemoryResult<Vec<ClaimView>> {
+        let claims_asked = scope.kinds.as_ref().is_none_or(|kinds| {
+            kinds
+                .iter()
+                .any(|kind| type_byte_for_kind(kind).is_ok_and(|kind| kind == ENTITY_TYPE_CLAIM))
+        });
+        if !claims_asked
+            || !scope.conversation_refs.is_empty()
+            || scope.person_ref.is_some()
+            || scope.facet.is_some()
+        {
+            return Ok(Vec::new());
+        }
+        let worlds = self.recall_worlds(scope)?;
+        let projects = self.selected_projects(scope)?;
+        self.own_held_matching(query, |_, body| {
+            worlds
+                .as_ref()
+                .is_none_or(|worlds| worlds.admits(body.world))
+                && projects.matches(body.scope_project)
+        })
     }
 
     /// The tray row's mark for a held claim; `None` when the tray holds none

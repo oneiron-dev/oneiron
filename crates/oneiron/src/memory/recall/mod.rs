@@ -946,7 +946,7 @@ impl Memory<'_> {
     /// The worlds one recall reads (ARCH-0022). A named world reads with base
     /// reality; no name reads the actor's default, base plus its active world.
     /// A handle bound to a room turn meets either with the room's Scope.
-    fn recall_worlds(
+    pub(in crate::memory) fn recall_worlds(
         &self,
         scope: &RecallScope,
     ) -> MemoryResult<Option<crate::claim::world_access::WorldAuthoritySet>> {

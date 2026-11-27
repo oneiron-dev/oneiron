@@ -174,7 +174,8 @@ pub struct ClaimView {
     /// this read already admitted: labelled with its served value.
     #[serde(default)]
     pub claim: Option<crate::lens::RecordRef>,
-    /// The pending consent and its reasons, when this proposal is held.
+    /// The pending consent and its reasons, when this proposal is held and
+    /// the reader is its writer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub held: Option<HeldMark>,
     /// The pending correction waiting on this claim, when one is parked.
@@ -909,7 +910,9 @@ impl Memory<'_> {
             valid_to: body.valid_to,
             salience: body.salience,
             stale: body.stale,
-            held: if body.approval == ClaimApprovalStatus::Proposed {
+            // The tray's reasons are the writer's own and the tray reader's
+            // (`vault.writes.pending`); every other reader sees no mark.
+            held: if body.approval == ClaimApprovalStatus::Proposed && self.is_own_write(body) {
                 self.held_mark(id)?
             } else {
                 None
