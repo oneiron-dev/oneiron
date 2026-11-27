@@ -489,7 +489,7 @@ impl Vault {
             return Ok((
                 had_refinement || had_merge_receipt || had_tags || had_missing || had_retained_copy,
                 had_vector,
-                ledger_changed || had_retained_copy,
+                ledger_changed,
             ));
         };
         let header = EntityMetadataHeader::parse(&entity_record)
