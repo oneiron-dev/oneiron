@@ -180,6 +180,95 @@ pub struct RetrievalMeta {
     pub limit_clamped: bool,
 }
 
+/// Which push a recall's relevance bar serves (RECALL-CARRIER-THRESHOLD; owner 26 Nov 18:53
+/// and 18:59): the lines a session is given at its start, the lines that ride with its work
+/// (a tool result, the user's prompt), or a read the session asked for itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RecallSource {
+    /// Lines given at a session's start, keyed on the task's words.
+    Start,
+    /// Lines that ride with the session's work: a tool result or the user's prompt.
+    Carrier,
+    /// A read the session asked for itself.
+    Pull,
+}
+
+impl RecallSource {
+    /// The wire name.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Start => "start",
+            Self::Carrier => "carrier",
+            Self::Pull => "pull",
+        }
+    }
+
+    /// Whether lines of this source are pushed into a session unasked, so at most
+    /// [`PUSH_LINES`] of them are.
+    #[must_use]
+    pub const fn pushes(self) -> bool {
+        matches!(self, Self::Start | Self::Carrier)
+    }
+}
+
+/// The most lines a pushed recall ([`RecallSource::pushes`]) answers, whatever its limit.
+pub const PUSH_LINES: usize = 3;
+
+/// A recall's ask to be judged by the owner's relevance bar (`recall.bar.<source>`): the
+/// push it serves and the harness it serves it in, which picks the harness's own row. The
+/// bar only narrows; a recall that asks none is judged by none.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RecallBarAsk {
+    pub source: RecallSource,
+    /// The harness, as its hooks name it (`claude-code`, `codex`, `prime-agent`): 1 to 40 of
+    /// `a-z 0-9 -`. Omitted, the rows that name no harness judge it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub harness: Option<String>,
+}
+
+/// Whether `name` is a harness name a bar row or ask may carry: 1 to 40 of `a-z 0-9 -`,
+/// starting with a letter.
+#[must_use]
+pub fn is_harness_name(name: &str) -> bool {
+    (1..=40).contains(&name.len())
+        && name.as_bytes()[0].is_ascii_lowercase()
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+}
+
+/// The rule a bar applied, as the pack reports it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RecallBarRule {
+    /// No bar: every line the recall found.
+    Open,
+    /// No line passes. `reason` says why: `owner` (the owner set it), `unmeasured` (the host
+    /// measured no bar for the vault's embedding space), `other_space` (the owner's floor names
+    /// another space), `declared_space` (the vault's text slot binds a declared space, which no
+    /// bar reads yet), `no_query_vector` (the query was not embedded), `no_project` (a push read
+    /// outside any project), `unreadable` (the owner's row did not read).
+    Quiet { reason: String },
+    /// A line passes when its text holds a phrase of the query, or one of its rare terms.
+    DirectMatch,
+    /// A line passes when the raw cosine of its vector and the query's, in `model`'s space,
+    /// is at least `floor`.
+    Cosine { floor: f32, model: String },
+}
+
+/// What a recall's bar did, beside its items.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct RecallBarOutcome {
+    pub source: RecallSource,
+    pub rule: RecallBarRule,
+    /// Whether the owner asks a harness to say so in one line when no line passed
+    /// (`recall.bar.empty_receipt`); false, it says nothing.
+    pub receipt: bool,
+}
+
 /// `vault.recall`'s inputs, spelled exactly as §HEAD-CONTRACT does.
 ///
 /// Every field but `query` is optional and defaults to the contract's default,
@@ -256,6 +345,14 @@ pub struct RecallRequest {
         skip_serializing_if = "Option::is_none"
     )]
     pub operation_id: Option<String>,
+    /// The owner's relevance bar for a push (RECALL-CARRIER-THRESHOLD): each line is judged
+    /// before the limit cuts, by the raw cosine of its vector and the query's in the vault's
+    /// embedding space, never a blended or reranked score, so a line under the bar takes no
+    /// slot. A push (`start`, `carrier`) answers at most 3 lines, only from the session's
+    /// project, and none when nothing clears the bar. Each line kept says its `similarity`,
+    /// and the pack says the rule (`bar`). Omitted, recall runs as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bar: Option<RecallBarAsk>,
 }
 pub mod call_mode;
 pub mod home;

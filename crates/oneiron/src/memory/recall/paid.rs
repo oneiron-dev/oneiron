@@ -378,6 +378,7 @@ impl Memory<'_> {
                 &RecallExecution {
                     hyde: door.hyde,
                     telemetry: input.telemetry.as_ref(),
+                    bar: input.bar.as_ref(),
                     deadline,
                     embedding,
                     media,
@@ -409,6 +410,7 @@ impl Memory<'_> {
                 &RecallExecution {
                     hyde: door.hyde,
                     telemetry: input.telemetry.as_ref(),
+                    bar: input.bar.as_ref(),
                     deadline: deadline.as_ref(),
                     reranker: Some(&capture),
                     embedding,
@@ -554,6 +556,7 @@ impl Memory<'_> {
                 &RecallExecution {
                     hyde: door.hyde,
                     telemetry: input.telemetry.as_ref(),
+                    bar: input.bar.as_ref(),
                     deadline: deadline.as_ref(),
                     reranker: Some(&prepared),
                     embedding,

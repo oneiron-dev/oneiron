@@ -22,6 +22,13 @@ use crate::retrieval_quality::RetrievalDiagnostics;
 use crate::store::RetrievalSignal;
 use heed::RoTxn;
 
+/// How many rows the text channel fetches for a barred direct-match push: the window's whole
+/// bound, not the fusion floor. The bar drops under-bar hits after the fold, so a push that
+/// fetched only the floor's 80 rows would never see a passing claim ranked below 80
+/// under-bar hits (REVIEW-10566/10567 round 2). Pull and no-bar recalls keep the floor; past
+/// this bound the window still hides a passing claim.
+const BARRED_PUSH_TEXT_WINDOW: usize = crate::memory::caps::MAX_SEARCH_LIMIT;
+
 /// What the text channel reads, plus the widening probe's gate cache it
 /// consumes.
 pub(super) struct TextChannelInputs<'a> {
@@ -204,7 +211,7 @@ impl PipelineBuilder<'_> {
     /// admission: a term's document frequency asks it of every posting. It
     /// answers each row once across the stage's reads (the turn fold's
     /// longer reads ask again of the same postings).
-    fn hidden_row_test<'t>(
+    pub(super) fn hidden_row_test<'t>(
         &'t self,
         rtxn: &'t RoTxn<'_>,
         (filter_config, world_allowed_set): (
@@ -263,6 +270,18 @@ impl PipelineBuilder<'_> {
             answers.insert(*id, hidden);
             Ok(hidden)
         })))
+    }
+
+    /// Whether this run is a push the owner's bar judges by direct match
+    /// (RECALL-CARRIER-THRESHOLD): a barred `start` or `carrier` on a vault with no embedder
+    /// (or under an explicit direct-match row). Only such a run reads the text window whole
+    /// ([`BARRED_PUSH_TEXT_WINDOW`]); pull and no-bar recalls never set the claims-only flag.
+    fn barred_direct_match_push(&self) -> bool {
+        self.recall_bar_claims_only
+            && matches!(
+                self.recall_bar,
+                Some(crate::memory::recall::bar::BarJudge::DirectMatch { .. })
+            )
     }
 
     /// Runs the text channel, the next of `stages_left` deadline stages, and
@@ -352,11 +371,15 @@ impl PipelineBuilder<'_> {
                         &mut retry_prefix_probe_claim_gate,
                     )
                 };
-                let candidate_limit = if self.candidate_filter.is_some() {
+                let mut candidate_limit = if self.candidate_filter.is_some() {
                     retry_scoped_text_limit
                 } else {
                     retry_text_channel_limit
                 };
+                if self.barred_direct_match_push() {
+                    candidate_limit =
+                        candidate_limit.max(self.text_channel_limit(BARRED_PUSH_TEXT_WINDOW));
+                }
                 let mut results = if self.memory_category {
                     self.search_text_candidates(
                         rtxn,
@@ -493,11 +516,14 @@ impl PipelineBuilder<'_> {
             .hyde_expansion
             .as_ref()
             .map_or(query, |expansion| expansion.grounded_query.as_str());
-        let candidate_limit = if self.candidate_filter.is_some() {
+        let mut candidate_limit = if self.candidate_filter.is_some() {
             self.text_channel_limit(limit)
         } else {
             text_channel_limit
         };
+        if self.barred_direct_match_push() {
+            candidate_limit = candidate_limit.max(self.text_channel_limit(BARRED_PUSH_TEXT_WINDOW));
+        }
         // A run that folds each MESSAGE into its TURN returns turns, so the
         // bound counts turns: several messages of one turn would otherwise
         // fill it and keep later conversations out. Such a run reads on,
