@@ -15,7 +15,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 8644 | 2333 | 276 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 8646 | 2334 | 276 |
 | [oneiron-agent-runtime](codemap/oneiron-agent-runtime.md) | `oneiron-agent-runtime`: the sandbox backends above the `oneiron` core crate (core split slice 5b.1) | 23 | 11 | 1 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 4 | 1 | 0 |
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the… | 77 | 12 | 0 |
@@ -170,7 +170,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `edit_roundtrip` | dir | 41 | m | yes | ARTL-3 (OF-368 D5): agent edit round-trip — code-session pipeline |
 | `edit_settle` | dir | 26 | L | yes | ARTL-4 (OF-368 D5/D6/D7): retained-output settle + receipts |
 | `embed` | file+dir | 49 | L | yes | Embedding pipeline root: attach, decide, and reconcile under one budget dial |
-| `engine_executor` | dir | 79 | L | yes | Engine-native JS code-mode executor |
+| `engine_executor` | dir | 82 | L | yes | Engine-native JS code-mode executor |
 | `engine_store_hooks` | file+dir | 2 | L | — | The engine's implementation of the store layer's hooks: each method forwards to the engine function of the… |
 | `entity_doc` | dir | 48 | L | yes | Durable, bounded entity text documents, anchored edits, fork sets and owner purge |
 | `entity_id` | file | 1 | s | — | Entity ids, world ids and the presentation-id grammar |

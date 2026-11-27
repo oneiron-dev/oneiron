@@ -22213,7 +22213,7 @@
      "path": "src/code_run/storage/reader_folds.rs",
      "purpose": "A fold's receipt (ARCH-0079 #reader-forks) and a summary's memo row, beside the run's fold ledger and where…",
      "surface": {
-      "crate-vis": 9
+      "crate-vis": 10
      }
     },
     {
@@ -22660,7 +22660,7 @@
      "path": "src/code_run/storage/response_owners.rs",
      "purpose": "Whose reply content a code run's replay row holds (FIX 5718, KEY STORE = A): one row per replay record, a…",
      "surface": {
-      "crate-vis": 16
+      "crate-vis": 17
      }
     },
     {
@@ -41937,7 +41937,7 @@
      "purpose": "Executor driver: struct, constructors, and the witness-turn doors",
      "surface": {
       "crate-vis": 5,
-      "fn": 12,
+      "fn": 14,
       "struct": 1
      }
     },
@@ -42173,17 +42173,17 @@
      "path": "src/engine_executor/program_entry.rs",
      "purpose": "A turn program's pinned entry (DOOR-141 PR3b, FIX 4382)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 8
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/engine_executor/program_entry/injection.rs",
      "purpose": "The calls a resumed pinned entry answers instead of issuing them (DOOR-141 PR3b): each one an earlier entry…",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 18
      }
     },
     {
@@ -42195,9 +42195,19 @@
      "path": "src/engine_executor/record.rs",
      "purpose": "Durable replay identity: config/terminal markers, hashes, and checkpoint state",
      "surface": {
-      "crate-vis": 31,
-      "fn": 2,
+      "crate-vis": 33,
+      "fn": 3,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/engine_executor/record/caller_source.rs",
+     "purpose": "The caller's own code of a caller-source run, kept as a body the run owns (FIX EXECUTE-CALLER-CODE)",
+     "surface": {
+      "crate-vis": 7
      }
     },
     {
@@ -42217,7 +42227,7 @@
      "path": "src/engine_executor/record/replay_hash.rs",
      "purpose": "The replay identity hashes of a run: the config hash its config marker stores as hex, and each REPL step's…",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -42237,6 +42247,7 @@
      "path": "src/engine_executor/repl.rs",
      "purpose": "The durable code-mode REPL orchestrator",
      "surface": {
+      "crate-vis": 2,
       "fn": 1
      }
     },
@@ -42257,7 +42268,7 @@
      "path": "src/engine_executor/repl/persistence.rs",
      "purpose": "Durable REPL record loading, failed-step appends, refused-reply correction records and wait resumption",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 9
      }
     },
     {
@@ -42407,6 +42418,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/engine_executor/source_entry.rs",
+     "purpose": "Model-free entry and replay of the caller's own source (FIX EXECUTE-CALLER-CODE)",
+     "surface": {
+      "fn": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -42487,6 +42508,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "src/engine_executor/tests/caller_source_entry.rs",
+     "purpose": "—",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "src/engine_executor/tests/code_check.rs",
      "purpose": "The checked-in `src/task_verb/code-mode.d.ts` is the verb table's rendering of `self.memory`, and the…",
      "surface": {}
@@ -42548,6 +42577,7 @@
      "kind": "src",
      "notable": [
       "CallableProgram",
+      "CallerRunInput",
       "EngineExecutorConfig",
       "EngineExecutorLimits",
       "EngineExecutorOutcome",
@@ -42569,8 +42599,8 @@
      "surface": {
       "const": 4,
       "crate-vis": 2,
-      "enum": 3,
-      "fn": 10,
+      "enum": 4,
+      "fn": 11,
       "re-export": 1,
       "struct": 11,
       "trait": 2
@@ -123971,7 +124001,7 @@
     },
     "engine_executor": {
      "entry": "crates/oneiron/src/engine_executor/mod.rs",
-     "files": 79,
+     "files": 82,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -125691,8 +125721,8 @@
    },
    "over_bar": 276,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8644,
-   "test_files": 2333
+   "source_files": 8646,
+   "test_files": 2334
   },
   "oneiron-agent-runtime": {
    "files": [
