@@ -70393,7 +70393,7 @@
      "path": "src/ports/claim_order.rs",
      "purpose": "CLAIM origin-write ordering",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 7
      }
     },
     {
@@ -113131,6 +113131,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/claim_row_version_ceiling.rs",
+     "purpose": "A carried CLAIM row version stops at a structural ceiling (FIX SYNC-CLAIM-ROW-VERSION-FLOOR-POISON; Engine…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -125823,7 +125831,7 @@
    "over_bar": 276,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 8652,
-   "test_files": 2337
+   "test_files": 2338
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -163488,13 +163496,23 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/verb_table.rs",
      "purpose": "The verb table, one JSON file per verb under `scripts/sdk/verbs/`, named by its verb, read in file-name order",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/verb_table/example_call.rs",
+     "purpose": "Whether an example calls its verb: a token-level parse of the example's JavaScript",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -163599,17 +163617,17 @@
     },
     "verb_table": {
      "entry": "crates/oneiron-sdk-generator/src/verb_table.rs",
-     "files": 1,
+     "files": 2,
      "impl_vault": false,
-     "largest_src_bucket": "s",
-     "layout": "file",
+     "largest_src_bucket": "m",
+     "layout": "file+dir",
      "purpose": "The verb table, one JSON file per verb under `scripts/sdk/verbs/`, named by its verb, read in file-name order",
      "spec_ids": []
     }
    },
    "over_bar": 7,
    "purpose": "The SDK generator: writes every generated SDK output of the verb table (`scripts/sdk/verbs/`), the Rust…",
-   "source_files": 44,
+   "source_files": 45,
    "test_files": 8
   },
   "oneiron-seal": {
