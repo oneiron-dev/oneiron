@@ -456,14 +456,17 @@ type CatalogRole = fn(&Generator, &Dict) -> Result<bool, GenerateError>;
 /// Each `AgentVerb` role method and the rows it selects, in the list's order.
 const CATALOG_ROLES: &[(&str, CatalogRole)] = &[
     ("is_facade", |generator, row| {
-        // `r.get('context', 'memory') == 'memory' or r['name'] in BOARD_HOST_NAMES`
-        Ok(context_is(row, "memory") || {
-            let name = item(row, "name")?;
-            generator
-                .board_host_names
-                .iter()
-                .any(|board| board.py_eq(name))
-        })
+        // `r.get('context', 'memory') == 'memory' or r['name'] in BOARD_HOST_NAMES`; a code-only row has no
+        // facade door (FIX EXECUTE-CALLER-CODE).
+        Ok(
+            (context_is(row, "memory") && !super::code_only_row(row)) || {
+                let name = item(row, "name")?;
+                generator
+                    .board_host_names
+                    .iter()
+                    .any(|board| board.py_eq(name))
+            },
+        )
     }),
     ("is_browser", |generator, row| {
         // `r['name'] in {row['name'] for row in BROWSER_ROWS}`
@@ -475,7 +478,9 @@ const CATALOG_ROLES: &[(&str, CatalogRole)] = &[
         name.check_hashable("a set element")?;
         Ok(browser.iter().any(|browser| browser.py_eq(name)))
     }),
-    ("is_mcp", |_, row| Ok(!get_is(row, "mcp", "none"))),
+    ("is_mcp", |_, row| Ok(super::mcp_tool_row(row))),
+    // A row code mode serves: every row but one served by its HTTP facade door only (FIX EXECUTE-CALLER-CODE).
+    ("is_code_mode", |_, row| Ok(!super::facade_only_row(row))),
     // A row whose answer is a credential or a secret value (FIX EXECUTE-CALLER-CODE): code a caller wrote never
     // receives it, whatever its credential holds.
     ("refused_to_caller_code", |_, row| {

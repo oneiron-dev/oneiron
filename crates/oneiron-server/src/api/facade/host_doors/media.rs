@@ -221,7 +221,16 @@ fn owner_or_granted(
     if granted_operations(server, auth).contains(&operation) {
         return Ok(());
     }
-    owner_grade(auth, message)
+    owner_grade(auth, message).map_err(|mut refusal| {
+        // Keep the exact missing Grant on the refusal that crosses the run
+        // bridge (FIX EXECUTE-CALLER-CODE), not just in facade prose.
+        let grant = format!("ai.{}", operation.as_str());
+        refusal
+            .message
+            .push_str(&format!("; this operation needs a Grant naming {grant}"));
+        refusal.reason_codes.push(format!("grant_required.{grant}"));
+        refusal
+    })
 }
 
 /// [`answered`] past its credential check, for a caller its own door proved

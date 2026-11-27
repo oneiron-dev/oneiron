@@ -552,3 +552,46 @@ pub(super) fn mcp_setup_verb_names(structured: &Value) -> Vec<String> {
         .map(|verb| verb["name"].as_str().expect("a verb name").to_owned())
         .collect()
 }
+
+/// Resolves `credential` to its gateway actor on the primary endpoint, for a
+/// test that drives a handler seam directly instead of through the router.
+/// The credential resolves exactly the way the wire resolves it: nothing here
+/// fabricates an actor. The locality is off this device, as the router judges a request
+/// whose connection recorded no peer (DEC-0005): device-local worlds withhold from it.
+pub(super) async fn mcp_test_context(
+    server: &Arc<SyncServer>,
+    credential: &str,
+    request_id: &str,
+) -> McpCallContext {
+    crate::api::resolve_mcp_gateway_actor(
+        crate::mcp::McpSurfaceMode::Primary,
+        request_id,
+        &mcp_credential_headers(server, credential),
+        &axum::http::Extensions::new(),
+        oneiron::claim::CallerLocality::OffDevice,
+        server,
+    )
+    .await
+    .expect("the test credential resolves")
+}
+
+/// Enters a TASK run through the kept task handler (FIX EXECUTE-CALLER-CODE):
+/// no MCP tool starts a task run anymore, so migrated task tests drive this
+/// helper instead of the retired `execute_code` tool. It renders the OLD task
+/// shape through the test-only seam, so each test's assertions stand. It
+/// answers a JSON-RPC body shaped like `route_json`'s: `result` on success,
+/// the structured `error` on refusal.
+pub(super) async fn execute_task_run_for_test(
+    server: &Arc<SyncServer>,
+    credential: &str,
+    run_ref: &str,
+    task: &str,
+) -> Value {
+    let actor = mcp_test_context(server, credential, run_ref).await;
+    match crate::api::mcp_gateway::execute_mcp_task_run_for_test(server, &actor, run_ref, task)
+        .await
+    {
+        Ok(result) => json!({ "result": result }),
+        Err(error) => mcp_error_response(json!(run_ref), error),
+    }
+}

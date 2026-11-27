@@ -692,8 +692,8 @@ fn booking_agent_capabilities() -> Vec<String> {
 /// endpoint each one belongs to (ONE-1704 repair).
 ///
 /// Derived from the same server-bound registrations as `tools/list` and
-/// `tools/call`. A verified runtime adds `execute_code`; an unbound host never
-/// advertises it. No independent tool catalog is maintained here.
+/// `tools/call`. A verified runtime adds `execute` and `resume`; an unbound
+/// host never advertises them. No independent tool catalog is maintained here.
 ///
 /// Two tokens per registered tool, both deterministic: the existing
 /// `mcp.tool.<name>` vocabulary, and one `mcp.endpoint.<mode>.<name>` token

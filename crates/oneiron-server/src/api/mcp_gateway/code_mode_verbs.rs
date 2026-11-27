@@ -55,6 +55,7 @@ mod library;
 mod program_admission;
 mod reader;
 mod receipt_evidence;
+mod run_result;
 mod secret_custody;
 mod session_write;
 mod site_skills;

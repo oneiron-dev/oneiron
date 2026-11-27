@@ -107,10 +107,20 @@ pub fn mcp_code_run_id(run_ref: &str, actor: &McpResolvedActor) -> EntityId {
     mcp_scoped_identity_id("execute_code.run", run_ref, actor)
 }
 
-/// One `execute_code` call as the injected host receives it.
+/// One code run's input as the injected host receives it (FIX EXECUTE-CALLER-CODE): a task in
+/// words, or the caller's own source.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum McpCodeRunInput<'a> {
+    /// A task in words for the REPL to carry out.
+    Task(&'a str),
+    /// The caller's own source to run as written.
+    CallerSource(&'a str),
+}
+
+/// One code run call as the injected host receives it.
 ///
 /// The actor is the RESOLVED connector actor; nothing here is caller-shaped
-/// except the task text and the run handle label.
+/// except the run input and the run handle label.
 pub struct McpCodeExecutionRequest<'a> {
     /// The vault this connector's durable run lives in. Supplied by the door
     /// the call arrived at, so the host binds no vault of its own.
@@ -120,8 +130,8 @@ pub struct McpCodeExecutionRequest<'a> {
     pub off_record_session: Option<String>,
     /// The caller's handle onto the durable run.
     pub run_ref: &'a str,
-    /// The REPL task the durable run carries out.
-    pub task: &'a str,
+    /// The run's input: a task in words, or the caller's own source.
+    pub input: McpCodeRunInput<'a>,
     /// The durable run id [`mcp_code_run_id`] derived for this handle.
     pub run_id: EntityId,
     /// The door each code-mode verb call takes: the SDK verb table under this
@@ -169,32 +179,36 @@ impl fmt::Debug for McpCodeExecutionRequest<'_> {
 
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum McpCodeExecutionError {
-    #[error("no execute_code host is bound on this server")]
+    #[error("no execute host is bound on this server")]
     HostUnbound,
     #[error(
-        "execute_code waited past limits.queue_wait_timeout_ms for a run's turn; no run was started; retry"
+        "execute waited past limits.queue_wait_timeout_ms for a run's turn; no run was started; retry"
     )]
     RunWaitedOut,
-    #[error("execute_code run binding failed: {0}")]
+    #[error("execute run binding failed: {0}")]
     RunBinding(String),
-    #[error("execute_code run failed: {0}")]
+    #[error("execute run failed: {0}")]
     Run(String),
+    /// The same run handle with other code (FIX EXECUTE-CALLER-CODE): the engine's config check
+    /// refused it, and nothing ran.
+    #[error("execute run refused: run_ref reused with other code")]
+    RunRefReused,
     /// A model call no provider answered stopped the run (FIX 3194): its
     /// step is kept, and the same `run_ref` enters it again from its next
     /// step once `retry_after` seconds have passed.
     #[error(
-        "execute_code run stopped: no provider answered a model call; call again with the same run_ref in {retry_after} s"
+        "resume stopped: no provider answered a model call; retry resume with the same run_ref in {retry_after} s"
     )]
     ProviderUnavailable { retry_after: u64 },
     /// A resumed pending step's program changed an effect step (L8-23): the entry holds with the
     /// walk's report line, and the owner answers once to re-fire or leave the drift.
-    #[error("execute_code run held with resume divergence: {0}")]
+    #[error("resume held with divergence: {0}")]
     ResumeDivergence(String),
     /// An off-record session refused an act the run took in it (FIX
     /// OFF-RECORD-RUN-POLICY-REFUSAL-500): the caller's refusal, answered as
     /// the session's other refusals are, never as a failure of the run.
     /// Entering the run again meets it again.
-    #[error("execute_code run refused: {}", .0.message)]
+    #[error("execute run refused: {}", .0.message)]
     Refused(Box<oneiron::MemoryError>),
 }
 
@@ -207,6 +221,7 @@ impl McpCodeExecutionError {
             Self::RunWaitedOut => "code_run_waited_out",
             Self::RunBinding(_) => "code_run_binding_failed",
             Self::Run(_) => "code_run_failed",
+            Self::RunRefReused => "run_ref_reused",
             Self::ProviderUnavailable { .. } => "model_unavailable",
             Self::ResumeDivergence(_) => "resume_divergence",
             Self::Refused(_) => "code_run_refused",
@@ -226,6 +241,12 @@ pub trait McpCodeExecutionHost: Send + Sync {
         false
     }
 
+    /// Task readiness (FIX EXECUTE-CALLER-CODE): caller-source readiness plus the generative
+    /// seat and the prompt package. True for hosts that predate the split.
+    fn task_runtime_available(&self) -> bool {
+        true
+    }
+
     fn execute<'a>(
         &'a self,
         request: McpCodeExecutionRequest<'a>,
@@ -233,14 +254,12 @@ pub trait McpCodeExecutionHost: Send + Sync {
         Box<dyn Future<Output = Result<EngineExecutorOutcome, McpCodeExecutionError>> + Send + 'a>,
     >;
 
-    /// [`Self::execute`] for the automatic re-entry of a run parked on a
-    /// durable wait (FIX 4606). The host takes the run's single flight and
-    /// its run permit as for any entry. Then it reads the run's record
-    /// again: a run that left the wait or the generation in `condition`
-    /// runs no batch and answers [`McpCodeRunResumed::Superseded`]. A
-    /// caller's own call goes through [`Self::execute`] and carries no
-    /// condition. The default host cannot read the record under its single
-    /// flight, so it enters nothing; the caller's next call enters the run.
+    /// A re-entry of an existing run. The host takes the run's single
+    /// flight and permit, then checks the record again. A missing record
+    /// or a run that no longer meets the automatic wait fence (FIX 4606)
+    /// runs no batch and answers [`McpCodeRunResumed::Superseded`]. The
+    /// default host cannot check the condition under its single flight,
+    /// so it enters nothing.
     fn execute_resumed<'a>(
         &'a self,
         _request: McpCodeExecutionRequest<'a>,
@@ -267,6 +286,12 @@ pub trait McpCodeModeProvider: Send + Sync {
     /// Defaults closed for fixture and custom providers.
     fn production_runtime_available(&self) -> bool {
         false
+    }
+
+    /// Task readiness (FIX EXECUTE-CALLER-CODE): caller-source readiness plus the generative
+    /// seat and the prompt package. True for providers that predate the split.
+    fn task_runtime_available(&self) -> bool {
+        true
     }
 
     /// The backend the durable REPL generates each step against.
@@ -390,6 +415,31 @@ pub trait McpCodeModeProvider: Send + Sync {
         task: &str,
     ) -> oneiron::Result<EngineExecutorConfig> {
         self.executor_config(vault, run_id, task)
+    }
+    /// The executor configuration for a caller-source run of `code` (FIX
+    /// EXECUTE-CALLER-CODE), in the vault it lives in. The default refuses: a provider that
+    /// predates the split runs task runs only.
+    fn source_executor_config(
+        &self,
+        _vault: &Vault,
+        _run_id: EntityId,
+        _code: &str,
+    ) -> oneiron::Result<EngineExecutorConfig> {
+        Err(oneiron::Error::InvalidConfig(
+            "this code-mode provider runs no caller-source runs".to_owned(),
+        ))
+    }
+    /// [`Self::source_executor_config`] for a run its host entered through `bound`, as
+    /// [`Self::executor_config_on`] is for a task run. The default answers
+    /// [`Self::source_executor_config`].
+    fn source_executor_config_on(
+        &self,
+        vault: &Vault,
+        _bound: &GatedActorWrite<'_>,
+        run_id: EntityId,
+        code: &str,
+    ) -> oneiron::Result<EngineExecutorConfig> {
+        self.source_executor_config(vault, run_id, code)
     }
     /// The model the code-mode template runs on, read without entering a
     /// run (FIX 4659). The default reads it from the config of a run keyed

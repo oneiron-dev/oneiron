@@ -17,8 +17,8 @@ use tokio::sync::mpsc;
 use super::support_mcp::{McpFixtureCodeBackend, McpFixtureCodeRuntime};
 use crate::mcp::{
     CodeRunLimits, McpCodeExecutionError, McpCodeExecutionHost, McpCodeExecutionRequest,
-    McpCodeModeProvider, McpConnectorScope, McpEngineNativeCodeHost, McpResolvedActor,
-    mcp_code_run_id,
+    McpCodeModeProvider, McpCodeRunInput, McpConnectorScope, McpEngineNativeCodeHost,
+    McpResolvedActor, mcp_code_run_id,
 };
 use crate::wire_telemetry::{LimitQuestions, LimitRow};
 
@@ -145,7 +145,7 @@ fn run<'a>(
         vault: Arc::clone(vault),
         actor,
         run_ref,
-        task: "summarize the launch plan",
+        input: McpCodeRunInput::Task("summarize the launch plan"),
         run_id: mcp_code_run_id(run_ref, actor),
         verbs: Arc::new(NoVerbs),
         off_record_session: None,

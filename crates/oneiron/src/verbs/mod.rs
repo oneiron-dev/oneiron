@@ -571,11 +571,12 @@ pub use verb_table::{GeneratedVerbTable, VERB_TABLE};
 /// The verb table as code mode serves it, each row at its full path (`vault.recall`,
 /// `self.focus.refresh`, a bare `describe`): the rows a host door answers, then
 /// the rows the run answers itself. The guest's method table, the executor
-/// prompt and dispatch all read this list.
+/// prompt and dispatch all read this list. A row served by its HTTP facade
+/// door only (`"mcp": "facade"`, FIX EXECUTE-CALLER-CODE) is not in it.
 pub fn code_mode_verb_names() -> impl Iterator<Item = &'static str> + Clone {
     let host = AgentVerb::ALL
         .iter()
-        .filter(|verb| RunVerb::from_name(verb.as_str()).is_none())
+        .filter(|verb| verb.is_code_mode() && RunVerb::from_name(verb.as_str()).is_none())
         .map(|verb| verb.as_str());
     host.chain(RunVerb::ALL.iter().map(|verb| verb.as_str()))
 }

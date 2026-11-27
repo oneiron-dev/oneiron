@@ -5,7 +5,8 @@ use std::sync::Arc;
 
 use oneiron::code_run::{GatedActorWrite, SpawnHostSeat};
 use oneiron::engine_executor::{
-    EngineExecutorConfig, EngineExecutorOutcome, RunCompaction, SelfBriefPort,
+    EngineExecutorConfig, EngineExecutorOutcome, EngineNativeExecutor, JsCodeModeRuntime,
+    RunCompaction, SelfBriefPort,
 };
 use oneiron::{EntityId, Vault, WriteActor};
 
@@ -125,8 +126,76 @@ pub(super) fn run_engine_native_code_mode(
             EngineRunError::Run(
                 oneiron::engine_executor::EngineExecutorError::ResumeDivergence(report),
             ) => McpCodeExecutionError::ResumeDivergence(report.to_string()),
+            EngineRunError::Run(error) if is_run_ref_reused(&error) => {
+                McpCodeExecutionError::RunRefReused
+            }
             EngineRunError::Run(error) => McpCodeExecutionError::Run(error.to_string()),
             EngineRunError::Payer(fault) => McpCodeExecutionError::RunBinding(fault.to_string()),
         },
+    })
+}
+
+/// The engine's exact refusal when the same run id meets other input (FIX EXECUTE-CALLER-CODE).
+const CONFIG_CHANGED: &str = "engine executor config changed for existing run";
+
+/// Whether `error` is the engine's config-changed refusal (FIX EXECUTE-CALLER-CODE): the same
+/// run id with other code or task, so the host answers run-ref-reused and nothing ran.
+fn is_run_ref_reused(error: &oneiron::engine_executor::EngineExecutorError) -> bool {
+    matches!(
+        error,
+        oneiron::engine_executor::EngineExecutorError::Engine(oneiron::Error::InvalidConfig(
+            msg
+        )) if msg.as_str() == CONFIG_CHANGED
+    )
+}
+
+/// Enters the existing substrate for one caller-source run (FIX EXECUTE-CALLER-CODE): the gated
+/// write at the host boundary, the engine's own runtime, and the model-free source entry. No
+/// model seat, no prompt, no compaction seat, no skill-executor model, no model receipt, no
+/// reader seat. Determinism, limits and the runtime factory are the task run's non-model ones.
+/// The run carries `consent_origin` as a task run does (FIX 4606).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each argument is one axis of the run's host binding"
+)]
+pub(super) fn run_engine_native_caller_source(
+    vault: &Vault,
+    provider: &dyn McpCodeModeProvider,
+    write_actor: WriteActor,
+    run_ref: &str,
+    config: &EngineExecutorConfig,
+    code: &str,
+    verbs: Arc<dyn oneiron::code_run::AgentVerbDoor>,
+    opener: Option<&oneiron::authority::VerifiedSlip>,
+    birth_position: oneiron::federation::record_scope::BirthPosition,
+    git_door_base: Option<String>,
+    consent_origin: Option<oneiron::code_run::CodeConsentRunOrigin>,
+) -> Result<EngineExecutorOutcome, McpCodeExecutionError> {
+    let mut gated_write = GatedActorWrite::new(vault, write_actor, run_ref)
+        .map_err(|error| McpCodeExecutionError::RunBinding(error.to_string()))?
+        .with_agent_verb_door(verbs)
+        .with_birth_position(birth_position)
+        .with_bound_run(config.run_id)
+        .with_git_door_base(git_door_base)
+        .with_code_consent_origin(consent_origin);
+    if let Some(opener) = opener {
+        gated_write = gated_write.with_opener_credential(opener);
+    }
+    let mut runtime = provider.runtime();
+    let runtime: &mut dyn JsCodeModeRuntime = &mut *runtime;
+    let mut executor = EngineNativeExecutor::for_caller_source(vault, runtime, &gated_write);
+    if let Some(feedback) = provider.code_check() {
+        executor = executor.with_code_check(feedback);
+    }
+    executor.run_caller_source(config, code).map_err(|error| {
+        if is_run_ref_reused(&error) {
+            return McpCodeExecutionError::RunRefReused;
+        }
+        match error {
+            oneiron::engine_executor::EngineExecutorError::ResumeDivergence(report) => {
+                McpCodeExecutionError::ResumeDivergence(report.to_string())
+            }
+            error => McpCodeExecutionError::Run(error.to_string()),
+        }
     })
 }

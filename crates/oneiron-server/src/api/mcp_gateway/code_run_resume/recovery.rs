@@ -236,9 +236,9 @@ impl McpCodeRunContinuation {
                 .err()
                 .unwrap_or(VerbAskRefusal::ScopeRefused)
         })?;
+        // Re-entry reads the held input again under this caller's rebuilt door.
         Ok(Self {
             run_ref: origin.handle.clone(),
-            task: run.task,
             wait: run.key,
             generation: run.generation,
             caller,
