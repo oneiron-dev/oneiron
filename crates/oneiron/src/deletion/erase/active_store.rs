@@ -281,8 +281,7 @@ impl Vault {
                     || had_refinement
                     || had_merge_receipt
                     || had_tags
-                    || had_missing
-                    || had_retained_copy,
+                    || had_missing,
                 citing,
                 effects,
             ))
