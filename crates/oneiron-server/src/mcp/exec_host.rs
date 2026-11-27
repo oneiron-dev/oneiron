@@ -236,6 +236,13 @@ impl McpCodeExecutionError {
             Self::WindowOutgrown => "code_run_window_outgrown",
         }
     }
+
+    /// Whether this answer ends its run as completion does: entering the run again meets it
+    /// again, so the run's brief, desktop and live cards close with it (FIX CODE-MODE-LENDING-W6).
+    #[must_use]
+    pub const fn ends_run(&self) -> bool {
+        matches!(self, Self::WindowOutgrown)
+    }
 }
 
 /// The server-local, INJECTED `execute` seam.

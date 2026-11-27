@@ -288,13 +288,16 @@ impl McpEngineNativeCodeHost {
                         port,
                     ),
                 };
-                let ended = outcome
-                    .as_ref()
-                    .is_ok_and(|outcome| matches!(outcome.status, EngineExecutorStatus::Complete));
+                let ended = match &outcome {
+                    Ok(outcome) => matches!(outcome.status, EngineExecutorStatus::Complete),
+                    Err(error) => error.ends_run(),
+                };
                 // The run's brief closes as the run completes, here and
                 // not with its waiter, so a caller who hung up cannot
                 // keep it; a resumable outcome or a failure the same
-                // `run_ref` re-enters keeps it. A caller-source run installed none.
+                // `run_ref` re-enters keeps it. A window outgrown ends the
+                // run as completion does: entering again meets it again
+                // (FIX CODE-MODE-LENDING-W6). A caller-source run installed none.
                 if ended
                     && code.is_none()
                     && let Some(brief) = &brief

@@ -248,7 +248,8 @@ fn mcp_code_run_request<'a>(
 /// Ends one entry of `entry`'s run with what its host answered. A run that
 /// ended ends its desktop and closes the live lens cards it created, named
 /// by its run id's hex (OF-181, FIX 2612); any other entry leaves them
-/// parked for the run's next entry (CUA-001). The outcome then settles
+/// parked for the run's next entry (CUA-001). A window outgrown ends the run
+/// as completion does (FIX CODE-MODE-LENDING-W6). The outcome then settles
 /// `entry`.
 fn mcp_code_run_ended(
     server: &Arc<SyncServer>,
@@ -262,12 +263,14 @@ fn mcp_code_run_ended(
     >,
 ) -> McpCodeRunEntered {
     let run_id = entry.run_id();
-    if outcome.as_ref().is_ok_and(|outcome| {
-        matches!(
+    let ended = match &outcome {
+        Ok(outcome) => matches!(
             outcome.status,
             oneiron::engine_executor::EngineExecutorStatus::Complete
-        )
-    }) {
+        ),
+        Err(error) => error.ends_run(),
+    };
+    if ended {
         server.desktop_seats.end_run(run_id);
         server.browser_seats.end_run(run_id);
         server.lens_frames.close_run(&run_id.to_hex());
