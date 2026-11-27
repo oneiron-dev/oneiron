@@ -439,7 +439,7 @@ pub fn answer(
         &query.args(),
         Some(&settings.account),
         Some(&lock.file),
-        DEVICE_QUERY_OUTPUT_MAX_BYTES,
+        usize::MAX,
     )
     .map_err(|error| match error {
         // The engine's probe names the class itself.
