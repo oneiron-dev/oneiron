@@ -432,9 +432,10 @@ folder Claude Code runs in. Then:
   session writes, including turns imported from its session log, carry the
   folder's bound project. Rows written with no folder, or before session
   placement, carry the root project, which a bound session does not read.
-  Room speech follows the same rule: in a bound session, a room's history
-  shows only the speech placed in the folder's project. Conversations and
-  other rows read as before.
+  Room speech is the exception: a room's history shows its members' messages
+  and turns whatever project they carry, since they were posted to every
+  member; claims in a room still follow the folder. Conversations and other
+  rows read as before.
 
 The binding selects; it grants nothing. The folder a tool call names comes from
 the client, so a client that names another folder only changes which of the

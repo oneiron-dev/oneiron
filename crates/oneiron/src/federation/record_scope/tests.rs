@@ -459,7 +459,7 @@ fn session_projects_admit_row_refuses_an_unusable_placement_and_a_root_row_when_
     let other = bound(EntityId::now());
     let root = bound(crate::claim::default_project_id());
     let admits = |id, raw: &[u8], projects: &SessionProjects| {
-        session_projects_admit_row(&vault.store, &txn, id, raw, projects)
+        session_projects_admit_row(&vault.store, &txn, id, raw, projects, false)
             .expect("the session admission decision")
     };
 
@@ -482,5 +482,10 @@ fn session_projects_admit_row_refuses_an_unusable_placement_and_a_root_row_when_
     assert!(
         !admits(loose, &loose_raw, &SessionProjects::Unbound),
         "an unbound session must not read the NOTE whose stamp does not bind"
+    );
+    assert!(
+        !session_projects_admit_row(&vault.store, &txn, bare, &bare_raw, &other, true)
+            .expect("the room lane's session admission decision"),
+        "a room history lane still judges a NOTE by its placement (PLACEMENT-B-ROOM-ROWS = B)"
     );
 }

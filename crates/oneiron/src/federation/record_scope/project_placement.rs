@@ -41,19 +41,24 @@ pub(crate) fn stored_project(
 /// Whether the session's projects admit this row: a CLAIM by its body, a NOTE,
 /// MESSAGE or TURN by its placement in the lane's own store, and every other
 /// row always. `stored_project` reads no stamp as the default project and an
-/// unusable stamp as no placement.
+/// unusable stamp as no placement. With `room_speech` (a room history lane,
+/// PLACEMENT-B-ROOM-ROWS = B), every MESSAGE and TURN: the room admits those.
 pub(crate) fn session_projects_admit_row(
     store: &(impl ManifestDbs + MachineHistoryScope),
     txn: &heed::RoTxn<'_>,
     id: EntityId,
     raw: &[u8],
     projects: &crate::session_project::SessionProjects,
+    room_speech: bool,
 ) -> Result<bool> {
     let header = EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("entity header"))?;
     let body = &raw[ENTITY_METADATA_HEADER_LEN..];
     match header.entity_type {
         crate::registry::ENTITY_TYPE_CLAIM => Ok(crate::claim::decode_claim_body(body, true)
             .is_ok_and(|body| projects.admits(body.scope_project))),
+        crate::registry::ENTITY_TYPE_MESSAGE | crate::registry::ENTITY_TYPE_TURN if room_speech => {
+            Ok(true)
+        }
         crate::registry::ENTITY_TYPE_NOTE
         | crate::registry::ENTITY_TYPE_MESSAGE
         | crate::registry::ENTITY_TYPE_TURN => {

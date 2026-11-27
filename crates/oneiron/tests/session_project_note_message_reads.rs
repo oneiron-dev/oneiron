@@ -6,6 +6,10 @@
 //! project, which no bound closure admits; a stamp that stands but is unusable, or a
 //! placement that does not read, is refused quietly. Every other kind passes as today.
 //!
+//! PLACEMENT-B-ROOM-ROWS = B: a TURN or MESSAGE read through a room's history is admitted by
+//! room membership and skips the session check, so a bound session's `rooms_messages` lists
+//! speech placed in any project; the same rows read outside the room stay narrowed.
+//!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test
 //! session_project_note_message_reads`.
 #![cfg(oneiron_test_support)]
@@ -16,6 +20,7 @@ use std::sync::Arc;
 use oneiron::authority::HostSlipIssuer;
 use oneiron::claim::{ScopedReadResult, default_project_id};
 use oneiron::consent::AuthenticatedOwner;
+use oneiron::core_write::ConversationCreateInput;
 use oneiron::memory::{Memory, WitnessReceipt, WitnessTurn};
 use oneiron::note::{NoteReadRequest, NoteReadView};
 use oneiron::registry::ENTITY_TYPE_FACET;
@@ -439,5 +444,221 @@ fn a_bound_folders_text_query_finds_only_its_projects_rows() -> TestResult {
             .collect();
         assert_eq!(notes, expected, "{name} finds only its expected NOTEs");
     }
+    Ok(())
+}
+
+/// One invented word each room speech below holds and no other row does, so the text query
+/// finds exactly the MESSAGE whose placement admits it.
+const ROOM_ROOT_TOKEN: &str = "quillharproomroot";
+const ROOM_BETA_TOKEN: &str = "quillharproombeta";
+const ROOM_ALPHA_TOKEN: &str = "quillharproomalpha";
+
+/// One visible user MESSAGE of `content` spoken into the room `room`, as `rooms_speak` takes
+/// it: `conversation_ref` names the room, so the speech lands one TURN with one MESSAGE.
+fn room_turn(room: &str, content: &str, occurred_at: u64) -> WitnessTurn {
+    let value = json!({
+        "conversation_ref": room,
+        "messages": [{
+            "author": "user",
+            "message_type": "dialogue",
+            "content": content,
+            "is_visible": true,
+            "order": 0,
+        }],
+        "occurred_at": occurred_at,
+    });
+    serde_json::from_value(value).expect("the witness turn shape decodes")
+}
+
+/// One ordinary room holding one speech from each folder: root (`writer(None)`), beta, and
+/// alpha (the control), each with its TURN and MESSAGE.
+struct RoomRows {
+    room: EntityId,
+    turn_root: EntityId,
+    turn_beta: EntityId,
+    turn_alpha: EntityId,
+    msg_root: EntityId,
+    msg_beta: EntityId,
+    msg_alpha: EntityId,
+}
+
+fn room_rows(fixture: &Fixture) -> TestResult<RoomRows> {
+    let created = fixture
+        .writer(None)
+        .conversations_create(&ConversationCreateInput {
+            id: None,
+            occurred_start: None,
+            occurred_end: None,
+            learned_at: None,
+            body: json!({
+                "v": 1,
+                "kind": "group",
+                "member_ids": [fixture.owner.to_hex()],
+                "title": "session project room",
+            }),
+            text: None,
+        })
+        .map_err(|error| format!("FIXTURE: open ordinary room: {error:?}"))?;
+    let room = EntityId::from_hex(&created.id)?;
+    let room_ref = room.to_hex();
+    let speak = |folder: Option<&str>, word: &str, at: u64| {
+        fixture
+            .writer(folder)
+            .rooms_speak(&room_turn(
+                &room_ref,
+                &format!("The room speech says {word}."),
+                at,
+            ))
+            .map_err(|error| format!("FIXTURE: speak {word}: {error:?}"))
+    };
+    let receipt_root = speak(None, ROOM_ROOT_TOKEN, 901)?;
+    let receipt_beta = speak(Some(BETA_DIGEST), ROOM_BETA_TOKEN, 902)?;
+    let receipt_alpha = speak(Some(MAIN_DIGEST), ROOM_ALPHA_TOKEN, 903)?;
+    let spoken = RoomRows {
+        room,
+        turn_root: receipt_root.turn_id,
+        turn_beta: receipt_beta.turn_id,
+        turn_alpha: receipt_alpha.turn_id,
+        msg_root: first_message(&receipt_root),
+        msg_beta: first_message(&receipt_beta),
+        msg_alpha: first_message(&receipt_alpha),
+    };
+    for (name, id, project) in [
+        ("root TURN", spoken.turn_root, default_project_id()),
+        ("beta TURN", spoken.turn_beta, fixture.beta),
+        ("alpha TURN", spoken.turn_alpha, fixture.alpha),
+        ("root MESSAGE", spoken.msg_root, default_project_id()),
+        ("beta MESSAGE", spoken.msg_beta, fixture.beta),
+        ("alpha MESSAGE", spoken.msg_alpha, fixture.alpha),
+    ] {
+        assert_eq!(
+            stamped_project(&fixture.vault, id)?,
+            Some(project),
+            "FIXTURE: {name} is placed in its expected project"
+        );
+    }
+    Ok(spoken)
+}
+
+#[test]
+fn a_bound_session_reads_root_and_other_project_speech_in_its_room() -> TestResult {
+    let fixture = open()?;
+    let spoken = room_rows(&fixture)?;
+    let session = fixture
+        .reader()
+        .in_session_workspace(&[MAIN_DIGEST.to_owned()]);
+    let history = session
+        .rooms_messages(spoken.room)
+        .map_err(|error| format!("MAIN room history: {error:?}"))?;
+    let turns: BTreeSet<_> = history.iter().map(|turn| turn.turn_id.clone()).collect();
+    for (name, id) in [
+        ("root", spoken.turn_root),
+        ("beta", spoken.turn_beta),
+        ("alpha", spoken.turn_alpha),
+    ] {
+        assert!(
+            turns.contains(&id.to_hex()),
+            "MAIN's room history lists the {name} speech TURN"
+        );
+    }
+    for (name, turn, message) in [
+        ("root", spoken.turn_root, spoken.msg_root),
+        ("beta", spoken.turn_beta, spoken.msg_beta),
+        ("alpha", spoken.turn_alpha, spoken.msg_alpha),
+    ] {
+        let row = history
+            .iter()
+            .find(|row| row.turn_id == turn.to_hex())
+            .unwrap_or_else(|| panic!("MAIN's room history lists the {name} speech TURN"));
+        assert!(
+            row.message_ids.contains(&message.to_hex()),
+            "MAIN's room history lists the {name} speech MESSAGE beside its TURN"
+        );
+    }
+    let control = fixture
+        .reader()
+        .rooms_messages(spoken.room)
+        .map_err(|error| format!("no folder room history: {error:?}"))?;
+    let turns: BTreeSet<_> = control.iter().map(|turn| turn.turn_id.clone()).collect();
+    for (name, id) in [
+        ("root", spoken.turn_root),
+        ("beta", spoken.turn_beta),
+        ("alpha", spoken.turn_alpha),
+    ] {
+        assert!(
+            turns.contains(&id.to_hex()),
+            "no folder lists the {name} speech TURN"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn outside_the_room_a_bound_session_still_misses_root_and_other_project_speech() -> TestResult {
+    let fixture = open()?;
+    let spoken = room_rows(&fixture)?;
+    let memory = fixture.reader();
+    let session = memory.in_session_workspace(&[MAIN_DIGEST.to_owned()]);
+    let reads = |reader: &Memory<'_>, id: EntityId| -> TestResult<bool> {
+        let reference = id.to_hex();
+        Ok(reader
+            .get_entity(&reference)
+            .map_err(|error| format!("vault.get {reference}: {error:?}"))?
+            .value
+            .is_some())
+    };
+    for (name, id, main_reads) in [
+        ("root speech TURN", spoken.turn_root, false),
+        ("beta speech TURN", spoken.turn_beta, false),
+        ("alpha speech TURN", spoken.turn_alpha, true),
+        ("root speech MESSAGE", spoken.msg_root, false),
+        ("beta speech MESSAGE", spoken.msg_beta, false),
+        ("alpha speech MESSAGE", spoken.msg_alpha, true),
+    ] {
+        assert_eq!(
+            reads(&session, id)?,
+            main_reads,
+            "MAIN outside the room point read of {name}"
+        );
+        assert!(reads(&memory, id)?, "no folder reads the {name}");
+    }
+    for (name, word, message) in [
+        ("root", ROOM_ROOT_TOKEN, spoken.msg_root),
+        ("beta", ROOM_BETA_TOKEN, spoken.msg_beta),
+    ] {
+        let found: BTreeSet<_> = session
+            .query_bm25(word, 10)
+            .map_err(|error| format!("MAIN BM25 {name}: {error:?}"))?
+            .value
+            .into_iter()
+            .map(|hit| hit.record.expect("a BM25 hit carries its record ref").id)
+            .collect();
+        assert!(
+            !found.contains(&message.to_hex()),
+            "MAIN outside the room does not recall the {name} speech MESSAGE"
+        );
+        let control: BTreeSet<_> = memory
+            .query_bm25(word, 10)
+            .map_err(|error| format!("no folder BM25 {name}: {error:?}"))?
+            .value
+            .into_iter()
+            .map(|hit| hit.record.expect("a BM25 hit carries its record ref").id)
+            .collect();
+        assert!(
+            control.contains(&message.to_hex()),
+            "no folder recalls the {name} speech MESSAGE"
+        );
+    }
+    let found: BTreeSet<_> = session
+        .query_bm25(ROOM_ALPHA_TOKEN, 10)
+        .map_err(|error| format!("MAIN BM25 alpha: {error:?}"))?
+        .value
+        .into_iter()
+        .map(|hit| hit.record.expect("a BM25 hit carries its record ref").id)
+        .collect();
+    assert!(
+        found.contains(&spoken.msg_alpha.to_hex()),
+        "MAIN outside the room recalls the alpha speech MESSAGE"
+    );
     Ok(())
 }

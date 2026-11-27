@@ -405,9 +405,13 @@ impl Memory<'_> {
             None => self.for_room_projection(room)?,
             Some(thread) => self.for_thread_projection(room, thread)?,
         };
+        // Room speech is judged by the room (PLACEMENT-B-ROOM-ROWS = B): every TURN and MESSAGE
+        // read here is this room's (a quote is proven inside it), posted to every member, so an
+        // attached session's projects do not narrow it; a CLAIM still meets them.
         let lane = projection
             .memory()
-            .read_lane(crate::claim::ClaimReadStatus::Recorded)?;
+            .read_lane(crate::claim::ClaimReadStatus::Recorded)?
+            .judging_room_speech_by_room();
         let mut admitted = BTreeSet::<EntityId>::new();
         for chunk in ids.chunks(128) {
             let reads: Vec<_> = chunk

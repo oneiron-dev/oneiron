@@ -296,8 +296,8 @@ impl<'v> ScopedRead<'v> {
     }
 
     /// Admit CLAIMs in the session's projects by body and NOTE, MESSAGE and TURN by birth stamp
-    /// in this lane's store. Refuse unusable placements. Other kinds pass; with no default, all pass.
-    /// This runs before the other gates of the row and of each row it was written from.
+    /// in this lane's store (on a room history lane, every MESSAGE and TURN). Refuse unusable
+    /// placements; pass other kinds, all with no default. Runs first, for the row and its sources.
     fn session_projects_admit(
         &self,
         rtxn: &heed::RoTxn<'_>,
@@ -313,6 +313,7 @@ impl<'v> ScopedRead<'v> {
             *id,
             raw,
             projects,
+            self.actor_key.room_speech_by_room,
         )
     }
 

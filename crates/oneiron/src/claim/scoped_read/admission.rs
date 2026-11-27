@@ -136,6 +136,16 @@ impl<'a> ScopedRead<'a> {
         self
     }
 
+    /// Leave each MESSAGE and TURN this lane reads to the room rather than to the session's
+    /// projects (PLACEMENT-B-ROOM-ROWS = B). Only a room history lane takes it, where the rule is
+    /// named (`workspace_roster/rooms/history.rs`). A CLAIM and a NOTE stay narrowed, and every
+    /// other gate stays.
+    #[must_use]
+    pub(crate) fn judging_room_speech_by_room(mut self) -> Self {
+        self.actor_key.room_speech_by_room = true;
+        self
+    }
+
     /// A channel-aware door names its destination; the proof still decides whether it is allowed.
     pub(crate) fn through_channel(mut self, channel: &str) -> Self {
         self.actor_key.channel = Some(channel.to_owned());
