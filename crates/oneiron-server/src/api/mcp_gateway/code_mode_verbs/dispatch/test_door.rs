@@ -64,7 +64,8 @@ pub(crate) fn admit_run_call_for_test(
         session_workspace: None,
         signing_request_transport: None,
     };
-    let door = McpCodeModeVerbs::new(server, &context, oneiron::EntityId::now());
+    let door = McpCodeModeVerbs::new(server, &context, oneiron::EntityId::now())
+        .authored_by_engine_model();
     door.admit_run_call(RunCall::Bridge(effect))
         .map(|key| key.is_some())
         .map_err(|refusal| refusal.code)

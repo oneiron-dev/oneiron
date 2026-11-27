@@ -128,7 +128,7 @@ fn mcp_code_run_verbs(
     let verbs = super::code_mode_verbs::McpCodeModeVerbs::new(server, actor, run_id);
     Arc::new(match input {
         McpCodeRunInput::CallerSource(_) => verbs.authored_by_caller(),
-        McpCodeRunInput::Task(_) => verbs,
+        McpCodeRunInput::Task(_) => verbs.authored_by_engine_model(),
     })
 }
 

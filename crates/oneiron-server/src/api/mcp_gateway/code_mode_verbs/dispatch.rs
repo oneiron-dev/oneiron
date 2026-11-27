@@ -19,6 +19,10 @@ pub(super) use self::verb_call::{execute_code_mode_verb, execute_step_verdict};
 
 impl McpCodeModeVerbs {
     /// Binds the door to the server runtime the `execute` call arrived on.
+    /// Its program is the caller's ([`RunAuthor::Caller`]) unless
+    /// [`Self::authored_by_engine_model`] says the engine's model wrote it, so
+    /// a door built for any other run lends nothing (FIX
+    /// CODE-MODE-LENDING-W8).
     pub(crate) fn new(
         server: &Arc<SyncServer>,
         actor: &McpCallContext,
@@ -34,8 +38,16 @@ impl McpCodeModeVerbs {
             guests: RunGuests::new(server, run_id),
             collector: crate::api::call_receipt::attempt_collector(),
             observer: crate::api::admission_observer(),
-            author: RunAuthor::EngineModel,
+            author: RunAuthor::Caller,
         }
+    }
+
+    /// The door of a task run, whose steps the engine's model wrote from the
+    /// caller's task: it keeps the run's services ([`RunAuthor::EngineModel`]).
+    /// Only a task run's entry binds it (FIX CODE-MODE-LENDING-W8).
+    pub(crate) fn authored_by_engine_model(mut self) -> Self {
+        self.author = RunAuthor::EngineModel;
+        self
     }
 
     /// The door of a run whose program its caller wrote (the MCP `execute`
