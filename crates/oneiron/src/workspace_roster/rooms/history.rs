@@ -410,8 +410,7 @@ impl Memory<'_> {
         // attached session's projects do not narrow it; a CLAIM still meets them.
         let lane = projection
             .memory()
-            .read_lane(crate::claim::ClaimReadStatus::Recorded)?
-            .judging_room_speech_by_room();
+            .read_lane(crate::claim::ClaimReadStatus::Recorded)?;
         let mut admitted = BTreeSet::<EntityId>::new();
         for chunk in ids.chunks(128) {
             let reads: Vec<_> = chunk
