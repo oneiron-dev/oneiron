@@ -1597,3 +1597,67 @@ fn a_member_lane_reads_its_windows_tombstones() {
         assert_eq!(value.len(), 25, "the whole tombstone value");
     });
 }
+
+/// FOLLOW-REQUEST-WINDOW-LIST-ORACLE (SYNC-RECEIVE-READ-20261127 F11): a
+/// member lane gets no root, so a follow or promotion with a garbage selector
+/// gets one answer whether or not the home lists the window: the socket
+/// closes with DECODE_ERROR, and nothing is answered with the socket kept.
+/// red with the selector decode moved back after the root's list check: the
+/// unlisted window is answered `FOLLOW_REFUSED` and its socket stays open,
+/// while the listed window's socket closes.
+#[test]
+fn a_garbage_follow_selector_gets_one_answer_for_a_listed_and_an_unlisted_window() {
+    run_on_engine_stack(|| async {
+        let fx = fixture(WindowFixture::Selected).await;
+        let unlisted = WindowKey::try_new("2019-07").unwrap();
+        for sub_tag in [
+            window_sub_tags::FOLLOW_REQUEST,
+            window_sub_tags::PROMOTION_REQUEST,
+        ] {
+            for key in [&fx.window, &unlisted] {
+                let mut socket = bound_member(&fx, transport::RESIDENCE_PROTOCOL_VERSION).await;
+                send_window(&mut socket, key, sub_tag, b"not a selector").await;
+                expect_close(&mut socket, REFUSED_FRAME).await;
+            }
+        }
+    });
+}
+
+/// The same order keeps the honest answer: a well-formed follow of a window
+/// the home does not list is still answered `FOLLOW_REFUSED`, and the socket
+/// stays open, so the listed window's promotion is granted on it right after.
+#[test]
+fn a_well_formed_follow_of_an_unlisted_window_still_answers_follow_refused() {
+    run_on_engine_stack(|| async {
+        let fx = fixture(WindowFixture::Selected).await;
+        let unlisted = WindowKey::try_new("2019-07").unwrap();
+        let selector = encode_sync_selector(&fx.selector).unwrap();
+        let mut socket = bound_member(&fx, transport::RESIDENCE_PROTOCOL_VERSION).await;
+        send_window(
+            &mut socket,
+            &unlisted,
+            window_sub_tags::FOLLOW_REQUEST,
+            &selector,
+        )
+        .await;
+        let refused = next_member_binary(&mut socket).await;
+        assert_eq!(refused[0], transport::TAG_WINDOW_SYNC);
+        let (key, tag, payload) = transport::decode_window_sync(&refused[1..]).unwrap();
+        assert_eq!(key, unlisted.as_str());
+        assert_eq!(tag, window_sub_tags::FOLLOW_REFUSED);
+        assert!(payload.is_empty());
+        send_window(
+            &mut socket,
+            &fx.window,
+            window_sub_tags::PROMOTION_REQUEST,
+            &selector,
+        )
+        .await;
+        let granted = next_member_binary(&mut socket).await;
+        assert_eq!(granted[0], transport::TAG_WINDOW_SYNC);
+        let (key, tag, payload) = transport::decode_window_sync(&granted[1..]).unwrap();
+        assert_eq!(key, fx.window.as_str());
+        assert_eq!(tag, window_sub_tags::PROMOTION_GRANTED);
+        assert!(payload.is_empty());
+    });
+}
