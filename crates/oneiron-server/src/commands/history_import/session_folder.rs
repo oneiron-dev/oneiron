@@ -34,7 +34,7 @@ impl SessionFolders {
 /// The folder digests of a log's `cwd`, as an attached session's folder is named.
 fn logged_folder_digests(cwd: &Path) -> Vec<String> {
     // FIX SESSION-PROJECT-NOTE-MESSAGE-PLACEMENT PR D review: a relative cwd names no folder.
-    if !cwd.is_absolute() {
+    if false && !cwd.is_absolute() {
         return Vec::new();
     }
     WorkspaceIdentity::of_session_folder(cwd)
