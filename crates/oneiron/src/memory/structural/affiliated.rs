@@ -412,6 +412,12 @@ impl Memory<'_> {
                 );
             }
             content.apply_batch(birth)?;
+            // The session's project settles in this same commit, admission
+            // first: a placement the credential does not cover refuses the
+            // whole write, and stores nothing.
+            content.update_note(note_id, |txn, _| {
+                self.settle_note_session_placement_in_txn(txn, note_id)
+            })?;
             for (claim_id, kind, target) in &attributed_links {
                 let mut record = crate::provenance::EdgeProvenanceClaimBody::new(
                     self.actor,
