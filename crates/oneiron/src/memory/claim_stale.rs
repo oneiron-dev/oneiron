@@ -232,10 +232,8 @@ impl Memory<'_> {
                 .as_ref()
                 .map(|_| ids.iter().copied().collect::<HashSet<_>>());
             let seen: HashSet<_> = views.iter().map(|view| view.claim_ref.as_str()).collect();
-            let include_stale = request
-                .filter
-                .as_ref()
-                .is_some_and(|filter| filter.include_stale == Some(true));
+            // The stale selector the read applied, under the actor ceiling.
+            let include_stale = receipt.applied.include_stale;
             let held = self
                 .with_read_filter(request.filter.as_ref())
                 .own_held_claims(
@@ -265,7 +263,8 @@ impl Memory<'_> {
     /// withheld, or stamped outside non-empty `project_refs` (and every
     /// project below them); the receipt says which axes narrowed. A claim
     /// the lane withholds that is the caller's own held claim is served
-    /// marked `held`, admitted by the caller's Recorded lane.
+    /// marked `held`, admitted by the caller's Recorded lane, and when stale
+    /// only if the applied filter includes stale claims.
     pub fn claim_read_filtered(
         &self,
         request: &ClaimFilteredReadRequest,
@@ -297,7 +296,11 @@ impl Memory<'_> {
             None => self
                 .with_read_filter(request.filter.as_ref())
                 .own_held_claims(
-                    |claim, body| *claim == id && projects.matches(body.scope_project),
+                    |claim, body| {
+                        *claim == id
+                            && (receipt.applied.include_stale || !body.stale)
+                            && projects.matches(body.scope_project)
+                    },
                     1,
                 )?
                 .into_iter()

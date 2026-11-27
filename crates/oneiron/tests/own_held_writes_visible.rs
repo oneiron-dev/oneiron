@@ -3,10 +3,12 @@
 mod common;
 
 use oneiron::memory::{
-    ClaimFilteredListRequest, ClaimFilteredReadRequest, ClaimInput, ClaimProposalReviewRequest,
-    ClaimSettleDecision, ClaimSettleRequest, ClaimSettlementVerdict, ClaimView, CommitReceipt,
-    Memory, MemoryPack, QueryBm25Request, RecallEffort, RecallRequest,
+    ClaimFilteredListRequest, ClaimFilteredReadRequest, ClaimInput, ClaimListFilter,
+    ClaimProposalReviewRequest, ClaimSettleDecision, ClaimSettleRequest, ClaimSettlementVerdict,
+    ClaimView, CommitReceipt, Memory, MemoryPack, ProducerRows, QueryBm25Request, RecallEffort,
+    RecallRequest, RecallScope,
 };
+use oneiron::policy_model::SecretScanMode;
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::{Bm25Search, recall_unembedded, search_bm25};
@@ -14,6 +16,8 @@ use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActo
 
 const MARKER: &str = "ownheldmark9v2z";
 const NON_MATCH: &str = "otherheldmark6r3x";
+// A word stored only beside a credential-shaped token, so the view redacts it.
+const HIDDEN_MARKER: &str = "hiddenheldmark8k4w";
 // The stock policy marks profile.* Normal, so the owner can settle it.
 const PREDICATE: &str = "profile.own_held_writes";
 
@@ -47,23 +51,7 @@ impl Fixture {
         let claim_ref = common::entity(0xB4).to_hex();
         let receipt = vault
             .memory(writer, EdgeActorClass::Agent)
-            .claim_upsert(&ClaimInput {
-                id: Some(claim_ref.clone()),
-                predicate: PREDICATE.to_owned(),
-                subject_ref: subject.to_hex(),
-                value: serde_json::json!(MARKER),
-                confidence: 0.8,
-                source: "generated".to_owned(),
-                world_ref: None,
-                relationship_ref: None,
-                scope: None,
-                valid_from: None,
-                valid_to: None,
-                occurred_at: None,
-                learned_at: None,
-                salience: None,
-                confidence_details: None,
-            })
+            .claim_upsert(&held_input(&claim_ref, subject, serde_json::json!(MARKER)))
             .expect("agent upserts its generated claim");
         Self {
             vault,
@@ -82,6 +70,23 @@ impl Fixture {
 
     fn other(&self) -> Memory<'_> {
         self.vault.memory(self.other, EdgeActorClass::Agent)
+    }
+
+    /// The owner turns write scanning off, so a credential-shaped token is
+    /// stored as given and every view of its claim redacts it.
+    fn scan_off(&self) {
+        let proof = self
+            .vault
+            .authenticate_owner(
+                self.owner,
+                "principal:held-scan-off",
+                true,
+                GateDecisionId::now(),
+            )
+            .expect("owner proof for the scan switch");
+        self.vault
+            .set_secret_scan_mode(&proof, SecretScanMode::Off, 10)
+            .expect("owner turns write scanning off");
     }
 
     fn approve(&self) {
@@ -114,6 +119,28 @@ impl Fixture {
             settled.verdict == ClaimSettlementVerdict::Landed,
             "owner approval lands"
         );
+    }
+}
+
+/// The agent's generated claim `claim_ref` about `subject`, under the held
+/// predicate.
+fn held_input(claim_ref: &str, subject: EntityId, value: serde_json::Value) -> ClaimInput {
+    ClaimInput {
+        id: Some(claim_ref.to_owned()),
+        predicate: PREDICATE.to_owned(),
+        subject_ref: subject.to_hex(),
+        value,
+        confidence: 0.8,
+        source: "generated".to_owned(),
+        world_ref: None,
+        relationship_ref: None,
+        scope: None,
+        valid_from: None,
+        valid_to: None,
+        occurred_at: None,
+        learned_at: None,
+        salience: None,
+        confidence_details: None,
     }
 }
 
@@ -166,12 +193,17 @@ fn bm25(memory: &Memory<'_>, query: &str) -> Bm25Search {
 }
 
 fn recall(memory: &Memory<'_>, query: &str) -> MemoryPack {
+    recall_in(memory, query, None)
+}
+
+fn recall_in(memory: &Memory<'_>, query: &str, scope: Option<RecallScope>) -> MemoryPack {
     recall_unembedded(
         memory,
         RecallRequest {
             query: query.to_owned(),
             effort: Some(RecallEffort::Light),
             format: Some("md".to_owned()),
+            scope,
             ..RecallRequest::default()
         },
     )
@@ -328,6 +360,138 @@ fn settled_claim_reads_as_ordinary() {
                 && view.held.is_none()
         }),
         "the settled claim {} appears in the writer's list without a held mark",
+        fixture.claim_ref,
+    );
+}
+
+#[test]
+fn held_lists_name_each_served_claim_as_a_producer() {
+    let fixture = Fixture::new();
+    let claim = EntityId::from_hex(&fixture.claim_ref).expect("fixture claim id");
+    let producers = ProducerRows::default();
+    let writer = fixture.writer().listing_producers(&producers);
+    let found = bm25(&writer, MARKER)
+        .held
+        .iter()
+        .any(|view| view.claim_ref == fixture.claim_ref);
+    assert!(
+        found && producers.take().contains(&claim),
+        "BM25's held claim {} is a producer of its answer (held: {found})",
+        fixture.claim_ref,
+    );
+    let producers = ProducerRows::default();
+    let writer = fixture.writer().listing_producers(&producers);
+    let found = recall(&writer, MARKER)
+        .held
+        .iter()
+        .any(|view| view.claim_ref == fixture.claim_ref);
+    assert!(
+        found && producers.take().contains(&claim),
+        "recall's held claim {} is a producer of its answer (held: {found})",
+        fixture.claim_ref,
+    );
+}
+
+#[test]
+fn only_the_writer_reads_the_held_mark() {
+    let fixture = Fixture::new();
+    fn find(memory: &Memory<'_>, claim_ref: &str) -> Option<ClaimView> {
+        let filter = ClaimListFilter {
+            predicate: Some(PREDICATE.to_owned()),
+            limit: 10,
+            ..Default::default()
+        };
+        memory
+            .claim_list(&filter)
+            .expect("record list of the held predicate")
+            .value
+            .into_iter()
+            .find(|view| view.claim_ref == claim_ref)
+    }
+    let claim_ref = fixture.claim_ref.as_str();
+    let owner = find(
+        &fixture.vault.memory(fixture.owner, EdgeActorClass::Human),
+        claim_ref,
+    );
+    assert!(
+        owner
+            .as_ref()
+            .is_some_and(|view| view.approval == "proposed" && view.held.is_none()),
+        "the owner's record list serves the proposal without the tray's reasons"
+    );
+    assert!(
+        find(&fixture.other(), claim_ref).is_none_or(|view| view.held.is_none()),
+        "another agent's record list never carries the writer's held mark"
+    );
+    assert!(
+        find(&fixture.writer(), claim_ref).is_some_and(|view| view.held.is_some()),
+        "the writer's record list marks its own held claim"
+    );
+}
+
+#[test]
+fn held_query_matches_only_the_served_value() {
+    let fixture = Fixture::new();
+    fixture.scan_off();
+    let hidden_ref = common::entity(0xB5).to_hex();
+    let hidden = format!("{HIDDEN_MARKER} ghp_{}", "a".repeat(36));
+    let writer = fixture.writer();
+    writer
+        .claim_upsert(&held_input(
+            &hidden_ref,
+            fixture.other,
+            serde_json::json!(hidden),
+        ))
+        .expect("agent upserts a claim holding a credential-shaped token");
+    let listed = list(&writer)
+        .into_iter()
+        .find(|view| view.claim_ref == hidden_ref);
+    assert!(
+        listed.is_some_and(
+            |view| view.held.is_some() && !view.value.to_string().contains(HIDDEN_MARKER)
+        ),
+        "the writer's list serves its held claim {hidden_ref} with the token's words redacted"
+    );
+    assert!(
+        bm25(&writer, HIDDEN_MARKER)
+            .held
+            .iter()
+            .all(|view| view.claim_ref != hidden_ref),
+        "a query matching only redacted words finds no held claim"
+    );
+    assert!(
+        recall(&writer, HIDDEN_MARKER)
+            .held
+            .iter()
+            .all(|view| view.claim_ref != hidden_ref),
+        "a recall matching only redacted words finds no held claim"
+    );
+}
+
+#[test]
+fn recall_held_list_keeps_the_recall_kinds() {
+    let fixture = Fixture::new();
+    let writer = fixture.writer();
+    let held = |kinds: &[&str]| {
+        recall_in(
+            &writer,
+            MARKER,
+            Some(RecallScope {
+                kinds: Some(kinds.iter().map(|kind| (*kind).to_owned()).collect()),
+                ..RecallScope::default()
+            }),
+        )
+        .held
+    };
+    assert!(
+        held(&["TURN"]).is_empty(),
+        "a recall of TURNs alone holds no claim"
+    );
+    assert!(
+        held(&["CLAIM"])
+            .iter()
+            .any(|view| view.claim_ref == fixture.claim_ref),
+        "a recall of CLAIMs keeps the writer's held claim {}",
         fixture.claim_ref,
     );
 }

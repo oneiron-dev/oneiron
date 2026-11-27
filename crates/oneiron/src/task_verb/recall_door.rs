@@ -131,15 +131,12 @@ pub fn recall_at_door_seeded(
             "a recall under an operation id takes no bar",
         ));
     }
-    // The caller's own held claims that match the query go beside the pack,
-    // never into its items, render or kept answer, and never on a push
-    // (AGENT-TRIAL-OWN-HELD-WRITES-HIDDEN).
+    // The caller's own held claims that match the query, under the recall's
+    // own selection, go beside the pack, never into its items, render or kept
+    // answer, and never on a push (AGENT-TRIAL-OWN-HELD-WRITES-HIDDEN).
     let push = input.bar.as_ref().is_some_and(|bar| bar.source.pushes());
     let query = input.query.clone();
-    let projects = input
-        .scope
-        .as_ref()
-        .map_or_else(Vec::new, |scope| scope.project_refs.clone());
+    let scope = input.scope.clone().unwrap_or_default();
     // Under a caller's operation id the first answer is kept by identity and
     // each later call of the same request replays it under the current read
     // (RESEARCH-0363 p5); see `crate::memory::recall_replay`.
@@ -153,7 +150,7 @@ pub fn recall_at_door_seeded(
         None => recall_with_whole_limit(&memory, input, embed, door),
     }?;
     if !push && !pack.narrowing.applied.deny_all {
-        pack.held = memory.own_held_for_query(&query, &projects)?;
+        pack.held = memory.own_held_for_recall(&query, &scope)?;
     }
     Ok(pack)
 }
