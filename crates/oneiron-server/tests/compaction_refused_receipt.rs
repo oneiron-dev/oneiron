@@ -635,6 +635,7 @@ fn run_self_task(
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "starts a task run through the retired MCP execute_code tool: no wire entry starts a task run since EXECUTE-CALLER-CODE PR D (Orchestrator EXECUTE-TASK-FORM-GAP)"]
 async fn a_compaction_call_refused_after_it_went_out_keeps_its_receipt() {
     let step = FakeLlm::start(Vec::new(), Some(Reply::Computed(Arc::new(answer)))).await;
     let compact = FakeLlm::start(Vec::new(), Some(Reply::Status(400))).await;
@@ -711,6 +712,7 @@ async fn a_compaction_call_refused_after_it_went_out_keeps_its_receipt() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "starts a task run through the retired MCP execute_code tool: no wire entry starts a task run since EXECUTE-CALLER-CODE PR D (Orchestrator EXECUTE-TASK-FORM-GAP)"]
 async fn a_compaction_call_refused_before_it_went_out_keeps_no_receipt() {
     let step = FakeLlm::start(Vec::new(), Some(Reply::Computed(Arc::new(answer)))).await;
     let compact = FakeLlm::start(Vec::new(), Some(Reply::Status(400))).await;
