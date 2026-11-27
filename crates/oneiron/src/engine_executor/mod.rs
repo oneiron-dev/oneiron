@@ -30,6 +30,7 @@ mod session_refusal;
 pub(crate) mod setting_keys;
 mod shadow_step;
 mod skill_call;
+mod source_entry;
 mod stack_floor;
 mod step_evidence;
 mod store;
@@ -52,7 +53,7 @@ pub(crate) use self::host::ACT_GATES_COUNT_CALLABLE_ROWS;
 pub(crate) use self::program_entry::{PinnedProgramEntry, PinnedProgramRun};
 #[cfg(test)]
 use self::record::step_state_hash;
-pub use self::record::{EnteredRun, entered_run};
+pub use self::record::{EnteredRun, caller_run_input, entered_run};
 pub(crate) use self::record::{caller_task_in_txn, code_run_complete_in_txn, parked_wait_now};
 #[cfg(oneiron_test_support)]
 pub(crate) use self::record::{executor_config_hash_for_test, step_state_hash_for_test};
@@ -82,13 +83,13 @@ pub(crate) use self::store::{
     terminal_output_seq, write_receipt_result_output_path,
 };
 pub use self::types::{
-    CallableProgram, ENGINE_EXECUTOR_COMPACTION_PURPOSE_NAME, ENGINE_EXECUTOR_FALLBACK_NAME,
-    ENGINE_EXECUTOR_PURPOSE_NAME, ENGINE_EXECUTOR_SOFT_STEP_LIMIT, EngineExecutorConfig,
-    EngineExecutorError, EngineExecutorLimits, EngineExecutorOutcome, EngineExecutorResult,
-    EngineExecutorStatus, ExecutorLegibility, GUEST_BUDGET_RESPONSE_KEY, JsCodeModeHost,
-    JsCodeModeOutput, JsCodeModeRuntime, JsCodeModeStep, JsCodeModeStepOutcome, JsCodeModeStream,
-    JsResultCall, JsResultRef, JsResultTarget, ParkedWait, SelfDispatchResponse, StoreReceiptInput,
-    StoreReceiptTree, guest_response_with_budget,
+    CallableProgram, CallerRunInput, ENGINE_EXECUTOR_COMPACTION_PURPOSE_NAME,
+    ENGINE_EXECUTOR_FALLBACK_NAME, ENGINE_EXECUTOR_PURPOSE_NAME, ENGINE_EXECUTOR_SOFT_STEP_LIMIT,
+    EngineExecutorConfig, EngineExecutorError, EngineExecutorLimits, EngineExecutorOutcome,
+    EngineExecutorResult, EngineExecutorStatus, ExecutorLegibility, GUEST_BUDGET_RESPONSE_KEY,
+    JsCodeModeHost, JsCodeModeOutput, JsCodeModeRuntime, JsCodeModeStep, JsCodeModeStepOutcome,
+    JsCodeModeStream, JsResultCall, JsResultRef, JsResultTarget, ParkedWait, SelfDispatchResponse,
+    StoreReceiptInput, StoreReceiptTree, guest_response_with_budget,
 };
 // L8-23: what a resumed pending step's walk met, on its outcome and its hold.
 pub use self::host::resume_preflight::{

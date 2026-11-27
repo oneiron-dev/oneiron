@@ -237,6 +237,7 @@ pub(super) async fn bind(
         // Each run's id and task replace these.
         run_id: EntityId::now(),
         task: ENGINE_EXECUTOR_PURPOSE_NAME.to_owned(),
+        caller_source_digest: None,
         prompt_package_root: prompt_package,
         model: seat.model.clone(),
         model_locality: seat.locality,

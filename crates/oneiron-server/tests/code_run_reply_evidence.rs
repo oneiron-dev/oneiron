@@ -124,6 +124,7 @@ fn run_one_turn(vault: &Vault, owner: EntityId, run_id: EntityId) {
     let config = EngineExecutorConfig {
         run_id,
         task: "keep the reply as evidence".to_owned(),
+        caller_source_digest: None,
         prompt_package_root: workspace_test_prompt_package_root()
             .expect("workspace test prompt package"),
         model: ModelId::new("seat/generative_reasoner@1cadcf6de87a").expect("seat model id"),

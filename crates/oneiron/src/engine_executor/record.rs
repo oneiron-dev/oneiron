@@ -4,21 +4,31 @@ use super::store::{
     CONFIG_OUTPUT_PATH, is_terminal_output_path, load_utf8_output, record_text_output,
     resumed_output_path, resumed_output_wait, terminal_output_path, terminal_output_seq,
 };
-use super::types::{EngineExecutorConfig, EngineExecutorResult, EngineExecutorStatus};
+use super::types::{
+    CallerRunInput, EngineExecutorConfig, EngineExecutorResult, EngineExecutorStatus,
+};
 use crate::code_run::{
     CodeConsentResume, CodeRunReplayGeneration, CodeRunReplayRecord, ExecutorStorage, ParkedWait,
     SelfDurableWait, SelfEffect, WaitKey, code_consent_resume_evidence,
     verify_code_consent_consumed, verify_parked_code_consent,
 };
 use crate::entity_id::EntityId;
-use crate::{Error, Vault};
+use crate::{Error, Result, Vault};
 use serde::{Deserialize, Serialize};
 
+mod caller_source;
 mod caller_task;
 mod replay_hash;
 mod step_digests;
+use self::caller_source::caller_source_in_txn;
+pub(super) use self::caller_source::{
+    caller_source_code_digest, has_caller_source, missing_caller_source_body, record_caller_source,
+    refuse_caller_source_as_task, verify_caller_source,
+};
 pub(crate) use self::caller_task::caller_task_in_txn;
 pub(super) use self::caller_task::record_caller_task;
+#[cfg(test)]
+pub(super) use self::replay_hash::executor_config_hash_for_binding;
 use self::replay_hash::executor_config_hash_hex;
 pub(super) use self::replay_hash::prepared_step_state_hash;
 #[cfg(test)]
@@ -304,6 +314,41 @@ pub fn entered_run(
         .filter(|marker| marker.schema_version == REPLAY_METADATA_SCHEMA_VERSION)
         .map(|marker| marker.config_hash);
     Ok(Some(EnteredRun { vault, config_hash }))
+}
+
+/// A run's caller input as its record keeps it (FIX EXECUTE-CALLER-CODE): the caller's exact
+/// code for a caller-source run, else the caller task for a task run. `None` when the run holds
+/// no replay record yet, or is a task run that keeps no caller task. A source run whose body
+/// cannot be read is refused, never read as a task run.
+///
+/// # Errors
+///
+/// Storage errors reading the record or its bodies, and [`Error::InvalidConfig`] when the
+/// record holds a caller-source body that cannot be read.
+pub fn caller_run_input(vault: &Vault, run_id: EntityId) -> Result<Option<CallerRunInput>> {
+    let _custody = vault.store.gate_custody_read_guard()?;
+    let txn = vault.store.env.read_txn()?;
+    let Some(record) = vault.get_code_run_replay_record_in_txn(&txn, &run_id)? else {
+        return Ok(None);
+    };
+    caller_run_input_in_txn(vault, &txn, &record)
+}
+
+/// [`caller_run_input`] for a record the caller already holds, in the caller's transaction.
+fn caller_run_input_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    record: &CodeRunReplayRecord,
+) -> Result<Option<CallerRunInput>> {
+    // FIX EXECUTE-CALLER-CODE: the manifest decides the mode. A source run's code is required:
+    // an unreadable body is a refusal, never a fallback to a task.
+    if has_caller_source(record) {
+        let Some(code) = caller_source_in_txn(vault, txn, record)? else {
+            return Err(missing_caller_source_body());
+        };
+        return Ok(Some(CallerRunInput::Source(code)));
+    }
+    Ok(caller_task_in_txn(vault, txn, record)?.map(CallerRunInput::Task))
 }
 
 pub(super) fn record_terminal_output(
