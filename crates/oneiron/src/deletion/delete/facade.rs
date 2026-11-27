@@ -65,15 +65,7 @@ impl Vault {
         id: &EntityId,
         reason: DeleteReason,
     ) -> Result<DeleteEntityOutcome> {
-        match self.delete_entity_through_dependents(id, reason, None, Some(owner)) {
-            // The owner, on their own proof, learns `restricted` for a
-            // record they chose to restrict (Q1 = A); any other absence
-            // passes through.
-            Err(Error::EntityNotFound) => Err(self
-                .restricted_owner_delete_refusal(id)
-                .unwrap_or(Error::EntityNotFound)),
-            outcome => outcome,
-        }
+        self.delete_entity_through_dependents(id, reason, None, Some(owner))
     }
 
     /// Owner-on-own-proof only (Q1 = A): the delete or erase rail refused
