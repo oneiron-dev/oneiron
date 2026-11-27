@@ -241,6 +241,11 @@ crate::side_table::side_tables! {
     DREAMER_PROACTIVITY_CLAIM_DIGESTS: VaultMeta b"dreamer:proactivity:claim_digests:v1:" Raw
         // Payload family: Id-only membership indexes, restored with the rows they index.
         [restore: content] [family: structure] [tier: canonical];
+    /// Marker that every proactivity digest stored before
+    /// `DREAMER_PROACTIVITY_CLAIM_DIGESTS` existed has been indexed there
+    /// (PROACTIVITY-DIGEST-COPY-ERASURE). Key: ().
+    DREAMER_PROACTIVITY_CLAIM_DIGESTS_INDEXED: VaultMeta b"dreamer:proactivity:claim_digests_indexed:v1" Raw
+        [restore: content] [family: unclassified] [tier: canonical];
     /// Time (u64 BE) of the last digest that delivered judge asks to one recipient. Key: id16.
     DREAMER_PROACTIVITY_JUDGE_ASKS: VaultMeta b"dreamer:proactivity:judge_asks:v1:" Raw
         [restore: content] [family: unclassified] [tier: canonical];

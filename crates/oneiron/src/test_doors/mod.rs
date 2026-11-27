@@ -314,6 +314,7 @@ pub mod pending_write_tray;
 pub mod policy_doors_between;
 #[cfg(feature = "sync")]
 pub mod predicted_residence;
+pub mod proactivity_digest_index;
 pub mod profiles_other_machine;
 #[cfg(feature = "sync")]
 pub mod project_replicated_revision;

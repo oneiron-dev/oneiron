@@ -17,6 +17,7 @@ use oneiron::provenance::made_by::{
 use oneiron::store::GateDecisionId;
 use oneiron::test_doors::curator_finding::emit_retract_finding;
 use oneiron::test_doors::house_link::put_claim_made_by;
+use oneiron::test_doors::proactivity_digest_index;
 use oneiron::test_doors::source_audience_binding::{bound_row, reads};
 use oneiron::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject, EntityId,
@@ -266,4 +267,47 @@ fn the_other_proposals_of_a_scrubbed_digest_stay() {
             .any(|line| line.contains(kept_ref.as_str()) && line.contains(kept_summary)),
         "the stored digest lost the other proposal's rendered ref or summary"
     );
+}
+
+#[test]
+fn a_digest_stored_before_the_index_existed_is_scrubbed_by_the_first_erase() -> oneiron::Result<()>
+{
+    let fixture = Fixture::with_machine_signers(SIGNER_SECRET);
+    let fact = fixture.fact_from_the_mailbox(FACT_VALUE);
+    let (before, finding, summary) = fixture.digest_with_finding(fact);
+    let id = before.id;
+    let reference = finding.to_hex();
+    let encoded_summary = serde_json::to_string(&summary).expect("the proposal summary serializes");
+    let escaped_summary = &encoded_summary[1..encoded_summary.len() - 1];
+
+    proactivity_digest_index::forget_claim_digest_index(&fixture.vault)?;
+    assert!(
+        !proactivity_digest_index::claim_digests_indexed(&fixture.vault)?,
+        "the fixture vault still reads indexed"
+    );
+    let stored = fixture.stored_digest(id);
+    let serialized = serde_json::to_string(&stored).expect("FIXTURE: the stored digest serializes");
+    assert!(
+        serialized.contains(reference.as_str()) && serialized.contains(escaped_summary),
+        "FIXTURE: the unindexed digest still carries the finding's ref and summary"
+    );
+
+    let outcome = fixture
+        .vault
+        .delete_entity_with_reason_as_owner(&fixture.proof, &finding, DeleteReason::UserHardDelete)
+        .expect("the owner hard-deletes the finding");
+    assert!(outcome.existed, "the hard-deleted finding existed");
+
+    let stored = fixture.stored_digest(id);
+    assert_eq!(stored.id, id, "the stored digest keeps its locator");
+    let serialized = serde_json::to_string(&stored).expect("the stored digest serializes");
+    assert!(
+        !serialized.contains(reference.as_str()) && !serialized.contains(escaped_summary),
+        "the digest stored before the index still carries the erased proposal's words"
+    );
+    assert!(
+        proactivity_digest_index::claim_digests_indexed(&fixture.vault)?,
+        "the first erase left the stored digests unindexed"
+    );
+    Ok(())
 }
