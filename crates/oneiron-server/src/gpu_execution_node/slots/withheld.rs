@@ -1,4 +1,4 @@
-//! The withheld list's reader. One long-lived thread per slot table reads
+//! The withheld list's reader. One long-lived thread per withheld path reads
 //! `[gpu_jobs.devices].withheld_file`, and each ask waits for a read that
 //! starts after the ask, for at most [`WITHHELD_READ_TIMEOUT`]. An open on a
 //! hard network mount whose server is lost blocks however it is flagged,
@@ -6,14 +6,17 @@
 //! lease): an ask with no answer in time reads as unreadable, so nothing
 //! is offered and readiness fails its device step. While that read has
 //! still not returned, later asks answer the same at once and start no
-//! other read. The thread ends once its table is dropped and its read in
-//! flight has returned.
+//! other read. Every slot table built for one path holds the same reader,
+//! so a table built again after an embedded stop and wake takes the read
+//! its predecessor left stuck and never starts a second thread beside it
+//! (review round 1 of #10610). The thread ends once no table holds its
+//! reader and its read in flight has returned.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, PoisonError, Weak};
 use std::time::Duration;
 
 use super::GpuProbeError;
@@ -56,8 +59,9 @@ struct ReadProgress {
     overdue: bool,
     /// The reader thread runs.
     thread_running: bool,
-    /// The table is dropped: the thread ends after its read in flight.
-    closed: bool,
+    /// The slot tables holding this reader. At none, the thread ends after
+    /// its read in flight.
+    holders: usize,
 }
 
 impl std::fmt::Debug for WithheldListReader {
@@ -76,25 +80,63 @@ fn lock(shared: &ReaderShared) -> MutexGuard<'_, ReadProgress> {
         .unwrap_or_else(PoisonError::into_inner)
 }
 
+impl ReaderShared {
+    fn new(path: PathBuf, source: WithheldSource) -> Self {
+        Self {
+            path,
+            source,
+            progress: Mutex::default(),
+            changed: Condvar::new(),
+        }
+    }
+}
+
 impl WithheldListReader {
     pub(super) fn new(path: PathBuf) -> Self {
-        Self::with_source(
-            path.clone(),
-            WITHHELD_READ_TIMEOUT,
-            Box::new(move || read_withheld_file(&path)),
-        )
+        Self::registered(path, WITHHELD_READ_TIMEOUT, |path| {
+            let path = path.to_path_buf();
+            Box::new(move || read_withheld_file(&path))
+        })
     }
 
+    /// The process's one reader of `path`, built with `source` only when no
+    /// table holds one and no read of it is in flight. A table built again
+    /// for the path (an embedded stop and wake builds a new slot table)
+    /// takes the reader its predecessor left, with any read still stuck on a
+    /// lost mount, so it answers at once and starts no second thread.
+    fn registered(
+        path: PathBuf,
+        timeout: Duration,
+        source: impl FnOnce(&Path) -> WithheldSource,
+    ) -> Self {
+        static READERS: OnceLock<Mutex<BTreeMap<PathBuf, Weak<ReaderShared>>>> = OnceLock::new();
+        let mut readers = READERS
+            .get_or_init(Mutex::default)
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        readers.retain(|_, reader| reader.strong_count() > 0);
+        let shared = match readers.get(&path).and_then(Weak::upgrade) {
+            Some(shared) => shared,
+            None => {
+                let shared = Arc::new(ReaderShared::new(path.clone(), source(path.as_path())));
+                readers.insert(path, Arc::downgrade(&shared));
+                shared
+            }
+        };
+        drop(readers);
+        Self::holding(shared, timeout)
+    }
+
+    #[cfg(test)]
     fn with_source(path: PathBuf, timeout: Duration, source: WithheldSource) -> Self {
-        Self {
-            shared: Arc::new(ReaderShared {
-                path,
-                source,
-                progress: Mutex::default(),
-                changed: Condvar::new(),
-            }),
-            timeout,
-        }
+        Self::holding(Arc::new(ReaderShared::new(path, source)), timeout)
+    }
+
+    fn holding(shared: Arc<ReaderShared>, timeout: Duration) -> Self {
+        let mut progress = lock(&shared);
+        progress.holders = progress.holders.saturating_add(1);
+        drop(progress);
+        Self { shared, timeout }
     }
 
     pub(super) fn read(&self) -> Result<BTreeSet<String>, GpuProbeError> {
@@ -165,7 +207,7 @@ impl WithheldListReader {
 impl Drop for WithheldListReader {
     fn drop(&mut self) {
         let mut progress = lock(&self.shared);
-        progress.closed = true;
+        progress.holders = progress.holders.saturating_sub(1);
         self.shared.changed.notify_all();
     }
 }
@@ -176,10 +218,10 @@ fn run_reader(shared: &ReaderShared) {
         progress = shared
             .changed
             .wait_while(progress, |progress| {
-                !progress.closed && progress.started >= progress.asked
+                progress.holders > 0 && progress.started >= progress.asked
             })
             .unwrap_or_else(PoisonError::into_inner);
-        if progress.closed {
+        if progress.holders == 0 {
             progress.thread_running = false;
             return;
         }
@@ -361,6 +403,49 @@ mod tests {
         assert_eq!(answered(&b), Ok(set(&["second"])));
         assert_eq!(blocking.started.try_recv(), Ok(()));
         assert_eq!(blocking.started.try_recv(), Err(mpsc::TryRecvError::Empty));
+    }
+
+    #[test]
+    fn a_reader_built_again_for_a_path_whose_read_is_stuck_starts_no_other_read() {
+        const REBUILT: &str = "/lost-mount/gpu-withheld-rebuilt";
+        let (source, blocking) = blocking_source();
+        // The answers stay open to the test's end, so the read never returns.
+        let BlockingSource {
+            started,
+            answers: _answers,
+        } = blocking;
+        let first = Arc::new(WithheldListReader::registered(
+            REBUILT.into(),
+            Duration::from_millis(100),
+            |_| source,
+        ));
+        assert_eq!(
+            reason_of(answered(&ask(&first, Duration::from_millis(100)))),
+            format!("{REBUILT}: no answer within 100 ms")
+        );
+        started
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the read started");
+        // The table is dropped (an embedded stop) and built again (its wake).
+        drop(first);
+        let (again, unused) = blocking_source();
+        let second = Arc::new(WithheldListReader::registered(
+            REBUILT.into(),
+            Duration::from_millis(100),
+            |_| again,
+        ));
+        assert!(
+            second.wait_until(|p| p.holders == 1),
+            "the first table let go of the reader"
+        );
+        // Willing to wait 60 s, it answers at once: the stuck read is its own.
+        let next = ask(&second, Duration::from_secs(60));
+        assert_eq!(
+            reason_of(answered(&next)),
+            format!("{REBUILT}: an earlier read has not returned")
+        );
+        assert_eq!(started.try_recv(), Err(mpsc::TryRecvError::Empty));
+        assert_eq!(unused.started.try_recv(), Err(mpsc::TryRecvError::Empty));
     }
 
     struct OneGpu;
