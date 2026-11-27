@@ -398,20 +398,26 @@ pub fn confirm_record_erase(
         },
         applied.as_ref(),
     )?;
-    // Only an erase applied now destroyed the world's keys; one that waits on
-    // a veto window or a hold has not erased it yet.
+    // Only an erase applied now destroyed the world's keys and freed the
+    // record's disk space; one that waits on a veto window or a hold has not
+    // erased it yet.
+    let applied_now = outcome.first.state == DeleteRequestState::Applied;
     let (old_backups_notice, old_backups_expire_within_days) =
-        world_erase_notice(world_erase && outcome.first.state == DeleteRequestState::Applied);
+        world_erase_notice(world_erase && applied_now);
     Ok(RecordEraseOutcome {
         check_in: Some(decision),
         old_backups_notice,
         old_backups_expire_within_days,
         // The erase answer's top-level list is the confirmed record's own
         // followed by the erase-level entries of the retaken view, so R
-        // shows what P showed.
+        // shows what P showed. A pending R leaves the disk note out: P says
+        // what the erase will do, and the disk is freed only once it applies
+        // (H5-R2-PENDING-ERASE-DISK-WORDING = A).
         remaining: {
             let mut remaining = outcome.first.remaining.clone();
-            remaining.extend(view.remaining);
+            remaining.extend(view.remaining.into_iter().filter(|notice| {
+                applied_now || notice.code != remaining_claims::REMAINING_DISK_NOT_OVERWRITTEN
+            }));
             remaining
         },
         legal_copies_kept: view.legal_copies_kept,

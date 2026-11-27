@@ -3,10 +3,12 @@
 //! T3 a plain erase lists its copies in order; T4 a sealed erase says the free
 //! space stays encrypted; T5 a shared record lists devices and peers; T6
 //! on-device-only settings leave providers out; T7 a held record lists the
-//! hold copy; T8 every bare restore carries the erasure note. Entry asserts
-//! compare code AND full text against the ruled literals. Fixtures copy H4's
-//! `rooted`/`artifact`, `deletion_setting_keys.rs` shares, `legal_hold_*`
-//! holds and `kit_restore_*` restores.
+//! hold copy; T8 every bare restore carries the erasure note; T9 an erase that
+//! waits on its veto window leaves the disk note out of R, and an applied one
+//! keeps it. Entry asserts compare code AND full text against the ruled
+//! literals. Fixtures copy H4's `rooted`/`artifact`/`two_owners`,
+//! `deletion_setting_keys.rs` shares, `legal_hold_*` holds and `kit_restore_*`
+//! restores.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test erase_answer_lists_copies_out_of_reach`.
@@ -20,6 +22,7 @@ use oneiron::access_grant::AccessGrantStatus;
 use oneiron::authority::{HOST_ISSUER_SEED_BYTES, HostSlipIssuer, MachineRole};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::deletion::LegalHoldTarget;
+use oneiron::federation::{FederationGrantRole as Role, InitialSharedMember};
 use oneiron::llm::ModelLocality;
 use oneiron::memory::{BlobArtifactInput, DeleteRequestState, Memory, SafeDeleteReason};
 use oneiron::note::TakeTarget;
@@ -791,5 +794,126 @@ fn every_bare_restore_carries_the_erasure_note() {
             "Records erased after this backup was taken may be back. This restore had no live vault to check them against."
         ),
         "every bare restore carries the erasure note"
+    );
+}
+
+const SHARED: u64 = 43;
+
+/// A rooted vault on a manual clock with two live Owners who accepted, so an
+/// owner erase waits on its veto window (H4's `two_owners`): the tempdir, the
+/// vault, the clock, the embedded owner and their proof.
+fn two_owners() -> (
+    tempfile::TempDir,
+    Vault,
+    Arc<ManualClock>,
+    EntityId,
+    AuthenticatedOwner,
+) {
+    let clock = ManualClock::new(T0);
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut config = VaultConfig::device();
+    config.store_clock = clock.bundle();
+    let vault = Vault::open(dir.path(), config).expect("vault on its manual clock");
+    vault.install_device_keystore(Arc::new(MemoryKeystore::default()));
+    let issuer = oneiron::test_support::provision_engine_machines(&vault);
+    vault
+        .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+        .expect("this install's live machine profile");
+    let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    oneiron::test_support::bind_host_owner(&vault, &issuer, owner).expect("the owner's binding");
+    let owner_proof = proof(&vault, owner);
+    let second = EntityId::now();
+    person(&vault, second);
+    let member = |member_ref| InitialSharedMember {
+        member_ref,
+        role: Some(Role::Owner),
+    };
+    vault
+        .initialize_shared_vault(
+            &owner_proof,
+            SHARED,
+            None,
+            &[member(owner), member(second)],
+            1,
+        )
+        .expect("a shared vault with two Owners");
+    let second_proof = proof(&vault, second);
+    let invitation = vault
+        .shared_invitations(&second_proof, SHARED)
+        .expect("invitations")
+        .into_iter()
+        .find(|open| open.role == Role::Owner)
+        .expect("the founding invitation");
+    vault
+        .accept_shared_invitation(&second_proof, SHARED, &invitation.id)
+        .expect("the second Owner accepts");
+    (dir, vault, clock, owner, owner_proof)
+}
+
+/// The (code, text) pairs of an answer's `remaining` list, in order.
+fn notices_of(outcome: &RecordEraseOutcome) -> Vec<(String, String)> {
+    outcome
+        .remaining
+        .iter()
+        .map(|notice| (notice.code.clone(), notice.text.clone()))
+        .collect()
+}
+
+#[test]
+fn a_pending_erase_answer_leaves_out_the_freed_disk() {
+    let (_dir, vault, _clock, owner, owner_proof) = two_owners();
+    let memory = vault.memory(owner, EdgeActorClass::Human);
+    let record = artifact(&memory);
+    let (takes, outcome) = preview_and_erase(&memory, &owner_proof, record);
+    assert!(
+        outcome.first_act.is_some() && outcome.first.state != DeleteRequestState::Applied,
+        "two Owners: the erase waits on its veto window: {outcome:?}"
+    );
+    let preview = remaining_of(&takes);
+    assert!(
+        preview
+            .iter()
+            .any(|(code, _)| code == "disk_not_overwritten"),
+        "P says what the erase will do, the freed disk included: {takes}"
+    );
+    let receipt_list: Vec<(String, String)> = outcome
+        .first
+        .remaining
+        .iter()
+        .map(|notice| (notice.code.clone(), notice.text.clone()))
+        .collect();
+    let expected: Vec<(String, String)> = receipt_list
+        .into_iter()
+        .chain(
+            preview
+                .iter()
+                .filter(|(code, _)| code != "disk_not_overwritten")
+                .cloned(),
+        )
+        .collect();
+    assert_eq!(
+        notices_of(&outcome),
+        expected,
+        "a pending R is the receipt's list, then P's entries without the disk note: {outcome:?}"
+    );
+
+    // The applied twin: a one-owner vault's erase applies at once, and its R
+    // keeps the disk note.
+    let applied_dir = tempfile::tempdir().expect("tempdir");
+    let (applied_vault, applied_owner, applied_proof, _issuer) = rooted(&applied_dir);
+    let applied_memory = applied_vault.memory(applied_owner, EdgeActorClass::Human);
+    let applied_record = artifact(&applied_memory);
+    let (_takes, applied) = preview_and_erase(&applied_memory, &applied_proof, applied_record);
+    assert_eq!(
+        applied.first.state,
+        DeleteRequestState::Applied,
+        "{applied:?}"
+    );
+    assert!(
+        notices_of(&applied).contains(&(
+            "disk_not_overwritten".to_owned(),
+            "The disk space and files it used are freed, not overwritten. Someone who copies this vault's files before that space is reused could still read it.".to_owned(),
+        )),
+        "an applied R keeps the disk note: {applied:?}"
     );
 }
