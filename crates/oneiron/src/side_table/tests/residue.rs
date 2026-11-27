@@ -32,7 +32,7 @@ use crate::memory::DeleteRequestState;
 use crate::ports::{ChangeLogStore, ChangeOp};
 use crate::registry::ENTITY_TYPE_REDACTION_AUDIT;
 use crate::side_table::{self, Named, SideDb, SideTable, SideTableDecl, declared, declared_for};
-use crate::store::{ASSET_INLINE_BODY_BYTES, DB_MANIFEST, GateDecisionId, Store};
+use crate::store::{ASSET_INLINE_BODY_BYTES, DB_MANIFEST, Store};
 use crate::verbs::{
     OwnerConfirmPreviewRequest, RecordEraseConfirmRequest, confirm_record_erase,
     preview_owner_confirm,
@@ -373,6 +373,7 @@ fn discard_proposal(base_hash: [u8; 32]) -> EditProposal {
         inspection: StructureSummary {
             format: OfficeFormat::Xlsx,
             sheets: Vec::new(),
+            defined_names: Vec::new(),
             has_pivots: false,
             has_charts: false,
             has_macros: false,
