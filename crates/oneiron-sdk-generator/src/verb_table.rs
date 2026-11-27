@@ -74,7 +74,8 @@ fn check_act_class(row: &Dict) -> Result<(), GenerateError> {
     Ok(())
 }
 
-/// An optional example has one physical line and calls the exact verb path.
+/// An optional example has one physical line and calls the exact verb path as code: the call
+/// stands outside every string literal and comment, so a quoted mention is no call.
 fn check_example(row: &Dict, name: &str) -> Result<(), GenerateError> {
     let Some(example) = row.get("example") else {
         return Ok(());
@@ -83,11 +84,13 @@ fn check_example(row: &Dict, name: &str) -> Result<(), GenerateError> {
         !text.trim().is_empty()
             && !text.contains(['\n', '\r'])
             && Regex::new(&format!(
-                r"(?:^|[^\p{{ID_Continue}}.$\x{{200C}}\x{{200D}}]){} *\(",
+                r"(?:^|[^\p{{ID_Continue}}.$\x{{200C}}\x{{200D}}])({}) *\(",
                 regex::escape(name)
             ))
             .expect("an escaped verb name in the example pattern")
-            .is_match(text)
+            .captures_iter(text)
+            .filter_map(|call| call.get(1))
+            .any(|path| outside_strings_and_comments(&text[..path.start()]))
     });
     if !valid {
         return Err(GenerateError::value(format!(
@@ -95,6 +98,26 @@ fn check_example(row: &Dict, name: &str) -> Result<(), GenerateError> {
         )));
     }
     Ok(())
+}
+
+/// Whether code goes on after `prefix`: it leaves no string literal open (`"`, `'` or a
+/// backtick, with backslash escapes) and starts no comment.
+fn outside_strings_and_comments(prefix: &str) -> bool {
+    let mut open: Option<char> = None;
+    let mut chars = prefix.chars().peekable();
+    while let Some(c) = chars.next() {
+        match open {
+            Some(_) if c == '\\' => {
+                chars.next();
+            }
+            Some(quote) if c == quote => open = None,
+            Some(_) => {}
+            None if matches!(c, '"' | '\'' | '`') => open = Some(c),
+            None if c == '/' && matches!(chars.peek(), Some('/' | '*')) => return false,
+            None => {}
+        }
+    }
+    open.is_none()
 }
 
 /// Reads one verb-tree file, identifying it on any read, parse, or shape error.
@@ -134,10 +157,10 @@ pub(crate) fn check_verb_tree<'a>(
         if !families
             .get(*root)
             .and_then(Value::as_str)
-            .is_some_and(|line| !line.trim().is_empty())
+            .is_some_and(|line| !line.trim().is_empty() && !line.contains(['\n', '\r']))
         {
             return Err(GenerateError::value(format!(
-                "{}: root {root:?} needs a non-blank family line",
+                "{}: root {root:?} needs a non-blank family line of one line",
                 families_path.display()
             )));
         }
@@ -512,6 +535,30 @@ mod tests {
     }
 
     #[test]
+    fn rejects_an_example_that_calls_its_verb_only_inside_a_string_or_comment() {
+        for example in [
+            r#""const hint = \"vault.recall({})\";""#,
+            r#""const hint = 'vault.recall({})';""#,
+            r#""const hint = `vault.recall({})`;""#,
+            r#""log(\"see vault.recall({})\")""#,
+            r#""log(\"a \\\" vault.recall({})\")""#,
+            r#""// vault.recall({})""#,
+            r#""/* vault.recall({}) */""#,
+        ] {
+            assert_example_refusal("example-in-string", example);
+        }
+    }
+
+    #[test]
+    fn accepts_an_example_whose_call_takes_string_arguments() {
+        example_row(
+            "example-string-argument",
+            r#""const r = await vault.recall({query: \"vault.recall(x)\", limit: 3})""#,
+        )
+        .expect("a call outside strings is valid whatever its arguments hold");
+    }
+
+    #[test]
     fn accepts_a_one_line_example_that_calls_its_own_verb() {
         example_row(
             "own-example-verb",
@@ -536,6 +583,26 @@ mod tests {
             error.contains(r#"root "reveal" needs a non-blank family line"#),
             "{error}"
         );
+    }
+
+    #[test]
+    fn rejects_a_family_line_of_more_than_one_line() {
+        for families in [
+            r#"{"vault":"Shared memory.\nMore."}"#,
+            r#"{"vault":"Shared memory.\rMore."}"#,
+        ] {
+            let error = verb_tree_error(
+                "multi-line-family",
+                families,
+                r#"{"Read":["recall"]}"#,
+                &["vault.recall"],
+            );
+            assert!(error.contains("families.json"), "{error}");
+            assert!(
+                error.contains(r#"root "vault" needs a non-blank family line of one line"#),
+                "{error}"
+            );
+        }
     }
 
     #[test]
