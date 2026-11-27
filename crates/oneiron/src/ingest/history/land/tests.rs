@@ -146,6 +146,35 @@ fn an_imported_session_keeps_its_folder_and_start_and_a_second_import_adds_no_ro
     }
 }
 
+/// A legacy Codex rollout opens with its own meta unwrapped, `{id, timestamp,
+/// ...}`: its `cwd` names the session's folder as a `session_meta` line's does
+/// (FIX SESSION-PROJECT-NOTE-MESSAGE-PLACEMENT PR D review round 2).
+#[test]
+fn a_legacy_codex_rollout_keeps_its_folder() {
+    let conversation = decode(
+        HistorySource::Codex,
+        "rollout-2026-09-20T10-00-00-s-legacy",
+        &[
+            r#"{"id":"s-legacy","timestamp":"2026-09-20T10:00:00.000Z","cwd":"/home/dev/projects/garden"}"#,
+            r#"{"type":"message","role":"user","content":"Water the tomatoes"}"#,
+        ],
+    );
+    assert_eq!(
+        conversation.cwd.as_deref(),
+        Some(FOLDER),
+        "a legacy rollout's own meta should name its folder"
+    );
+    assert_eq!(
+        conversation
+            .messages
+            .iter()
+            .map(|message| message.text.as_str())
+            .collect::<Vec<_>>(),
+        ["Water the tomatoes"],
+        "the legacy rollout's message should decode beside its folder"
+    );
+}
+
 /// A vault imported before the import kept the folder: importing the same
 /// log again fills in the folder and the start time on the conversation, and
 /// adds no row. The import after that writes nothing.

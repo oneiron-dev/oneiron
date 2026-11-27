@@ -24,6 +24,11 @@ impl SessionFolders {
         let Some(cwd) = &conversation.cwd else {
             return Vec::new();
         };
+        // FIX SESSION-PROJECT-NOTE-MESSAGE-PLACEMENT PR D review round 2: the cache saves only
+        // the git reads; a logged path names a folder only while it is still a directory.
+        if !Path::new(cwd).is_dir() {
+            return Vec::new();
+        }
         self.by_cwd
             .entry(cwd.clone())
             .or_insert_with(|| logged_folder_digests(Path::new(cwd)))
@@ -111,7 +116,7 @@ mod tests {
     }
 
     #[test]
-    fn an_existing_folders_digests_match_the_session_identity_and_are_cached() {
+    fn an_existing_folders_digests_match_the_session_identity_while_it_is_a_folder() {
         let dir = tempfile::tempdir().expect("create the session folder test directory");
         let folder = dir.path().join("work");
         std::fs::create_dir(&folder).expect("create the logged folder");
@@ -125,12 +130,24 @@ mod tests {
             digests, expected,
             "an existing cwd should have the same digests as an attached session"
         );
-
-        std::fs::remove_dir(&folder).expect("remove the logged folder after resolving it");
         assert_eq!(
             folders.digests_of(&log),
             digests,
-            "a second lookup of the same cwd should use the cached digests"
+            "a second lookup of the same folder should name it again"
+        );
+
+        // FIX SESSION-PROJECT-NOTE-MESSAGE-PLACEMENT PR D review round 2: a cached cwd is
+        // checked again before its digests are reused.
+        std::fs::remove_dir(&folder).expect("remove the logged folder after resolving it");
+        assert!(
+            folders.digests_of(&log).is_empty(),
+            "a cwd whose folder was removed after a lookup should have no folder digests"
+        );
+        std::fs::write(&folder, b"not a folder")
+            .expect("put a regular file where the logged folder was");
+        assert!(
+            folders.digests_of(&log).is_empty(),
+            "a cwd that became a regular file after a lookup should have no folder digests"
         );
     }
 }
