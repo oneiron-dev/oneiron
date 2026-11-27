@@ -15,6 +15,7 @@
 //! positions ([`seed_read_world_prefix_in_txn`], FIX 7085).
 
 mod origins;
+mod person_rows;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::RangeBounds;
