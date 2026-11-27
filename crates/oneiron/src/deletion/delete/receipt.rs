@@ -217,6 +217,9 @@ impl Vault {
         // The erased world's pad tombstones publish once this commits
         // (FIX 343); their windows are read before the purge erases the pads.
         let mut pad_windows = self.world_pad_windows_in_txn(&wtxn, id)?;
+        // The record's FILE digests, read before the purge below releases its
+        // descriptors: what the delete answer counts after the collect pass (H5).
+        let released_file_digests = file_body_digests_in_txn(&self.store, &wtxn, id)?;
         // A classified corrupt CLAIM's world does not read: its tombstone goes
         // to its month's world windows too, published with these (FIX 7800).
         pad_windows.extend(self.stage_corrupt_world_tombstones_in_txn(
@@ -228,7 +231,6 @@ impl Vault {
         // A FEDERATION_GRANT row erased here is marked withdrawn; this door's
         // own `dt:` marker and tombstone carry its erasure (FIX 11779).
         crate::authority::mark_if_withdrawn_grant_in_txn(&self.store, &mut wtxn, *id)?;
-        let released_file_digests = file_body_digests_in_txn(&self.store, &wtxn, id)?;
         let (existed, citing, purged_cancelled) = self.purge_entity_active_store_in_txn(
             &mut wtxn,
             id,
