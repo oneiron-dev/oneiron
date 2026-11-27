@@ -240,9 +240,35 @@ impl GpuSlotTable {
     /// [`GpuProbeError`] when the driver, the withheld list, the drain file
     /// or the disk cannot be read: then nothing is offered.
     pub fn availability(&self, now_ms: u64) -> Result<GpuAvailability, GpuProbeError> {
+        self.availability_on(now_ms, None)
+    }
+
+    /// [`Self::availability`] on the given withheld list: the reading uses
+    /// it in place of the file, so a caller that already sampled the list
+    /// judges the devices on that same sample.
+    ///
+    /// # Errors
+    ///
+    /// [`GpuProbeError`] when the driver, the drain file or the disk cannot
+    /// be read: then nothing is offered.
+    pub fn availability_with_withheld(
+        &self,
+        now_ms: u64,
+        withheld: BTreeSet<String>,
+    ) -> Result<GpuAvailability, GpuProbeError> {
+        self.availability_on(now_ms, Some(withheld))
+    }
+
+    /// [`Self::availability`] on `withheld` (`None`: the list is read from
+    /// its file).
+    fn availability_on(
+        &self,
+        now_ms: u64,
+        withheld: Option<BTreeSet<String>>,
+    ) -> Result<GpuAvailability, GpuProbeError> {
         let shared = &self.shared;
         let mut state = shared.lock();
-        let reading = shared.read(&mut state)?;
+        let reading = shared.read_with(&mut state, withheld)?;
         let drained = shared.drained(&state)?;
         let disk = match &shared.disk {
             Some(disk) => Some(
@@ -629,12 +655,25 @@ impl Shared {
     /// list and the GPUs this table owns. A reading that lists one GPU id
     /// twice is refused ([`GpuProbeError::RepeatedDevice`]).
     fn read(&self, state: &mut State) -> Result<Reading, GpuProbeError> {
+        self.read_with(state, None)
+    }
+
+    /// One fresh reading on `withheld` (`None`: the withheld list is read
+    /// from its file).
+    fn read_with(
+        &self,
+        state: &mut State,
+        withheld: Option<BTreeSet<String>>,
+    ) -> Result<Reading, GpuProbeError> {
         let devices = self.probe.devices()?;
         if let Some(device_id) = repeated_device_id(&devices) {
             return Err(GpuProbeError::RepeatedDevice { device_id });
         }
         let processes = self.probe.compute_processes()?;
-        let withheld = self.withheld()?;
+        let withheld = match withheld {
+            Some(withheld) => withheld,
+            None => self.withheld()?,
+        };
         let owned = self.own_offered(state);
         Ok(Reading {
             devices,

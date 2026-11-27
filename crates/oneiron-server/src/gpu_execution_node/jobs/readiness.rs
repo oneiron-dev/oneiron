@@ -44,7 +44,7 @@ use super::{NodeJobs, ReceiptClock};
 use crate::gpu_execution_node::node::NodeSnapshot;
 use crate::gpu_execution_node::node_settings::DrainClearBy;
 use crate::gpu_execution_node::wire::{
-    JobState, NodeReadiness, ReadinessCheck, ReadinessResult, ReadinessState,
+    DeviceRelease, JobState, NodeReadiness, ReadinessCheck, ReadinessResult, ReadinessState,
 };
 
 /// The node's readiness record, beside the journal in `state_dir`.
@@ -289,11 +289,13 @@ impl NodeJobs {
     /// quarantines its key. The release check runs only in
     /// [`NodeJobs::tick`]'s end handling, which ends before this step on the
     /// same thread, and the listener runs one tick at a time and awaits it
-    /// (`handler::mesh::shutdown::tick`). A key whose release check is still
-    /// owed stays `Ended`, so this step does not wait for it: a quarantined
-    /// key stays `Ended` until its release check passes, a reboot ends it or
-    /// the owner writes it off, and waiting would stop the checks and keep
-    /// their drain for that long.
+    /// (`handler::mesh::shutdown::tick`). A key whose device release is still
+    /// owed (its unit is still stopping) defers the check, so the check's
+    /// device query never holds the machine's query lock when that release
+    /// check runs; the wait ends when the unit is gone and the release
+    /// passes, or when the release check quarantines the device (a
+    /// quarantined key, release `Unconfirmed`, does not defer it), so it is
+    /// bounded by the unit's stop.
     pub(super) fn readiness_tick(&self) {
         let _checking = match self.shared.readiness.checking.try_lock() {
             Ok(guard) => guard,
@@ -304,7 +306,8 @@ impl NodeJobs {
         let snapshot = parts.admission.readiness_snapshot();
         self.observe_drain(&snapshot.controls.drained);
         let settings = parts.admission.job_settings();
-        let offer = OfferMark::of(&snapshot, parts.devices.booker_withheld());
+        let withheld = parts.devices.booker_withheld();
+        let offer = OfferMark::of(&snapshot, withheld.clone());
         let now = self.now();
         let mark = {
             let mut book = self.shared.readiness.book();
@@ -316,10 +319,10 @@ impl NodeJobs {
             }
             book.record.mark.clone()
         };
-        if self.attempt_runs() {
+        if self.attempt_runs() || self.release_owed() {
             return;
         }
-        let found = match self.check_readiness(mark.as_ref(), &now, &settings) {
+        let found = match self.check_readiness(mark.as_ref(), &now, &settings, withheld) {
             Ok(()) => ReadinessState::Ready,
             Err((check, why)) => ReadinessState::NotReady { check, why },
         };
@@ -336,12 +339,27 @@ impl NodeJobs {
         })
     }
 
+    /// Whether any ended key still owes its device release: its launch holds
+    /// a device lease and its unit is still stopping, so the readiness check
+    /// waits for it. A quarantined key (`Unconfirmed`) owes none.
+    fn release_owed(&self) -> bool {
+        self.keys().iter().any(|key| {
+            key.state == JobState::Ended
+                && key
+                    .launch
+                    .as_ref()
+                    .is_some_and(super::journal::KeyLaunch::has_device_lease)
+                && matches!(key.release, DeviceRelease::Held)
+        })
+    }
+
     /// The six checks, in order; the first that fails, with why.
     fn check_readiness(
         &self,
         mark: Option<&ClockMark>,
         now: &ReceiptClock,
         settings: &NodeJobSettings,
+        withheld: Result<BTreeSet<String>, String>,
     ) -> Result<(), (ReadinessCheck, String)> {
         let parts = self.parts();
         let missing = scope_missing(&parts.units.probe(), &[]);
@@ -353,7 +371,7 @@ impl NodeJobs {
         }
         parts
             .devices
-            .probe()
+            .probe_with_withheld(withheld)
             .map_err(|why| (ReadinessCheck::Devices, why))?;
         parts
             .admission

@@ -315,6 +315,22 @@ pub trait NodeDevices: Send + Sync {
     /// Why the devices cannot be read.
     fn probe(&self) -> Result<(), String>;
 
+    /// The readiness check's device probe on the withheld list it was given:
+    /// a fresh reading of every device answers, whether the machine is
+    /// paused or drained (a look, not a hold). The default judges the
+    /// devices as [`NodeDevices::probe`] does and ignores the list.
+    ///
+    /// # Errors
+    ///
+    /// Why the devices cannot be read, or why the given list did not read.
+    fn probe_with_withheld(
+        &self,
+        withheld: Result<BTreeSet<String>, String>,
+    ) -> Result<(), String> {
+        let _ = withheld;
+        self.probe()
+    }
+
     /// The devices another booker withholds now, read without probing the
     /// driver. The default withholds none.
     ///
@@ -594,6 +610,19 @@ impl NodeDevices for GpuSlotTable {
         self.availability(oneiron_base::unix_millis_now())
             .map(drop)
             .map_err(|error| format!("devices_unreadable: {error}"))
+    }
+
+    fn probe_with_withheld(
+        &self,
+        withheld: Result<BTreeSet<String>, String>,
+    ) -> Result<(), String> {
+        match withheld {
+            Ok(withheld) => self
+                .availability_with_withheld(oneiron_base::unix_millis_now(), withheld)
+                .map(drop)
+                .map_err(|error| format!("devices_unreadable: {error}")),
+            Err(why) => Err(format!("devices_unreadable: {why}")),
+        }
     }
 
     fn booker_withheld(&self) -> Result<BTreeSet<String>, String> {

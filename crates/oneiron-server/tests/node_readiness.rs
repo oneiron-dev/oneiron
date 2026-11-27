@@ -28,8 +28,8 @@ use oneiron_server::gpu_execution_node::jobs::{
 };
 use oneiron_server::gpu_execution_node::node::{DISABLED_MARKER_EXTENSION, marker_beside};
 use oneiron_server::gpu_execution_node::wire::{
-    HoldRef, JobAnswer, JobEnd, JobReceipt, JobReserve, JobState, JobStatusAnswer, JobSubmit,
-    NetworkMode, OutputDecl, ReadinessCheck, ReadinessState, ResourceRequest, ScopeKind,
+    DeviceRelease, HoldRef, JobAnswer, JobEnd, JobReceipt, JobReserve, JobState, JobStatusAnswer,
+    JobSubmit, NetworkMode, OutputDecl, ReadinessCheck, ReadinessState, ResourceRequest, ScopeKind,
     SignedJobSubmit, SlotSelector, Starter, WorkloadPin,
 };
 use oneiron_server::gpu_execution_node::{
@@ -599,6 +599,26 @@ fn a_withheld_list_that_is_not_a_regular_file_never_blocks_the_tick() {
     );
 }
 
+/// The device probe judges the withheld list it was given, not the file as
+/// it reads now: with an unreadable file, the given list still answers.
+#[test]
+fn the_device_probe_judges_the_withheld_list_it_was_given() {
+    let rig = OfferFixture::new();
+    fs::write(&rig.withheld_file, [0xff, 0xfe]).expect("the withheld list is not UTF-8");
+    let now_ms = rig.fixture.node.clock.wall_ms();
+    let error = rig
+        .slots
+        .availability(now_ms)
+        .expect_err("the file does not read");
+    assert!(
+        matches!(error, GpuProbeError::WithheldUnreadable { .. }),
+        "{error}"
+    );
+    rig.slots
+        .availability_with_withheld(now_ms, BTreeSet::new())
+        .expect("the given empty list reads");
+}
+
 /// Another booker taking the GPU is not a failure: its process computes on
 /// the GPU, and the GPU joins the withheld list. The check that change
 /// makes due reads the GPU as withheld, not busy, passes, and leaves the
@@ -801,6 +821,52 @@ fn no_check_runs_while_an_attempt_runs() {
         jobs.readiness().state,
         not_ready(ReadinessCheck::Devices, DRIVER_DOWN)
     );
+}
+
+/// No readiness check runs while a device release is still owed: the end
+/// record moved the key to `Ended` but its unit is still stopping, so the
+/// check waits, and the first tick after the unit is gone runs it.
+#[test]
+fn no_check_runs_while_a_device_release_is_owed() {
+    let fixture = fixture();
+    let jobs = fixture.node.open();
+    jobs.tick();
+    let first = jobs.readiness();
+    assert_eq!(first.state, ReadinessState::Ready);
+    assert_eq!(first.results.len(), 1);
+
+    let key = "job-q4/release-owed";
+    let running = fixture.run(&jobs, key);
+    assert!(
+        running
+            .launch
+            .as_ref()
+            .is_some_and(|launch| !launch.devices.is_empty()),
+        "the run holds a device lease"
+    );
+    fixture.node.admission.set_controls(NodeControls {
+        enabled: true,
+        paused: Some("paused at the box".to_owned()),
+        ..NodeControls::default()
+    });
+    fixture.node.units.exit_while_stopping(key);
+    jobs.tick();
+    let ended = wait_for(&jobs, key, |entry| entry.state == JobState::Ended);
+    assert_eq!(jobs.readiness(), first);
+    assert_eq!(ended.release, DeviceRelease::Held);
+
+    fixture.node.units.finish_stopping(key);
+    jobs.tick();
+    let released = wait_for(&jobs, key, |entry| {
+        matches!(entry.release, DeviceRelease::Confirmed { .. })
+    });
+    assert!(
+        matches!(released.release, DeviceRelease::Confirmed { .. }),
+        "the unit is gone and the release passed"
+    );
+    let idle = jobs.readiness();
+    assert_eq!(idle.state, ReadinessState::Ready);
+    assert_eq!(idle.results.len(), 2);
 }
 
 /// An offer seen during an attempt remains unchecked until an idle tick.
