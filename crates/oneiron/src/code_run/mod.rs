@@ -41,6 +41,7 @@ mod replay_parts;
 mod repo_calls;
 mod repo_model;
 mod result_read;
+pub mod run_result_read;
 pub(crate) mod run_verb_call;
 mod run_verbs;
 mod scoped_call_control;

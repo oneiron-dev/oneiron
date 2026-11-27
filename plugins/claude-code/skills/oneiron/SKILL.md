@@ -13,8 +13,9 @@ The Oneiron plugin connects this session to the person's vault in two ways:
   compaction, after each reply and when the session ends, a hook queues the
   session's log; the running `oneiron serve` imports it, and each message
   lands once.
-- **The `oneiron` MCP server gives you the vault's verbs as tools**, one tool
-  per verb, under the agent credential the person minted for Claude Code. That
+- **The `oneiron` MCP server gives you the vault's verbs as tools**, plus
+  `execute` and `resume` when the vault binds a code host, under the agent
+  credential the person minted for Claude Code. That
   credential decides what you may read and write. The vault checks it on every
   call; you never name your own identity.
 

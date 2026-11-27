@@ -34,6 +34,28 @@ pub(crate) const SESSION_READS: &[&str] =
 /// The contexts whose rows, and only those, state `"mcp": "none"`.
 pub(crate) const MCP_NONE_CONTEXTS: &[&str] = &["browser", "scoped_child"];
 
+/// The `mcp` values a row may state, sorted (FIX EXECUTE-CALLER-CODE). A row that states none is an MCP tool-first
+/// tool, a facade door (a memory row) and a code-mode verb. `"none"`: a browser or scoped-child row, no MCP tool.
+/// `"facade"`: its HTTP facade door only, so no MCP tool, no code-mode verb and no action. `"code"`: a code-mode verb
+/// only, answered by the run's own door, so no MCP tool, no facade door and no action.
+pub(crate) const MCP_PROJECTIONS: &[&str] = &["code", "facade", "none"];
+
+/// Whether a row serves an MCP tool-first tool: it states no `mcp` projection.
+pub(crate) fn mcp_tool_row(row: &Dict) -> bool {
+    !row.get("mcp")
+        .is_some_and(|mcp| MCP_PROJECTIONS.iter().any(|known| mcp.is_str(known)))
+}
+
+/// Whether a row is served by its HTTP facade door only (`"mcp": "facade"`).
+pub(crate) fn facade_only_row(row: &Dict) -> bool {
+    row.get("mcp").is_some_and(|mcp| mcp.is_str("facade"))
+}
+
+/// Whether a row is a code-mode verb only, answered by the run's own door (`"mcp": "code"`).
+pub(crate) fn code_only_row(row: &Dict) -> bool {
+    row.get("mcp").is_some_and(|mcp| mcp.is_str("code"))
+}
+
 /// The `mcp_scope` values, sorted: the set is read only for membership and in sorted order.
 pub(crate) const MCP_SCOPES: &[&str] = &["addressed", "born", "filtered", "unrestricted"];
 
@@ -156,16 +178,12 @@ pub(crate) struct Generator {
 }
 
 impl Generator {
-    /// The rows the MCP doors serve as tools, every row but a browser row.
+    /// The rows the MCP doors serve as tools: every row that states no `mcp` projection.
     pub(crate) fn mcp_rows(&self) -> Vec<RowId> {
         self.callable_rows
             .iter()
             .copied()
-            .filter(|&id| {
-                !self.rows[id]
-                    .get("mcp")
-                    .is_some_and(|mcp| mcp.is_str("none"))
-            })
+            .filter(|&id| mcp_tool_row(&self.rows[id]))
             .collect()
     }
 }

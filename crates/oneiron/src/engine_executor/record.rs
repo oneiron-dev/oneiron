@@ -335,7 +335,7 @@ pub fn caller_run_input(vault: &Vault, run_id: EntityId) -> Result<Option<Caller
 }
 
 /// [`caller_run_input`] for a record the caller already holds, in the caller's transaction.
-fn caller_run_input_in_txn(
+pub(crate) fn caller_run_input_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     record: &CodeRunReplayRecord,

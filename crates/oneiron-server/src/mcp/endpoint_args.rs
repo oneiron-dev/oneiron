@@ -1,11 +1,11 @@
-//! Endpoint tool argument envelopes: setup, execute-code, paging, and verbs.
+//! Endpoint tool argument envelopes: setup, execute, resume, paging, and verbs.
 
 use super::args::{McpActorMetadata, McpConsentMetadata};
 use super::codec::deserialize_optional_u32;
 use super::codec::deserialize_optional_u64;
 use super::codec::{McpToolArguments, schema_normalized_arguments};
 use super::surface::{
-    MCP_BOARD_BUDGET_TOK, MCP_EXECUTE_CODE_TOOL, MCP_INVOKE_ACTION_TOOL, MCP_READ_RESULT_TOOL,
+    MCP_BOARD_BUDGET_TOK, MCP_EXECUTE_TOOL, MCP_INVOKE_ACTION_TOOL, MCP_RESUME_TOOL,
     MCP_SETUP_TOOL, McpEndpointTool, McpGeneratedVerbTool,
 };
 use super::tool_catalog::{McpToolValidationError, McpValidatedToolArgs};
@@ -139,64 +139,42 @@ impl McpSetupToolArgs {
     }
 }
 
-/// `execute_code` arguments: ONE durable REPL run against the injected host.
-///
-/// There is no gateway-side program grammar any more. The task text is what
-/// the bound sandbox/REPL provider carries out through `EngineNativeExecutor`,
-/// and `run_ref` is the caller's handle onto the DURABLE run: the same handle
-/// under the same connector scope re-enters the same persisted run.
+/// `execute` arguments: the caller's own TypeScript or JavaScript, run as
+/// written, plus the handle of the durable run. With no `run_ref` the server
+/// mints one and returns it; the same handle with the same code replays the
+/// stored result. The actor is the resolved credential and travels in no
+/// block here (FIX EXECUTE-CALLER-CODE).
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct McpExecuteCodeToolArgs {
-    pub schema_version: String,
-    pub actor: McpActorMetadata,
-    pub consent: McpConsentMetadata,
-    pub run_ref: String,
-    pub task: String,
+pub struct McpExecuteToolArgs {
+    pub code: String,
     #[serde(default)]
-    pub page: Option<McpPageRequest>,
-    #[serde(default)]
-    pub cache: Option<McpCacheHint>,
+    pub run_ref: Option<String>,
 }
 
-impl McpExecuteCodeToolArgs {
+impl McpExecuteToolArgs {
     fn validate(&self) -> Result<(), McpToolValidationError> {
-        validate_schema_version(MCP_EXECUTE_CODE_TOOL, &self.schema_version)?;
-        self.actor.validate(MCP_EXECUTE_CODE_TOOL)?;
-        self.consent.validate(MCP_EXECUTE_CODE_TOOL)?;
-        validate_nonblank(MCP_EXECUTE_CODE_TOOL, "run_ref", &self.run_ref)?;
-        validate_nonblank(MCP_EXECUTE_CODE_TOOL, "task", &self.task)?;
-        McpPageRequest::validate_optional(self.page.as_ref(), MCP_EXECUTE_CODE_TOOL)?;
+        validate_nonblank(MCP_EXECUTE_TOOL, "code", &self.code)?;
+        validate_optional_nonblank(MCP_EXECUTE_TOOL, "run_ref", self.run_ref.as_deref())?;
         Ok(())
     }
 }
 
-/// `read_result` arguments: one read of a result of the durable run
-/// `run_ref` names under this credential, as `execute_code` derives it.
-/// `ref` is a name the run bound, a handle or a range ref; `input` is the
-/// facet's input less the ref. With no `facet` it reads the card.
+/// `resume` arguments: the handle of a durable run, plus the caller's own
+/// word when the run waits on an ask. A present JSON null is a word, as the
+/// direct answer door reads one; a missing answer leaves the run to go on
+/// without one.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct McpReadResultToolArgs {
-    pub schema_version: String,
-    pub actor: McpActorMetadata,
-    pub consent: McpConsentMetadata,
+pub struct McpResumeToolArgs {
     pub run_ref: String,
-    #[serde(rename = "ref")]
-    pub reference: String,
-    #[serde(default)]
-    pub facet: Option<McpResultFacet>,
-    #[serde(default)]
-    pub input: Option<serde_json::Map<String, Value>>,
+    #[serde(default, deserialize_with = "deserialize_present_request")]
+    pub answer: Option<Value>,
 }
 
-impl McpReadResultToolArgs {
+impl McpResumeToolArgs {
     fn validate(&self) -> Result<(), McpToolValidationError> {
-        validate_schema_version(MCP_READ_RESULT_TOOL, &self.schema_version)?;
-        self.actor.validate(MCP_READ_RESULT_TOOL)?;
-        self.consent.validate(MCP_READ_RESULT_TOOL)?;
-        validate_nonblank(MCP_READ_RESULT_TOOL, "run_ref", &self.run_ref)?;
-        validate_nonblank(MCP_READ_RESULT_TOOL, "ref", &self.reference)?;
+        validate_nonblank(MCP_RESUME_TOOL, "run_ref", &self.run_ref)?;
         Ok(())
     }
 }
@@ -231,32 +209,6 @@ impl McpInvokeActionToolArgs {
             &self.idempotency_key,
         )?;
         Ok(())
-    }
-}
-
-/// The read `read_result` makes: a result's card, or one of its facets.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum McpResultFacet {
-    Describe,
-    Slice,
-    Search,
-    Query,
-    Chunks,
-}
-
-impl McpResultFacet {
-    /// The facet it reads; `None` for the card.
-    #[must_use]
-    pub const fn facet(self) -> Option<oneiron::code_run::ResultFacet> {
-        use oneiron::code_run::ResultFacet;
-        match self {
-            Self::Describe => None,
-            Self::Slice => Some(ResultFacet::Slice),
-            Self::Search => Some(ResultFacet::Search),
-            Self::Query => Some(ResultFacet::Query),
-            Self::Chunks => Some(ResultFacet::Chunks),
-        }
     }
 }
 
@@ -555,25 +507,19 @@ fn validate_endpoint_tool_args(
             parsed.validate()?;
             Ok(McpValidatedToolArgs::Setup(Box::new(parsed)))
         }
-        McpEndpointTool::ExecuteCode => {
-            let parsed = decode_endpoint_args::<McpExecuteCodeToolArgs>(
-                MCP_EXECUTE_CODE_TOOL,
-                &schema,
-                args,
-                actor,
-            )?;
+        McpEndpointTool::Execute => {
+            // No actor block travels on these tools, so none is filled in:
+            // the call runs as the credential that resolved it.
+            let parsed =
+                decode_endpoint_args::<McpExecuteToolArgs>(MCP_EXECUTE_TOOL, &schema, args, None)?;
             parsed.validate()?;
-            Ok(McpValidatedToolArgs::ExecuteCode(Box::new(parsed)))
+            Ok(McpValidatedToolArgs::Execute(Box::new(parsed)))
         }
-        McpEndpointTool::ReadResult => {
-            let parsed = decode_endpoint_args::<McpReadResultToolArgs>(
-                MCP_READ_RESULT_TOOL,
-                &schema,
-                args,
-                actor,
-            )?;
+        McpEndpointTool::Resume => {
+            let parsed =
+                decode_endpoint_args::<McpResumeToolArgs>(MCP_RESUME_TOOL, &schema, args, None)?;
             parsed.validate()?;
-            Ok(McpValidatedToolArgs::ReadResult(Box::new(parsed)))
+            Ok(McpValidatedToolArgs::Resume(Box::new(parsed)))
         }
         McpEndpointTool::InvokeAction => {
             let parsed = decode_endpoint_args::<McpInvokeActionToolArgs>(

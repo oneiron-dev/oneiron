@@ -1,4 +1,4 @@
-//! JSON schemas for endpoint tools: setup, execute-code, paging, and verbs.
+//! JSON schemas for endpoint tools: setup, execute, resume, paging, and verbs.
 
 use super::schema_parts::{
     actor_schema, closed_object_schema, consent_schema, entity_id_schema, nonblank_string_schema,
@@ -93,41 +93,25 @@ pub(super) fn setup_tool_schema() -> Value {
     )
 }
 
-pub(super) fn execute_code_tool_schema() -> Value {
+pub(super) fn execute_tool_schema() -> Value {
     tool_schema_root(
-        "https://oneiron.local/schemas/mcp/execute_code.args.v1.json",
+        "https://oneiron.local/schemas/mcp/execute.args.v1.json",
         json!({
-            "schema_version": schema_version_property(),
-            "actor": actor_schema(),
-            "consent": consent_schema(),
+            "code": nonblank_string_schema(),
             "run_ref": nonblank_string_schema(),
-            "task": {
-                "type": "string",
-                "pattern": "\\S",
-            },
-            "page": page_request_schema(),
-            "cache": cache_hint_schema(),
         }),
-        &["schema_version", "consent", "run_ref", "task"],
+        &["code"],
     )
 }
 
-pub(super) fn read_result_tool_schema() -> Value {
+pub(super) fn resume_tool_schema() -> Value {
     tool_schema_root(
-        "https://oneiron.local/schemas/mcp/read_result.args.v1.json",
+        "https://oneiron.local/schemas/mcp/resume.args.v1.json",
         json!({
-            "schema_version": schema_version_property(),
-            "actor": actor_schema(),
-            "consent": consent_schema(),
             "run_ref": nonblank_string_schema(),
-            "ref": nonblank_string_schema(),
-            "facet": {
-                "type": "string",
-                "enum": ["describe", "slice", "search", "query", "chunks"],
-            },
-            "input": {"type": "object"},
+            "answer": {},
         }),
-        &["schema_version", "consent", "run_ref", "ref"],
+        &["run_ref"],
     )
 }
 

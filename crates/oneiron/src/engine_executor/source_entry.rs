@@ -143,7 +143,9 @@ impl EngineNativeExecutor<'_> {
             settled.push_back(SettledCall { row, listed, reply });
         }
 
-        let prepared = self.prepare_caller_source(&record, head.as_ref(), code)?;
+        let prepared = self
+            .prepare_caller_source(&record, head.as_ref(), code)?
+            .with_return_capture();
         let preparation = prepared.transpiled().map(TranspiledSource::identity);
         let root = self.attempt_root();
         let cancel = root.token();

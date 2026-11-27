@@ -202,6 +202,12 @@ impl<'a> VerbWriteRun<'a> {
             )
             .expect("seed actor");
         let actor = WriteActor::new(actor_id, EdgeActorClass::Agent);
+        // Scoped reads are default-deny (OF-063). The actor reads under a
+        // `core:read` grant, as the other executor tests' actor does, so a
+        // speech that asserts the task it created reads that task; without
+        // it the witness refuses the speech and its refusal receipt mints
+        // the actor's stamp token.
+        crate::conversation_dag::fixtures::grant_reads(vault, actor);
         Self::through(vault, TaskCreateDoor::new(vault, actor, extra))
     }
 

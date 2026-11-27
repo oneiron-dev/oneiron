@@ -2,7 +2,7 @@
 //! decoder produces.
 
 use super::endpoint_args::{
-    McpExecuteCodeToolArgs, McpInvokeActionToolArgs, McpReadResultToolArgs, McpSetupToolArgs,
+    McpExecuteToolArgs, McpInvokeActionToolArgs, McpResumeToolArgs, McpSetupToolArgs,
     McpVerbToolArgs,
 };
 use serde::Serialize;
@@ -29,10 +29,10 @@ pub const MCP_SERVER_NAME: &str = "oneiron";
 pub enum McpValidatedToolArgs {
     /// ONE-1704 primary endpoint: the one setup call.
     Setup(Box<McpSetupToolArgs>),
-    /// ONE-1704 primary endpoint: the REPL against the same gated vault API.
-    ExecuteCode(Box<McpExecuteCodeToolArgs>),
-    /// A direct read of one `execute_code` run's result, beside it.
-    ReadResult(Box<McpReadResultToolArgs>),
+    /// The caller's own code, run as written on a durable run.
+    Execute(Box<McpExecuteToolArgs>),
+    /// The explicit re-entry of a durable run by its handle.
+    Resume(Box<McpResumeToolArgs>),
     /// One action of the app's table, on both endpoints (OF-181).
     InvokeAction(Box<McpInvokeActionToolArgs>),
     /// ONE-1704 tool-first endpoint: one GENERATED tool per exported verb row.
