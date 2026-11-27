@@ -119,8 +119,7 @@ impl MeshAuthorityRowJoin {
     /// part that does not continue it: one of another row's length, an empty
     /// one, one past [`MESH_AUTHORITY_PART_MAX`] and one past the row's end.
     pub fn take(&mut self, part: MeshAuthorityPart) -> bool {
-        let continues = part.total == self.reference.total
-            && !part.part.is_empty()
+        let continues = !part.part.is_empty()
             && part.part.len() <= MESH_AUTHORITY_PART_MAX
             && self.offset().saturating_add(part.part.len() as u64) <= self.reference.total;
         if continues {
