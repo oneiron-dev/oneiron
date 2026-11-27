@@ -20,3 +20,152 @@ pub fn claim_digests_indexed(vault: &crate::Vault) -> crate::Result<bool> {
     let txn = vault.store.env.read_txn()?;
     claim_digests_indexed_for_test(&vault.store, &txn)
 }
+
+/// Writes a pending Dreamer proposal with the given value through the signed claim door.
+///
+/// # Errors
+/// Returns a claim, authorization, or storage error.
+pub fn put_digest_proposal(vault: &crate::Vault, value: &str) -> crate::Result<crate::EntityId> {
+    use crate::{
+        ClaimApprovalStatus, ClaimCandidate, ClaimSource, ClaimSubject, EntityId, TimeRange,
+        WriteEnvelope, WriteProvenance,
+    };
+    use rmpv::Value;
+
+    let actor = vault.dreamer_authority()?;
+    let id = EntityId::now();
+    let now = vault.now_recorded_at();
+    let candidate = ClaimCandidate::new(
+        "dreamer.proactivity.follow_up",
+        ClaimSubject::Entity(actor.entity_ref()),
+        Value::from(value),
+        0.7,
+    );
+    let mut envelope = WriteEnvelope::new(
+        actor,
+        ClaimSource::Generated,
+        WriteProvenance::new(Value::Map(vec![(
+            Value::from("surface"),
+            Value::from("dreamer"),
+        )]))?,
+        ClaimApprovalStatus::Proposed,
+    );
+    vault.with_write_txn_grouped(|txn| {
+        vault.sign_retained_machine_claim_in_txn(txn, &id, &candidate, &mut envelope)?;
+        vault
+            .batch_in()
+            .claim_candidate(
+                &id,
+                candidate,
+                &envelope,
+                TimeRange {
+                    start: now,
+                    end: now,
+                },
+                now,
+            )
+            .apply_recording_gate_decisions(txn)
+    })?;
+    Ok(id)
+}
+
+/// Reads the exact stored digest bytes under a valid locator.
+///
+/// # Errors
+/// Returns a transaction or storage error, or `EntityNotFound` if the digest is absent.
+pub fn stored_digest_bytes(vault: &crate::Vault, locator: [u8; 32]) -> crate::Result<Vec<u8>> {
+    use crate::side_table::SideTableDbs;
+
+    let txn = vault.store.env.read_txn()?;
+    vault
+        .store
+        .side_vault_meta()
+        .get(&txn, &digest_storage_key(locator))?
+        .map(std::borrow::Cow::into_owned)
+        .ok_or(crate::Error::EntityNotFound)
+}
+
+fn digest_storage_key(locator: [u8; 32]) -> Vec<u8> {
+    let mut key = crate::side_table::DREAMER_PROACTIVITY_DIGEST
+        .prefix
+        .to_vec();
+    key.extend_from_slice(&locator);
+    key
+}
+
+/// Finds the active custody id for a handle lifted from this digest, not another row.
+///
+/// # Errors
+/// Returns an origin, authorization, or storage error.
+pub fn digest_custody_id(
+    vault: &crate::Vault,
+    owner: &crate::consent::AuthenticatedOwner,
+    locator: [u8; 32],
+    handle: &str,
+) -> crate::Result<Option<crate::EntityId>> {
+    let place = format!(
+        "side:{}",
+        crate::side_table::DREAMER_PROACTIVITY_DIGEST.name
+    );
+    let origin = crate::batch::secret_scan::side_row_origin(&place, &digest_storage_key(locator))?;
+    let found = vault.found_keys(owner, false, 100)?;
+    let Some(key) = found
+        .into_iter()
+        .find(|notice| notice.record == origin)
+        .and_then(|notice| {
+            notice
+                .keys
+                .into_iter()
+                .find(|key| key.handle == handle && key.place == place)
+        })
+    else {
+        return Ok(None);
+    };
+    vault.resolve_secret_ref(&key.name)
+}
+
+/// Copies the stored digest verbatim to a damaged key missing the locator's last byte.
+///
+/// # Errors
+/// Returns a transaction or storage error, or `EntityNotFound` if the digest is absent.
+pub fn copy_digest_under_malformed_key(
+    vault: &crate::Vault,
+    locator: [u8; 32],
+) -> crate::Result<()> {
+    use crate::side_table::SideTableDbs;
+
+    let (key, malformed) = digest_storage_keys(locator);
+    vault.with_write_txn_grouped(|txn| {
+        let db = vault.store.side_vault_meta();
+        let bytes = db
+            .get(txn, &key)?
+            .ok_or(crate::Error::EntityNotFound)?
+            .into_owned();
+        db.put(txn, &malformed, &bytes)
+    })
+}
+
+/// Reads the exact damaged row without decoding its key or value.
+///
+/// # Errors
+/// Returns a transaction or storage error.
+pub fn malformed_digest_bytes(
+    vault: &crate::Vault,
+    locator: [u8; 32],
+) -> crate::Result<Option<Vec<u8>>> {
+    use crate::side_table::SideTableDbs;
+
+    let (_, key) = digest_storage_keys(locator);
+    let txn = vault.store.env.read_txn()?;
+    Ok(vault
+        .store
+        .side_vault_meta()
+        .get(&txn, &key)?
+        .map(std::borrow::Cow::into_owned))
+}
+
+fn digest_storage_keys(locator: [u8; 32]) -> (Vec<u8>, Vec<u8>) {
+    let key = digest_storage_key(locator);
+    let malformed = key[..key.len() - 1].to_vec();
+    (key, malformed)
+}

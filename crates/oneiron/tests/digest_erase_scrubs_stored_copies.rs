@@ -11,9 +11,11 @@ use oneiron::authority::HostSlipIssuer;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::deletion::DeleteReason;
 use oneiron::dreamer_runner::maintenance::digest::ProactivityDigest;
+use oneiron::policy_model::SecretScanMode;
 use oneiron::provenance::made_by::{
     MadeBy, MadeByClass, MadeByInput, MadeByInputRole, MadeByProcess,
 };
+use oneiron::secret_custody::SecretCustodyStatus;
 use oneiron::store::GateDecisionId;
 use oneiron::test_doors::curator_finding::emit_retract_finding;
 use oneiron::test_doors::house_link::put_claim_made_by;
@@ -27,6 +29,8 @@ use oneiron::{
 const FACT_PREDICATE: &str = "profile.preference";
 const FACT_VALUE: &str = "The harbour survey's lantern list is kept in the owner's mail.";
 const SIGNER_SECRET: &[u8] = b"digest-erase-scrubs-stored-copies";
+const TOKEN_A: &str = "ghp_zyxwvutsrqponmlkjihgfedcba9876543210";
+const TOKEN_B: &str = "ghp_0123456789abcdefghijklmnopqrstuvwxyz";
 
 struct Fixture {
     vault: Vault,
@@ -116,6 +120,12 @@ impl Fixture {
         let stored = self.assemble_digest();
         let summary = stored_proposal_summary(&stored, finding).to_owned();
         (stored, finding, summary)
+    }
+
+    fn set_secret_scan(&self, mode: SecretScanMode) -> oneiron::Result<()> {
+        self.vault
+            .set_secret_scan_mode(&self.proof, mode, self.vault.now_recorded_at())?;
+        Ok(())
     }
 
     fn assemble_digest(&self) -> ProactivityDigest {
@@ -309,5 +319,142 @@ fn a_digest_stored_before_the_index_existed_is_scrubbed_by_the_first_erase() -> 
         proactivity_digest_index::claim_digests_indexed(&fixture.vault)?,
         "the first erase left the stored digests unindexed"
     );
+    Ok(())
+}
+
+#[test]
+fn erasing_one_claim_masks_a_surviving_secret_stored_before_scanning() -> oneiron::Result<()> {
+    let fixture = Fixture::with_machine_signers(SIGNER_SECRET);
+    fixture.set_secret_scan(SecretScanMode::Off)?;
+    let erased = proactivity_digest_index::put_digest_proposal(&fixture.vault, FACT_VALUE)?;
+    let kept = proactivity_digest_index::put_digest_proposal(&fixture.vault, TOKEN_B)?;
+    let before = fixture.assemble_digest();
+    let erased_summary = stored_proposal_summary(&before, erased);
+    assert!(stored_proposal_summary(&before, kept).contains(TOKEN_B));
+    assert!(digest_bytes_contain(&fixture, before.id, TOKEN_B)?);
+
+    // Leave the historical lift queued: the erase must admit the surviving value itself.
+    fixture.set_secret_scan(SecretScanMode::On)?;
+    let outcome = fixture
+        .vault
+        .delete_entity_with_reason_as_owner(&fixture.proof, &erased, DeleteReason::UserHardDelete)
+        .expect("a surviving secret must not block the hard erase");
+    assert!(outcome.existed, "the hard-deleted proposal existed");
+
+    assert_stored_proposal_erased(&fixture, &before, erased, erased_summary);
+    let stored = fixture.stored_digest(before.id);
+    assert!(
+        stored_proposal_summary(&stored, kept).contains("[secret "),
+        "the surviving proposal is masked"
+    );
+    assert!(!digest_bytes_contain(&fixture, before.id, TOKEN_B)?);
+    Ok(())
+}
+
+fn digest_bytes_contain(fixture: &Fixture, locator: [u8; 32], text: &str) -> oneiron::Result<bool> {
+    let bytes = proactivity_digest_index::stored_digest_bytes(&fixture.vault, locator)?;
+    Ok(bytes
+        .windows(text.len())
+        .any(|window| window == text.as_bytes()))
+}
+
+#[test]
+fn erasing_the_claim_whose_secret_the_digest_masked_retires_its_custody() -> oneiron::Result<()> {
+    let fixture = Fixture::with_machine_signers(SIGNER_SECRET);
+    fixture.set_secret_scan(SecretScanMode::Off)?;
+    let erased = proactivity_digest_index::put_digest_proposal(&fixture.vault, TOKEN_A)?;
+    let kept = proactivity_digest_index::put_digest_proposal(&fixture.vault, TOKEN_B)?;
+    // The source claims still hold raw tokens, but the digest assembles with scanning on.
+    fixture.set_secret_scan(SecretScanMode::On)?;
+    let before = fixture.assemble_digest();
+    let erased_handle = proposal_handle(stored_proposal_summary(&before, erased));
+    let kept_handle = proposal_handle(stored_proposal_summary(&before, kept));
+    let erased_custody = proactivity_digest_index::digest_custody_id(
+        &fixture.vault,
+        &fixture.proof,
+        before.id,
+        erased_handle,
+    )?
+    .expect("FIXTURE: the digest minted custody for the erased proposal's token");
+    let kept_custody = proactivity_digest_index::digest_custody_id(
+        &fixture.vault,
+        &fixture.proof,
+        before.id,
+        kept_handle,
+    )?
+    .expect("FIXTURE: the digest minted custody for the surviving proposal's token");
+    assert_ne!(
+        erased_custody, kept_custody,
+        "FIXTURE: two separate custody records"
+    );
+
+    let outcome = fixture.vault.delete_entity_with_reason_as_owner(
+        &fixture.proof,
+        &erased,
+        DeleteReason::UserHardDelete,
+    )?;
+    assert!(outcome.existed, "the hard-deleted proposal existed");
+
+    let erased_meta = fixture
+        .vault
+        .get_secret_metadata(&erased_custody)?
+        .expect("the revoked custody metadata remains");
+    assert_eq!(
+        erased_meta.status,
+        SecretCustodyStatus::Revoked,
+        "custody for the removed handle was not retired"
+    );
+    let kept_meta = fixture
+        .vault
+        .get_secret_metadata(&kept_custody)?
+        .expect("the surviving custody record remains");
+    assert_eq!(kept_meta.status, SecretCustodyStatus::Active);
+    assert!(digest_bytes_contain(
+        &fixture,
+        before.id,
+        &format!("[secret {kept_handle}]")
+    )?);
+    Ok(())
+}
+
+fn proposal_handle(summary: &str) -> &str {
+    let (_, tail) = summary
+        .split_once("[secret ")
+        .expect("FIXTURE: the digest masked the raw token");
+    let (handle, _) = tail.split_once(']').expect("FIXTURE: a complete handle");
+    handle
+}
+
+#[test]
+fn a_digest_row_with_a_malformed_key_is_deleted_by_the_first_erase() -> oneiron::Result<()> {
+    let fixture = Fixture::with_machine_signers(SIGNER_SECRET);
+    let fact = fixture.fact_from_the_mailbox(FACT_VALUE);
+    let (before, finding, summary) = fixture.digest_with_finding(fact);
+
+    proactivity_digest_index::copy_digest_under_malformed_key(&fixture.vault, before.id)?;
+    proactivity_digest_index::forget_claim_digest_index(&fixture.vault)?;
+    assert!(
+        proactivity_digest_index::malformed_digest_bytes(&fixture.vault, before.id)?.is_some(),
+        "FIXTURE: the malformed digest row is present"
+    );
+    assert!(!proactivity_digest_index::claim_digests_indexed(
+        &fixture.vault
+    )?);
+
+    let outcome = fixture.vault.delete_entity_with_reason_as_owner(
+        &fixture.proof,
+        &finding,
+        DeleteReason::UserHardDelete,
+    )?;
+    assert!(outcome.existed, "the hard-deleted finding existed");
+
+    assert!(
+        proactivity_digest_index::malformed_digest_bytes(&fixture.vault, before.id)?.is_none(),
+        "the first erase left the malformed digest row on disk"
+    );
+    assert!(proactivity_digest_index::claim_digests_indexed(
+        &fixture.vault
+    )?);
+    assert_stored_proposal_erased(&fixture, &before, finding, &summary);
     Ok(())
 }
