@@ -253,18 +253,31 @@ fn connect_to_gate(exchange: &Path) -> Result<UnixStream, String> {
 const CONNECT_RETRY: Duration = Duration::from_millis(20);
 
 /// Connects without blocking, retrying a full listen queue or an interrupted
-/// attempt until `deadline`. The stream is blocking once connected.
+/// attempt until `deadline`. No try starts once `deadline` has passed, and a
+/// connection that completes after it is dropped and reported as `TimedOut`
+/// (review r1 of #10579, P1). The stream is blocking once connected.
 ///
 /// # Errors
 ///
-/// `TimedOut` if the listener did not take a connection in time, or the
-/// original error if the attempt failed for another reason.
+/// `TimedOut` if the listener did not take a connection in time, or if a
+/// connection completed after `deadline`; the original error if the attempt
+/// failed for another reason.
 pub(super) fn connect_by_deadline(
     address: &rustix::net::SocketAddrUnix,
     deadline: Instant,
 ) -> io::Result<UnixStream> {
     loop {
         match connect_once(address) {
+            Ok(stream) => {
+                if Instant::now() > deadline {
+                    drop(stream);
+                    return Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "the handler's connection came after its deadline",
+                    ));
+                }
+                return Ok(stream);
+            }
             Err(error) if matches!(error.raw_os_error(), Some(libc::EAGAIN | libc::EINTR)) => {
                 let left = deadline.saturating_duration_since(Instant::now());
                 if left.is_zero() {
@@ -274,8 +287,14 @@ pub(super) fn connect_by_deadline(
                     ));
                 }
                 std::thread::sleep(CONNECT_RETRY.min(left));
+                if Instant::now() > deadline {
+                    return Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        format!("the handler took no connection in time: {error}"),
+                    ));
+                }
             }
-            result => return result,
+            Err(error) => return Err(error),
         }
     }
 }
@@ -635,7 +654,10 @@ fn exec_failed(report: &mut dyn Write, journal: Option<&mut std::fs::File>, why:
 
 #[cfg(test)]
 mod tests {
-    use super::{CHECKPOINT_SIGNALS, checkpoint_signal_number};
+    use std::os::unix::net::UnixListener;
+    use std::time::{Duration, Instant};
+
+    use super::{CHECKPOINT_SIGNALS, checkpoint_signal_number, connect_by_deadline};
 
     #[test]
     fn every_checkpoint_signal_a_template_may_name_is_caught_before_the_exec() {
@@ -643,5 +665,23 @@ mod tests {
             assert!(checkpoint_signal_number(name).is_some(), "{name}");
         }
         assert_eq!(checkpoint_signal_number("TERM"), None);
+    }
+
+    #[test]
+    fn a_connection_made_after_its_deadline_is_refused() {
+        let dir = tempfile::tempdir().expect("a socket directory");
+        let path = dir.path().join("gate.sock");
+        let _listener = UnixListener::bind(&path).expect("a listening socket");
+        let address = rustix::net::SocketAddrUnix::new(path.as_path()).expect("a unix address");
+        // testkit-lint: allow(wall-clock) a deadline already past on the real clock
+        let past = Instant::now()
+            .checked_sub(Duration::from_millis(1))
+            .expect("a past deadline");
+        let refused =
+            connect_by_deadline(&address, past).expect_err("a late connection is refused");
+        assert_eq!(refused.kind(), std::io::ErrorKind::TimedOut, "{refused}");
+        // testkit-lint: allow(wall-clock) a deadline ahead on the real clock
+        let ahead = Instant::now() + Duration::from_secs(5);
+        connect_by_deadline(&address, ahead).expect("a connection within its deadline");
     }
 }
