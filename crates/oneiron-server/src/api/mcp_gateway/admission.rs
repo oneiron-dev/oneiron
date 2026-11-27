@@ -68,7 +68,7 @@ pub(crate) fn mcp_admit_scoped_call(
         // verb it runs is admitted by name too. An action runs under the
         // credential's own slip and read key, so no world or facet a
         // registration narrows to rides it: a narrowed connector is refused,
-        // as for execute_code.
+        // as for execute.
         McpValidatedToolArgs::InvokeAction(action) => {
             mcp_admit_bound_tool(actor, &action.verb).map_err(|error| error.with_field("verb"))?;
             return mcp_admit_unscoped_execution(actor, crate::mcp::MCP_INVOKE_ACTION_TOOL, "name");
@@ -116,7 +116,7 @@ pub(crate) fn mcp_admit_step_verb(
 
 /// One verb-table row a code run serves itself (`vault.search`,
 /// `vault.claims.put`, …). No tool carries it, so the bound-verb ceiling names it by
-/// its row name. Its world/facet axis is the run's: `execute_code` admits no
+/// its row name. Its world/facet axis is the run's: `execute` admits no
 /// narrowed credential.
 pub(crate) fn mcp_admit_run_verb(
     actor: &McpCallContext,

@@ -1,4 +1,4 @@
-//! The condition an automatic re-entry of a parked `execute_code` run
+//! The condition an automatic re-entry of a parked `execute` run
 //! carries to its host (FIX 4606), and what the host answers it.
 //!
 //! A re-entry is readied for one wait at one replay generation. A caller's

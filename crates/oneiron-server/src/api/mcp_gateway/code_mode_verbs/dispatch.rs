@@ -18,7 +18,7 @@ pub(crate) use self::verb_call::code_mode_line;
 pub(super) use self::verb_call::{execute_code_mode_verb, execute_step_verdict};
 
 impl McpCodeModeVerbs {
-    /// Binds the door to the server runtime the `execute_code` call arrived on.
+    /// Binds the door to the server runtime the `execute` call arrived on.
     pub(crate) fn new(
         server: &Arc<SyncServer>,
         actor: &McpCallContext,
@@ -98,7 +98,7 @@ impl McpCodeModeVerbs {
             .clone()
     }
 
-    /// The lane of the credential `execute_code` was admitted on, from where
+    /// The lane of the credential `execute` was admitted on, from where
     /// its caller sits: what a run's search and a session read read under.
     pub(super) fn credential_lane(&self) -> Result<ScopedReadActorKey, AgentVerbRefusal> {
         let unauthenticated = || AgentVerbRefusal {
@@ -216,7 +216,7 @@ impl AgentVerbDoor for McpCodeModeVerbs {
             let _ = sender.send(executed);
         });
         // A live-run hold the verb makes names its attempt on the
-        // `execute_code` call's receipt (FIX 10938).
+        // `execute` call's receipt (FIX 10938).
         self.runtime
             .spawn(crate::api::call_receipt::with_attempt_collector(
                 self.collector.clone(),
@@ -246,7 +246,7 @@ impl AgentVerbDoor for McpCodeModeVerbs {
 
     /// The run's answer to the questions one of its connector calls waits on
     /// (FIX 3838): the host door an MCP `connector.answer` meets, for this
-    /// connector's caller on the credential `execute_code` was admitted on.
+    /// connector's caller on the credential `execute` was admitted on.
     /// The run's admission and verb hooks already ran around it. The reply
     /// is foreign data and serves no vault rows.
     fn connector_answer(
@@ -319,7 +319,7 @@ impl AgentVerbDoor for McpCodeModeVerbs {
 
     /// A call the run serves itself meets this connector's door at each call
     /// too: a run row needs its own binding, and every call needs the
-    /// session `execute_code` was admitted on, still live, and the grant its
+    /// session `execute` was admitted on, still live, and the grant its
     /// own effect needs (`mcp_run_call_gate`). A search reads
     /// under that credential's grants, as `vault.recall` does, from where its
     /// caller sits (DEC-0005).
@@ -410,7 +410,7 @@ impl AgentVerbDoor for McpCodeModeVerbs {
 
     /// A read a session-bound run serves through the room (WILL L11-01)
     /// meets this connector's door as its run calls do: the verb's own
-    /// binding, the session `execute_code` was admitted on, still live, the
+    /// binding, the session `execute` was admitted on, still live, the
     /// verb's own grant, and that credential's lane, from where its caller
     /// sits.
     fn admit_session_read(&self, verb: AgentVerb) -> Result<ScopedReadActorKey, AgentVerbRefusal> {

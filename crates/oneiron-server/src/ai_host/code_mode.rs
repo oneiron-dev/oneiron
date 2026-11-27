@@ -408,7 +408,7 @@ fn exact_route(models: &ModelRuntime, vault: &Vault, pick: &ModelId) -> Option<M
 /// The type-feedback service, per `[models.code_mode.check]` (FIX 8277):
 /// with the mode `off`, each step's feedback answers unavailable. In
 /// feedback mode the checker loads off every execution door and is never
-/// awaited here, so `execute_code` binds and runs at once; a check admitted
+/// awaited here, so `execute` binds and runs at once; a check admitted
 /// before the load ends waits for it on its own thread. A check never gates
 /// code mode: when no checker loads, each step's feedback says so and its
 /// run goes on. Landed checks write their results on `vault`.

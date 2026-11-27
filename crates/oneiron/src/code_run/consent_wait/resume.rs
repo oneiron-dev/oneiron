@@ -2,7 +2,7 @@
 //! kept with the wait, and the parked runs a host may enter again for that
 //! caller after a restart (FIX 4606).
 //!
-//! A served MCP `execute_code` run that parks on a code consent wait has no
+//! A served MCP `execute` run that parks on a code consent wait has no
 //! parked attempt for a trap to wake. Its host kept what a re-entry needs in
 //! memory only, so a restart lost it. Now the host binds the admitted
 //! caller's origin on the run, and the held call's mint stamps it into the

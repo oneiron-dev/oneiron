@@ -6,7 +6,7 @@ mod execute;
 pub(crate) use self::execute::execute_mcp_task_run_for_test;
 pub(super) use self::execute::resume_mcp_code_run;
 pub(crate) use self::execute::{execute_mcp_execute, execute_mcp_resume};
-// `execute_code` reaches the gateway's names through this module.
+// `execute` reaches the gateway's names through this module.
 #[cfg(test)]
 use super::mcp_actor_result;
 use super::{

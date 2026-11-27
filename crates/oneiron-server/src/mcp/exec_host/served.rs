@@ -1,4 +1,4 @@
-//! The served `execute_code` host: the run limits one server works under,
+//! The served `execute` host: the run limits one server works under,
 //! and the engine-native adapter that enters each durable run on the
 //! injected provider.
 
@@ -24,7 +24,7 @@ use crate::mcp::run_seats::RunSeats;
 use crate::wire_telemetry::{LimitQuestions, LimitRow};
 use oneiron_contracts::fingerprint::ContentHash;
 
-/// How many `execute_code` runs one server works on at once.
+/// How many `execute` runs one server works on at once.
 ///
 /// Each run is an OS thread with its own reactor and sandbox runtime, so the
 /// bound is on runs, not calls: a run holds its place until its worker ends,
@@ -129,7 +129,7 @@ impl McpEngineNativeCodeHost {
     }
 
     /// The permits every run of this host waits its turn for, an
-    /// `execute_code` run's and a host worker's alike.
+    /// `execute` run's and a host worker's alike.
     pub(crate) fn runs(&self) -> &Admission<String> {
         &self.runs
     }

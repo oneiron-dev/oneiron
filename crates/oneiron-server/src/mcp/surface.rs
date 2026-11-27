@@ -65,7 +65,7 @@ pub const MCP_RESULT_META_SCHEMA_VERSION: &str = "mcp_result_meta.v1";
 /// Schema version of the typed verb grammar `setup_oneiron` returns.
 pub const MCP_VERB_GRAMMAR_SCHEMA_VERSION: &str = "mcp_verb_grammar.v1";
 
-/// Schema version of `execute_code`'s typed run result.
+/// Schema version of `execute`'s typed run result.
 pub const MCP_CODE_RUN_SCHEMA_VERSION: &str = "mcp_code_run.v1";
 
 /// Harness-side board budget: the ceiling half of the adaptive `min` the

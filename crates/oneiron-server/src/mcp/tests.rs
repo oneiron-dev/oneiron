@@ -415,7 +415,7 @@ fn claim_id_scopes_by_credential_scope_identity() {
         mcp_scoped_identity_id("claim", "one-1704-key", &a),
     );
 
-    // The `execute_code` run handle IS that one derivation, not a second rule.
+    // The `execute` run handle IS that one derivation, not a second rule.
     assert_eq!(
         mcp_code_run_id("one-1704-run", &a),
         mcp_scoped_identity_id("execute_code.run", "one-1704-run", &a),

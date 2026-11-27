@@ -1,4 +1,4 @@
-//! The native `execute_code` entry: one durable run entered on the engine's
+//! The native `execute` entry: one durable run entered on the engine's
 //! own sandbox/REPL substrate through the run's credential-gated write door.
 
 use std::sync::Arc;
@@ -17,7 +17,7 @@ use super::{
 
 /// Enters the EXISTING sandbox/REPL substrate for one durable run.
 ///
-/// This is the whole of what `execute_code` means now: bind the gated write at
+/// This is the whole of what `execute` means now: bind the gated write at
 /// the host boundary, hand the engine its own runtime, and let
 /// `EngineNativeExecutor` own every step, replay row, and terminal marker. The
 /// server evaluates nothing and opens no second vault-write path. A run with
@@ -99,7 +99,7 @@ pub(super) fn run_engine_native_code_mode(
             &reactor,
             seat.as_ref(),
             brief,
-            // Each `execute_code` call is its own entry.
+            // Each `execute` call is its own entry.
             None,
         ),
         None => enter_engine_native_run(
@@ -111,7 +111,7 @@ pub(super) fn run_engine_native_code_mode(
             &reactor,
             None,
             seat.as_ref(),
-            // An `execute_code` run is no planned child.
+            // An `execute` run is no planned child.
             None,
             // Keep this caller's existing unconstrained routing.
             Vec::new(),

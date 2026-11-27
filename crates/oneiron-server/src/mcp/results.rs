@@ -129,7 +129,7 @@ fn read_facet_refs(scope: &McpConnectorScope) -> Option<Vec<String>> {
 ///
 /// A live-run refusal of `invoke_action` (OF-181) carries the suggestion its
 /// HTTP door states, `LiveRunRefusal::suggestion`, alone: each has its own
-/// code, apart from `execute_code`'s refusals (FIX 3456).
+/// code, apart from `execute`'s refusals (FIX 3456).
 #[must_use]
 pub fn mcp_recovery_suggestions(error_code: &str) -> Vec<String> {
     let live_run = LiveRunRefusal::from_code(error_code).map(LiveRunRefusal::suggestion);

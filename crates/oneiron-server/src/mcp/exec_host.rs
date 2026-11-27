@@ -44,7 +44,7 @@ pub use self::served::{CodeRunLimits, McpEngineNativeCodeHost};
 /// row. Nothing a caller sends reaches this: the key is a caller-chosen label,
 /// the identity is not.
 ///
-/// Both callers route through here: the `execute_code` durable run handle and
+/// Both callers route through here: the `execute` durable run handle and
 /// the retained edit adapter's idempotency row. There is no second derivation.
 #[must_use]
 pub fn mcp_scoped_identity_id(namespace: &str, key: &str, actor: &McpResolvedActor) -> EntityId {
@@ -97,7 +97,7 @@ pub fn mcp_scoped_identity_id(namespace: &str, key: &str, actor: &McpResolvedAct
     }
 }
 
-/// The DURABLE run id one `execute_code` handle resolves to.
+/// The DURABLE run id one `execute` handle resolves to.
 ///
 /// Deterministic, so re-calling with the same `run_ref` under the same
 /// credential scope re-enters the SAME persisted replay record — that is the
@@ -147,7 +147,7 @@ pub struct McpCodeExecutionRequest<'a> {
 }
 
 /// A code-mode durable run's self brief (FIX 17594 delivery slice D5), lent
-/// with one `execute_code` call by the door it arrived at: the port the
+/// with one `execute` call by the door it arrived at: the port the
 /// run's executor carries the brief through, and what the host does with
 /// the brief around one entry.
 ///
@@ -229,11 +229,11 @@ impl McpCodeExecutionError {
     }
 }
 
-/// The server-local, INJECTED `execute_code` seam.
+/// The server-local, INJECTED `execute` seam.
 ///
 /// ONE-1704 owns the MCP bridge, not a new engine runtime: the host is bound
 /// once by route/provider wiring and this crate never evaluates anything of its
-/// own. With no host bound, `execute_code` fails CLOSED — it does not fall back
+/// own. With no host bound, `execute` fails CLOSED — it does not fall back
 /// to a gateway-local loop.
 pub trait McpCodeExecutionHost: Send + Sync {
     /// Only a host with a verified production interpreter may enter tools/list.
@@ -476,7 +476,7 @@ pub trait McpCodeModeProvider: Send + Sync {
     fn seat_decisions(&self) -> Option<&SeatDecisions> {
         None
     }
-    /// Host-owned capability profile, never taken from execute_code arguments.
+    /// Host-owned capability profile, never taken from execute arguments.
     fn seat_facet(&self) -> Option<&str> {
         None
     }
@@ -766,7 +766,7 @@ impl<'a> ScopeMeter<'a> {
 }
 
 /// One entry of an engine-native run through `bound`, the write door its
-/// host bound: `execute_code`'s credential-gated door, or a leased attempt's
+/// host bound: `execute`'s credential-gated door, or a leased attempt's
 /// own dispatcher. A manifest-backed run runs on `seat`, the model seat its
 /// host bore it on (`engine_run_seat`); a run with none takes its configured
 /// model.
@@ -1192,7 +1192,7 @@ fn enter_on(
 
 static MCP_CODE_EXECUTION_HOST: OnceLock<Arc<dyn McpCodeExecutionHost>> = OnceLock::new();
 
-/// Binds the process's `execute_code` host. Route/provider wiring only.
+/// Binds the process's `execute` host. Route/provider wiring only.
 ///
 /// Returns `false` when a host is already bound: the seam is set once, so no
 /// request-time input can swap the substrate under a live connector.
@@ -1200,7 +1200,7 @@ pub fn bind_mcp_code_execution_host(host: Arc<dyn McpCodeExecutionHost>) -> bool
     MCP_CODE_EXECUTION_HOST.set(host).is_ok()
 }
 
-/// The bound `execute_code` host, or `None` when this process bound none.
+/// The bound `execute` host, or `None` when this process bound none.
 #[must_use]
 pub fn mcp_code_execution_host() -> Option<&'static Arc<dyn McpCodeExecutionHost>> {
     MCP_CODE_EXECUTION_HOST.get()

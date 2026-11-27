@@ -31,7 +31,7 @@ const REPEATED_SURFACE_READS: usize = 4;
 /// 742-815 ms in the E2E build.
 const REPEATED_SURFACE_READS_BOUND: Duration = Duration::from_millis(50);
 
-/// A server with no code host: its surfaces carry no `execute_code` runtime.
+/// A server with no code host: its surfaces carry no `execute` runtime.
 fn server_without_code_host() -> (tempfile::TempDir, SyncServer) {
     let dir = tempfile::tempdir().expect("temporary vault directory");
     let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).expect("open vault"));

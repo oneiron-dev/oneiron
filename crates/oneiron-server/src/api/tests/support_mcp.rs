@@ -365,7 +365,7 @@ pub(super) struct McpFixtureCodeProvider {
 /// How many times the bound fixture host was ENTERED for a run.
 ///
 /// ONE-1704 B2 reads this to prove ZERO runs are created by a refused
-/// `execute_code` call: the host is bound in this process, and the counter is
+/// `execute` call: the host is bound in this process, and the counter is
 /// the run-creation witness rather than an absence someone has to infer.
 pub(super) static MCP_FIXTURE_CODE_RUNS: std::sync::atomic::AtomicUsize =
     std::sync::atomic::AtomicUsize::new(0);
@@ -417,7 +417,7 @@ impl crate::mcp::McpCodeModeProvider for McpFixtureCodeProvider {
     }
 }
 
-/// Binds the process's fixture `execute_code` host exactly once.
+/// Binds the process's fixture `execute` host exactly once.
 pub(super) fn bind_mcp_test_code_host() {
     static BOUND: std::sync::Once = std::sync::Once::new();
     BOUND.call_once(|| {

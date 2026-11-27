@@ -1,4 +1,4 @@
-//! The automatic re-entry of a served MCP `execute_code` run parked on a
+//! The automatic re-entry of a served MCP `execute` run parked on a
 //! durable wait (FIX 4606).
 //!
 //! An MCP caller holds no parked attempt, so no trap wakes its run when the
@@ -17,7 +17,7 @@
 //! own. A caller's own call that registers checks the same at once, so a
 //! reply delivered before the registration waits for no pass. Readiness is
 //! not authority: the caller's kept instrument, its registration and
-//! `execute_code`'s own gate are checked again first, and nothing stands in
+//! `execute`'s own gate are checked again first, and nothing stands in
 //! for the caller. The run then goes through the same admitted execution
 //! helper as the caller's own call, under the host's single flight, run
 //! admission, and (for task runs) model seat and spend line. Each verb call
@@ -585,7 +585,7 @@ async fn reenter(
 /// kept instrument verifies again as the same slip at the same ceiling, or
 /// as the same live owner; a connector's registration resolves again at
 /// the ceiling the call was admitted at and still admits its proof; and
-/// `execute_code`'s own gate admits it. Nothing stands in: never the owner,
+/// `execute`'s own gate admits it. Nothing stands in: never the owner,
 /// a wider scope or another actor.
 async fn caller_stands(server: &Arc<SyncServer>, continuation: &McpCodeRunContinuation) -> bool {
     let caller = &continuation.caller;
