@@ -167,7 +167,7 @@ pub fn manifest_distinct_chunks_in_place(
     // BLAKE3 is the manifest's hash.
     let id = crate::store::code_snapshot::entity_id_from_hash_material(
         crate::origin::lfs::VAULT_LFS_ASSET_ID_DOMAIN,
-        &[blake3::hash(bytes).as_bytes()],
+        &[ContentHash::of(bytes).as_bytes()],
     )?;
     if id != *asset_id || declared != size_bytes {
         return Err(Error::CorruptedIndex("lfs manifest digest"));
