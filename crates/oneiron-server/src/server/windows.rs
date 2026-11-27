@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use loro::{ExportMode, VersionVector};
 use oneiron::sync::bridge::{LiveQueryTee, MaterializedDiffSummary, OriginMark};
-use oneiron::sync::schema::{add_window_to_root, create_window_doc, read_window_list};
+use oneiron::sync::schema::{add_window_to_root, read_window_list};
 use oneiron::sync::server_state;
 use oneiron::sync::window::LoadedWindow;
 use oneiron::sync::{WindowKey, WindowManager};
@@ -15,26 +15,6 @@ use super::core::{BroadcastPayload, SyncServer};
 /// single-tenant (one vault per user per ARCH-0023b Fig. 1) and the loader
 /// does not key storage by user, so this is a label only.
 pub(super) const SERVER_USER_ID: &str = "server";
-
-/// The window a fetch answers from ([`SyncServer::fetch_window`]).
-pub(crate) enum FetchedWindow {
-    /// The live window of a key the root lists. The handle keeps it loaded
-    /// while the fetch reads it.
-    Listed(Arc<LoadedWindow>),
-    /// An empty window doc for a key the root does not list. Nothing
-    /// snapshots, lists or broadcasts it.
-    Unlisted(loro::LoroDoc),
-}
-
-impl FetchedWindow {
-    /// The doc the fetch answers from.
-    pub(crate) fn doc(&self) -> &loro::LoroDoc {
-        match self {
-            Self::Listed(window) => &window.doc,
-            Self::Unlisted(doc) => doc,
-        }
-    }
-}
 
 impl SyncServer {
     // ─── Device-lease registry (ONE-1140, OD-3) ──────────────────────────
@@ -173,23 +153,21 @@ impl SyncServer {
         Ok(window)
     }
 
-    /// The window a fetch answers from (WINDOW-FETCH-NO-CREATE, Engine 27 Nov
-    /// 16:43). A fetch names any key it likes, so it never creates a window:
-    /// a key the root lists is served as [`Self::serve_window`] serves it, and
-    /// any other key from an empty window doc that is not snapshotted to
-    /// `d:w:*`, listed in the root or broadcast (FIX
-    /// WINDOW-FETCH-CREATES-NAMED-WINDOW). Only a write creates a window.
+    /// The live window a fetch answers from (WINDOW-FETCH-NO-CREATE, Engine
+    /// 27 Nov 16:43): the window of a key the root lists, served as
+    /// [`Self::serve_window`] serves it, whose handle keeps it loaded while
+    /// the fetch reads it; `None` for any other key, for which nothing opens,
+    /// snapshots (`d:w:*`), lists or broadcasts a window. A fetch names any
+    /// key it likes, so it never creates a window (FIX
+    /// WINDOW-FETCH-CREATES-NAMED-WINDOW). Only a write creates one.
     pub(crate) async fn fetch_window(
         &self,
         key: &WindowKey,
-    ) -> Result<FetchedWindow, oneiron::Error> {
+    ) -> Result<Option<Arc<LoadedWindow>>, oneiron::Error> {
         if !read_window_list(&self.root_doc).contains(key) {
-            return Ok(FetchedWindow::Unlisted(create_window_doc(
-                SERVER_USER_ID,
-                key,
-            )));
+            return Ok(None);
         }
-        self.serve_window(key).await.map(FetchedWindow::Listed)
+        self.serve_window(key).await.map(Some)
     }
 
     /// [`Self::serve_window`]'s doc, for a test that need not hold the window.
