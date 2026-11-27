@@ -50,6 +50,7 @@ pub(crate) use dependent_walk::{
     DependentWalkDoor, any_pending_walk, land_archived_ports_rows_in_txn,
     withdraw_before_rewrite_in_txn,
 };
+mod cited_source_dependency_backfill;
 mod compaction_home_revisions;
 mod dependency_registration;
 mod integrity;
