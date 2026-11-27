@@ -38,10 +38,8 @@ pub use oneiron_organ_host::{
 use super::job_unit::{JobKeyId, JobUnit, NodeClock};
 use crate::gpu_execution_node::device::DeviceSample;
 pub use crate::gpu_execution_node::node::NodeControls;
-use crate::gpu_execution_node::node::{AuthorityEnded, ExecutionNode, NodeKeys, NodeSnapshot};
-use crate::gpu_execution_node::node_settings::{
-    DrainClearBy, ExecutionNodeSettings, READINESS_EVERY_SECS_DEFAULT,
-};
+use crate::gpu_execution_node::node::{AuthorityEnded, ExecutionNode, NodeKeys};
+use crate::gpu_execution_node::node_settings::{DrainClearBy, READINESS_EVERY_SECS_DEFAULT};
 use crate::gpu_execution_node::slots::GpuSlotTable;
 use crate::gpu_execution_node::wire::{
     FETCH_MAX_BYTES, JobAnswer, JobRefusal, JobReserve, JobStatusAnswer, LogTailRequest,
@@ -142,19 +140,15 @@ pub trait NodeAdmission: Send + Sync {
     /// The local controls now.
     fn controls(&self) -> NodeControls;
 
-    /// Reads the local controls and owner's policy for one readiness tick. The default
-    /// reads only the controls.
-    fn readiness_snapshot(&self) -> NodeSnapshot {
-        NodeSnapshot {
+    /// The local controls and the owner's machine policy now, from one read,
+    /// for one readiness tick (row READINESS-NOT-RUN-AT-OFFER). The default
+    /// reads the controls alone, with no file and no policy.
+    fn readiness_snapshot(&self) -> crate::gpu_execution_node::node::NodeSnapshot {
+        crate::gpu_execution_node::node::NodeSnapshot {
             settings: Ok(None),
             controls: self.controls(),
             policy: None,
         }
-    }
-
-    /// Reads the job settings for one readiness tick, reusing its snapshot when available.
-    fn readiness_job_settings(&self, _snapshot: &NodeSnapshot) -> NodeJobSettings {
-        self.job_settings()
     }
 
     /// Whether the node's own job grant, the issuer's job grant and the
@@ -321,7 +315,8 @@ pub trait NodeDevices: Send + Sync {
     /// Why the devices cannot be read.
     fn probe(&self) -> Result<(), String>;
 
-    /// Reads the devices another booker withholds now. The default withholds none.
+    /// The devices another booker withholds now, read without probing the
+    /// driver. The default withholds none.
     ///
     /// # Errors
     ///
@@ -440,8 +435,8 @@ impl NodeAdmission for ExecutionNode {
         ExecutionNode::controls(self)
     }
 
-    fn readiness_snapshot(&self) -> NodeSnapshot {
-        self.snapshot()
+    fn readiness_snapshot(&self) -> crate::gpu_execution_node::node::NodeSnapshot {
+        ExecutionNode::snapshot(self)
     }
 
     fn issuer_live(&self, issuer: EntityId) -> Result<(), IssuerNotLive> {
@@ -488,11 +483,22 @@ impl NodeAdmission for ExecutionNode {
         // One read of the box file for every key; with none, or one that
         // does not parse, each key keeps its default.
         let file = ExecutionNode::settings(self).ok().flatten();
-        job_settings_from_file(self, file.as_ref())
-    }
-
-    fn readiness_job_settings(&self, snapshot: &NodeSnapshot) -> NodeJobSettings {
-        job_settings_from_file(self, snapshot.settings())
+        let defaults = NodeJobSettings::default();
+        let (readiness_every_secs, drain_clear_by) = file.as_ref().map_or(
+            (defaults.readiness_every_secs, defaults.drain_clear_by),
+            |file| ExecutionNode::readiness_settings(self, file),
+        );
+        NodeJobSettings {
+            staging_limit_secs: file
+                .as_ref()
+                .map_or(defaults.staging_limit_secs, |file| file.staging_limit_secs),
+            receipt_keep_days: file.as_ref().map_or(defaults.receipt_keep_days, |file| {
+                u64::from(file.receipt_keep_days)
+            }),
+            readiness_every_secs,
+            drain_clear_by,
+            ..defaults
+        }
     }
 
     fn template_signal(&self, template: &str) -> Option<String> {
@@ -526,28 +532,6 @@ impl NodeAdmission for ExecutionNode {
                     .collect()
             })
             .unwrap_or_default()
-    }
-}
-
-/// Builds the job settings from the box file and the owner's readiness policy.
-fn job_settings_from_file(
-    node: &ExecutionNode,
-    file: Option<&ExecutionNodeSettings>,
-) -> NodeJobSettings {
-    let defaults = NodeJobSettings::default();
-    let (readiness_every_secs, drain_clear_by) = file.map_or(
-        (defaults.readiness_every_secs, defaults.drain_clear_by),
-        |file| node.readiness_settings(file),
-    );
-    NodeJobSettings {
-        staging_limit_secs: file
-            .map_or(defaults.staging_limit_secs, |file| file.staging_limit_secs),
-        receipt_keep_days: file.map_or(defaults.receipt_keep_days, |file| {
-            u64::from(file.receipt_keep_days)
-        }),
-        readiness_every_secs,
-        drain_clear_by,
-        ..defaults
     }
 }
 

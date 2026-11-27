@@ -297,7 +297,7 @@ impl NodeJobs {
         let parts = self.parts();
         let snapshot = parts.admission.readiness_snapshot();
         self.observe_drain(&snapshot.controls.drained);
-        let settings = parts.admission.readiness_job_settings(&snapshot);
+        let settings = parts.admission.job_settings();
         let offer = OfferMark::of(&snapshot, parts.devices.booker_withheld());
         let now = self.now();
         let mark = {
