@@ -2,7 +2,9 @@
 //! an imported turn's source speaker (FIX 15412) or a native person turn's
 //! writers (FIX DREAMER-NATIVE-PERSON-TURN-UNATTRIBUTED; ARCH-0043:37).
 //! In a shared vault this includes every native person turn; in a personal
-//! vault it includes only those its owner did not write alone.
+//! vault it includes only those its owner did not write alone. A label names
+//! only a PERSON that still stands: a deleted, erased or withdrawn one is
+//! left out, while its MESSAGE's words stay on the line.
 
 use super::TurnText;
 use crate::dreamer_consolidation::call_labels::{CallLabelMap, LabelKind};
@@ -48,8 +50,9 @@ impl TurnSpeakers {
 
     /// The PERSONs one TURN's line names beside its role: an imported
     /// turn's source speaker; otherwise, for a native user turn, its
-    /// writers, unless the vault is personal and its live owner wrote the
-    /// turn alone. An agent's, a counterparty's or a system turn names none.
+    /// writers, unless the vault is personal and its live owner is the
+    /// turn's one writer. An agent's, a counterparty's or a system turn
+    /// names none. Each is a PERSON that still stands ([`standing`]).
     pub(crate) fn people_in(
         &self,
         vault: &Vault,
@@ -62,7 +65,7 @@ impl TurnSpeakers {
             return Ok(Vec::new());
         };
         if let Some(person) = text.source_speaker() {
-            return Ok(vec![person]);
+            return Ok(standing(vault, txn, vec![person]));
         }
         if imported {
             return Ok(Vec::new());
@@ -73,7 +76,7 @@ impl TurnSpeakers {
         ) {
             return Ok(Vec::new());
         }
-        let writers = text.native_writers();
+        let writers = standing(vault, txn, text.native_writers());
         if !self.shared
             && let [writer] = writers.as_slice()
             && crate::policy_model::is_live_vault_owner_in_txn(vault, txn, writer)?
@@ -82,6 +85,16 @@ impl TurnSpeakers {
         }
         Ok(writers)
     }
+}
+
+/// `people` less each one deleted, erased or withdrawn in `txn`, judged as
+/// the model run's source fence judges a source row: a label lists its
+/// PERSON among the call's source rows, and the fence refuses the whole
+/// call while one of them does not stand, though the turn's words still do
+/// (REVIEW-10620 round 1).
+fn standing(vault: &Vault, txn: &heed::RoTxn<'_>, mut people: Vec<EntityId>) -> Vec<EntityId> {
+    people.retain(|person| !crate::code_run::source_row_withdrawn_in(vault, txn, person));
+    people
 }
 
 /// The call labels of `people`, each after a space, in order: an already

@@ -2,13 +2,16 @@
 //! label beside its role in the extraction transcript. In a shared vault every person turn is labelled, the owner's
 //! included; in a personal vault a turn the vault's owner wrote alone shows no label, while a turn another PERSON
 //! wrote shows that PERSON's label. Only the transcript line changes: class, landing, review and recall are
-//! unchanged.
+//! unchanged. A deleted writer is not labelled, so the call's source rows still stand and the model run's source
+//! fence lets the call send, while that writer's MESSAGE keeps its words on the line (REVIEW-10620 round 1).
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test dreamer_native_turn_writer_label`
 
 #![cfg(oneiron_test_support)]
 
-use oneiron::test_doors::dreamer_extraction_room::{TurnWriter, writer_label_slice_calls};
+use oneiron::test_doors::dreamer_extraction_room::{
+    TurnWriter, writer_label_slice_calls, writer_label_slice_calls_after_member_delete,
+};
 
 /// How a call's listing names the member PERSON the door seeds: its `entity <label> "mira"` line ends so.
 const MEMBER_NAME: &str = "\"mira\"";
@@ -147,5 +150,59 @@ fn a_turn_the_owner_and_a_member_both_wrote_names_both() {
         listed_as(&calls[call], first),
         Some(MEMBER_NAME),
         "the first label names the owner, who wrote the first MESSAGE, not the member: {calls:?}"
+    );
+}
+
+/// The calls after the member PERSON's delete over one TURN the owner opened and the member added to: the
+/// transcripts, the TURN line's call and head, and whether every call's source rows stand.
+fn after_member_delete(shared: bool) -> (Vec<String>, usize, Vec<String>, bool) {
+    let calls = writer_label_slice_calls_after_member_delete(
+        shared,
+        &[
+            (TurnWriter::Owner, 0, "tea for me"),
+            (TurnWriter::Member, 0, "coffee for me"),
+        ],
+    )
+    .expect("writer-label calls after the member's delete");
+    let transcripts: Vec<String> = calls
+        .iter()
+        .map(|(transcript, _)| transcript.clone())
+        .collect();
+    let (call, head) = turn_head(&transcripts, "tea for me");
+    let head = head.into_iter().map(str::to_owned).collect();
+    let stand = calls.iter().all(|(_, stands)| *stands);
+    assert!(
+        transcripts[call].contains("tea for me\ncoffee for me"),
+        "the TURN's line keeps the deleted member's words: {transcripts:?}"
+    );
+    (transcripts, call, head, stand)
+}
+
+#[test]
+fn in_a_shared_vault_a_deleted_co_writer_is_not_labelled_and_the_call_still_sends() {
+    let (transcripts, call, head, stand) = after_member_delete(true);
+    let head: Vec<&str> = head.iter().map(String::as_str).collect();
+    let owner = sole_writer(&head, &transcripts);
+    assert_ne!(
+        listed_as(&transcripts[call], owner),
+        Some(MEMBER_NAME),
+        "the one label names the owner, not the deleted member: {transcripts:?}"
+    );
+    assert!(
+        stand,
+        "every row the calls were read from stands, so the source fence lets them send: {transcripts:?}"
+    );
+}
+
+#[test]
+fn in_a_personal_vault_a_turn_whose_co_writer_was_deleted_names_no_one_and_still_sends() {
+    let (transcripts, _, head, stand) = after_member_delete(false);
+    assert!(
+        matches!(head.as_slice(), [_, role] if role == "user"),
+        "the owner is the turn's one standing writer, so the line names no one: {head:?} in {transcripts:?}"
+    );
+    assert!(
+        stand,
+        "every row the calls were read from stands, so the source fence lets them send: {transcripts:?}"
     );
 }

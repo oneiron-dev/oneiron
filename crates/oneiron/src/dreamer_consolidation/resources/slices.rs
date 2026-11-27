@@ -516,6 +516,49 @@ pub(crate) fn native_slice_calls_in_room_for_test(
     material: &[String],
     room: Option<usize>,
 ) -> crate::memory::MemoryResult<Vec<(String, bool)>> {
+    Ok(
+        native_slices_in_room_for_test(vault, attempt, turns, material, room)?
+            .into_iter()
+            .map(|slice| (slice.transcript, slice.page_past_room.is_some()))
+            .collect(),
+    )
+}
+
+/// The native extraction slices over `turns` of `attempt`, as
+/// [`native_slice_calls_in_room_for_test`] builds them with no host material
+/// and no room bound, each as its transcript and whether every row it was
+/// read from still stands now, as the model run's source fence asks before
+/// it sends (REVIEW-10620 round 1).
+///
+/// # Errors
+///
+/// As [`native_slice_calls_in_room_for_test`].
+#[cfg(oneiron_test_support)]
+pub(crate) fn native_slice_sources_standing_for_test(
+    vault: &Vault,
+    attempt: AttemptId,
+    turns: &[EntityId],
+) -> crate::memory::MemoryResult<Vec<(String, bool)>> {
+    Ok(
+        native_slices_in_room_for_test(vault, attempt, turns, &[], None)?
+            .into_iter()
+            .map(|slice| {
+                let stands = !crate::code_run::source_rows_withdrawn(vault, &slice.sources);
+                (slice.transcript, stands)
+            })
+            .collect(),
+    )
+}
+
+/// The slices both test reads above take.
+#[cfg(oneiron_test_support)]
+fn native_slices_in_room_for_test(
+    vault: &Vault,
+    attempt: AttemptId,
+    turns: &[EntityId],
+    material: &[String],
+    room: Option<usize>,
+) -> crate::memory::MemoryResult<Vec<ExtractionSlice>> {
     use crate::dreamer_consolidation::wake_plan::AttemptPreparation;
     use crate::memory::MemoryError;
     let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
@@ -542,10 +585,7 @@ pub(crate) fn native_slice_calls_in_room_for_test(
     let (slices, _) = resources
         .extraction_slices(turns, bound)
         .map_err(MemoryError::from)?;
-    Ok(slices
-        .into_iter()
-        .map(|slice| (slice.transcript, slice.page_past_room.is_some()))
-        .collect())
+    Ok(slices)
 }
 
 /// The calls [`fit_chunks`] keeps for items of `lines` bytes cut by

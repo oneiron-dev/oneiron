@@ -404,6 +404,33 @@ pub fn writer_label_slice_calls(
     shared: bool,
     said: &[(TurnWriter, usize, &str)],
 ) -> MemoryResult<Vec<String>> {
+    Ok(writer_label_slices(shared, said, false)?
+        .into_iter()
+        .map(|(transcript, _)| transcript)
+        .collect())
+}
+
+/// [`writer_label_slice_calls`] with the member PERSON deleted after the conversation is queued for extraction (a
+/// shell-keeping user delete, which keeps its MESSAGEs and their writer edges): each call's transcript and whether
+/// every row the call was read from still stands, as the model run's source fence asks before it sends.
+///
+/// # Errors
+///
+/// As [`writer_label_slice_calls`], or the delete.
+pub fn writer_label_slice_calls_after_member_delete(
+    shared: bool,
+    said: &[(TurnWriter, usize, &str)],
+) -> MemoryResult<Vec<(String, bool)>> {
+    writer_label_slices(shared, said, true)
+}
+
+/// The calls of [`writer_label_slice_calls`], each with whether its source rows stand; `delete_member` deletes the
+/// member PERSON between the queueing and the slicing.
+fn writer_label_slices(
+    shared: bool,
+    said: &[(TurnWriter, usize, &str)],
+    delete_member: bool,
+) -> MemoryResult<Vec<(String, bool)>> {
     let directory = tempfile::tempdir().map_err(Error::from)?;
     drop(super::consolidation::open_dreamer_vault(
         directory.path(),
@@ -472,17 +499,12 @@ pub fn writer_label_slice_calls(
     }
     let (attempt, _) =
         super::extraction_inputs::enqueue_admitted_extraction_attempt(&vault, &turns, 1_000)?;
-    let calls = crate::dreamer_consolidation::resources::native_slice_calls_in_room_for_test(
-        &vault,
-        attempt,
-        &turns,
-        &[],
-        None,
-    )?;
-    Ok(calls
-        .into_iter()
-        .map(|(transcript, _)| transcript)
-        .collect())
+    if delete_member && !vault.delete_entity(&member)? {
+        return Err(Error::InvalidConfig("the member PERSON to delete exists".to_owned()).into());
+    }
+    crate::dreamer_consolidation::resources::native_slice_sources_standing_for_test(
+        &vault, attempt, &turns,
+    )
 }
 
 /// Stands shared vault membership for [`writer_label_slice_calls`]: the owner's conferring Owner grant and the
