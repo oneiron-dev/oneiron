@@ -145,12 +145,6 @@ pub(crate) fn retained_envelope_source_table(value: &[u8]) -> Option<String> {
 /// A record hard-deleted here (its dt: marker stands) is kept out too, so a copy stored before
 /// its delete, or imported after it, is not carried (FIX HARD-DELETE-RETAINED-ARCHIVE-ROW-OUTLIVES-RECORD).
 fn export_keeps_record_out(vault: &crate::Vault, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
-    if vault
-        .store
-        .port_deletion_marked(rtxn, DeletionMarker::HardDelete, id)?
-    {
-        return Ok(true);
-    }
     if super::export_egress::whole_vault_export_excludes_entity_in_txn(vault, rtxn, id)? {
         return Ok(true);
     }
