@@ -11,13 +11,18 @@
 //! its predecessor left stuck and never starts a second thread beside it
 //! (review round 1 of #10610). The thread ends once no table holds its
 //! reader and its read in flight has returned.
+//!
+//! An ask takes only an answer its read published by the ask's own
+//! deadline, however late the asker wakes, and each published answer is
+//! kept while an ask it serves still waits, so a later read never replaces
+//! it (review round 2 of #10610).
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::io::Read;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, PoisonError, Weak};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use super::GpuProbeError;
 
@@ -47,10 +52,11 @@ struct ReadProgress {
     asked: u64,
     /// The newest ask the read in flight (or the last read) serves.
     started: u64,
-    /// The newest ask answered.
-    answered: u64,
-    /// The newest read's answer.
-    answer: Option<Result<BTreeSet<String>, String>>,
+    /// The published answers an ask still waiting can take, in the order
+    /// the reader published them (ascending `serving`).
+    answers: VecDeque<Published>,
+    /// The asks still waiting for an answer.
+    waiting: BTreeSet<u64>,
     /// A read is in flight.
     reading: bool,
     /// An ask gave up waiting (on the read in flight, or on one not yet
@@ -62,6 +68,68 @@ struct ReadProgress {
     /// The slot tables holding this reader. At none, the thread ends after
     /// its read in flight.
     holders: usize,
+}
+
+/// One read's answer, kept while an ask it serves still waits.
+#[derive(Debug)]
+struct Published {
+    /// The newest ask the read serves: it started after every ask up to
+    /// this one.
+    serving: u64,
+    /// When the reader published it.
+    at: Instant,
+    answer: Result<BTreeSet<String>, String>,
+}
+
+/// What one ask takes when it stops waiting.
+#[derive(Debug, PartialEq, Eq)]
+enum Taken {
+    /// The answer of the read that serves it, published by its deadline.
+    Answer(Result<BTreeSet<String>, String>),
+    /// The read that serves it published after its deadline.
+    Late,
+    /// No read that serves it has published.
+    Unanswered,
+}
+
+impl ReadProgress {
+    /// The first published read that serves `ask`: one that started after it.
+    fn serving(&self, ask: u64) -> Option<&Published> {
+        self.answers
+            .iter()
+            .find(|published| published.serving >= ask)
+    }
+
+    /// What `ask` takes, by its `deadline` (`None`: no deadline), as it
+    /// stops waiting; the answers no other waiting ask can take go.
+    fn take(&mut self, ask: u64, deadline: Option<Instant>) -> Taken {
+        let taken = match self.serving(ask) {
+            Some(published) if deadline.is_none_or(|deadline| published.at <= deadline) => {
+                Taken::Answer(published.answer.clone())
+            }
+            Some(_) => Taken::Late,
+            None => Taken::Unanswered,
+        };
+        self.waiting.remove(&ask);
+        self.prune();
+        taken
+    }
+
+    /// Drops each kept answer no waiting ask can take any more. An ask takes
+    /// the first answer whose `serving` reaches it, so an answer is kept for
+    /// the waiting asks after the one before it, up to its own `serving`;
+    /// an ask made later takes only a read that starts after it.
+    fn prune(&mut self) {
+        let waiting = &self.waiting;
+        let mut after = 0;
+        self.answers.retain(|published| {
+            let first = after.saturating_add(1);
+            let kept = first <= published.serving
+                && waiting.range(first..=published.serving).next().is_some();
+            after = published.serving;
+            kept
+        });
+    }
 }
 
 impl std::fmt::Debug for WithheldListReader {
@@ -165,32 +233,40 @@ impl WithheldListReader {
             }
             progress.thread_running = true;
         }
+        // The ask's own deadline: an answer published after it never answers
+        // this ask, even when the asker wakes after the reader publishes.
+        let deadline = Instant::now().checked_add(timeout);
         progress.asked = progress.asked.saturating_add(1);
         let ask = progress.asked;
+        progress.waiting.insert(ask);
         shared.changed.notify_all();
         let (mut progress, _) = shared
             .changed
-            .wait_timeout_while(progress, timeout, |progress| progress.answered < ask)
+            .wait_timeout_while(progress, timeout, |progress| {
+                progress.serving(ask).is_none()
+            })
             .unwrap_or_else(PoisonError::into_inner);
-        if progress.answered >= ask {
-            return match progress.answer.clone() {
-                Some(Ok(withheld)) => Ok(withheld),
-                Some(Err(reason)) => Err(unreadable(reason)),
-                None => Err(unreadable(format!(
-                    "{}: the read gave no answer",
-                    shared.path.display()
-                ))),
-            };
+        let no_answer = || {
+            unreadable(format!(
+                "{}: no answer within {} ms",
+                shared.path.display(),
+                timeout.as_millis()
+            ))
+        };
+        match progress.take(ask, deadline) {
+            Taken::Answer(Ok(withheld)) => Ok(withheld),
+            Taken::Answer(Err(reason)) => Err(unreadable(reason)),
+            // Its read returned, after this ask's deadline: no read is
+            // overdue.
+            Taken::Late => Err(no_answer()),
+            Taken::Unanswered => {
+                // Unanswered in time: a read runs and is slow, or the reader
+                // has not started this ask's read yet; either way the read
+                // that serves it is overdue.
+                progress.overdue = true;
+                Err(no_answer())
+            }
         }
-        // Unanswered in time: a read runs and is slow, or the reader has not
-        // started this ask's read yet; either way the read that serves it is
-        // overdue.
-        progress.overdue = true;
-        Err(unreadable(format!(
-            "{}: no answer within {} ms",
-            shared.path.display(),
-            timeout.as_millis()
-        )))
     }
 
     #[cfg(test)]
@@ -233,8 +309,12 @@ fn run_reader(shared: &ReaderShared) {
         let answer = catch_unwind(AssertUnwindSafe(|| (shared.source)()))
             .unwrap_or_else(|_| Err(format!("{}: the read panicked", shared.path.display())));
         progress = lock(shared);
-        progress.answered = serving;
-        progress.answer = Some(answer);
+        progress.answers.push_back(Published {
+            serving,
+            at: Instant::now(),
+            answer,
+        });
+        progress.prune();
         progress.reading = false;
         progress.overdue = false;
         shared.changed.notify_all();
@@ -276,8 +356,8 @@ mod tests {
 
     use super::super::{GpuDeviceOffer, GpuSlotRefusal, GpuSlotTable, Shared};
     use super::{
-        Arc, BTreeSet, Duration, GpuProbeError, Mutex, PoisonError, WithheldListReader,
-        WithheldSource,
+        Arc, BTreeSet, Duration, GpuProbeError, Instant, Mutex, PoisonError, Published,
+        ReadProgress, Taken, WithheldListReader, WithheldSource,
     };
     use crate::gpu_execution_node::device::{GpuComputeProcess, GpuDevice, GpuDeviceProbe};
 
@@ -375,7 +455,7 @@ mod tests {
             "/lost-mount/gpu-withheld: no answer within 100 ms"
         );
         blocking.answers.send(Ok(set(&["GPU-late"]))).unwrap();
-        assert!(reader.wait_until(|p| !p.reading && p.answer.is_some()));
+        assert!(reader.wait_until(|p| !p.reading && p.started >= 1));
         blocking.answers.send(Ok(set(&["GPU-fresh"]))).unwrap();
         let next = ask(&reader, Duration::from_secs(10));
         assert_eq!(answered(&next), Ok(set(&["GPU-fresh"])));
@@ -403,6 +483,72 @@ mod tests {
         assert_eq!(answered(&b), Ok(set(&["second"])));
         assert_eq!(blocking.started.try_recv(), Ok(()));
         assert_eq!(blocking.started.try_recv(), Err(mpsc::TryRecvError::Empty));
+    }
+
+    /// Asks `waiting` and the answers published at `at_ms` after `t0`, each
+    /// serving the ask named beside it.
+    fn progress(t0: Instant, waiting: &[u64], published: &[(u64, u64, &str)]) -> ReadProgress {
+        ReadProgress {
+            waiting: waiting.iter().copied().collect(),
+            answers: published
+                .iter()
+                .map(|&(serving, at_ms, id)| Published {
+                    serving,
+                    at: t0 + Duration::from_millis(at_ms),
+                    answer: Ok(set(&[id])),
+                })
+                .collect(),
+            ..ReadProgress::default()
+        }
+    }
+
+    #[test]
+    fn an_answer_published_after_an_asks_deadline_never_answers_it() {
+        // The ask's 2 s ran out; the reader published 10 ms later, before the
+        // asker took the lock again (review round 2 of #10610).
+        let t0 = Instant::now();
+        let mut late = progress(t0, &[1], &[(1, 2_010, "GPU-late")]);
+        assert_eq!(
+            late.take(1, Some(t0 + Duration::from_secs(2))),
+            Taken::Late,
+            "an answer published after the deadline is late, never taken as the list"
+        );
+        assert!(late.answers.is_empty(), "no waiting ask keeps it");
+        let mut timely = progress(t0, &[1], &[(1, 1_990, "GPU-held")]);
+        assert_eq!(
+            timely.take(1, Some(t0 + Duration::from_secs(2))),
+            Taken::Answer(Ok(set(&["GPU-held"]))),
+            "an answer published by the deadline answers"
+        );
+        assert_eq!(
+            progress(t0, &[2], &[(1, 10, "old")]).take(2, Some(t0 + Duration::from_secs(2))),
+            Taken::Unanswered,
+            "a read that started before the ask never answers it"
+        );
+    }
+
+    #[test]
+    fn a_later_read_never_replaces_an_answer_a_waiting_ask_can_take() {
+        let t0 = Instant::now();
+        // Ask 1's read published in time; ask 2's read published after ask
+        // 1's deadline, before ask 1 woke.
+        let mut both = progress(t0, &[1, 2], &[(1, 1_900, "first"), (2, 2_050, "second")]);
+        assert_eq!(
+            both.take(1, Some(t0 + Duration::from_secs(2))),
+            Taken::Answer(Ok(set(&["first"]))),
+            "ask 1 takes its own timely answer"
+        );
+        assert_eq!(
+            both.answers.iter().map(|p| p.serving).collect::<Vec<_>>(),
+            [2],
+            "ask 1's answer goes; ask 2's stays for it"
+        );
+        assert_eq!(
+            both.take(2, Some(t0 + Duration::from_secs(3))),
+            Taken::Answer(Ok(set(&["second"]))),
+            "ask 2 takes the read that started after it"
+        );
+        assert!(both.answers.is_empty(), "nothing waits");
     }
 
     #[test]
