@@ -7766,7 +7766,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/client/residence/pad_custody.rs` | src | m | 2 crate-vis | — | Pad hydration from the home (KS-5, FIX 6706): a world's current pads as capsules sealed to this machine… |
 | `src/sync/client/residence/predict.rs` | src | s | 6 crate-vis | — | A predicted machine's ask for a prediction and its fetch of the predicted set the home names |
 | `src/sync/client/residence/promoted_pads.rs` | src | s | 5 crate-vis | — | The pads of a promoted window's world (FIX 3789) |
-| `src/sync/client/residence/rpc.rs` | src | m | 13 crate-vis | — | The residence RPC lane's socket: one short-lived authenticated socket to the home a call reads from |
+| `src/sync/client/residence/rpc.rs` | src | m | 15 crate-vis | — | The residence RPC lane's socket: one short-lived authenticated socket to the home a call reads from |
+| `src/sync/client/residence/rpc/reply_frame_tests.rs` | test | s | — | — | How a residence RPC reads the home's refusal of the rest of an answer (REVIEW-10640 round 2): the live-query… |
 | `src/sync/client/residence/search.rs` | src | s | 1 struct · 2 crate-vis | ResidenceSearchPage | A home search served in pages (FIX 8865, FIX 196): the device keeps the caller's whole count and asks the… |
 | `src/sync/client/residence/search_client.rs` | src | s | 2 fn · 1 crate-vis | — | Home search orchestration |
 | `src/sync/client/residence/secret_same_value.rs` | src | s | 1 crate-vis | — | This machine's same-value statement to its residence home, and the home's statements to it, once each steady… |

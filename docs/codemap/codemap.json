@@ -90746,8 +90746,16 @@
      "path": "src/sync/client/residence/rpc.rs",
      "purpose": "The residence RPC lane's socket: one short-lived authenticated socket to the home a call reads from",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 15
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/sync/client/residence/rpc/reply_frame_tests.rs",
+     "purpose": "How a residence RPC reads the home's refusal of the rest of an answer (REVIEW-10640 round 2): the live-query…",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -125840,7 +125848,7 @@
     },
     "sync": {
      "entry": "crates/oneiron/src/sync/mod.rs",
-     "files": 455,
+     "files": 456,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -126193,7 +126201,7 @@
    "over_bar": 276,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 8668,
-   "test_files": 2361
+   "test_files": 2362
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -181546,6 +181554,14 @@
     },
     {
      "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/handler/residence_touch_retry_tests.rs",
+     "purpose": "A residence touch the home withdrew is asked again on a fresh socket, at most three times in all…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/handler/root_updates.rs",
@@ -194886,7 +194902,7 @@
     },
     "handler": {
      "entry": "crates/oneiron-server/src/handler/mod.rs",
-     "files": 51,
+     "files": 52,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -195424,7 +195440,7 @@
    "over_bar": 72,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 2232,
-   "test_files": 635
+   "test_files": 636
   },
   "oneiron-setting-contract": {
    "files": [
