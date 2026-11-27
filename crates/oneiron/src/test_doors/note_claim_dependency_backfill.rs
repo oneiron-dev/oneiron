@@ -21,6 +21,24 @@ pub fn forget_note_claim_dependencies(vault: &Vault, claim: EntityId) -> Result<
     })
 }
 
+/// Records that `note` was written from `source`, so deleting `source`
+/// withdraws `note` (its stale mark) through the dependent walk.
+pub fn record_note_source_dependency(
+    vault: &Vault,
+    note: EntityId,
+    source: EntityId,
+) -> Result<()> {
+    vault.with_write_txn_grouped(|txn| {
+        crate::ports::record_derived_edge_in_txn(&vault.store, txn, &note, &source)
+    })
+}
+
+/// Whether `id` carries the dependent walk's stale mark.
+pub fn stale_marked(vault: &Vault, id: EntityId) -> Result<bool> {
+    let txn = vault.store.env.read_txn()?;
+    crate::ports::stale_in_txn(&vault.store, &txn, &id)
+}
+
 /// Deletes the backfill marker so the next open runs the pass again.
 pub fn reset_note_claim_dependency_backfill(vault: &Vault) -> Result<()> {
     vault.with_write_txn_grouped(|txn| {

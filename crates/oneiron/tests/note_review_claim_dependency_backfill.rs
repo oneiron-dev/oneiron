@@ -14,7 +14,8 @@ use oneiron::store::GateDecisionId;
 use oneiron::temporal::TimeRange;
 use oneiron::test_doors::note_claim_dependency_backfill::{
     forget_note_claim_dependencies, note_claim_dependency_backfill_counts,
-    plant_bare_hard_delete_marker, reset_note_claim_dependency_backfill, write_claim_citing_refs,
+    plant_bare_hard_delete_marker, record_note_source_dependency,
+    reset_note_claim_dependency_backfill, stale_marked, write_claim_citing_refs,
 };
 use oneiron::test_doors::note_review_pass::{note_review_seen, review_notes_once};
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig, WriteActor};
@@ -26,13 +27,15 @@ struct Fixture {
     owner: WriteActor,
     proof: AuthenticatedOwner,
     dir: tempfile::TempDir,
+    keystore: Arc<oneiron_keystore::MemoryKeystore>,
 }
 
 impl Fixture {
     fn new() -> Self {
         let dir = tempfile::tempdir().expect("temporary vault directory");
         let vault = Vault::open(dir.path(), VaultConfig::device()).expect("open the vault");
-        vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
+        let keystore = Arc::new(oneiron_keystore::MemoryKeystore::new());
+        vault.install_device_keystore(Arc::clone(&keystore));
         vault
             .prepare_install_signing()
             .expect("install signing keys");
@@ -72,21 +75,25 @@ impl Fixture {
             owner: WriteActor::new(owner, EdgeActorClass::Human),
             proof,
             dir,
+            keystore,
         }
     }
 
     /// Drops the vault and opens the same directory again, reinstalling the
-    /// keystore and the owner credentials the next step needs.
+    /// same device keystore (a restart keeps it, as
+    /// tests/agent_grant_backfill.rs does) and the owner credentials the
+    /// next step needs.
     fn reopen(self) -> Self {
         let Fixture {
             vault,
             owner: _,
             proof: _,
             dir,
+            keystore,
         } = self;
         drop(vault);
         let vault = Vault::open(dir.path(), VaultConfig::device()).expect("reopen the vault");
-        vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
+        vault.install_device_keystore(Arc::clone(&keystore));
         vault
             .prepare_install_signing()
             .expect("install signing keys");
@@ -109,6 +116,7 @@ impl Fixture {
             owner: WriteActor::new(owner, EdgeActorClass::Human),
             proof,
             dir,
+            keystore,
         }
     }
 
@@ -310,4 +318,39 @@ fn the_backfill_runs_once() {
         first, second,
         "a second open leaves the backfill counts unchanged"
     );
+}
+
+#[test]
+fn an_old_claim_whose_note_is_stale_is_withdrawn() {
+    let f = Fixture::new();
+    let (note, claim) = f.review_new_note();
+    forget_note_claim_dependencies(&f.vault, claim).expect("strip the CLAIM's dependency");
+    let source = f
+        .vault
+        .create_note("observation", "Mira Vale lent the lantern list.", f.owner)
+        .expect("the owner creates the NOTE's source");
+    record_note_source_dependency(&f.vault, note, source).expect("the NOTE depends on its source");
+    assert!(
+        f.vault
+            .delete_entity(&source)
+            .expect("soft delete the source")
+    );
+    assert!(
+        stale_marked(&f.vault, note).expect("read the NOTE's stale mark"),
+        "deleting its source did not withdraw the NOTE"
+    );
+    assert!(
+        f.vault.get_claim(&claim).expect("read the CLAIM").is_some(),
+        "the CLAIM does not read before the backfill"
+    );
+    reset_note_claim_dependency_backfill(&f.vault).expect("reset the backfill marker");
+    let f = f.reopen();
+    assert!(
+        f.vault.get_claim(&claim).expect("read the CLAIM").is_none(),
+        "the backfill left an old CLAIM whose NOTE is stale"
+    );
+    let counts = note_claim_dependency_backfill_counts(&f.vault)
+        .expect("read the backfill counts")
+        .expect("the backfill is complete");
+    assert_eq!(counts[7], 1, "stale_note counts the stale NOTE");
 }

@@ -10,15 +10,18 @@
 //! N1B-DELETED-REF-TYPE = A: a witnessed NOTE plus a removal marker
 //! withdraws; a removed ref with no witness stays live and is counted; an
 //! archived NOTE is counted, never linked nor withdrawn). A stale NOTE (its
-//! own source withdrew it) carries no removal marker and takes no new
-//! dependency, so its CLAIM is left and counted, never a failed open.
+//! own source withdrew it) withdraws the CLAIM too, counted apart, as the
+//! walk does for a CLAIM written after N1 (Engine ANSWER
+//! STALE-SOURCE-OLD-ROWS = A); the registration refuses a stale source, so
+//! linking one would fail the open.
 //!
 //! Marker [`NOTE_CLAIM_DEPENDENCY_BACKFILL`]: `()` key, Raw value. In
 //! progress the value is tag `1`, the last visited CLAIM id (16 bytes) and
 //! the eight counters (each u64 BE); complete it is tag `2` and the eight
 //! counters. Counters in order: scanned, linked, withdrawn, undecodable,
-//! missing_without_marker, deleted_ref_type_unknown, archived, stale_note. A marker
-//! value that does not decode restarts the pass; its effects are idempotent.
+//! missing_without_marker, deleted_ref_type_unknown, archived, stale_note.
+//! A marker value that does not decode restarts the pass; its effects are
+//! idempotent.
 
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -155,7 +158,8 @@ fn decode_state(raw: &[u8]) -> Option<BackfillState> {
 enum NoteRef {
     /// A stored NOTE, neither removed nor archived: link it.
     LiveNote,
-    /// A NOTE that was removed, by a stored header or a deletion witness.
+    /// A NOTE that was removed (a stored header or a deletion witness), or a
+    /// stored NOTE its own source withdrew (stale).
     RemovedNote,
     /// Anything else: counted by kind where the rule counts it.
     Other,
@@ -359,7 +363,7 @@ impl Vault {
             }
             if state.stale {
                 counts.stale_note += 1;
-                return Ok(NoteRef::Other);
+                return Ok(NoteRef::RemovedNote);
             }
             return Ok(NoteRef::LiveNote);
         }
