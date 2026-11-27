@@ -2896,7 +2896,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/resources/restated.rs` | src | s | 4 crate-vis | — | A candidate that restates the Dreamer's own unvetted head is already said (FIX 12043), whether or not the… |
 | `src/dreamer_consolidation/resources/root.rs` | src | s | 8 crate-vis | — | A typed root is a resource origin, not a conversation partition |
 | `src/dreamer_consolidation/resources/signals.rs` | src | m | 12 crate-vis | — | Actor- and branch-filtered graph/vector inputs for mechanical selection |
-| `src/dreamer_consolidation/resources/slices.rs` | src | m | 10 crate-vis | — | Read-only extraction children attenuated from one prepared branch |
+| `src/dreamer_consolidation/resources/slices.rs` | src | m | 11 crate-vis | — | Read-only extraction children attenuated from one prepared branch |
 | `src/dreamer_consolidation/resources/write.rs` | src | m | 1 struct · 2 fn · 20 crate-vis | ScopedConsolidationWrite | Sealed resource handoff |
 | `src/dreamer_consolidation/retained_conflict.rs` | src | m | 1 struct · 4 crate-vis | RetainedAlternative | The candidates an escalated consolidation round dropped, retained on its `conflict.open` marker (OF-023, FIX… |
 | `src/dreamer_consolidation/retained_keep.rs` | src | m | 1 struct · 1 enum · 9 crate-vis | ConflictSettleOutcome, StagedKeep | Keeping a conflict's retained alternative (OF-023, FIX 496): where the Keep lands it, and what a Keep of… |
@@ -2972,10 +2972,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/thing_agent/input.rs` | src | s | 8 crate-vis | — | The owned, framed inputs a thing's agent is lent (FIX 7508): each of the branch's clean extraction slices… |
 | `src/dreamer_consolidation/thing_agent/proposals.rs` | src | s | 9 crate-vis | — | The engine's own record of a thing's agent (FIX 7508): the host parent run of each lease generation, the… |
 | `src/dreamer_consolidation/thing_agent/serve.rs` | src | m | 3 crate-vis | — | The thing pass (FIX 7508): a thing branch's agent, launched, served and collected inside its parent's wake… |
-| `src/dreamer_consolidation/turn_text.rs` | src | L | 31 crate-vis | — | The read-only text of one TURN as a consolidation branch sees it |
+| `src/dreamer_consolidation/turn_text.rs` | src | L | 32 crate-vis | — | The read-only text of one TURN as a consolidation branch sees it |
 | `src/dreamer_consolidation/turn_text/attribution.rs` | src | s | 3 crate-vis | — | Who a projected MESSAGE's words are attributed to (FIX 15412): the `AuthoredBy` binding its author bucket… |
 | `src/dreamer_consolidation/turn_text/compaction_span.rs` | src | s | 5 crate-vis | — | `conversation_check_evidence` (FIX 4465 D): the Dreamer's read of the span a conversation's self-written… |
 | `src/dreamer_consolidation/turn_text/projection.rs` | src | s | 2 crate-vis | — | The exact projection a consolidation branch read of one witnessed TURN (FIX 5755), and a retained citation… |
+| `src/dreamer_consolidation/turn_text/writers.rs` | src | s | 5 crate-vis | — | Whom the extraction transcript labels beside a person TURN's role: an imported turn's source speaker (FIX… |
 | `src/dreamer_consolidation/value_projection.rs` | src | s | 2 crate-vis | — | Data projection between extraction/merge JSON and claim MessagePack values |
 | `src/dreamer_consolidation/wake_plan.rs` | src | m | 2 struct · 29 crate-vis | PreparedConsolidationAttempt, PreparedWake | One frozen read revision and exact preparation of queued consolidation work |
 | `src/dreamer_consolidation/wake_plan/chunk_identity.rs` | src | s | 4 crate-vis | — | A sibling chunk's identity (FIX 7488): the parent its source attempt is queued under, its branch, and the… |
@@ -6881,6 +6882,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/side_table/raw_reverse.rs` | src | s | 1 crate-vis | — | Descending raw side rows for readers that retain malformed values as facts |
 | `src/side_table/row_classes.rs` | src | s | 1 enum · 1 crate-vis | StorageTier | What a checkpoint does with each side table, written on the table's row (core split slice 1): the storage… |
 | `src/side_table/tests.rs` | test | L | — | — | — |
+| `src/side_table/tests/residue.rs` | test | m | — | — | — |
 | `src/skill/call.rs` | src | m | 1 fn · 2 re-export · 6 crate-vis | — | Callable skill execution through the caller's existing sandbox runtime and host |
 | `src/skill/call/answer.rs` | src | s | 1 struct · 2 fn · 4 crate-vis | CallableSkillAnswer | A callable skill's answer, spooled to disk as it streams and checked against its return contract as it is… |
 | `src/skill/call/frozen.rs` | src | m | 2 fn · 1 re-export · 4 crate-vis | — | Frozen callable cases (FIX 12093) |
@@ -8490,7 +8492,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/dreamer_attempt_binding.rs` | src | s | 1 struct · 7 fn · 4 const | ObservedStrengthClaim | Admitted strength and conflict-settlement attempts for bound job clients |
 | `src/test_doors/dreamer_context_refusal.rs` | src | s | 1 fn | — | Doors for `tests/dreamer_context_refusal_settles.rs` (a Dreamer step the provider refuses for its context… |
 | `src/test_doors/dreamer_exclusion_forgets.rs` | src | s | 1 fn | — | Doors for `tests/setting_dreamer_1.rs`: the sets the `dreamer.excluded_conversations` hook asked the… |
-| `src/test_doors/dreamer_extraction_room.rs` | src | m | 1 struct · 4 fn | RoomSliceCall | Door for `tests/dreamer_extraction_room.rs` (FIX DREAMER-EXTRACTION-INPUT-UNBOUNDED-BY-WINDOW): one real… |
+| `src/test_doors/dreamer_extraction_room.rs` | src | m | 1 struct · 1 enum · 6 fn | RoomSliceCall, TurnWriter | Door for `tests/dreamer_extraction_room.rs` (FIX DREAMER-EXTRACTION-INPUT-UNBOUNDED-BY-WINDOW): one real… |
 | `src/test_doors/dreamer_extraction_schema.rs` | src | s | 4 fn | — | Door for `tests/dreamer_extraction_answer_schema.rs` (HOUSE-SCHEMA): the shipped TURN extraction answer… |
 | `src/test_doors/dreamer_partition_window.rs` | src | m | 1 struct · 4 fn | WindowFinish | Door for `tests/dreamer_window_finish_order.rs` (FIX 21927): one real Meso wake window whose second slot can… |
 | `src/test_doors/dreamer_promotion_seconds.rs` | src | s | 2 struct · 5 fn · 1 crate-vis | PendingStamps, PromotionRun | Doors for `tests/dreamer_promotion_seconds.rs` (UC-03 PR 0a; FIX GATE-ROW-CREATED-AT-MILLISECONDS… |
@@ -9935,6 +9937,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/dreamer_extraction_parse_retry.rs` | test | m | — | — | [EXTRACTION-JSON-PARSE-RETRY-PROMPT-LOOKUP-OFF]: one Micro wake over one witnessed TURN |
 | `tests/dreamer_extraction_room.rs` | test | m | — | — | FIX DREAMER-EXTRACTION-INPUT-UNBOUNDED-BY-WINDOW: the main claim extraction call's input is sized by the… |
 | `tests/dreamer_meso_width.rs` | test | s | — | — | FIX 21927 P2: the lead's DREAMER-WIDTH ruling (13 Nov 2026) lets clean Generated Dreamer priors run wide… |
+| `tests/dreamer_native_turn_writer_label.rs` | test | s | — | — | FIX DREAMER-NATIVE-PERSON-TURN-UNATTRIBUTED (ARCH-0043:37): a native person TURN shows its writer's PERSON… |
 | `tests/dreamer_pace_settings.rs` | test | m | — | — | The Dreamer's paces as the owner's Setting keys (restriction wave 14, C104 + C105; owner 16 Nov 00:44… |
 | `tests/dreamer_promotion_seconds.rs` | test | s | — | — | UC-03 PR 0a (FIX GATE-ROW-CREATED-AT-MILLISECONDS, DREAMER-RUN-NOW-MS-INTO-SECONDS-PARAMS): a Dreamer run's… |
 | `tests/dreamer_signed_claim_recall.rs` | test | s | — | — | FIX row DREAMER-MESO-CLAIM-RECALL-MISS: a belief the Dreamer lands is signed by the engine's MACHINE writer… |
