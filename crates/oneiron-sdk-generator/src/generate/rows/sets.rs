@@ -32,6 +32,8 @@ const HOST_FLAGS: &[&str] = &[
 ];
 /// The keys a run row may hold beside its required ones, and the required ones.
 const RUN_OPTIONAL: &[&str] = &[
+    "description",
+    "example",
     "output",
     "outputs_by_input",
     "host",
@@ -42,7 +44,7 @@ const RUN_OPTIONAL: &[&str] = &[
 /// The agent powers a run row may name as its requirement.
 const POWERS: &[&str] = &["spawn", "save_agent"];
 const RUN_REQUIRED: &[&str] = &["name", "input", "scope", "context", "effect", "act_class"];
-/// A scoped-child row's keys, `description` aside.
+/// A scoped-child row's keys, `description` and `example` aside.
 const SCOPED_CHILD_KEYS: &[&str] = &[
     "name",
     "input",
@@ -272,7 +274,7 @@ fn check_scoped_child(row: &Dict) -> Result<(), GenerateError> {
     let keys: BTreeSet<&str> = row
         .keys()
         .map(String::as_str)
-        .filter(|&key| key != "description")
+        .filter(|&key| !matches!(key, "description" | "example"))
         .collect();
     let bad = !keys_are(&keys, SCOPED_CHILD_KEYS)
         || !item_in(row, "scope", &["Read", "Write"])?

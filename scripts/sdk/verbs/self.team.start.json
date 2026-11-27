@@ -1,5 +1,6 @@
 {
   "name": "self.team.start",
+  "description": "Starts a team run under a coordination pattern, spawns its members as children of the leader, and returns the same team for the same key.",
   "input": "crate::team::TeamStartInput",
   "output": "crate::team::TeamRunAnswer",
   "scope": "Write",

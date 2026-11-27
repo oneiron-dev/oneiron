@@ -1,0 +1,12 @@
+{
+  "vault": "the shared memory: records, claims, notes, projects, mail, code, settings",
+  "self": "your own faculties: board, inbox, browser, desktop, diary, grants, secrets",
+  "ai": "model calls: chat, embed, image, speech, transcribe, voice, video",
+  "tasks": "TASK cards: create, accept, answer, update, wait",
+  "calendar": "calendar connector, ICS feeds and invites",
+  "graph_fs": "the vault read as a file tree",
+  "connector": "tools of outside services: list them, read a schema, call",
+  "reveal": "ask to reveal a withheld handle's value",
+  "host": "the host's own upkeep: budgets, compaction, wake",
+  "feedback": "feedback to a report's publisher"
+}

@@ -1,5 +1,6 @@
 {
   "name": "vault.decisions.asks.climb",
+  "description": "Moves one open decision ask to the next role with a live holder, or leaves it where it is if no eligible role remains.",
   "input": "crate::receipt::DecisionAskClimbRequest",
   "output": "Option<crate::llm::decision::ResolvedRole>",
   "call": "crate::task_verb::sdk::host_only(memory, \"vault.decisions.asks.climb\", &input)?",

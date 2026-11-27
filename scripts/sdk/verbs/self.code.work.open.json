@@ -1,5 +1,6 @@
 {
   "name": "self.code.work.open",
+  "description": "Opens a private work view of grant-readable files from the attached merge queue's green revision.",
   "input": "crate::memory::repo_doors::RepoWorkOpenInput",
   "output": "crate::memory::repo_doors::RepoWorkOpenOutput",
   "scope": "Write",

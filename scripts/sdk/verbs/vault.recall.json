@@ -1,6 +1,7 @@
 {
   "name": "vault.recall",
   "description": "Recalls ranked memories under the caller scope; selected retained foreign worlds carry staleness metadata; a format renders within token_budget, else the reader_agent_ref profile window, else 4,000 tokens.",
+  "example": "const items = await vault.recall({ query: \"Granite drafter D1 result\", limit: 8 }).then(result => \"items\" in result ? result.items : []);",
   "input": "RecallRequest",
   "output": "crate::memory::MemoryPack",
   "call": "crate::task_verb::sdk::recall_unembedded(memory, input)?",

@@ -1,6 +1,7 @@
 {
   "name": "self.actor",
   "description": "The actor the caller's credential binds, its class, and the person it acts for, as entity refs a claim or note can take as its subject; reads nothing else.",
+  "example": "const me = await self.actor({});",
   "input": "crate::task_verb::sdk::EmptyRequest",
   "output": "crate::task_verb::sdk::SelfActorRefs",
   "call": "crate::task_verb::sdk::host_only(memory, \"self.actor\", &input)?",

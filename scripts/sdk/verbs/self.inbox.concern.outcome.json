@@ -1,5 +1,6 @@
 {
   "name": "self.inbox.concern.outcome",
+  "description": "Marks a concern card confirmed, dismissed, or unresolved, keeping a review receipt and treating only a live owner's verdict as an anchored evaluator outcome.",
   "input": "crate::dreamer_runner::maintenance::agent_health::ConcernOutcomeRequest",
   "output": "crate::dreamer_runner::maintenance::agent_health::ConcernCardSummary",
   "call": "memory.concern_outcome(&input)?",

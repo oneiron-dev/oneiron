@@ -1,5 +1,6 @@
 {
   "name": "vault.guests.revoke",
+  "description": "Revokes one guest grant as the vault owner, ends its pacts, and can request courtesy deletion from the named peer.",
   "input": "crate::task_verb::sdk::GuestRevokeRequest",
   "output": "crate::receipt::GuestRevokeResponse",
   "call": "crate::task_verb::sdk::revoke_guest_embedded(memory, input)?",

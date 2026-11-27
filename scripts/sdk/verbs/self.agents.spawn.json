@@ -1,5 +1,6 @@
 {
   "name": "self.agents.spawn",
+  "description": "Queues a child agent under the caller's leased run from its stated need and briefing, either directly or through the planner, under an intent key.",
   "input": "crate::code_run::AgentSpawnInput",
   "output": "crate::code_run::AgentSpawnOutput",
   "scope": "Write",

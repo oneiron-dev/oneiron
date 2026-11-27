@@ -1,6 +1,7 @@
 {
   "name": "vault.hydrate",
   "description": "Returns the found records for short refs or hex ids, the read's receipt, and a list of the refs it did not find.",
+  "example": "await vault.hydrate({ refs: items.map(i => i.short_id) });",
   "uniffi": {
     "args": {
       "refs": "Vec<String>"

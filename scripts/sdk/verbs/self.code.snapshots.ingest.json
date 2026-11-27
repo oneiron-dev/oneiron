@@ -1,5 +1,6 @@
 {
   "name": "self.code.snapshots.ingest",
+  "description": "Ingests the commit named by an admitted full Git ref as a snapshot of grant-readable paths.",
   "input": "crate::memory::repo_doors::RepoSnapshotsIngestInput",
   "output": "crate::memory::repo_doors::RepoSnapshotsIngestOutput",
   "scope": "Write",

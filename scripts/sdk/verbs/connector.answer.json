@@ -1,5 +1,6 @@
 {
   "name": "connector.answer",
+  "description": "Answers the questions pending on one of the caller's connector calls under the original grant and returns the connector's next questions or result.",
   "input": "crate::task_verb::sdk::ConnectorAnswerRequest",
   "output": "crate::task_verb::sdk::ConnectorCallReply",
   "scope": "Write",

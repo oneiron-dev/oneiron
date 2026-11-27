@@ -1,5 +1,6 @@
 {
   "name": "vault.questions.pause",
+  "description": "Pauses or resumes one of the caller's standing questions.",
   "input": "crate::receipt::QuestionPauseRequest",
   "output": "crate::receipt::QuestionPaused",
   "call": "crate::task_verb::sdk::host_only(memory, \"vault.questions.pause\", &input)?",
