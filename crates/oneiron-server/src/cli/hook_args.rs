@@ -127,7 +127,8 @@ pub struct HookRecallArgs {
     #[arg(long, default_value_t = 8)]
     pub limit: usize,
 
-    /// Recall this instead of the project's name (or the prompt).
+    /// The task's words to recall at start (on `prompt`, in place of the prompt); only lines
+    /// that clear the owner's relevance bar are given. A start with none recalls nothing.
     #[arg(long)]
     pub query: Option<String>,
 

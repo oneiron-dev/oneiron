@@ -5,9 +5,11 @@
 //!
 //! - `session-start` binds a vault ([`bind`]), prints one line naming it,
 //!   which also gives the bind command when no project is bound to the
-//!   session's folder ([`recall::folder_unbound`]), and recalls a short block
-//!   for the project ([`recall`]).
-//! - `prompt` recalls a short block for the prompt from the bound vault.
+//!   session's folder ([`recall::folder_unbound`]). Given the task's words
+//!   (`--query`), it pushes the lines that clear the owner's start bar, at most
+//!   3 ([`recall`]); keyed on nothing but the folder, it recalls nothing.
+//! - `prompt` pushes the lines for the prompt that clear the owner's carrier
+//!   bar, from the bound vault.
 //! - `hand-over` queues the session's log for the running `serve` to import,
 //!   or sends it to the selected hosted vault every start of the session
 //!   bound and recorded ([`hand_over`], [`session_binding`]).
@@ -54,6 +56,7 @@ use std::process::{Child, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
 use oneiron::ingest::history::HistorySource;
+use oneiron::memory::RecallSource;
 use serde_json::{Map, Value};
 
 use self::bind::HandOverTarget;
@@ -65,7 +68,6 @@ use crate::cli::{HookArgs, HookBindArgs, HookEvent, HookHandOverArgs, HookHost, 
 /// The most of the host's event read from stdin.
 const MAX_EVENT_BYTES: u64 = 1 << 20;
 /// How long the project's git root may take to find.
-const GIT_TIMEOUT: Duration = Duration::from_secs(2);
 /// The longest first line of a Codex rollout read for its meta, which holds
 /// the session's base instructions: tens of KiB.
 const MAX_ROLLOUT_META_BYTES: u64 = 4 << 20;
@@ -186,28 +188,35 @@ fn session_start(host: HookHost, args: &HookRecallArgs) -> Vec<String> {
     {
         line.push_str(&unbound_folder_words(&url));
     }
-    let query = args.query.clone().unwrap_or_else(|| {
-        folder
-            .as_deref()
-            .map_or_else(String::new, |dir| project_name(dir, deadline))
-            .replace(['-', '_'], " ")
-    });
-    if !query.trim().is_empty() {
-        let recall = recall::Recall {
-            host,
-            oneiron: &oneiron,
-            url: &url,
-            auth,
-            workspace: folder.as_deref(),
-            query: &query,
-            limit: args.limit,
-            effort: args.effort,
-            deadline,
-        };
-        said.extend(recall.block(&format!(
+    // A start keyed on nothing but the folder's name recalls nothing: on such a query no
+    // relevance bar separates true lines from traps (RECALL-AB-THRESHOLD-DATA, 26 Nov: a true
+    // note at 0.416 under two traps at 0.428 and 0.419). Given the task's words, the start
+    // pushes what clears the owner's start bar (RECALL-CARRIER-THRESHOLD).
+    let Some(query) = args
+        .query
+        .as_deref()
+        .filter(|query| !query.trim().is_empty())
+    else {
+        return said;
+    };
+    let recall = recall::Recall {
+        host,
+        oneiron: &oneiron,
+        url: &url,
+        auth,
+        workspace: folder.as_deref(),
+        query,
+        limit: args.limit,
+        effort: args.effort,
+        deadline,
+        bar: RecallSource::Start,
+    };
+    said.extend(recall.block(
+        &format!(
             "From your Oneiron vault, for \"{query}\" (recalled at session start; may be dated):"
-        )));
-    }
+        ),
+        &recall::query_lead(query),
+    ));
     said
 }
 
@@ -270,8 +279,20 @@ fn prompt(host: HookHost, args: &HookRecallArgs) -> Vec<String> {
         limit: args.limit,
         effort: args.effort,
         deadline,
+        bar: RecallSource::Carrier,
     };
-    recall.block("From your Oneiron vault, for this prompt (may be dated):")
+    let lead = match args
+        .query
+        .as_deref()
+        .filter(|given| !given.trim().is_empty())
+    {
+        Some(_) => recall::query_lead(&query),
+        None => "From your Oneiron vault, for this prompt".to_owned(),
+    };
+    recall.block(
+        "From your Oneiron vault, for this prompt (may be dated):",
+        &lead,
+    )
 }
 
 /// Whom a recall from the vault bound runs as: the hosted vault step 3
@@ -493,38 +514,6 @@ fn codex_rollout_start(event: &Map<String, Value>) -> EarlierTurns {
         }
         _ => EarlierTurns::Own,
     }
-}
-
-/// The git repository's folder name, else the working directory's.
-fn project_name(cwd: &Path, deadline: Instant) -> String {
-    let top = git_top(cwd, deadline).unwrap_or_else(|| cwd.to_path_buf());
-    top.file_name()
-        .map_or_else(String::new, |name| name.to_string_lossy().into_owned())
-}
-
-fn git_top(cwd: &Path, deadline: Instant) -> Option<PathBuf> {
-    let deadline = deadline.min(Instant::now() + GIT_TIMEOUT);
-    if Instant::now() >= deadline {
-        return None;
-    }
-    let mut child = oneiron_spawn::command("git")
-        .arg("-C")
-        .arg(cwd)
-        .args(["rev-parse", "--show-toplevel"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .ok()?;
-    let Some(status) = wait_until(&mut child, deadline) else {
-        let _ = child.kill();
-        let _ = child.wait();
-        return None;
-    };
-    let mut top = String::new();
-    child.stdout.take()?.read_to_string(&mut top).ok()?;
-    let top = top.trim();
-    (status.success() && !top.is_empty()).then(|| PathBuf::from(top))
 }
 
 fn deadline(timeout: f64) -> Instant {

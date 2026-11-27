@@ -5,8 +5,8 @@ if you want it. You make no calls by hand:
 
 | Claude Code event | Hook | What happens |
 |---|---|---|
-| `SessionStart` (start, resume, `/clear`, after a compaction) | `session-start` | The session binds a vault and is told which in one line. Claude Code adds it to the session's context. The plugin and the snippet below recall nothing at start (`--query " "`), until start recall has a relevance threshold ([How it works](#how-it-works)). |
-| `UserPromptSubmit` (only if you add it) | `prompt` | A short recall for what you just asked, from the bound vault. |
+| `SessionStart` (start, resume, `/clear`, after a compaction) | `session-start` | The session binds a vault and is told which in one line. Claude Code adds it to the session's context. Given the task's words (`--query "<words>"`), it is also given the lines that clear your relevance bar, at most 3; keyed on nothing but the folder, it recalls nothing. The plugin and the snippet below pass `--query " "` ([How it works](#how-it-works)). |
+| `UserPromptSubmit` (only if you add it) | `prompt` | The lines for what you just asked that clear your relevance bar, at most 3, from the bound vault. |
 | `PreCompact` | `hand-over` | The session's log is queued for import before compaction drops it from context. |
 | `Stop` (each time Claude finishes a reply) | `hand-over` | The log is queued again; the import lands only what is new. |
 | `SessionEnd` | `hand-over` | A last queue, for a session that ended mid-reply. |
@@ -35,7 +35,7 @@ oneiron@oneiron` in place of step 1 of [Remove it](#remove-it).
 ```
 Claude Code ──SessionStart──▶ oneiron hook session-start ──▶ bind a vault (below)
                                                        ──▶ oneiron mcp ──▶ serve: vault.recall
-                                                           (not with a blank --query)
+                                                           (only with --query "<words>")
             ◀── stdout: the vault's line and any recalled lines, added to context
 
 Claude Code ──Stop/PreCompact/SessionEnd──▶ oneiron hook hand-over
@@ -46,23 +46,35 @@ Claude Code ──Stop/PreCompact/SessionEnd──▶ oneiron hook hand-over
 ```
 
 - **Recall** goes through `oneiron mcp` with the hooks' own read-only
-  credential. By default it calls `vault.recall` at the `light` effort: no model
-  call and no embedding, so it is fast and costs nothing. `--effort medium`
-  embeds the query on the server's embedder, so a session finds what it
-  worked on in other words; `high`, `xhigh` and `max` also rerank on the
-  reranker the server's `[models]` routes, under the server's own budget
-  (see [run-with-models.md](run-with-models.md#8-the-reranker)). A server that
-  does not list `vault.recall` gets `memory.query` instead (on the one-space
-  preset it embeds the query through the text slot's declared space when it
-  can, and otherwise answers lexically). The query is
-  the project's name: the git repository's folder name, or the working
-  directory's.
-- **No recall at start, for now.** Start recall has no relevance threshold
-  yet, and lines that miss the session's work are worse than none. So the
-  plugin and the snippet below pass `--query " "`: a blank query binds the
-  vault, records the session and calls no tool. Claude recalls through the
-  MCP tools when the work needs it. To recall at start anyway, drop
-  `--query " "` (the project's name) or give `--query "<words>"`.
+  credential. It calls `vault.recall` at the `light` effort (no model call)
+  unless you set `--effort`; `medium` also searches by the query's vector, so
+  a session finds what it worked on in other words; `high`, `xhigh` and `max`
+  also rerank on the reranker the server's `[models]` routes, under the
+  server's own budget (see [run-with-models.md](run-with-models.md#8-the-reranker)).
+  A server that does not list `vault.recall` is asked nothing.
+- **Only lines above your relevance bar.** Lines that miss the session's work
+  are worse than none, so every hook line is judged by your bar before the
+  result is cut: a line under it takes no slot, at most 3 lines are given, only
+  from the session's project, and nothing when none clears it. The score is the
+  raw cosine of the line's vector and the query's in your vault's embedding
+  space (the server embeds the query once for it, at any effort), never a rank.
+  Set the bar per hook with the settings `recall.bar.start` (session start) and
+  `recall.bar.carrier` (each prompt), per harness (the item, `claude-code`) and
+  per project (a project's row overrides the vault's). The default, `measured`,
+  is a cosine of 0.52 in pplx-embed-v1-0.6b's space, where it was measured;
+  in any other space it gives nothing until you set a floor
+  (`{"cosine": {"floor": 0.6, "model": "<org/name@revision>"}}`), and on a
+  vault with no embedder it gives a line holding a rare word of the query, or
+  every word of it. `open` gives every line, `quiet` none. Each line kept says
+  its `similarity`. To be told in one line when nothing cleared the bar, set
+  `recall.bar.empty_receipt` to true for the harness; by default the hook says
+  nothing.
+- **No recall at start, unless you give the task's words.** A start keyed on
+  nothing but the folder's name recalls nothing: on a folder's name no bar
+  separates the lines you need from the ones that mislead. The plugin and the
+  snippet below pass `--query " "`: a blank query binds the vault, records the
+  session and calls no tool. Claude recalls through the MCP tools when the work
+  needs it. To be given lines at start, give `--query "<words>"`.
 - **Write-back** needs no credential. `--queue` leaves one file that names the
   session's log in the vault's import queue. A running `serve` imports it
   within seconds. It is the same import as `oneiron import claude-code` with the
@@ -400,7 +412,9 @@ folder Claude Code runs in. Then:
   the session's folder, whether a project is bound there (`initialize` answers
   `project_bound` under `_meta["oneiron/workspace"]`, naming no project).
 - The hook's own recalls (at start when it has a query, and on each prompt)
-  pass `--workspace` with the session's folder, so they read its project too.
+  pass `--workspace` with the session's folder, so they read its project too,
+  and your bar is read at that project. In a folder with no project bound
+  they give nothing.
 - A read that names its projects (`project_refs` on `vault.recall`,
   `vault.claims.list_filtered`, `vault.claims.read_filtered`) reads those,
   within what the credential reads anyway.
@@ -515,7 +529,8 @@ vault, and no recalled lines ([No recall at start](#how-it-works)).
 To recall for each prompt as well, add a `UserPromptSubmit` entry running
 `/path/to/oneiron hook --host claude-code prompt --credential-file
 /path/to/claude-code-hooks.cred`. It recalls at the `light` effort unless
-you set `--effort`, and prints nothing when it finds nothing.
+you set `--effort`, gives only the lines that clear `recall.bar.carrier`, and
+prints nothing when none does.
 
 ### Next to your other hooks
 
@@ -574,9 +589,10 @@ What the hooks already imported stays in your vault, like any import.
   A larger one, the session's or a subagent's, is left out with a
   `log_too_large` warning in `serve`'s log, and the rest of the session
   lands.
-- `--query "<words>"` on `session-start` recalls those words instead of the
-  project's name (on `prompt`, instead of the prompt). A blank one
-  (`--query " "`, as the plugin passes) recalls nothing.
+- `--query "<words>"` on `session-start` gives the lines for those words that
+  clear your start bar (on `prompt`, the words instead of the prompt). With no
+  `--query`, or a blank one (`--query " "`, as the plugin passes), the start
+  recalls nothing.
 - `--effort <light|medium|high|xhigh|max>` on `session-start` picks recall's
   effort; it stays `light` unless you set it. Above light the server embeds
   the query first, and a model that is still loading leaves recall on its
