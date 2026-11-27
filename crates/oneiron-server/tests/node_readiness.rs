@@ -570,6 +570,35 @@ fn an_owner_offer_or_a_withheld_list_change_checks_at_the_next_tick() {
     rig.assert_driver_failure(&jobs);
 }
 
+#[test]
+fn a_withheld_list_that_is_not_a_regular_file_never_blocks_the_tick() {
+    let rig = OfferFixture::new();
+    let jobs = rig.open();
+    fs::remove_file(&rig.withheld_file).expect("remove the withheld list");
+    let made = oneiron_spawn::command("mkfifo")
+        .arg(&rig.withheld_file)
+        .status()
+        .expect("mkfifo");
+    assert!(made.success(), "mkfifo");
+
+    let slots = Arc::clone(&rig.slots);
+    let now_ms = rig.fixture.node.clock.wall_ms();
+    let (finished, outcome) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        jobs.tick();
+        let _ = finished.send(slots.availability(now_ms));
+    });
+    let error = outcome
+        .recv_timeout(Duration::from_secs(20))
+        .expect("the tick and availability returned without a writer on the FIFO")
+        .expect_err("a FIFO is not a valid withheld list");
+    let expected = format!("{}: not a regular file", rig.withheld_file.display());
+    assert!(
+        matches!(&error, GpuProbeError::WithheldUnreadable { reason } if reason == &expected),
+        "{error}"
+    );
+}
+
 /// Another booker taking the GPU is not a failure: its process computes on
 /// the GPU, and the GPU joins the withheld list. The check that change
 /// makes due reads the GPU as withheld, not busy, passes, and leaves the
@@ -799,6 +828,45 @@ fn a_change_while_an_attempt_runs_is_checked_at_the_first_idle_tick() {
     assert_eq!(jobs.readiness(), first);
     assert_eq!(fixture.node.devices.drained(), None);
 
+    fixture.node.units.exit(key, 0);
+    jobs.tick();
+    wait_for(&jobs, key, |entry| entry.state == JobState::Ended);
+    let idle = jobs.readiness();
+    assert_eq!(idle.state, not_ready(ReadinessCheck::Devices, DRIVER_DOWN));
+    assert_eq!(idle.checked_at_ms, Some(NOW_MS + 1_000));
+    assert_eq!(idle.results.len(), 2);
+    assert!(fixture.node.devices.drained().is_some());
+}
+
+#[test]
+fn a_change_that_goes_back_while_an_attempt_runs_is_still_checked_at_the_first_idle_tick() {
+    let fixture = fixture();
+    let jobs = fixture.node.open();
+    jobs.tick();
+    let first = jobs.readiness();
+    assert_eq!(first.state, ReadinessState::Ready);
+    assert_eq!(first.results.len(), 1);
+
+    let key = "job-q4/offer-goes-back-while-running";
+    fixture.run(&jobs, key);
+    fixture.node.admission.set_controls(NodeControls {
+        enabled: true,
+        paused: Some("paused at the box".to_owned()),
+        ..NodeControls::default()
+    });
+    fixture.node.clock.advance_ms(1_000);
+    jobs.tick();
+    assert_eq!(jobs.readiness(), first);
+    assert_eq!(fixture.node.devices.drained(), None);
+
+    fixture.node.admission.set_controls(NodeControls {
+        enabled: true,
+        ..NodeControls::default()
+    });
+    fixture
+        .node
+        .devices
+        .set_idle_probe_failure(Some(DRIVER_DOWN));
     fixture.node.units.exit(key, 0);
     jobs.tick();
     wait_for(&jobs, key, |entry| entry.state == JobState::Ended);

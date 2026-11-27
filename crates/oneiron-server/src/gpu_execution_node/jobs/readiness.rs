@@ -166,11 +166,14 @@ struct ReadinessBook {
     record: ReadinessRecord,
     /// This tracks the last checked offer and does not survive a restart.
     checked_offer: Option<OfferMark>,
+    /// An offer change seen since the last check, kept until a check settles.
+    offer_changed: bool,
 }
 
 impl ReadinessBook {
     fn due(&self, now_ms: u64, every_secs: u64, offer: &OfferMark) -> bool {
-        self.checked_offer.as_ref() != Some(offer)
+        self.offer_changed
+            || self.checked_offer.as_ref() != Some(offer)
             || self.record.readiness.checked_at_ms.is_none_or(|since| {
                 now_ms >= since.saturating_add(every_secs.saturating_mul(1_000))
             })
@@ -218,6 +221,7 @@ impl NodeReadinessShared {
             book: Mutex::new(ReadinessBook {
                 record,
                 checked_offer: None,
+                offer_changed: false,
             }),
             checking: Mutex::new(()),
             incidents: Mutex::new(IncidentLog::open(state_dir)),
@@ -276,6 +280,8 @@ impl NodeJobs {
     /// The readiness step of the tick: records a drain or a clear that
     /// another path made, then, while no attempt runs and a check is due,
     /// runs the check and the DRAIN rule on its result.
+    /// A change seen while an attempt runs is kept and checked at the first
+    /// idle tick, even if the offer has gone back by then.
     ///
     /// The check never runs beside a job's end or release check. Each reads
     /// the devices through root's machine-wide query lock, which refuses a
@@ -301,7 +307,10 @@ impl NodeJobs {
         let offer = OfferMark::of(&snapshot, parts.devices.booker_withheld());
         let now = self.now();
         let mark = {
-            let book = self.shared.readiness.book();
+            let mut book = self.shared.readiness.book();
+            if book.checked_offer.as_ref() != Some(&offer) {
+                book.offer_changed = true;
+            }
             if !book.due(now.wall_ms, settings.readiness_every_secs, &offer) {
                 return;
             }
@@ -375,14 +384,16 @@ impl NodeJobs {
                 ));
             }
         }
-        let launched: BTreeSet<JobKeyId> = self
-            .keys()
-            .into_iter()
-            .filter(|key| key.launch.is_some())
-            .map(|key| key.id)
-            .collect();
+        // List the units first so each listed unit was journaled before its key
+        // is read: launch journals Launching before it starts the unit.
         match parts.units.live_units() {
             Ok(units) => {
+                let launched: BTreeSet<JobKeyId> = self
+                    .keys()
+                    .into_iter()
+                    .filter(|key| key.launch.is_some())
+                    .map(|key| key.id)
+                    .collect();
                 if let Some((id, _)) = units.iter().find(|(id, _)| !launched.contains(id)) {
                     return Err((
                         ReadinessCheck::Units,
@@ -431,6 +442,7 @@ impl NodeJobs {
             readiness.results.drain(..first);
             book.record.mark = Some(ClockMark::of(now));
             book.checked_offer = Some(offer);
+            book.offer_changed = false;
             self.shared.readiness.persist(&book.record);
             check_incident(&before, &book.record.readiness)
         };

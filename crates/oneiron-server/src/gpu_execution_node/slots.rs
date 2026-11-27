@@ -42,6 +42,7 @@
 //! writes no quarantine file.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::io::Read;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use oneiron::job_workload::HeldDevice;
@@ -648,10 +649,26 @@ impl Shared {
         let Some(path) = &self.offer.withheld_file else {
             return Ok(BTreeSet::new());
         };
-        let text =
-            std::fs::read_to_string(path).map_err(|error| GpuProbeError::WithheldUnreadable {
-                reason: format!("{}: {error}", path.display()),
-            })?;
+        let unreadable = |error| GpuProbeError::WithheldUnreadable {
+            reason: format!("{}: {error}", path.display()),
+        };
+        let mut options = std::fs::OpenOptions::new();
+        options.read(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+
+            options.custom_flags(libc::O_NONBLOCK);
+        }
+        let mut file = options.open(path).map_err(unreadable)?;
+        let metadata = file.metadata().map_err(unreadable)?;
+        if !metadata.file_type().is_file() {
+            return Err(GpuProbeError::WithheldUnreadable {
+                reason: format!("{}: not a regular file", path.display()),
+            });
+        }
+        let mut text = String::new();
+        file.read_to_string(&mut text).map_err(unreadable)?;
         Ok(text
             .lines()
             .map(str::trim)
