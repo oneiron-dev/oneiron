@@ -47,8 +47,9 @@ use std::os::unix::fs::{FileTypeExt as _, MetadataExt as _, PermissionsExt as _}
 use std::os::unix::net::UnixListener;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
+use oneiron_server::gpu_execution_node::jobs::JobKeyId;
 use oneiron_server::gpu_execution_node::scope_systemd::device_query::{
     DEVICE_QUERY_LOCK_FILE, DeviceQueryError, DeviceQuerySettings,
 };
@@ -504,6 +505,84 @@ fn a_query_its_kill_cannot_end_holds_the_machines_query_lock_until_it_ends() {
     .expect("readable device lines");
     assert_eq!(devices[0].device_id, CARD);
     handler.join().expect("the handler");
+}
+
+#[test]
+fn a_query_whose_output_passes_the_cap_is_refused_early_and_its_group_ends() {
+    // Reap the orphaned sleep here instead of relying on PID 1. Run only
+    // this test in the subreaper so it adopts no children of other tests.
+    const ISOLATED: &str = "ONEIRON_TEST_DEVICE_QUERY_OUTPUT_CAP";
+    if std::env::var_os(ISOLATED).is_none() {
+        let child = std::process::Command::new(std::env::current_exe().expect("this test binary"))
+            .args([
+                "--exact",
+                "a_query_whose_output_passes_the_cap_is_refused_early_and_its_group_ends",
+                "--nocapture",
+            ])
+            .env(ISOLATED, "1")
+            .output()
+            .expect("run the isolated test");
+        let stdout = String::from_utf8_lossy(&child.stdout);
+        let stderr = String::from_utf8_lossy(&child.stderr);
+        assert!(
+            child.status.success() && stdout.contains("1 passed"),
+            "the isolated test: {stdout}{stderr}"
+        );
+        return;
+    }
+    rustix::process::set_child_subreaper(Some(rustix::process::getpid()))
+        .expect("adopt orphaned query children");
+
+    let dir = private_dir();
+    let settings = settings_in(dir.path(), job_account());
+    let program = write_script(
+        dir.path(),
+        "nvidia-smi-overflow",
+        r#"#!/bin/sh
+sleep 30 &
+echo "$!" > "$(dirname "$0")/overflow.pid"
+head -c 2097152 /dev/zero
+sleep 30
+"#,
+    );
+    // testkit-lint: allow(wall-clock) measures the real query timeout
+    let started = Instant::now();
+    let result = device_query::answer(NvidiaSmiQuery::Devices, &program, &settings);
+    let elapsed = started.elapsed();
+
+    let raw_pid: i32 = std::fs::read_to_string(dir.path().join("overflow.pid"))
+        .expect("the background sleep's pid file")
+        .trim()
+        .parse()
+        .expect("a process id");
+    assert!(raw_pid > 0, "not a process id: {raw_pid}");
+    let pid = rustix::process::Pid::from_raw(raw_pid).expect("a process id");
+    // testkit-lint: allow(wall-clock) bounds the wait for the orphan to exit
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        // SAFETY: a positive PID selects only this child, and a null
+        // status pointer discards its status. It may not be adopted yet.
+        let _ = unsafe { libc::waitpid(raw_pid, std::ptr::null_mut(), libc::WNOHANG) };
+        match rustix::process::test_kill_process(pid) {
+            Err(rustix::io::Errno::SRCH) => break,
+            other => other.expect("check whether the background sleep exists"),
+        }
+        // testkit-lint: allow(wall-clock) the same process-exit deadline
+        let within_deadline = Instant::now() < deadline;
+        assert!(within_deadline, "the background sleep still exists");
+        // testkit-lint: allow(sleep) poll for adoption and exit of a real child
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    let reason = result.expect_err("the query exceeded the output cap");
+    assert!(
+        reason.starts_with("device_query_output_too_long:"),
+        "{reason}"
+    );
+    assert!(
+        elapsed < Duration::from_secs(10),
+        "the query took {elapsed:?}"
+    );
 }
 
 /// What a test puts at the query lock's name in place of the lock install
@@ -983,11 +1062,10 @@ fn install_refuses_an_oneiron_binary_beneath_the_query_locks_directory() {
     assert_eq!(check("/usr/local/bin/oneiron"), Ok(()));
 }
 
-#[test]
-fn a_listener_that_takes_no_connection_holds_the_probe_no_longer_than_its_deadline() {
+/// A full listen queue. Keep both the listener and its queued clients open.
+fn full_queue_listener(dir: &Path) -> (PathBuf, (OwnedFd, Vec<OwnedFd>)) {
     use rustix::net::{AddressFamily, SocketAddrUnix, SocketFlags, SocketType};
-    let dir = tempfile::tempdir().expect("tempdir");
-    let socket = dir.path().join("job-control.sock");
+    let socket = dir.join("job-control.sock");
     let address = SocketAddrUnix::new(&socket).expect("the socket's address");
     // A listener with no accept backlog that never accepts, its queue full.
     let listener =
@@ -1010,6 +1088,13 @@ fn a_listener_that_takes_no_connection_holds_the_probe_no_longer_than_its_deadli
         }
         assert!(waiting.len() < 64, "the queue never filled");
     }
+    (socket, (listener, waiting))
+}
+
+#[test]
+fn a_listener_that_takes_no_connection_holds_the_probe_no_longer_than_its_deadline() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (socket, _guards) = full_queue_listener(dir.path());
     let wait = Duration::from_secs(1);
     let (answered, answer) = std::sync::mpsc::channel();
     let asked = socket.clone();
@@ -1030,7 +1115,33 @@ fn a_listener_that_takes_no_connection_holds_the_probe_no_longer_than_its_deadli
         Ok(other) => panic!("a full queue is no answer in time, got {other:?}"),
         Err(_) => panic!("the probe still waited to connect 5 s past its 1 s deadline"),
     }
-    drop((waiting, listener));
+}
+
+#[test]
+fn a_listener_that_takes_no_connection_holds_a_job_request_no_longer_than_its_deadline() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let (socket, _guards) = full_queue_listener(dir.path());
+    let wait = Duration::from_secs(1);
+    let (answered, answer) = std::sync::mpsc::channel();
+    let asked = socket.clone();
+    std::thread::spawn(move || {
+        let id = JobKeyId::for_key("k");
+        let _ = answered.send(control::request_at(
+            &asked,
+            control::ControlVerb::Stop,
+            &id,
+            wait,
+        ));
+    });
+    let reason = answer
+        .recv_timeout(wait + Duration::from_secs(5))
+        .expect("the job request still waited to connect 5 s past its 1 s deadline")
+        .expect_err("the listener took no connection");
+    assert!(
+        reason.starts_with(&format!("{}: ", socket.display()))
+            && reason.contains("the handler took no connection in time"),
+        "{reason}"
+    );
 }
 
 #[test]
