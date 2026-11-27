@@ -241,7 +241,8 @@ pub(crate) fn archived_side_group(source_table: &str) -> Option<ArchivedSideGrou
         name if name == side_table::SEND_RECEIPT_SUMMARY.name => Some(Group::SendReceipts),
         name if name == side_table::TEAM_RECEIPT.name => Some(Group::Team),
         name if name == side_table::LEGAL_HOLD_ROW.name
-            || name == side_table::LEGAL_HOLD_EVENT.name =>
+            || name == side_table::LEGAL_HOLD_EVENT.name
+            || name == side_table::LEGAL_HOLD_SEALED_RECORD.name =>
         {
             Some(Group::LegalHold)
         }

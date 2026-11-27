@@ -133,6 +133,7 @@ pub(crate) const RETAINED_SUBJECT_RULES: &[(&str, RetainedSubjectRule)] = &[
     ("LEARNING_SETTING", ParsedKey(learning_setting_key_records)),
     ("LEGAL_HOLD_EVENT", Evidence),
     ("LEGAL_HOLD_ROW", Evidence),
+    ("LEGAL_HOLD_SEALED_RECORD", Evidence),
     ("MAIL_PACK_COMPLIANCE_SETTING", NoRecord),
     ("MESSAGE_STREAM_POLICY", NoRecord),
     ("MESSAGE_STREAM_RECEIPT", ONE_ID),

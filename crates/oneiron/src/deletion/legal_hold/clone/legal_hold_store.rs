@@ -197,12 +197,20 @@ impl Drop for HoldCloneFile {
     }
 }
 
+/// What one seal wrote: its captures, and the `Records` capture's id with the record ids it
+/// holds (record targets and the inquiries' kept copy CLAIMs), for the hold's sealed-record rows.
+pub(crate) struct SealedHoldClone {
+    pub(crate) captures: Vec<HoldCloneCapture>,
+    pub(crate) records: Option<(EntityId, Vec<[u8; 16]>)>,
+}
+
 /// Writes one sealed capture per scope kind in `targets` for `hold_id`:
 /// `Records` for its record targets and its inquiries' kept copy CLAIMs,
 /// `Inquiries` for its inquiry targets (ARCH-0038 #company-hold), then the
 /// gate-decision extents for its gate-partition targets. Each capture
 /// streams through a collector in the exact frame format a host receives,
-/// sealed to the hold's own key.
+/// sealed to the hold's own key. Returns what the seal wrote, with the
+/// `Records` capture's members for the hold's sealed-record rows.
 ///
 /// It runs INSIDE the caller's LMDB writer and reads through `txn`, the
 /// writer's own view, so the hold row and its copies commit or roll back
@@ -217,7 +225,7 @@ pub(crate) fn write_hold_clone_in_txn(
     txn: &RoTxn<'_>,
     hold_id: EntityId,
     targets: &[LegalHoldTarget],
-) -> Result<Vec<HoldCloneCapture>> {
+) -> Result<SealedHoldClone> {
     let store = configured(vault)?;
     let vault_id = *vault.vault_id().as_bytes();
     let dir = store.hold_dir(vault, &hold_id);
@@ -235,6 +243,7 @@ pub(crate) fn write_hold_clone_in_txn(
     let secret = hold_secret(vault, &vault_id, &hold_id, &dir)?;
     let public = secret.public_key();
     let mut captures = Vec::new();
+    let mut records: Option<(EntityId, Vec<[u8; 16]>)> = None;
     let mut written: Vec<PathBuf> = Vec::new();
     let outcome = (|| -> Result<()> {
         let mut inquiry_ids: Vec<EntityId> = targets
@@ -278,6 +287,7 @@ pub(crate) fn write_hold_clone_in_txn(
                 Ok((counts, CaptureExtent::Records))
             })?;
             captures.push(capture);
+            records = Some((capture.capture, record_ids));
             written.push(path);
         }
         if let Some(scope) = &inquiries {
@@ -352,7 +362,7 @@ pub(crate) fn write_hold_clone_in_txn(
         }
         return Err(error);
     }
-    Ok(captures)
+    Ok(SealedHoldClone { captures, records })
 }
 
 /// Streams the gate decisions `request`'s scope selects, through the same

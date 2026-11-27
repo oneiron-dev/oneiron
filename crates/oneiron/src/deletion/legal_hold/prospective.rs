@@ -186,6 +186,33 @@ pub(crate) fn prospective_standing_in_txn(store: &Store, txn: &RoTxn<'_>) -> Res
     Ok(STANDINGS.iter_raw_from(store, txn, &[])?.next().is_some())
 }
 
+/// The capture id the hold's next flush lands, which every unflushed sealed entry names; none
+/// once the standing ends.
+pub(crate) fn owner_pending_capture_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    hold: &[u8; 16],
+) -> Result<Option<[u8; 16]>> {
+    Ok(STANDINGS
+        .get(store, txn, &(*hold, 0))?
+        .filter(|standing| standing.owner_hold_dir.is_some())
+        .map(|standing| standing.capture))
+}
+
+/// Rewrites the owner standing's recipient to nothing, so every later seal is Missed.
+#[cfg(oneiron_test_support)]
+pub(crate) fn spoil_owner_recipient_in_txn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    hold: &[u8; 16],
+) -> Result<()> {
+    if let Some(mut standing) = STANDINGS.get(store, wtxn, &(*hold, 0))? {
+        standing.recipient = Vec::new();
+        STANDINGS.put(store, wtxn, &(*hold, 0), &standing)?;
+    }
+    Ok(())
+}
+
 /// Seals the new base MESSAGE row `id`, exactly as this writer just staged
 /// it, to every prospective order standing at the writer's recorded time,
 /// and keeps it in that order's outbox. A seal that fails keeps the user's
@@ -232,6 +259,16 @@ pub(crate) fn seal_prospective_message_in_txn(
                 OutboxEntry::Missed { message }
             }
         };
+        // A sealed owner row names its copy; a Missed entry and a host order put nothing.
+        if standing.owner_hold_dir.is_some() && matches!(entry, OutboxEntry::SealedRow { .. }) {
+            crate::store::legal_hold::sealed_records::put_in_txn(
+                store,
+                wtxn,
+                &key.0,
+                &standing.capture,
+                &[message],
+            )?;
+        }
         append_in_txn(store, wtxn, key, &mut standing, &entry)?;
         STANDINGS.put(store, wtxn, &key, &standing)?;
         sealed_any = true;

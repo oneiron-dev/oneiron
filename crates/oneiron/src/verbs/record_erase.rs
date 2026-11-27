@@ -241,19 +241,31 @@ fn remaining_for_erase(
     let legal_copies_kept: u32 = match owner.revalidate_in_txn(vault, txn) {
         Ok(_) => {
             let now = vault.store.clock.now_recorded_at();
-            crate::store::legal_hold::holds_in_txn(&vault.store, txn)?
-                .into_iter()
-                // Host orders keep no copy in this vault. Customer holds seal each
-                // Record target on placement or widening and name it in clone_captures.
-                // A row from before sealed captures has none and does not count.
-                .filter(|hold| {
-                    hold.stands()
-                        && hold.owner_may_see(now)
-                        && hold.kind == LegalHoldKind::Customer
-                        && !hold.clone_captures.is_empty()
-                        && hold.targets.contains(&LegalHoldTarget::Record(*record))
-                })
-                .fold(0u32, |count, _| count.saturating_add(1))
+            // Host orders keep no copy in this vault; a customer hold counts when its sealed
+            // capture holds the record: an explicit Record target, or a row of
+            // LEGAL_HOLD_SEALED_RECORD (prospective seals, inquiry copy CLAIMs) whose capture
+            // landed or waits in the outbox.
+            let mut kept = 0u32;
+            for hold in crate::store::legal_hold::holds_in_txn(&vault.store, txn)? {
+                if !hold.stands()
+                    || !hold.owner_may_see(now)
+                    || hold.kind != LegalHoldKind::Customer
+                {
+                    continue;
+                }
+                let named = !hold.clone_captures.is_empty()
+                    && hold.targets.contains(&LegalHoldTarget::Record(*record));
+                let sealed = crate::store::legal_hold::sealed_records::kept_copy_in_txn(
+                    &vault.store,
+                    txn,
+                    &hold,
+                    record,
+                )?;
+                if named || sealed {
+                    kept = kept.saturating_add(1);
+                }
+            }
+            kept
         }
         Err(crate::error::Error::Gate(crate::error::GateError::ConsentOwnerNotAuthenticated(
             _,

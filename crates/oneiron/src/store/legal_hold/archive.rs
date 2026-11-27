@@ -1,4 +1,4 @@
-//! The owner restore lands customer hold rows before their history.
+//! The owner restore lands customer hold rows before their history and sealed-record rows.
 
 use std::collections::BTreeMap;
 
@@ -24,6 +24,8 @@ enum DecodedRow {
     Hold(EntityId, LegalHold),
     /// A customer hold event at its archived sequence.
     Event((EntityId, u64), LegalHoldEvent),
+    /// A sealed-record row naming a hold's capture member.
+    SealedRecord(([u8; 16], [u8; 16], [u8; 16])),
 }
 
 /// Decodes each envelope with its owning codec and the shared credential predicate.
@@ -36,6 +38,14 @@ fn decode_row(
         }
         name if name == side_table::LEGAL_HOLD_EVENT.name => {
             decode_archived_row(&EVENTS, row).map(|(key, value)| DecodedRow::Event(key, value))
+        }
+        name if name == side_table::LEGAL_HOLD_SEALED_RECORD.name => {
+            let (key, value) = decode_archived_row(&super::sealed_records::SEALED_RECORDS, row)?;
+            if value.is_empty() {
+                Ok(DecodedRow::SealedRecord(key))
+            } else {
+                Err(InvalidValue)
+            }
         }
         _ => Err(InvalidEncoding),
     }
@@ -167,6 +177,57 @@ pub(crate) fn land_archived_legal_hold_rows_in_txn(
         } else {
             install_archived_row(&EVENTS, vault, txn, permit, &key, &rows[index])?
         };
+    }
+
+    let mut sealed: Vec<_> = decoded
+        .iter()
+        .enumerate()
+        .filter_map(|(index, row)| match row {
+            Ok(DecodedRow::SealedRecord(key)) => Some((*key, index)),
+            _ => None,
+        })
+        .collect();
+    sealed.sort_by_key(|(key, _)| *key);
+    for (key, index) in sealed {
+        let Ok(hold_id) = EntityId::from_bytes(key.0) else {
+            outcomes[index] = HeldBack(InvalidValue);
+            continue;
+        };
+        let Some(primary) = primary_inputs.get(&hold_id) else {
+            outcomes[index] = HeldBack(MissingCompanion);
+            continue;
+        };
+        match outcomes[*primary] {
+            KeptLive => {
+                outcomes[index] = HeldBack(InconsistentCompanion);
+                continue;
+            }
+            HeldBack(_) => {
+                outcomes[index] = HeldBack(MissingCompanion);
+                continue;
+            }
+            Installed | Unchanged => {}
+        }
+        let Some(hold) = ROWS.get(vault, txn, &hold_id)? else {
+            outcomes[index] = HeldBack(MissingCompanion);
+            continue;
+        };
+        if !hold
+            .clone_captures
+            .iter()
+            .any(|named| *named.capture.as_bytes() == key.2)
+        {
+            outcomes[index] = HeldBack(InconsistentCompanion);
+            continue;
+        }
+        outcomes[index] = install_archived_row(
+            &super::sealed_records::SEALED_RECORDS,
+            vault,
+            txn,
+            permit,
+            &key,
+            &rows[index],
+        )?;
     }
     Ok(outcomes)
 }
