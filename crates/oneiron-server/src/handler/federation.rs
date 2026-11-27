@@ -93,8 +93,10 @@ pub(super) async fn handle_selector_fetch(
         send(direct_tx, key, window_sub_tags::SELECTOR_DEFERRED, &retry)?;
         return Ok(ControlFlow::Continue(()));
     }
+    // A fetch of a key the root does not list is answered from an empty
+    // window and creates nothing (WINDOW-FETCH-NO-CREATE).
     let window = server
-        .serve_window(key)
+        .fetch_window(key)
         .await
         .map_err(|e| ProtocolError::Persistence(format!("window load failed: {e}")))?;
     // FIX 6313: the load may wait, and the session the gate before dispatch
@@ -104,7 +106,7 @@ pub(super) async fn handle_selector_fetch(
         tracing::warn!("credential revoked — refusing sync message and closing");
         return Ok(ControlFlow::Break(()));
     }
-    let doc = window.doc.clone();
+    let doc = window.doc().clone();
     // The answer leaves only while the grant and the authority it is made
     // under stand (SELECTOR-RELEASE-POINT = B): read before the filter.
     let basis = crate::selector_release::SelectorReleaseBasis::take(

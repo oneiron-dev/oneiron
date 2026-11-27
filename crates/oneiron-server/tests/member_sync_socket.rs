@@ -640,6 +640,79 @@ fn a_member_socket_serves_its_grant_and_no_root_frame() {
     });
 }
 
+/// The `UPDATE` a member's selector fetch of `window` is answered with,
+/// imported into a fresh doc.
+async fn member_fetch_answer(fx: &Fixture, window: &WindowKey) -> LoroDoc {
+    let mut socket = bound_member(fx, transport::PROTOCOL_VERSION).await;
+    send_window(
+        &mut socket,
+        window,
+        window_sub_tags::SELECTOR_VV_REQUEST,
+        &encode_selector_vv_request(&fx.selector, &[]).unwrap(),
+    )
+    .await;
+    let answer = next_member_binary(&mut socket).await;
+    assert_eq!(answer[0], transport::TAG_WINDOW_SYNC);
+    let (key, tag, update) = transport::decode_window_sync(&answer[1..]).unwrap();
+    assert_eq!(key, window.as_str());
+    assert_eq!(tag, window_sub_tags::UPDATE);
+    let served = LoroDoc::new();
+    served.import(update).unwrap();
+    served
+}
+
+/// Whether the root the home persisted lists `window`.
+fn persisted_root_lists(vault: &Vault, window: &WindowKey) -> bool {
+    oneiron::sync::server_state::load_root_from_state(vault)
+        .unwrap()
+        .is_some_and(|root| oneiron::sync::schema::read_window_list(&root).contains(window))
+}
+
+/// WINDOW-FETCH-CREATES-NAMED-WINDOW (SYNC-RECEIVE-READ-20261127 F9;
+/// WINDOW-FETCH-NO-CREATE = yes, Engine 27 Nov 16:43): a member's selector
+/// fetch of a window the root does not list is answered as an empty window
+/// and creates nothing: no `d:w:*` snapshot, and no persisted root that lists
+/// it.
+/// red with the fetch served through `serve_window` again: the fetch
+/// snapshots the window and persists a root that lists it.
+#[test]
+fn a_member_fetch_of_an_unlisted_window_is_answered_empty_and_creates_nothing() {
+    run_on_engine_stack(|| async {
+        let fx = fixture(WindowFixture::Selected).await;
+        let unlisted = WindowKey::try_new("2019-07").unwrap();
+        assert!(!window_snapshot_present(&fx.vault, &unlisted).unwrap());
+        assert!(!persisted_root_lists(&fx.vault, &unlisted));
+        let served = member_fetch_answer(&fx, &unlisted).await;
+        assert!(
+            served.get_map("entities").is_empty(),
+            "the unlisted window is answered empty"
+        );
+        assert!(
+            !window_snapshot_present(&fx.vault, &unlisted).unwrap(),
+            "the fetch snapshotted no window"
+        );
+        assert!(
+            !persisted_root_lists(&fx.vault, &unlisted),
+            "the fetch persisted no root that lists the window"
+        );
+    });
+}
+
+/// The same change leaves a listed window's fetch as it was: a member's
+/// selector fetch of the window the root lists is still answered with its
+/// selected row.
+#[test]
+fn a_member_fetch_of_a_listed_window_still_serves_its_selected_row() {
+    run_on_engine_stack(|| async {
+        let fx = fixture(WindowFixture::Selected).await;
+        let served = member_fetch_answer(&fx, &fx.window).await;
+        assert!(
+            !served.get_map("entities").is_empty(),
+            "the listed window's answer carries its selected row"
+        );
+    });
+}
+
 #[test]
 fn a_member_socket_refuses_full_window_and_a_foreign_selector() {
     run_on_engine_stack(|| async {
