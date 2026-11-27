@@ -193,14 +193,11 @@ fn every_edge_actor_class_name_is_its_serde_name() {
 }
 
 /// Every row of `LegalHoldState`, as its hand table spelled it.
-const LEGAL_HOLD_STATE_ROWS: [(LegalHoldState, &str); 2] = [
-    (LegalHoldState::RetainedForLaw, "retained_for_law"),
-    (LegalHoldState::UseRestricted, "use_restricted"),
-];
+const LEGAL_HOLD_STATE_ROWS: [(LegalHoldState, &str); 1] =
+    [(LegalHoldState::UseRestricted, "use_restricted")];
 
 #[test]
 fn every_legal_hold_state_keeps_its_name() {
-    assert_eq!(LegalHoldState::RetainedForLaw.as_str(), "retained_for_law");
     assert_eq!(LegalHoldState::UseRestricted.as_str(), "use_restricted");
 }
 

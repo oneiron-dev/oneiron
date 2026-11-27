@@ -76,6 +76,26 @@ impl Vault {
         }
     }
 
+    /// [`Self::delete_entity_with_reason_as_owner`] with the answer's entries:
+    /// the owner's HTTP delete answer lists what it leaves exactly as
+    /// `vault.delete` does.
+    pub fn delete_entity_as_owner_with_remaining(
+        &self,
+        owner: &AuthenticatedOwner,
+        id: &EntityId,
+        reason: DeleteReason,
+    ) -> Result<(DeleteEntityOutcome, Vec<crate::memory::RemainingNotice>)> {
+        let file_digests = super::remaining::file_body_digests(self, id)?;
+        let outcome = self.delete_entity_with_reason_as_owner(owner, id, reason)?;
+        let remaining = super::remaining::delete_remaining(
+            self,
+            reason,
+            outcome.sweep_key.as_deref(),
+            &file_digests,
+        );
+        Ok((outcome, remaining))
+    }
+
     /// Owner-on-own-proof only (Q1 = A): the delete or erase rail refused
     /// `id` with absence, so re-probe for a cooperative restriction on it in
     /// a read txn of its own. `Some(Error::RecordRestricted)` when one

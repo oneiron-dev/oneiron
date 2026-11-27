@@ -148,13 +148,11 @@ function hookStop(value: unknown): HookStop | undefined {
   return typeof (value as Record<string, unknown>).status === "string" ? (value as HookStop) : undefined
 }
 
-/** Narrows the optional notice to the engine's two legal-hold states. */
+/** Narrows the optional notice to the engine's legal-hold state. */
 function legalHoldNotice(value: unknown): LegalHoldNotice | undefined {
   if (typeof value !== "object" || value === null) return undefined
   const state = (value as Record<string, unknown>).state
-  return state === "retained_for_law" || state === "use_restricted"
-    ? (value as LegalHoldNotice)
-    : undefined
+  return state === "use_restricted" ? (value as LegalHoldNotice) : undefined
 }
 
 /** Narrows the optional hold to the engine's room-join hold shape. */

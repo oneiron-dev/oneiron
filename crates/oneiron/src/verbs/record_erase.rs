@@ -11,12 +11,14 @@ use serde::{Deserialize, Serialize};
 use super::owner_confirm;
 use crate::consent::AuthenticatedOwner;
 use crate::deletion::DeleteEntityPreview;
+use crate::deletion::LegalHoldTarget;
 use crate::memory::RemainingNotice;
 use crate::memory::{
     DeleteReceipt, DeleteRequestState, EraseOptions, EraseReason, Memory, MemoryError,
     MemoryResult, SameBytesHold, SameBytesOutcome,
 };
 use crate::{EntityId, entity_id::bytes_to_hex_lower};
+use oneiron_records::memory::claims as remaining_claims;
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::verbs::record_erase::RecordEraseConfirmRequest;
@@ -69,6 +71,10 @@ pub struct RecordErasePreview {
     /// What the erase would leave behind that the person is told.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub remaining: Vec<RemainingNotice>,
+    /// How many legal holds keep a sealed copy of this record outside the vault; shown
+    /// only to the owner and only when no secrecy order hides the hold.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub legal_copies_kept: u32,
 }
 
 /// What became of one other record holding the same bytes: `erased`,
@@ -113,10 +119,18 @@ pub struct RecordEraseOutcome {
     /// record's list, beside its receipt.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub remaining: Vec<RemainingNotice>,
+    /// How many legal holds keep a sealed copy of this record outside the vault; shown
+    /// only to the owner and only when no secrecy order hides the hold.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub legal_copies_kept: u32,
 }
 
 fn hex(bytes: &[u8; 32]) -> String {
     bytes_to_hex_lower(bytes)
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
 }
 
 /// The notice an erase of a world gives, and the days it names: the world is
@@ -147,7 +161,114 @@ fn erases_world(
         .map_err(MemoryError::from)
 }
 
-fn preview_view(preview: &DeleteEntityPreview, world_erase: bool) -> RecordErasePreview {
+/// Whether a copy of this vault lives on another machine or with other members, so an
+/// erase reaches it only when that copy next syncs (H5, F9).
+fn vault_syncs_in_txn(vault: &crate::Vault, txn: &heed::RoTxn<'_>) -> crate::Result<bool> {
+    // This machine is a replica that reached its home at least once.
+    // (`sync` owns the row, so this arm builds only with that feature.)
+    #[cfg(feature = "sync")]
+    if crate::sync::window_rows::LAST_SYNC
+        .get(&vault.store, txn, &())?
+        .is_some()
+    {
+        return Ok(true);
+    }
+    // The authority names a machine other than the serving one.
+    let serving = vault.serving_machine_in_txn(txn)?;
+    if vault
+        .authority_view_readonly_in_txn(txn)?
+        .machines
+        .keys()
+        .any(|machine| Some(*machine) != serving)
+    {
+        return Ok(true);
+    }
+    // A shared vault: other members hold a copy.
+    if vault.shared_vault_creation_in_txn(txn)?.is_some() {
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+/// The erase-level entries P shows and R repeats, in door order, and how many legal
+/// holds keep a sealed copy of `record` outside the vault: backups and exports notes
+/// and the disk note always; the devices note when the record was shared or the vault
+/// syncs; the provider note when the vault's settings let a model call leave the
+/// device; the hold note when a hold the owner may see covers the record.
+fn remaining_for_erase(
+    memory: &Memory<'_>,
+    owner: &AuthenticatedOwner,
+    txn: &heed::RoTxn<'_>,
+    record: &EntityId,
+    preview: &DeleteEntityPreview,
+) -> MemoryResult<(Vec<RemainingNotice>, u32)> {
+    let vault = memory.vault();
+    let mut remaining = Vec::new();
+    remaining.push(RemainingNotice {
+        code: remaining_claims::REMAINING_BACKUPS_BEFORE_ERASE.to_owned(),
+        text: remaining_claims::REMAINING_BACKUPS_BEFORE_ERASE_TEXT.to_owned(),
+    });
+    let disk_text = if vault.vault_pages_sealed() {
+        remaining_claims::REMAINING_DISK_NOT_OVERWRITTEN_SEALED_TEXT
+    } else {
+        remaining_claims::REMAINING_DISK_NOT_OVERWRITTEN_PLAIN_TEXT
+    };
+    remaining.push(RemainingNotice {
+        code: remaining_claims::REMAINING_DISK_NOT_OVERWRITTEN.to_owned(),
+        text: disk_text.to_owned(),
+    });
+    remaining.push(RemainingNotice {
+        code: remaining_claims::REMAINING_EXPORTS_BEFORE_ERASE.to_owned(),
+        text: remaining_claims::REMAINING_EXPORTS_BEFORE_ERASE_TEXT.to_owned(),
+    });
+    if !preview.shared_with().is_empty() || vault_syncs_in_txn(vault, txn)? {
+        remaining.push(RemainingNotice {
+            code: remaining_claims::REMAINING_DEVICES_AND_PEERS.to_owned(),
+            text: remaining_claims::REMAINING_DEVICES_AND_PEERS_TEXT.to_owned(),
+        });
+    }
+    if crate::llm::vault_allows_provider_model_in_txn(vault, txn)? {
+        remaining.push(RemainingNotice {
+            code: remaining_claims::REMAINING_MODEL_PROVIDERS.to_owned(),
+            text: remaining_claims::REMAINING_MODEL_PROVIDERS_TEXT.to_owned(),
+        });
+    }
+    // The legal-copy count is shown only to the owner: a caller whose proof carries
+    // no owner authority (a shared person previewing or confirming an erase)
+    // counts zero, without failing the otherwise permitted erase. A store error
+    // still fails the read.
+    let legal_copies_kept: u32 = match owner.revalidate_in_txn(vault, txn) {
+        Ok(_) => {
+            let now = vault.store.clock.now_recorded_at();
+            crate::store::legal_hold::holds_in_txn(&vault.store, txn)?
+                .into_iter()
+                .filter(|hold| {
+                    hold.stands()
+                        && hold.owner_may_see(now)
+                        && hold.targets.contains(&LegalHoldTarget::Record(*record))
+                })
+                .fold(0u32, |count, _| count.saturating_add(1))
+        }
+        Err(crate::error::Error::Gate(crate::error::GateError::ConsentOwnerNotAuthenticated(
+            _,
+        ))) => 0,
+        Err(other) => return Err(other.into()),
+    };
+    if legal_copies_kept > 0 {
+        remaining.push(RemainingNotice {
+            code: remaining_claims::REMAINING_LEGAL_HOLD_COPY.to_owned(),
+            text: remaining_claims::REMAINING_LEGAL_HOLD_COPY_TEXT.to_owned(),
+        });
+    }
+    Ok((remaining, legal_copies_kept))
+}
+
+fn preview_view(
+    preview: &DeleteEntityPreview,
+    world_erase: bool,
+    remaining: Vec<RemainingNotice>,
+    legal_copies_kept: u32,
+) -> RecordErasePreview {
     let (old_backups_notice, old_backups_expire_within_days) = world_erase_notice(world_erase);
     RecordErasePreview {
         record: preview.entity().to_hex(),
@@ -183,8 +304,8 @@ fn preview_view(preview: &DeleteEntityPreview, world_erase: bool) -> RecordErase
         remote_copies_may_remain: preview.remote_copies_may_remain(),
         old_backups_notice,
         old_backups_expire_within_days,
-        // The preview's entries come in the next PR.
-        remaining: Vec::new(),
+        remaining,
+        legal_copies_kept,
     }
 }
 
@@ -199,22 +320,27 @@ fn hold_code(hold: SameBytesHold) -> &'static str {
 /// The erase's view twice over: the engine preview the erase runs on, and
 /// the shown view the owner confirms. [`confirm_record_erase`] and the
 /// shared preview call this same fn, so a confirm binds what the preview
-/// showed.
+/// showed. The caller's proof gates the legal-copy count: only an owner is
+/// shown it.
 pub(crate) fn record_erase_view(
     memory: &Memory<'_>,
+    owner: &AuthenticatedOwner,
     record: &EntityId,
 ) -> MemoryResult<(DeleteEntityPreview, RecordErasePreview)> {
     let preview = memory.preview_entity_delete(record)?;
-    let world_erase = {
+    let (world_erase, remaining, legal_copies_kept) = {
         let txn = memory
             .vault()
             .store
             .env
             .read_txn()
             .map_err(crate::Error::from)?;
-        erases_world(memory, &txn, *record)?
+        let world_erase = erases_world(memory, &txn, *record)?;
+        let (remaining, legal_copies_kept) =
+            remaining_for_erase(memory, owner, &txn, record, &preview)?;
+        (world_erase, remaining, legal_copies_kept)
     };
-    let view = preview_view(&preview, world_erase);
+    let view = preview_view(&preview, world_erase, remaining, legal_copies_kept);
     Ok((preview, view))
 }
 
@@ -231,7 +357,7 @@ pub fn confirm_record_erase(
     input: RecordEraseConfirmRequest,
 ) -> MemoryResult<RecordEraseOutcome> {
     let ask = owner_confirm::asked("vault.records.erase_confirm", &input)?;
-    let (preview, view) = record_erase_view(memory, &input.record)?;
+    let (preview, view) = record_erase_view(memory, owner, &input.record)?;
     let vault = memory.vault();
     owner_confirm::admit(vault, owner, ask, &view)?;
     // The confirmed view names the old backups exactly when this erase
@@ -274,9 +400,15 @@ pub fn confirm_record_erase(
         check_in: Some(decision),
         old_backups_notice,
         old_backups_expire_within_days,
-        // The erase answer's top-level list is the confirmed record's own;
-        // the next PR appends erase-level entries.
-        remaining: outcome.first.remaining.clone(),
+        // The erase answer's top-level list is the confirmed record's own
+        // followed by the erase-level entries of the retaken view, so R
+        // shows what P showed.
+        remaining: {
+            let mut remaining = outcome.first.remaining.clone();
+            remaining.extend(view.remaining);
+            remaining
+        },
+        legal_copies_kept: view.legal_copies_kept,
         first: outcome.first,
         first_act: outcome.first_act,
         same_bytes: outcome

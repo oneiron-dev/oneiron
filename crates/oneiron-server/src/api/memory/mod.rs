@@ -545,9 +545,9 @@ pub(crate) async fn core_memory_verb(
                 };
                 #[cfg(oneiron_test_support)]
                 crate::test_doors::memory_owner_commit::run_before_owner_commit(&server.vault);
-                let outcome = server
+                let (outcome, remaining) = server
                     .vault
-                    .delete_entity_with_reason_as_owner(&owner, &id, reason)
+                    .delete_entity_as_owner_with_remaining(&owner, &id, reason)
                     .map_err(failed)?;
                 let delete = serde_json::json!(CoreMemoryVerbDeleteOutcome {
                     existed: Some(outcome.existed),
@@ -566,9 +566,7 @@ pub(crate) async fn core_memory_verb(
                             .to_owned()
                     ),
                     check_in: None,
-                    remaining: oneiron::memory::remaining_after_delete(
-                        outcome.sweep_key.as_deref(),
-                    ),
+                    remaining,
                 });
                 (Some(id.to_hex()), delete)
             } else {

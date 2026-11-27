@@ -1,7 +1,7 @@
 //! A legal order's typed refusal (OF-470; WILL-PLAN L01 rows 01 and 03).
 //!
-//! Where Oneiron hosts the bytes, a binding legal order may keep them, or
-//! keep them for its own purpose only. Its refusal names that bound, the
+//! Where Oneiron hosts the bytes, a binding legal order may keep them for
+//! its own purpose only. Its refusal names that bound, the
 //! law (DEC-0005: "a hosted refusal names its bound"), and says what
 //! self-hosting changes. Every field is an opaque ref, a time or a code, as
 //! the hold log's are (C3).
@@ -17,10 +17,6 @@ use crate::register::Register;
 /// The remedy both error projections give a legal order's refusal.
 pub const LEGAL_HOLD_SUGGESTION: &str = "A legal order binding where Oneiron hosts these bytes keeps them until it lifts; the refusal names its bound. The same act works on bytes you host that no hold covers.";
 
-/// The lead of a `retained_for_law` refusal.
-const RETAINED_FOR_LAW_TEXT: &str =
-    "legal hold: a legal order binding Oneiron's hosting keeps this record, so it is not deleted";
-
 /// The lead of a `use_restricted` refusal.
 const USE_RESTRICTED_TEXT: &str = "legal hold: a legal order binding Oneiron's hosting keeps this record for its own purpose only, so it is not used";
 
@@ -29,8 +25,6 @@ const USE_RESTRICTED_TEXT: &str = "legal hold: a legal order binding Oneiron's h
 #[serde(rename_all = "snake_case")]
 #[register("legal.hold.state")]
 pub enum LegalHoldState {
-    /// The order keeps the bytes: no delete or erase destroys them.
-    RetainedForLaw,
     /// The order keeps the bytes for its own purpose only: no named read or
     /// write uses them while it stands.
     UseRestricted,
@@ -77,7 +71,6 @@ pub struct LegalHoldNotice {
 impl fmt::Display for LegalHoldNotice {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self.state {
-            LegalHoldState::RetainedForLaw => RETAINED_FOR_LAW_TEXT,
             LegalHoldState::UseRestricted => USE_RESTRICTED_TEXT,
         })?;
         let bound = &self.bound;

@@ -480,7 +480,7 @@ impl Memory<'_> {
                 receipt_ref: Some(format!("redaction:{}", receipt.to_hex())),
                 state: DeleteRequestState::Applied,
                 check_in: None,
-                remaining: remaining_after_delete(Some(&sweep_key)),
+                remaining: remaining_after_delete(Some(&sweep_key), false, 0),
             })
         });
         if erased.is_ok() {

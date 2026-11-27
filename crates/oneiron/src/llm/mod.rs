@@ -13,6 +13,7 @@ mod autocheck;
 mod budget;
 mod defaults;
 pub(crate) use defaults::read_effective_defaults;
+pub(crate) use defaults::vault_allows_provider_model_in_txn;
 pub use defaults::{
     PurposeDefaultProposal, PurposeDefaultProposalStatus, PurposeDefaultSubmission,
     PurposeDefaultSubmitter, purpose_default_grant_target,
