@@ -1842,7 +1842,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/dispatcher/world_privacy_wait.rs` | src | s | 1 crate-vis | — | `tasks.wait({request, step_key})` (FIX 4706): a code run's wait on one world-privacy request its actor… |
 | `src/code_run/fold_api.rs` | src | s | 1 fn · 1 re-export | — | Typed public calls on a credential's attached live run |
 | `src/code_run/live_run.rs` | src | s | 2 struct · 10 fn · 2 const · 3 crate-vis | CodeRunLiveRunBinding, LiveRunCredential | A live agent run's attachment to the one credential that may act for it (OF-181) |
-| `src/code_run/mod.rs` | src | m | 8 mod · 39 re-export · 78 crate-vis | — | Host-side skeleton for first-party `self.*` code-mode calls |
+| `src/code_run/mod.rs` | src | m | 9 mod · 39 re-export · 78 crate-vis | — | Host-side skeleton for first-party `self.*` code-mode calls |
 | `src/code_run/model_call.rs` | src | m | 2 struct · 12 fn · 1 re-export · 3 crate-vis | ModelCallReasoningPart, ModelCallRecord | Per-model-call evidence and replay records (FIX 12516) |
 | `src/code_run/model_call/signed_reasoning.rs` | src | s | 1 crate-vis | — | Whole signed reasoning parts use existing custody, never text masking |
 | `src/code_run/payload.rs` | src | m | 15 crate-vis | — | Code-run request and outcome replay values |
@@ -1885,6 +1885,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/code_run/result_read/shape.rs` | src | s | 2 crate-vis | — | The shape a result's head shows of its format, for its card and for the way `query` reads it |
 | `src/code_run/result_read/slice.rs` | src | s | 2 crate-vis | — | `slice`: one range of a result's body, by bytes or by lines, at most one reply of it, with where to go on from |
 | `src/code_run/result_read/unplaced.rs` | src | s | 1 crate-vis | — | What a run's guest gets in place of an answer the side-row wall could not admit (FIX 5718 part 3, Engine… |
+| `src/code_run/run_result_read.rs` | src | s | 1 struct · 1 fn · 1 const | RunResultReadRequest | The input of `vault.runs.read_result` (FIX EXECUTE-CALLER-CODE): a caller's code reads a window of one… |
 | `src/code_run/run_verb_call.rs` | src | m | 1 fn · 1 crate-vis | — | The run rows as typed calls (OF-181) |
 | `src/code_run/run_verbs.rs` | src | m | 6 struct · 5 enum · 1 fn · 2 re-export · 4 crate-vis | AgentSpawnInput, AgentSpawnOutput, MemorySupersedeInput, ReaderSpawnInput, ReportBlockedInput, SpawnKnob, SpawnPattern, TaskRefuseInput +3 | The inputs and outputs of the verb-table rows a code run answers itself (`context: "run"` in… |
 | `src/code_run/scoped_call_control.rs` | src | s | 1 struct · 5 fn · 1 const | ScopedCallControl | A scoped child's live cutoff at its port calls and reads (FIX 8233) |
@@ -3561,6 +3562,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/embed/world_vectors.rs` | src | m | 3 struct · 1 enum · 3 fn · 5 crate-vis | WorldVectorsAnswer, WorldVectorsEntry, WorldVectorsRequest, WorldVectorsVerdict | Where each world's text vectors are made, as this install makes them (DEC-0005 #private-world-vectors; FIX… |
 | `src/engine_executor/attempt_cancels.rs` | src | s | 8 crate-vis | — | The step loops leased attempts are running in this vault (FIX 600), each under its attempt's root token, so… |
 | `src/engine_executor/board_frames.rs` | src | s | 2 crate-vis | — | The board frames a step's verb answers carried (FIX 2135): kept beside the step as it ends, and read to the… |
+| `src/engine_executor/caller_run_output.rs` | src | s | 1 struct · 1 fn | CallerRunOutput | Reads the return value and console of a served run through its held outputs |
 | `src/engine_executor/capture.rs` | src | s | 4 crate-vis | — | The executor's step replay capture (FIX 3028, FIX 3694): each step of a leased attempt's canonical run… |
 | `src/engine_executor/checkpoint_read.rs` | src | s | 1 fn · 2 const · 1 re-export · 2 crate-vis | — | Checkpoint read (DOOR-141 B): one page of a code run's committed step checkpoints and the replies its parked… |
 | `src/engine_executor/code_check.rs` | src | m | 1 struct · 3 fn · 12 crate-vis | TypeFeedback | Feedback mode (FIX 8277, owner ruling CODE-MODE-TS rule 4): each generated program is type-checked as its… |
@@ -3599,10 +3601,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/engine_executor/host/skill_delivery.rs` | src | s | 2 crate-vis | — | A skill body a call's answer delivered to the step's own program (FIX 3608): what the call's native producer… |
 | `src/engine_executor/host/spill_door.rs` | src | s | 1 crate-vis | — | A test door running the host's pre-record spill on one outcome |
 | `src/engine_executor/host/type_feedback.rs` | src | s | 6 crate-vis | — | The type checks of the callable skills a run's program calls (FIX 10389): each admitted once, at the call's… |
-| `src/engine_executor/mod.rs` | src | s | 4 mod · 13 re-export · 16 crate-vis | — | Engine-native JS code-mode executor |
+| `src/engine_executor/mod.rs` | src | s | 4 mod · 15 re-export · 16 crate-vis | — | Engine-native JS code-mode executor |
+| `src/engine_executor/no_model.rs` | src | s | 1 struct | NoModelBackend | The backend of a run whose input is the caller's code (FIX EXECUTE-CALLER-CODE) |
 | `src/engine_executor/program_entry.rs` | src | m | 8 crate-vis | — | A turn program's pinned entry (DOOR-141 PR3b, FIX 4382) |
 | `src/engine_executor/program_entry/injection.rs` | src | m | 18 crate-vis | — | The calls a resumed pinned entry answers instead of issuing them (DOOR-141 PR3b): each one an earlier entry… |
-| `src/engine_executor/record.rs` | src | m | 1 struct · 3 fn · 33 crate-vis | EnteredRun | Durable replay identity: config/terminal markers, hashes, and checkpoint state |
+| `src/engine_executor/record.rs` | src | m | 1 struct · 3 fn · 34 crate-vis | EnteredRun | Durable replay identity: config/terminal markers, hashes, and checkpoint state |
 | `src/engine_executor/record/caller_source.rs` | src | s | 7 crate-vis | — | The caller's own code of a caller-source run, kept as a body the run owns (FIX EXECUTE-CALLER-CODE) |
 | `src/engine_executor/record/caller_task.rs` | src | s | 2 crate-vis | — | The caller's own task of an MCP `execute_code` run, kept as a body the run owns (FIX 4606) |
 | `src/engine_executor/record/replay_hash.rs` | src | s | 6 crate-vis | — | The replay identity hashes of a run: the config hash its config marker stores as hex, and each REPL step's… |
@@ -3615,7 +3618,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/engine_executor/repl/turn.rs` | src | s | 3 crate-vis | — | One model turn of the durable REPL: its hooks, its request, and the program the model's reply heals to… |
 | `src/engine_executor/reply_evidence.rs` | src | s | 1 fn · 1 const · 1 re-export · 2 crate-vis | — | Reply evidence (RAW-PROVIDER-EVIDENCE-READ): the model reply one step of a canonical code run received, as… |
 | `src/engine_executor/resume_divergence.rs` | src | m | 1 fn · 10 crate-vis | — | One run's resume-divergence ask and the owner's answer to it (L8-23): a resumed pending step whose… |
-| `src/engine_executor/run_position.rs` | src | s | 1 struct · 1 fn | CodeRunPosition | Where a canonical code run's committed record stands, read outside its entries (FIX 4606): its replay… |
+| `src/engine_executor/run_position.rs` | src | s | 1 struct · 2 fn | CodeRunPosition | Where a canonical code run's committed record stands, read outside its entries (FIX 4606): its replay… |
 | `src/engine_executor/run_signals.rs` | src | m | 12 crate-vis | — | The steers and messages that reach a running run between its steps (AGM-2 = C; ARCH-0079 #message-classes… |
 | `src/engine_executor/self_brief.rs` | src | s | 2 struct · 3 enum · 1 trait · 8 crate-vis | BriefBoundary, BriefCandidateToken, BriefPrefix, BriefRecheck, FoldBoundary, SelfBriefPort | The host's self-brief port for a native run (FIX 17594, delivery slice D2) |
 | `src/engine_executor/session_refusal.rs` | src | s | 1 fn | — | An off-record session's refusal of one act a run took in it (FIX OFF-RECORD-RUN-POLICY-REFUSAL-500) |
@@ -8158,7 +8161,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/ask_outcome_tests.rs` | test | m | — | — | — |
 | `src/task_verb/ask_policy.rs` | src | s | 1 crate-vis | — | Ask policy snapshot chosen at admission from trusted manifest rows |
 | `src/task_verb/ask_preflight.rs` | src | s | 1 fn · 2 crate-vis | — | Read-only ask preflight over the exact admission holder and route facts |
-| `src/task_verb/ask_record.rs` | src | m | 33 crate-vis | — | Protected replicated ask facts |
+| `src/task_verb/ask_record.rs` | src | m | 1 fn · 33 crate-vis | — | Protected replicated ask facts |
 | `src/task_verb/ask_record/attendee_entry.rs` | src | s | 12 crate-vis | — | The protected first-entry fact of one attendee in one container (OF-365, ILDF2 P5) |
 | `src/task_verb/ask_record/attendee_late_ask.rs` | src | s | 6 crate-vis | — | A placed attendee's first later identity question, separate from its immutable first-entry history cut |
 | `src/task_verb/ask_record/consult_answer.rs` | src | s | 1 crate-vis | — | A consult answer's word on the ask its consult belongs to |
