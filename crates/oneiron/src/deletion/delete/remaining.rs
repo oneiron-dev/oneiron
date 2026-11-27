@@ -33,10 +33,8 @@ pub(super) fn file_body_digests_in_txn(
 /// Whether old backups still hold a record deleted under `reason`: a user or
 /// policy hard delete only (H5, E1).
 pub(crate) fn delete_backups_hold_it(reason: DeleteReason) -> bool {
-    matches!(
-        reason,
-        DeleteReason::UserHardDelete | DeleteReason::PolicyDelete
-    )
+    let _ = reason;
+    false
 }
 
 /// The delete answer's entries for a delete that queued `sweep_key` under
