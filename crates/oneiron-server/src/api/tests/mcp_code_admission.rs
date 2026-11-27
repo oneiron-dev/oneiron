@@ -151,6 +151,7 @@ fn run<'a>(
         off_record_session: None,
         consent_origin: None,
         brief: None,
+        run_end: None,
     })
 }
 
