@@ -142,6 +142,10 @@ fn artifact_retention_deleted_in_txn(
     crate::deletion::row_deletion_marked(store, txn, artifact_id, raw.as_deref())
 }
 
+/// Purges an artifact's retained edit-settle work inside every artifact delete path: the held
+/// proposals (pending, stranded, organ-wait) go, and the settlements and Unattached comments
+/// stay with their words emptied, as the owner's discard of a world copy leaves them (FIX 14534),
+/// because those words are the deleted artifact's own text (FIX HARD-DELETE-SETTLED-WORDS-OUTLIVE-ARTIFACT).
 pub(crate) fn purge_artifact_retention_in_txn(
     store: &crate::store::Store,
     txn: &mut heed::RwTxn<'_>,
@@ -149,9 +153,13 @@ pub(crate) fn purge_artifact_retention_in_txn(
 ) -> crate::error::Result<()> {
     pending::purge_artifact_in_txn(store, txn, artifact_id)?;
     stranded::purge_artifact_in_txn(store, txn, artifact_id)?;
-    organ_wait::purge_artifact_in_txn(store, txn, artifact_id)
+    organ_wait::purge_artifact_in_txn(store, txn, artifact_id)?;
+    discarded_words::discard_settle_payload_in_txn(store, txn, artifact_id)?;
+    crate::anchored_annotation::discard_snapshot_payload_in_txn(store, txn, artifact_id)
 }
 
+#[cfg(test)]
+mod artifact_delete_tests;
 pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
