@@ -238,6 +238,18 @@ pub trait AgentVerbDoor: Send + Sync {
         Ok(())
     }
 
+    /// Admits the outer `self.skills.call` a credential-bound host
+    /// projection entered for its caller: the caller asked for that call
+    /// itself, so it is admitted as that caller's direct call, while each
+    /// call the skill's body makes meets [`Self::admit_run_call`]. A door
+    /// that rules the same on both admits it as [`Self::admit_run_call`]
+    /// admits the bridge call.
+    fn admit_outer_skill_call(
+        &self,
+    ) -> std::result::Result<Option<crate::claim::ScopedReadActorKey>, AgentVerbRefusal> {
+        self.admit_run_call(RunCall::Bridge(SelfEffect::SkillsCall))
+    }
+
     /// Admits one speech call of the run (`effect` is `Speak`, `Think` or
     /// `Express`, its trailing bubble included) with `destination`, where
     /// the run's storage lands it. A door that rules on speech wherever it
@@ -302,6 +314,17 @@ pub trait AgentVerbDoor: Send + Sync {
             code: AGENT_VERB_SESSION_BOUND.to_owned(),
             reason_codes: Vec::new(),
         })
+    }
+
+    /// Reads back a verb row's recorded answer only where this door admits
+    /// that verb now (FIX CODE-MODE-LENDING-W11). A door that rules on verb
+    /// rows only at [`Self::call`] keeps today's ruling.
+    fn admit_recorded_verb(
+        &self,
+        verb: crate::task_verb::sdk::AgentVerb,
+    ) -> std::result::Result<(), AgentVerbRefusal> {
+        let _ = verb;
+        Ok(())
     }
 
     /// Whether a result the run retained stays on this device for the door's

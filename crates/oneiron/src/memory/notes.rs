@@ -28,12 +28,40 @@ impl Memory<'_> {
             markdown,
             self.write_actor(),
             self.birth_position,
-            then,
+            |txn, note| {
+                self.settle_note_session_placement_in_txn(txn, note)?;
+                then(txn, note)
+            },
         )?;
         Ok((
             self.entity_ref_receipt_of(&id, crate::registry::ENTITY_TYPE_NOTE)?,
             value,
         ))
+    }
+
+    /// Settles a NOTE this handle just birthed onto its session placement, in
+    /// the birth transaction: admission first, so a placement the caller's
+    /// credential does not cover refuses the whole write and stores nothing.
+    /// A handle with no placement, or one naming the default project, settles
+    /// nothing: the NOTE keeps the root stamp its birth wrote.
+    pub(in crate::memory) fn settle_note_session_placement_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        note: crate::EntityId,
+    ) -> MemoryResult<()> {
+        let placement = self
+            .session_placement
+            .filter(|placement| *placement != crate::claim::default_project_id());
+        let Some(project) = placement else {
+            return Ok(());
+        };
+        self.admit_project_placement_in_txn(
+            txn,
+            project,
+            crate::memory::witness::ProjectPlacementSource::SessionFolder,
+        )?;
+        crate::federation::record_scope::stamp_note_project(&self.vault.store, txn, note, project)?;
+        Ok(())
     }
     pub fn edit_note(&self, note_ref: &str, edit: &NoteEdit) -> MemoryResult<NoteEditOutcome> {
         let id = self.resolve_ref(note_ref)?;

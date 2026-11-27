@@ -378,6 +378,7 @@ async fn injected_host_execute_code() -> InjectedHostRun {
             off_record_session: None,
             consent_origin: None,
             brief: None,
+            run_end: None,
         })
         .await
         .expect("the durable run enters");
@@ -395,6 +396,7 @@ async fn injected_host_execute_code() -> InjectedHostRun {
             off_record_session: None,
             consent_origin: None,
             brief: None,
+            run_end: None,
         })
         .await
         .expect("the persisted run re-enters");

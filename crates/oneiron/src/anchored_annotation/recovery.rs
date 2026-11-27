@@ -942,3 +942,6 @@ impl Vault {
         Ok(thread_from_head(*artifact_id, new_head_id, head))
     }
 }
+
+#[cfg(test)]
+mod artifact_delete_tests;

@@ -39,6 +39,10 @@ pub(crate) fn mcp_call_recipient() -> Option<oneiron::memory::RepoRevealRecipien
 
 /// `None` means this is not an MCP call: the facade binds its own credential
 /// door. A present but different credential is refused, never downgraded.
+/// A callable skill's program is stored code, not one the engine's model
+/// wrote from this caller's task, so its door is the caller's own: no
+/// code-mode line, guest, reader child, summary job or credential-answer
+/// row a direct call lacks (FIX CODE-MODE-LENDING-W8).
 pub(crate) fn skill_execution_door(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -57,8 +61,31 @@ pub(crate) fn skill_execution_door(
                     &[],
                 ));
             }
-            Ok(Arc::new(McpCodeModeVerbs::new(server, caller, run)) as Arc<dyn AgentVerbDoor>)
+            Ok(
+                Arc::new(McpCodeModeVerbs::new(server, caller, run).authored_by_caller())
+                    as Arc<dyn AgentVerbDoor>,
+            )
         })
         .ok()
         .transpose()
+}
+
+/// The door [`skill_execution_door`] builds for a callable skill that
+/// `caller` calls over MCP on run `run`, with [`CALLER`] bound as
+/// `execute_agent_verb_input` binds it: the integration tests' door (FIX
+/// CODE-MODE-LENDING-W8).
+#[cfg(oneiron_test_support)]
+pub(crate) fn skill_door_for_test(
+    server: &Arc<SyncServer>,
+    caller: McpCallContext,
+    run: oneiron::EntityId,
+) -> MemoryResult<Arc<dyn AgentVerbDoor>> {
+    let refused = |message: &str| MemoryError::new(MEMORY_CODE_FORBIDDEN, message, &[]);
+    let auth = caller
+        .auth
+        .clone()
+        .ok_or_else(|| refused("the test caller holds no credential"))?;
+    CALLER
+        .sync_scope(caller, || skill_execution_door(server, &auth, run))?
+        .ok_or_else(|| refused("no MCP call was in scope"))
 }

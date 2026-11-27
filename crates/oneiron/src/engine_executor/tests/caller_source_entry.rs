@@ -225,9 +225,20 @@ fn written_tasks_and_claims(vault: &Vault) -> Vec<EntityId> {
     .collect()
 }
 
+/// The TASK and CLAIM rows written since `seeded`, the rows the vault held
+/// before the test ran (`Vault::open` seeds 44 claims; one `tasks.create`
+/// writes the task and its owner fact, two TASK rows).
+fn count_new_tasks_and_claims(vault: &Vault, seeded: &[EntityId]) -> usize {
+    written_tasks_and_claims(vault)
+        .into_iter()
+        .filter(|id| !seeded.contains(id))
+        .count()
+}
+
 #[test]
 fn a_source_run_needs_no_model() {
     let (_dir, vault) = open_test_vault();
+    let seeded = written_tasks_and_claims(&vault);
     let vault = Arc::new(vault);
     let harness = SourceHarness::new(&vault);
     let config = source_config(entity(0xC1), WRITE_CODE);
@@ -248,9 +259,9 @@ fn a_source_run_needs_no_model() {
         Some(CallerRunInput::Source(WRITE_CODE.to_owned())),
     );
     assert_eq!(
-        written_tasks_and_claims(&vault).len(),
-        1,
-        "the program's one write lands"
+        count_new_tasks_and_claims(&vault, &seeded),
+        2,
+        "the program's one task and its owner fact land"
     );
 
     // The backend-free constructor runs the same program with no backend
@@ -270,15 +281,16 @@ fn a_source_run_needs_no_model() {
         .expect("the backend-free entry completes");
     assert_eq!(backend_free_outcome.status, EngineExecutorStatus::Complete);
     assert_eq!(
-        written_tasks_and_claims(&vault).len(),
-        2,
-        "both runs' writes land"
+        count_new_tasks_and_claims(&vault, &seeded),
+        4,
+        "both runs' tasks and owner facts land"
     );
 }
 
 #[test]
 fn the_same_code_replays_without_writing_again() {
     let (_dir, vault) = open_test_vault();
+    let seeded = written_tasks_and_claims(&vault);
     let vault = Arc::new(vault);
     let harness = SourceHarness::new(&vault);
     let run_id = entity(0xC2);
@@ -312,15 +324,16 @@ fn the_same_code_replays_without_writing_again() {
         "the second entry returns the stored outcome"
     );
     assert_eq!(
-        written_tasks_and_claims(&vault).len(),
-        1,
-        "the vault holds one task, not two"
+        count_new_tasks_and_claims(&vault, &seeded),
+        2,
+        "the vault holds one new task and its owner fact"
     );
 }
 
 #[test]
 fn other_code_under_the_same_run_is_refused() {
     let (_dir, vault) = open_test_vault();
+    let seeded = written_tasks_and_claims(&vault);
     let vault = Arc::new(vault);
     let harness = SourceHarness::new(&vault);
     let run_id = entity(0xC3);
@@ -338,7 +351,7 @@ fn other_code_under_the_same_run_is_refused() {
         .expect("read replay")
         .expect("stored replay");
     let written = written_tasks_and_claims(&vault);
-    assert_eq!(written.len(), 1);
+    assert_eq!(written.iter().filter(|id| !seeded.contains(id)).count(), 2);
 
     let second_config = source_config(run_id, OTHER_CODE);
     let mut second = SourceStep::new(
@@ -377,6 +390,7 @@ fn other_code_under_the_same_run_is_refused() {
 #[test]
 fn a_delivered_wait_resumes_with_no_model_turn() {
     let (_dir, vault) = open_test_vault();
+    let seeded = written_tasks_and_claims(&vault);
     let vault = Arc::new(vault);
     let harness = SourceHarness::new(&vault);
     let run_id = entity(0xC4);
@@ -462,7 +476,7 @@ fn a_delivered_wait_resumes_with_no_model_turn() {
         panic!("the replayed ask must return the delivered reply");
     };
     assert_eq!(reply.output, serde_json::json!({"answer": "go on"}));
-    assert_eq!(written_tasks_and_claims(&vault).len(), 1);
+    assert_eq!(count_new_tasks_and_claims(&vault, &seeded), 2);
     assert_eq!(
         second_outcome.replay_record.bridge_calls.len(),
         2,

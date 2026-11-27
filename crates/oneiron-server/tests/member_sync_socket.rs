@@ -47,6 +47,9 @@ const REPLY_WAIT: Duration = Duration::from_secs(10);
 // debug build on a loaded test host that takes seconds, not milliseconds.
 const CATALOGUE_WAIT: Duration = Duration::from_secs(120);
 const ROOT_OBSERVATION: Duration = Duration::from_millis(250);
+// Ten of a socket's body upkeep polls (asset_bodies::ASSET_BODY_POLL, 50 ms).
+#[cfg(all(oneiron_test_support, feature = "mesh"))]
+const BODY_UPKEEP_OBSERVATION: Duration = Duration::from_millis(500);
 // dispatch_error maps InvalidPayload to DECODE_ERROR, not UNKNOWN_TAG.
 const REFUSED_FRAME: u16 = 4002;
 // transport::close_revoked uses CLOSE_RPC_NO_PRINCIPAL on the owner path too.
@@ -131,6 +134,10 @@ struct Fixture {
     task: tokio::task::JoinHandle<()>,
     url: String,
     vault: Arc<Vault>,
+    /// The home's own window manager (the one its body upkeep opens windows
+    /// in), for a test that asks which windows it has open.
+    #[cfg(all(oneiron_test_support, feature = "mesh"))]
+    home_windows: Arc<oneiron::sync::WindowManager>,
     issuer: HostSlipIssuer,
     root: CapabilitySlip,
     owner: EntityId,
@@ -346,6 +353,8 @@ async fn fixture_with_options(shape: WindowFixture, options: FixtureOptions) -> 
         )
         .unwrap(),
     );
+    #[cfg(all(oneiron_test_support, feature = "mesh"))]
+    let home_windows = oneiron_server::test_doors::embedded_peer_path::device_link_windows(&server);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("ws://{}/ws", listener.local_addr().unwrap());
     let app = build_app(server);
@@ -356,6 +365,8 @@ async fn fixture_with_options(shape: WindowFixture, options: FixtureOptions) -> 
         task,
         url,
         vault,
+        #[cfg(all(oneiron_test_support, feature = "mesh"))]
+        home_windows,
         issuer,
         root,
         owner,
@@ -637,6 +648,182 @@ fn a_member_socket_serves_its_grant_and_no_root_frame() {
             "the socket is still live after observation"
         );
         assert_eq!(durable_rows(&fx), before);
+    });
+}
+
+/// The `UPDATE` a member's selector fetch of `window` is answered with,
+/// imported into a fresh doc.
+async fn member_fetch_answer(fx: &Fixture, window: &WindowKey) -> LoroDoc {
+    let mut socket = bound_member(fx, transport::PROTOCOL_VERSION).await;
+    member_fetch_answer_on(&mut socket, window, &fx.selector).await
+}
+
+/// [`member_fetch_answer`] on the bound member `socket`, under `selector`.
+async fn member_fetch_answer_on(
+    socket: &mut Socket,
+    window: &WindowKey,
+    selector: &SyncSelector,
+) -> LoroDoc {
+    send_window(
+        socket,
+        window,
+        window_sub_tags::SELECTOR_VV_REQUEST,
+        &encode_selector_vv_request(selector, &[]).unwrap(),
+    )
+    .await;
+    let answer = next_member_binary(socket).await;
+    assert_eq!(answer[0], transport::TAG_WINDOW_SYNC);
+    let (key, tag, update) = transport::decode_window_sync(&answer[1..]).unwrap();
+    assert_eq!(key, window.as_str());
+    assert_eq!(tag, window_sub_tags::UPDATE);
+    let served = LoroDoc::new();
+    served.import(update).unwrap();
+    served
+}
+
+/// Whether the root the home persisted lists `window`.
+fn persisted_root_lists(vault: &Vault, window: &WindowKey) -> bool {
+    oneiron::sync::server_state::load_root_from_state(vault)
+        .unwrap()
+        .is_some_and(|root| oneiron::sync::schema::read_window_list(&root).contains(window))
+}
+
+/// WINDOW-FETCH-CREATES-NAMED-WINDOW (SYNC-RECEIVE-READ-20261127 F9;
+/// WINDOW-FETCH-NO-CREATE = yes, Engine 27 Nov 16:43): a member's selector
+/// fetch of a window the root does not list is answered as an empty window
+/// and creates nothing: no `d:w:*` snapshot, and no persisted root that lists
+/// it.
+/// red with the fetch served through `serve_window` again: the fetch
+/// snapshots the window and persists a root that lists it.
+#[test]
+fn a_member_fetch_of_an_unlisted_window_is_answered_empty_and_creates_nothing() {
+    run_on_engine_stack(|| async {
+        let fx = fixture(WindowFixture::Selected).await;
+        let unlisted = WindowKey::try_new("2019-07").unwrap();
+        assert!(!window_snapshot_present(&fx.vault, &unlisted).unwrap());
+        assert!(!persisted_root_lists(&fx.vault, &unlisted));
+        let served = member_fetch_answer(&fx, &unlisted).await;
+        assert!(
+            served.get_map("entities").is_empty(),
+            "the unlisted window is answered empty"
+        );
+        assert!(
+            !window_snapshot_present(&fx.vault, &unlisted).unwrap(),
+            "the fetch snapshotted no window"
+        );
+        assert!(
+            !persisted_root_lists(&fx.vault, &unlisted),
+            "the fetch persisted no root that lists the window"
+        );
+    });
+}
+
+/// The same change leaves a listed window's fetch as it was: a member's
+/// selector fetch of the window the root lists is still answered with its
+/// selected row.
+#[test]
+fn a_member_fetch_of_a_listed_window_still_serves_its_selected_row() {
+    run_on_engine_stack(|| async {
+        let fx = fixture(WindowFixture::Selected).await;
+        let served = member_fetch_answer(&fx, &fx.window).await;
+        assert!(
+            !served.get_map("entities").is_empty(),
+            "the listed window's answer carries its selected row"
+        );
+    });
+}
+
+/// REVIEW-10604 P1 2: a member's selector fetch of a month the root does not
+/// list is answered empty even when the vault stores a row in that month that
+/// the member's selector selects. The row is stored after the home started,
+/// so its boot reconcile did not list the month, and nothing served the
+/// month since. The answer is the empty window as it is, not the selector
+/// filter's copy, which packs the rows the vault stores under the key.
+/// red with the unlisted answer made through the selector filter again (head
+/// 5cc797cf): the answer carries the stored row.
+#[test]
+fn a_member_fetch_of_an_unlisted_month_with_a_stored_selected_row_is_answered_empty() {
+    run_on_engine_stack(|| async {
+        let fx = fixture(WindowFixture::Selected).await;
+        let unlisted = WindowKey::try_new("2019-07").unwrap();
+        let stored = EntityId::now();
+        let stored_at = unlisted.start_timestamp().unwrap() + 86_400;
+        fx.vault
+            .put_entity(
+                &stored,
+                ENTITY_TYPE_FACET,
+                TimeRange {
+                    start: stored_at,
+                    end: stored_at,
+                },
+                stored_at,
+                &rmp_serde::to_vec_named(&json!({"title": "Stored facet"})).unwrap(),
+            )
+            .unwrap();
+        assert!(!persisted_root_lists(&fx.vault, &unlisted));
+        let selector = SyncSelector::new(
+            fx.grant_id,
+            fx.member,
+            SyncSelectorWorld::All,
+            vec![stored],
+            vec![],
+        );
+        let mut socket = bound_member(&fx, transport::PROTOCOL_VERSION).await;
+        let served = member_fetch_answer_on(&mut socket, &unlisted, &selector).await;
+        assert!(
+            served.get_map("entities").is_empty(),
+            "the unlisted month is answered empty, without its stored row"
+        );
+        assert!(
+            !window_snapshot_present(&fx.vault, &unlisted).unwrap(),
+            "the fetch snapshotted no window"
+        );
+        assert!(
+            !persisted_root_lists(&fx.vault, &unlisted),
+            "the fetch persisted no root that lists the window"
+        );
+    });
+}
+
+/// REVIEW-10604 P1 1: an unlisted window's empty answer is not kept as one of
+/// the socket's admitted copies, so the socket's body upkeep, which rebuilds
+/// each kept copy from the home's window on every poll, opens no window for
+/// the key while the socket stays open.
+/// red with the empty answer kept as an admitted copy again (head 5cc797cf):
+/// the upkeep's rebuild opens the unlisted window in the home's manager.
+#[cfg(all(oneiron_test_support, feature = "mesh"))]
+#[test]
+fn a_member_fetch_of_an_unlisted_window_leaves_no_window_for_the_body_upkeep_to_open() {
+    run_on_engine_stack(|| async {
+        let fx = fixture(WindowFixture::Selected).await;
+        let unlisted = WindowKey::try_new("2019-07").unwrap();
+        let mut socket = bound_member(&fx, transport::PROTOCOL_VERSION).await;
+        let served = member_fetch_answer_on(&mut socket, &unlisted, &fx.selector).await;
+        assert!(
+            served.get_map("entities").is_empty(),
+            "the unlisted window is answered empty"
+        );
+        // The socket stays open across several body upkeep polls.
+        let observation = tokio::time::timeout(BODY_UPKEEP_OBSERVATION, async {
+            loop {
+                if let Message::Close(close) = next_message(&mut socket).await {
+                    panic!("the socket closed during the observation: {close:?}");
+                }
+            }
+        })
+        .await;
+        assert!(
+            observation.is_err(),
+            "the bounded observation must complete"
+        );
+        assert!(
+            fx.home_windows.window(&unlisted).is_none(),
+            "the body upkeep opened no window for the unlisted key"
+        );
+        assert!(
+            !window_snapshot_present(&fx.vault, &unlisted).unwrap(),
+            "nothing snapshotted the unlisted window"
+        );
     });
 }
 
@@ -1595,5 +1782,69 @@ fn a_member_lane_reads_its_windows_tombstones() {
             .unwrap();
         assert_eq!(value.first(), Some(&2), "the hard delete's reason byte");
         assert_eq!(value.len(), 25, "the whole tombstone value");
+    });
+}
+
+/// FOLLOW-REQUEST-WINDOW-LIST-ORACLE (SYNC-RECEIVE-READ-20261127 F11): a
+/// member lane gets no root, so a follow or promotion with a garbage selector
+/// gets one answer whether or not the home lists the window: the socket
+/// closes with DECODE_ERROR, and nothing is answered with the socket kept.
+/// red with the selector decode moved back after the root's list check: the
+/// unlisted window is answered `FOLLOW_REFUSED` and its socket stays open,
+/// while the listed window's socket closes.
+#[test]
+fn a_garbage_follow_selector_gets_one_answer_for_a_listed_and_an_unlisted_window() {
+    run_on_engine_stack(|| async {
+        let fx = fixture(WindowFixture::Selected).await;
+        let unlisted = WindowKey::try_new("2019-07").unwrap();
+        for sub_tag in [
+            window_sub_tags::FOLLOW_REQUEST,
+            window_sub_tags::PROMOTION_REQUEST,
+        ] {
+            for key in [&fx.window, &unlisted] {
+                let mut socket = bound_member(&fx, transport::RESIDENCE_PROTOCOL_VERSION).await;
+                send_window(&mut socket, key, sub_tag, b"not a selector").await;
+                expect_close(&mut socket, REFUSED_FRAME).await;
+            }
+        }
+    });
+}
+
+/// The same order keeps the honest answer: a well-formed follow of a window
+/// the home does not list is still answered `FOLLOW_REFUSED`, and the socket
+/// stays open, so the listed window's promotion is granted on it right after.
+#[test]
+fn a_well_formed_follow_of_an_unlisted_window_still_answers_follow_refused() {
+    run_on_engine_stack(|| async {
+        let fx = fixture(WindowFixture::Selected).await;
+        let unlisted = WindowKey::try_new("2019-07").unwrap();
+        let selector = encode_sync_selector(&fx.selector).unwrap();
+        let mut socket = bound_member(&fx, transport::RESIDENCE_PROTOCOL_VERSION).await;
+        send_window(
+            &mut socket,
+            &unlisted,
+            window_sub_tags::FOLLOW_REQUEST,
+            &selector,
+        )
+        .await;
+        let refused = next_member_binary(&mut socket).await;
+        assert_eq!(refused[0], transport::TAG_WINDOW_SYNC);
+        let (key, tag, payload) = transport::decode_window_sync(&refused[1..]).unwrap();
+        assert_eq!(key, unlisted.as_str());
+        assert_eq!(tag, window_sub_tags::FOLLOW_REFUSED);
+        assert!(payload.is_empty());
+        send_window(
+            &mut socket,
+            &fx.window,
+            window_sub_tags::PROMOTION_REQUEST,
+            &selector,
+        )
+        .await;
+        let granted = next_member_binary(&mut socket).await;
+        assert_eq!(granted[0], transport::TAG_WINDOW_SYNC);
+        let (key, tag, payload) = transport::decode_window_sync(&granted[1..]).unwrap();
+        assert_eq!(key, fx.window.as_str());
+        assert_eq!(tag, window_sub_tags::PROMOTION_GRANTED);
+        assert!(payload.is_empty());
     });
 }

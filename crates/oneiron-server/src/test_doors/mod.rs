@@ -79,6 +79,7 @@ pub mod parked_step_resume;
 pub mod pre_idle_reuse;
 pub mod question_heads;
 pub mod raw_stream;
+pub mod recorded_answer_recheck;
 #[cfg(unix)]
 pub mod recovery_box_hold;
 pub mod refusal_wire;

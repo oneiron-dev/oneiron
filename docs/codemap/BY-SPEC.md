@@ -432,6 +432,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | ARCH-0040 | `crates/oneiron/src/workspace_roster/project/read/mod.rs` | m |
 | ARCH-0040 | `crates/oneiron/src/workspace_roster/rooms/peer_settings.rs` | s |
 | ARCH-0040 | `crates/oneiron/src/workspace_roster/rooms/thread_delete.rs` | s |
+| ARCH-0040 | `crates/oneiron-server/src/handler/mesh/sync_grant.rs` | s |
 | ARCH-0040 | `crates/oneiron-server/src/selector_release.rs` | s |
 | ARCH-0040 | `crates/oneiron-testkit/src/model/mod.rs` | m |
 | ARCH-0042 | `crates/oneiron/src/dreamer_runner/maintenance/calibration_asks.rs` | s |

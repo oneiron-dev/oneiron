@@ -238,6 +238,8 @@ impl Vault {
                 self.text_index_trusted
                     .load(std::sync::atomic::Ordering::Acquire),
             )?;
+            // Erase and count the inert copies first; the derived-row eraser then finds none.
+            let had_retained_copy = crate::batch::export::archive_retained_record_erase::erase_retained_side_rows_of_record_in_txn(&self.store, wtxn, id)?;
             // A MACHINE claim's signed history controls go with it.
             let (existed, had_vector, had_graph_mutation, neighbors) =
                 crate::batch::deindex_entity_with_machine_history(&write, wtxn, id)?;
@@ -279,7 +281,8 @@ impl Vault {
                     || had_refinement
                     || had_merge_receipt
                     || had_tags
-                    || had_missing,
+                    || had_missing
+                    || had_retained_copy,
                 citing,
                 effects,
             ))
@@ -293,6 +296,8 @@ impl Vault {
     /// `erase`: the scrub of an erase (a GDPR or policy delete, a hard
     /// erase's redirect shell), whose body keys retire; a delete's keeps
     /// them, so its restore window stays (KS-2A).
+    /// The third result says whether the scrub changed local rows a forward write counts beyond
+    /// the body: the Gate decision ledger or an inert archive copy about the record.
     pub(in crate::deletion) fn soft_erase_active_store_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -480,10 +485,11 @@ impl Vault {
                 ppr::invalidate_ppr_for_delete(&self.store, wtxn, id, &cleanup.neighbors)?;
                 crate::store::graph_version::increment_graph_version(&self.store, wtxn)?;
             }
+            let had_retained_copy = crate::batch::export::archive_retained_record_erase::erase_retained_side_rows_of_record_in_txn(&self.store, wtxn, id)?;
             return Ok((
-                had_refinement || had_merge_receipt || had_tags || had_missing,
+                had_refinement || had_merge_receipt || had_tags || had_missing || had_retained_copy,
                 had_vector,
-                ledger_changed,
+                ledger_changed || had_retained_copy,
             ));
         };
         let header = EntityMetadataHeader::parse(&entity_record)

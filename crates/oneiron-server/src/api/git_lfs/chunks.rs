@@ -82,7 +82,19 @@ pub(super) async fn exchange(
     let line = server.transfers.lfs_reads_line();
     let questions = Arc::clone(&server.transfers.questions);
     let (served, permit) = crate::api::transfer::spawn_worker(move || {
-        let decoded = oneiron::sync::chunks::read_chunk_request_stream(&mut request);
+        // The decode reads the named object's manifest to check HAVE and WANT
+        // as they arrive: its copies are charged first, on a hold of their
+        // own, before the read (FIX 9032; REVIEW-10608 P1 2). The hold ends
+        // with the decode, whose hashes are then gone, before the serve
+        // charges its own copies on the exchange's room.
+        let mut manifest_held = line.empty();
+        let decoded = oneiron::sync::chunks::read_chunk_request_stream(&mut request, |oid| {
+            if let Some(row) = vault.lfs_manifest_row_bytes(LfsOid::from_bytes(*oid))? {
+                Transfers::charge_exchange_manifest(&line, &questions, &mut manifest_held, 0, row);
+            }
+            oneiron::sync::chunks::manifest_chunk_hashes(&vault, oid)
+        });
+        drop(manifest_held);
         let failed = request.failed();
         let (mut room, room_taken) = request.into_room();
         let served = match decoded {

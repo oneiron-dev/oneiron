@@ -55,8 +55,8 @@ use oneiron_server::gpu_execution_node::scope_systemd::device_query::{
 };
 use oneiron_server::gpu_execution_node::scope_systemd::{control, device_query};
 use oneiron_server::gpu_execution_node::{
-    DeviceToolAccount, GpuProbeError, NvidiaSmiQuery, NvidiaSmiRoute, parse_compute_process_lines,
-    parse_device_lines, parse_sample_lines,
+    DeviceToolAccount, GPU_QUERY_TIMEOUT, GpuProbeError, NvidiaSmiQuery, NvidiaSmiRoute,
+    parse_compute_process_lines, parse_device_lines, parse_sample_lines,
 };
 
 const JOB_ACCOUNT: &str = "oneiron-job-standin";
@@ -124,10 +124,15 @@ struct Standins {
     /// group's kill cannot end, as one wedged in a driver call is. That
     /// process's id is in [`ESCAPED_PID_FILE`] beside it before it answers.
     escaping: PathBuf,
+    /// Keeps running past the deadline, with its id in [`SLOW_PID_FILE`].
+    slow: PathBuf,
 }
 
 /// The file the escaping stand-in writes its left-behind process's id to.
 const ESCAPED_PID_FILE: &str = "escaped.pid";
+
+/// The file the slow stand-in writes its own process id to.
+const SLOW_PID_FILE: &str = "slow.pid";
 
 fn standins() -> &'static Standins {
     static STANDINS: OnceLock<(tempfile::TempDir, Standins)> = OnceLock::new();
@@ -179,11 +184,19 @@ fi
 echo "{CARD}, NVIDIA GeForce RTX 4090, 24564"
 "#
     );
+    let slow = format!(
+        r#"#!/bin/sh
+trap '' TERM
+echo "$$" > "$(dirname "$0")/{SLOW_PID_FILE}"
+exec sleep 60
+"#
+    );
     Standins {
         job_account_only: write_script(dir, "nvidia-smi", &job_account_only),
         before_hand_over: write_script(dir, "nvidia-smi-before-hand-over", &before_hand_over),
         refusing_loudly: write_script(dir, "nvidia-smi-refusing-loudly", &refusing_loudly),
         escaping: write_script(dir, "nvidia-smi-escaping", &escaping),
+        slow: write_script(dir, "nvidia-smi-slow", &slow),
     }
 }
 
@@ -446,6 +459,150 @@ fn a_socket_this_account_may_not_connect_to_leaves_the_query_to_the_tool_run_her
     }
 }
 
+/// Runs one test in its own process and checks that its assertions ran.
+fn run_isolated_device_query_test(test: &str, flag: &str, marker: &str) {
+    let dir = private_dir();
+    let child = std::process::Command::new(std::env::current_exe().expect("this test binary"))
+        .args(["--exact", test, "--nocapture", "--test-threads", "1"])
+        .env(flag, "1")
+        .env("TMPDIR", dir.path())
+        .env_remove("USER")
+        .env_remove("LOGNAME")
+        .output()
+        .expect("run the isolated test");
+    let stdout = String::from_utf8_lossy(&child.stdout);
+    let stderr = String::from_utf8_lossy(&child.stderr);
+    assert!(
+        child.status.success() && stdout.contains(marker),
+        "the isolated test exited with {}:\n{stdout}{stderr}",
+        child.status
+    );
+}
+
+/// Makes `connect` return EPERM on this x86-64 test thread and its children.
+#[cfg(target_arch = "x86_64")]
+fn deny_connect_with_eperm() {
+    use libc::{BPF_ABS, BPF_JEQ, BPF_JMP, BPF_K, BPF_LD, BPF_RET, BPF_W, sock_filter};
+
+    const AUDIT_ARCH_X86_64: u32 = 0xC000_003E;
+    let statement = |code, k| sock_filter {
+        code,
+        jt: 0,
+        jf: 0,
+        k,
+    };
+    let jump_if_equal = |k, jf| sock_filter {
+        code: (BPF_JMP | BPF_JEQ | BPF_K) as u16,
+        jt: 0,
+        jf,
+        k,
+    };
+    let load_word = (BPF_LD | BPF_W | BPF_ABS) as u16;
+    let ret = (BPF_RET | BPF_K) as u16;
+    let mut filters = [
+        statement(load_word, 4), // seccomp_data.arch
+        jump_if_equal(AUDIT_ARCH_X86_64, 3),
+        statement(load_word, 0), // seccomp_data.nr
+        jump_if_equal(libc::SYS_connect as u32, 1),
+        statement(ret, libc::SECCOMP_RET_ERRNO | libc::EPERM as u32),
+        statement(ret, libc::SECCOMP_RET_ALLOW),
+    ];
+    let program = libc::sock_fprog {
+        len: filters.len().try_into().expect("the filter length"),
+        filter: filters.as_mut_ptr(),
+    };
+    let one: libc::c_ulong = 1;
+    let zero: libc::c_ulong = 0;
+    // SAFETY: these are the integer arguments required for PR_SET_NO_NEW_PRIVS.
+    let no_new_privs = unsafe { libc::prctl(libc::PR_SET_NO_NEW_PRIVS, one, zero, zero, zero) };
+    assert_eq!(
+        no_new_privs,
+        0,
+        "prctl: {}",
+        std::io::Error::last_os_error()
+    );
+    // SAFETY: program points to the initialized filter array for this call.
+    let installed = unsafe {
+        libc::syscall(
+            libc::SYS_seccomp,
+            libc::SECCOMP_SET_MODE_FILTER,
+            0_u32,
+            &raw const program,
+        )
+    };
+    assert_eq!(installed, 0, "seccomp: {}", std::io::Error::last_os_error());
+}
+
+/// Off x86-64 there is no filter to make `connect` answer EPERM (the one
+/// above checks the x86-64 audit arch), so the run lists this case as
+/// ignored, with that reason.
+#[cfg(not(target_arch = "x86_64"))]
+#[test]
+#[ignore = "the seccomp filter that makes connect answer EPERM is written for x86-64 only"]
+fn a_socket_whose_connect_answers_eperm_leaves_the_query_to_the_tool_run_here() {}
+
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn a_socket_whose_connect_answers_eperm_leaves_the_query_to_the_tool_run_here() {
+    const CHILD: &str = "ONEIRON_TEST_CONNECT_EPERM";
+    const MARKER: &str = "eperm-child-ran";
+    if std::env::var_os(CHILD).is_none() {
+        run_isolated_device_query_test(
+            "a_socket_whose_connect_answers_eperm_leaves_the_query_to_the_tool_run_here",
+            CHILD,
+            MARKER,
+        );
+        return;
+    }
+    deny_connect_with_eperm();
+
+    let dir = private_dir();
+    let socket = dir.path().join("job-control.sock");
+    let _listener = UnixListener::bind(&socket).expect("bind");
+    std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o600)).expect("chmod");
+    match NvidiaSmiRoute::of_machine(&socket) {
+        NvidiaSmiRoute::JobControl {
+            socket: selected, ..
+        } => assert_eq!(selected, socket),
+        other => panic!("the socket looks usable before connect, got {other:?}"),
+    }
+
+    let route = NvidiaSmiRoute::JobControl {
+        socket: socket.clone(),
+        fallback_program: standins().before_hand_over.clone(),
+    };
+    let devices = parse_device_lines(
+        &route
+            .query(NvidiaSmiQuery::Devices)
+            .expect("the devices from the tool run here"),
+    )
+    .expect("readable device lines");
+    assert_eq!(devices.len(), 1);
+    assert_eq!(devices[0].device_id, CARD);
+
+    let after = NvidiaSmiRoute::JobControl {
+        socket: socket.clone(),
+        fallback_program: standins().job_account_only.clone(),
+    };
+    match after.query(NvidiaSmiQuery::Devices) {
+        Err(GpuProbeError::Unavailable { reason }) => {
+            assert!(
+                reason.starts_with(&format!(
+                    "this account may not connect to the job control socket at {}: ",
+                    socket.display()
+                )),
+                "{reason}"
+            );
+            let eperm = std::io::Error::from_raw_os_error(libc::EPERM).to_string();
+            assert!(reason.contains(&eperm), "{reason}");
+            assert!(reason.contains("; run here: "), "{reason}");
+            assert!(reason.ends_with(NVML_REFUSAL), "{reason}");
+        }
+        other => panic!("both refusals, got {other:?}"),
+    }
+    println!("{MARKER}");
+}
+
 #[test]
 fn a_query_its_kill_cannot_end_holds_the_machines_query_lock_until_it_ends() {
     let dir = private_dir();
@@ -505,6 +662,90 @@ fn a_query_its_kill_cannot_end_holds_the_machines_query_lock_until_it_ends() {
     .expect("readable device lines");
     assert_eq!(devices[0].device_id, CARD);
     handler.join().expect("the handler");
+}
+
+#[test]
+fn a_query_past_its_deadline_is_refused_and_its_killed_process_frees_the_lock() {
+    // Keep the query runner's unreaped-process count separate from other tests.
+    const CHILD: &str = "ONEIRON_TEST_DEVICE_QUERY_DEADLINE";
+    const MARKER: &str = "deadline-child-ran";
+    if std::env::var_os(CHILD).is_none() {
+        run_isolated_device_query_test(
+            "a_query_past_its_deadline_is_refused_and_its_killed_process_frees_the_lock",
+            CHILD,
+            MARKER,
+        );
+        return;
+    }
+
+    let dir = private_dir();
+    let socket = dir.path().join("job-control.sock");
+    let settings = settings_in(dir.path(), job_account());
+    let lock_file = settings.lock_dir.join(DEVICE_QUERY_LOCK_FILE);
+    let program = &standins().slow;
+    let handler = serve_device_queries(&socket, program.clone(), settings, 1);
+    let route = NvidiaSmiRoute::JobControl {
+        socket,
+        fallback_program: standins().before_hand_over.clone(),
+    };
+
+    // testkit-lint: allow(wall-clock) measures the real query deadline
+    let started = Instant::now();
+    let answer = route.query(NvidiaSmiQuery::Devices);
+    let elapsed = started.elapsed();
+    match answer {
+        Err(GpuProbeError::Unavailable { reason }) => {
+            assert!(
+                reason.starts_with("job control refused the nvidia-devices query: "),
+                "{reason}"
+            );
+            assert!(
+                reason.contains(&format!("{} did not answer within 10 s", program.display())),
+                "{reason}"
+            );
+        }
+        other => panic!("a query past its deadline is refused, got {other:?}"),
+    }
+    assert!(
+        (GPU_QUERY_TIMEOUT..=GPU_QUERY_TIMEOUT + Duration::from_secs(6)).contains(&elapsed),
+        "the query took {elapsed:?}, expected the 10 s deadline plus at most 6 s"
+    );
+
+    let raw_pid: i32 = std::fs::read_to_string(program.with_file_name(SLOW_PID_FILE))
+        .expect("the slow stand-in's pid file")
+        .trim()
+        .parse()
+        .expect("a process id");
+    assert!(raw_pid > 0, "not a process id: {raw_pid}");
+    let pid = rustix::process::Pid::from_raw(raw_pid).expect("a process id");
+    // testkit-lint: allow(wall-clock) bounds both real process cleanup checks
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let (freed, free) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let taken = std::fs::File::open(&lock_file).and_then(|file| file.lock());
+        let _ = freed.send(taken);
+    });
+    // testkit-lint: allow(wall-clock) the same process cleanup deadline
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    free.recv_timeout(remaining)
+        .expect("the lock is free once the timed-out query's process is killed")
+        .expect("the lock");
+    loop {
+        match rustix::process::test_kill_process(pid) {
+            Err(rustix::io::Errno::SRCH) => break,
+            other => other.expect("check whether the timed-out query's process exists"),
+        }
+        // testkit-lint: allow(wall-clock) the same process cleanup deadline
+        let within_deadline = Instant::now() < deadline;
+        assert!(
+            within_deadline,
+            "the timed-out query's process still exists"
+        );
+        // testkit-lint: allow(sleep) poll for the reaper to collect the real child
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    handler.join().expect("the handler");
+    println!("{MARKER}");
 }
 
 #[test]

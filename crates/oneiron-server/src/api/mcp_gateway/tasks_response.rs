@@ -783,11 +783,12 @@ pub(crate) struct McpCodeRun {
 /// engine's model wrote from the caller's task keeps the run's services.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum RunAuthor {
-    /// The caller wrote the code the run executes. Dormant until the
-    /// `execute` tool binds it (PR D); the test door binds it now.
-    #[cfg_attr(not(oneiron_test_support), allow(dead_code))]
+    /// The caller wrote the code the run executes, or the door's program is
+    /// stored code such as a callable skill's: every door but a task run's
+    /// (FIX CODE-MODE-LENDING-W8).
     Caller,
     /// The engine's model wrote each step's program from the caller's task.
+    /// Only a task run's door is built with it.
     EngineModel,
 }
 

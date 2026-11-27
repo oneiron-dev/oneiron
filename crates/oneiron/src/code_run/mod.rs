@@ -138,6 +138,7 @@ pub use self::correction::{
     CodeRunCorrectionCheckpoint, CodeRunCorrectionOutcome, CodeRunCorrectionPolicy,
     ExecutorWireRepairs,
 };
+pub(crate) use self::dispatcher::RecordedProducer;
 pub(crate) use self::dispatcher::{
     ExecutorCallSite, ExecutorReply, ExecutorReplyPublisher, agent_attempt_run_ref,
     check_write_gate_against_vault, envelope_run_ref, recorded_verb_call,
@@ -145,7 +146,7 @@ pub(crate) use self::dispatcher::{
 };
 pub use self::dispatcher::{
     GatedActorWrite, HostPlannerBinding, HostPlannerDecisions, HostSelfDispatcher,
-    RepoRequestWitness, SELF_MEMORY_SEARCH_MAX_RESULTS,
+    RECORDED_ANSWER_UNIDENTIFIED, RepoRequestWitness, SELF_MEMORY_SEARCH_MAX_RESULTS,
 };
 pub(crate) use self::dispatcher::{HookedCall, TextAnswerPost};
 pub(crate) use self::model_call::{

@@ -36,7 +36,7 @@ EOF
 name=oneiron-qualify-$$-$(date +%s)
 stage=$(mktemp -d)
 trap 'docker rm -f "$name" > /dev/null 2>&1; rm -rf "$stage"' EXIT
-cp "$bin" "$stage/oneiron" && cp "$here/qualify_systemd_scope.sh" "$stage/"
+cp "$bin" "$stage/oneiron" && cp "$here/qualify_systemd_scope.sh" "$here/qualify_device_query.sh" "$stage/"
 docker run -d --name "$name" --privileged --cgroupns=private --memory 8g --cpus 4 \
   --tmpfs /run --tmpfs /run/lock -v "$stage:/opt/qualify:ro" "$tag" "$init" > /dev/null \
   || { echo "## QUALIFY rc=77 why=container-did-not-start"; exit 77; }

@@ -19,6 +19,10 @@ pub(super) use self::verb_call::{execute_code_mode_verb, execute_step_verdict};
 
 impl McpCodeModeVerbs {
     /// Binds the door to the server runtime the `execute` call arrived on.
+    /// Its program is the caller's ([`RunAuthor::Caller`]) unless
+    /// [`Self::authored_by_engine_model`] says the engine's model wrote it, so
+    /// a door built for any other run lends nothing (FIX
+    /// CODE-MODE-LENDING-W8).
     pub(crate) fn new(
         server: &Arc<SyncServer>,
         actor: &McpCallContext,
@@ -34,8 +38,16 @@ impl McpCodeModeVerbs {
             guests: RunGuests::new(server, run_id),
             collector: crate::api::call_receipt::attempt_collector(),
             observer: crate::api::admission_observer(),
-            author: RunAuthor::EngineModel,
+            author: RunAuthor::Caller,
         }
+    }
+
+    /// The door of a task run, whose steps the engine's model wrote from the
+    /// caller's task: it keeps the run's services ([`RunAuthor::EngineModel`]).
+    /// Only a task run's entry binds it (FIX CODE-MODE-LENDING-W8).
+    pub(crate) fn authored_by_engine_model(mut self) -> Self {
+        self.author = RunAuthor::EngineModel;
+        self
     }
 
     /// The door of a run whose program its caller wrote (the MCP `execute`
@@ -47,8 +59,12 @@ impl McpCodeModeVerbs {
         self
     }
 
-    /// A browser row: this connector's binding, live session and the row's
-    /// own grant at each call, then the run's guest.
+    /// A browser row: this connector's binding, then its live session and
+    /// Write at each call, whatever the row reads, then the run's guest. The
+    /// guest is the host's: a direct call reaches the browser only through
+    /// the caller's attached live run, which needs Write, and no direct door
+    /// serves the desktop, so a desktop row is refused
+    /// ([`MCP_DESKTOP_REFUSED`], FIX CODE-MODE-LENDING-W2).
     pub(super) fn call_browser(
         &self,
         call: &SelfAgentVerbCall,
@@ -56,7 +72,8 @@ impl McpCodeModeVerbs {
         invocation: InvocationId,
     ) -> oneiron::Result<Result<AgentVerbAnswer, AgentVerbRefusal>> {
         if let Err(error) = mcp_admit_host_verb(&self.actor, call.verb)
-            .and_then(|()| mcp_host_verb_gate(&self.server, &self.actor, call.verb))
+            .and_then(|()| desktop_row_refusal(call.verb))
+            .and_then(|()| mcp_browser_guest_gate(&self.server, &self.actor))
         {
             return refused(error);
         }
@@ -157,6 +174,61 @@ impl McpCodeModeVerbs {
             })?
             .map(|reader| reader.at(self.actor.locality()))
             .ok_or_else(unauthenticated)
+    }
+
+    /// A call the run serves itself meets this connector's door at each call
+    /// too: a run row needs its own binding, and every call needs the
+    /// session `execute` was admitted on, still live, and the grant its
+    /// own effect needs (`mcp_run_call_gate`). A search reads
+    /// under that credential's grants, as `vault.recall` does, from where its
+    /// caller sits (DEC-0005).
+    fn admit_bound_run_call(
+        &self,
+        call: RunCall,
+    ) -> Result<Option<ScopedReadActorKey>, AgentVerbRefusal> {
+        let refused = |error: McpGatewayError| AgentVerbRefusal {
+            hook_notice: None,
+            code: error.kind.to_owned(),
+            reason_codes: error.reason_codes,
+        };
+        // A row's own binding: the effect's one row, or, for an effect shared
+        // by several rows (Fold, Team, Leader), one of them. The exact row of
+        // a shared effect is admitted first, by `admit_run_row`.
+        if let RunCall::Bridge(effect) = call {
+            let mut rows = RunVerb::ALL.iter().filter(|verb| verb.effect() == effect);
+            if let Some(first) = rows.next()
+                && mcp_admit_run_verb(&self.actor, *first).is_err()
+                && !rows.any(|verb| mcp_admit_run_verb(&self.actor, *verb).is_ok())
+            {
+                mcp_admit_run_verb(&self.actor, *first).map_err(refused)?;
+            }
+        }
+        mcp_run_call_gate(&self.server, &self.actor, call).map_err(refused)?;
+        // Reading the reason is capture-only; a missing key must not refuse the decline.
+        if matches!(call, RunCall::Bridge(SelfEffect::TasksRefuse)) {
+            return Ok(self.host_turn_read_key());
+        }
+        // A search reads on the credential's lane, a facet stamp places only
+        // a row that lane reads, a consult lands only refs it reads, and a
+        // TASK binding reads its TASK and workflow there (FIX 5316).
+        // A run's claim put and supersede check the records they name on
+        // that lane too, as a facade row's is (FIX-LIST 25102).
+        // The run repo rows read on that lane too (FIX 6867).
+        if !matches!(
+            call,
+            RunCall::Bridge(
+                SelfEffect::MemorySearch
+                    | SelfEffect::MemoryPutEdge
+                    | SelfEffect::MemoryPutClaim
+                    | SelfEffect::MemorySupersedeClaim
+                    | SelfEffect::ConsultResult
+                    | SelfEffect::WorkflowDispatch
+            )
+        ) && !matches!(call, RunCall::Bridge(effect) if effect.is_repo())
+        {
+            return Ok(None);
+        }
+        self.credential_lane().map(Some)
     }
 }
 
@@ -320,70 +392,34 @@ impl AgentVerbDoor for McpCodeModeVerbs {
         })
     }
 
-    /// A call the run serves itself meets this connector's door at each call
-    /// too: a run row needs its own binding, and every call needs the
-    /// session `execute` was admitted on, still live, and the grant its
-    /// own effect needs (`mcp_run_call_gate`). A search reads
-    /// under that credential's grants, as `vault.recall` does, from where its
-    /// caller sits (DEC-0005).
+    /// A call a caller's own code makes is refused what no direct call
+    /// reaches first (`caller_code_run_refusal`); then it meets the checks
+    /// every call the run serves itself meets ([`Self::admit_bound_run_call`]).
     fn admit_run_call(
         &self,
         call: RunCall,
     ) -> Result<Option<ScopedReadActorKey>, AgentVerbRefusal> {
-        let refused = |error: McpGatewayError| AgentVerbRefusal {
-            hook_notice: None,
-            code: error.kind.to_owned(),
-            reason_codes: error.reason_codes,
-        };
         if self.author == RunAuthor::Caller
             && let RunCall::Bridge(effect) = call
             && let Some(reason) = caller_code_run_refusal(effect)
         {
             return Err(caller_code_refused(reason));
         }
-        // A row's own binding: the effect's one row, or, for an effect shared
-        // by several rows (Fold, Team, Leader), one of them. The exact row of
-        // a shared effect is admitted first, by `admit_run_row`.
-        if let RunCall::Bridge(effect) = call {
-            let mut rows = RunVerb::ALL.iter().filter(|verb| verb.effect() == effect);
-            if let Some(first) = rows.next()
-                && mcp_admit_run_verb(&self.actor, *first).is_err()
-                && !rows.any(|verb| mcp_admit_run_verb(&self.actor, *verb).is_ok())
-            {
-                mcp_admit_run_verb(&self.actor, *first).map_err(refused)?;
-            }
-        }
-        mcp_run_call_gate(&self.server, &self.actor, call).map_err(refused)?;
-        // Reading the reason is capture-only; a missing key must not refuse the decline.
-        if matches!(call, RunCall::Bridge(SelfEffect::TasksRefuse)) {
-            return Ok(self.host_turn_read_key());
-        }
-        // A search reads on the credential's lane, a facet stamp places only
-        // a row that lane reads, a consult lands only refs it reads, and a
-        // TASK binding reads its TASK and workflow there (FIX 5316).
-        // A run's claim put and supersede check the records they name on
-        // that lane too, as a facade row's is (FIX-LIST 25102).
-        // The run repo rows read on that lane too (FIX 6867).
-        if !matches!(
-            call,
-            RunCall::Bridge(
-                SelfEffect::MemorySearch
-                    | SelfEffect::MemoryPutEdge
-                    | SelfEffect::MemoryPutClaim
-                    | SelfEffect::MemorySupersedeClaim
-                    | SelfEffect::ConsultResult
-                    | SelfEffect::WorkflowDispatch
-            )
-        ) && !matches!(call, RunCall::Bridge(effect) if effect.is_repo())
-        {
-            return Ok(None);
-        }
-        self.credential_lane().map(Some)
+        self.admit_bound_run_call(call)
     }
 
-    /// A run's speech is its own record only where its storage lands it in
-    /// the run's own derived conversation; anywhere else it is a room write
-    /// and needs Write (`mcp_run_speech_gate`). A caller's own speech is a
+    /// The outer skill call is the caller's own `self.skills.call`, which the
+    /// facade admitted on the caller's credential before the skill's body
+    /// runs, not a call the body made: it meets the checks a run call meets
+    /// and none of the caller-code refusals, which still refuse each of the
+    /// body's own calls (REVIEW-10594).
+    fn admit_outer_skill_call(&self) -> Result<Option<ScopedReadActorKey>, AgentVerbRefusal> {
+        self.admit_bound_run_call(RunCall::Bridge(SelfEffect::SkillsCall))
+    }
+
+    /// A run's speech writes a MESSAGE wherever its storage lands it, so the
+    /// engine's program needs Write in its own run's conversation as in a room
+    /// (`mcp_run_speech_gate`, FIX CODE-MODE-LENDING-W7). A caller's own speech is a
     /// call it chose to make: the row it is made through needs its binding,
     /// as a direct call's does, and it needs Write wherever it lands (FIX
     /// EXECUTE-CALLER-CODE). It reads nothing.
@@ -425,6 +461,51 @@ impl AgentVerbDoor for McpCodeModeVerbs {
                 reason_codes: error.reason_codes,
             })?;
         self.credential_lane()
+    }
+
+    /// Rechecks a recorded verb's caller-code policy and binding (FIX
+    /// CODE-MODE-LENDING-W11). Host-served result, browser and desktop rows
+    /// also meet the gates their live call meets; session-bound rows meet the room's existing
+    /// admission methods. The input-dependent scope and grade of a generated
+    /// row's recorded answer stay at the generic Read check: the original
+    /// arguments are not available here.
+    fn admit_recorded_verb(&self, verb: AgentVerb) -> Result<(), AgentVerbRefusal> {
+        if self.author == RunAuthor::Caller
+            && let Some(reason) = caller_code_verb_refusal(verb)
+        {
+            return Err(caller_code_refused(reason));
+        }
+        let refused = |error: McpGatewayError| AgentVerbRefusal {
+            hook_notice: None,
+            code: error.kind.to_owned(),
+            reason_codes: error.reason_codes,
+        };
+        if matches!(verb, AgentVerb::VaultRunsReadResult) {
+            return mcp_admit_host_verb(&self.actor, verb)
+                .and_then(|()| mcp_host_verb_gate(&self.server, &self.actor, verb))
+                .map_err(refused);
+        }
+        // As `call_browser` admits the live row (FIX CODE-MODE-LENDING-W2).
+        if verb.is_browser() {
+            return mcp_admit_host_verb(&self.actor, verb)
+                .and_then(|()| desktop_row_refusal(verb))
+                .and_then(|()| mcp_browser_guest_gate(&self.server, &self.actor))
+                .map_err(refused);
+        }
+        let surface = try_registered_surface(McpSurfaceMode::ToolFirst)
+            .map_err(|error| refused(admission::mcp_surface_unavailable(error)))?;
+        let name = verb.as_str();
+        let Some(McpEndpointTool::Verb(tool)) = surface.resolve(name) else {
+            if let Some(refusal) = oneiron::task_verb::sdk::wrong_root(name) {
+                return Err(refused(mcp_facade_error(refusal)));
+            }
+            return Err(refused(McpGatewayError::new(
+                -32601,
+                "unknown_tool",
+                format!("{name} is not a verb in the SDK verb table"),
+            )));
+        };
+        admission::mcp_admit_bound_tool(&self.actor, tool.name).map_err(refused)
     }
 
     /// A room write a session-bound run stages (WILL L11-01, S01-2a) meets
@@ -475,6 +556,23 @@ impl AgentVerbDoor for McpCodeModeVerbs {
                 .take(),
         );
     }
+}
+
+/// A run's desktop row is refused: no direct door serves the host's desktop
+/// guest (FIX CODE-MODE-LENDING-W2).
+fn desktop_row_refusal(verb: AgentVerb) -> Result<(), McpGatewayError> {
+    if !verb.as_str().starts_with("self.desktop.") {
+        return Ok(());
+    }
+    Err(McpGatewayError::new(
+        -32020,
+        MCP_DESKTOP_REFUSED,
+        format!(
+            "{} drives the host's desktop, which no direct call reaches, so a connector's run \
+             does not either",
+            verb.as_str()
+        ),
+    ))
 }
 
 /// A refused call as the run takes it: a verb hook's stop as the typed stop,

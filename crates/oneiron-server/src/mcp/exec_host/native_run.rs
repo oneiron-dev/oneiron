@@ -3,25 +3,72 @@
 
 use std::sync::Arc;
 
-use oneiron::code_run::{GatedActorWrite, SpawnHostSeat};
+use oneiron::LlmBackend;
+use oneiron::code_run::GatedActorWrite;
+use oneiron::engine_executor::RunCompaction;
 use oneiron::engine_executor::{
     CallerRunInput, EngineExecutorConfig, EngineExecutorOutcome, EngineNativeExecutor,
-    JsCodeModeRuntime, RunCompaction, SelfBriefPort, caller_run_input,
+    JsCodeModeRuntime, SelfBriefPort, caller_run_input,
 };
+use oneiron::llm::seat::ModelSeat;
 use oneiron::{EntityId, Vault, WriteActor};
 
-use super::{
-    EngineRunError, McpCodeExecutionError, McpCodeModeProvider, engine_run_seat,
-    enter_engine_native_run, enter_on,
-};
+use super::{EngineRunError, McpCodeExecutionError, McpCodeModeProvider, engine_run_seat};
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn enter_on(
+    vault: &Vault,
+    provider: &dyn McpCodeModeProvider,
+    backend: &dyn LlmBackend,
+    bound: &GatedActorWrite<'_>,
+    config: &EngineExecutorConfig,
+    compaction: Option<&mut RunCompaction>,
+    reactor: &tokio::runtime::Runtime,
+    seat: Option<&ModelSeat>,
+    brief: Option<&dyn SelfBriefPort>,
+    horizon: Option<oneiron::idle_fold::CachedPrefixHorizon>,
+    window_outgrown_ends_run: bool,
+) -> Result<EngineExecutorOutcome, EngineRunError> {
+    let mut runtime = provider.runtime();
+    let runtime: &mut dyn JsCodeModeRuntime = &mut *runtime;
+    let mut routed_config = config.clone();
+    let mut executor = EngineNativeExecutor::new(vault, backend, provider.lease(), runtime, bound)
+        .with_cache_horizon(horizon);
+    if let Some(seat) = seat {
+        routed_config.model = seat.model().clone();
+        routed_config.model_locality = seat.locality();
+        routed_config.seat_effort = Some(seat.effort());
+        executor = executor.with_model_seat(seat);
+    }
+    if let Some(seat) = compaction {
+        executor = executor.with_compaction(seat);
+    }
+    if window_outgrown_ends_run {
+        executor = executor.with_window_outgrown_terminal();
+    }
+    if let Some(feedback) = provider.code_check() {
+        executor = executor.with_code_check(feedback);
+    }
+    // FIX 17594 (delivery slice D2): the host's self-brief port, when it
+    // lends one.
+    if let Some(port) = brief {
+        executor = executor.with_self_brief(port);
+    }
+    reactor
+        .block_on(executor.run(&routed_config))
+        .map_err(EngineRunError::Run)
+}
 
 /// Enters the EXISTING sandbox/REPL substrate for one durable run.
 ///
 /// This is the whole of what `execute` means now: bind the gated write at
 /// the host boundary, hand the engine its own runtime, and let
 /// `EngineNativeExecutor` own every step, replay row, and terminal marker. The
-/// server evaluates nothing and opens no second vault-write path. A run with
-/// a seat may spawn reader children under it. A run its caller's credential
+/// server evaluates nothing and opens no second vault-write path. An MCP run
+/// is lent no reader seat: its children would spend on the host's meter,
+/// which no direct call reaches (CODE-MODE-LENDING-RUN-SPEND = A, FIX
+/// CODE-MODE-LENDING-W5), so `self.spawn` answers `reader_spawn_unbound`.
+/// A run its caller's credential
 /// admitted binds that slip's lineage as its own (FIX 4705). A run its host
 /// lends a self-brief port (`brief`, FIX 17594) carries the brief it
 /// prepares on either backend.
@@ -49,8 +96,6 @@ pub(super) fn run_engine_native_code_mode(
     opener: Option<&oneiron::authority::VerifiedSlip>,
     worlds: Vec<EntityId>,
     birth_position: oneiron::federation::record_scope::BirthPosition,
-    reader_seat: Option<SpawnHostSeat>,
-    compaction: Option<&mut RunCompaction>,
     git_door_base: Option<String>,
     consent_origin: Option<oneiron::code_run::CodeConsentRunOrigin>,
     brief: Option<&dyn SelfBriefPort>,
@@ -72,9 +117,6 @@ pub(super) fn run_engine_native_code_mode(
         .with_code_consent_origin(consent_origin);
     if let Some(opener) = opener {
         gated_write = gated_write.with_opener_credential(opener);
-    }
-    if let Some(seat) = reader_seat {
-        gated_write = gated_write.with_reader_spawn(seat);
     }
     let reactor = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -100,43 +142,57 @@ pub(super) fn run_engine_native_code_mode(
             backend.as_ref(),
             &gated_write,
             config,
-            compaction,
+            // An MCP run takes no compaction seat (FIX CODE-MODE-LENDING-W6).
+            None,
             &reactor,
             seat.as_ref(),
             brief,
             // Each `execute` call is its own entry.
             None,
+            true,
         ),
-        None => enter_engine_native_run(
+        None => enter_on(
             vault,
             provider,
+            provider.backend(),
             &gated_write,
             config,
-            compaction,
+            // An MCP run takes no compaction seat (FIX CODE-MODE-LENDING-W6).
+            None,
             &reactor,
-            None,
             seat.as_ref(),
-            // An `execute` run is no planned child.
-            None,
-            // Keep this caller's existing unconstrained routing.
-            Vec::new(),
             brief,
             None,
+            true,
         ),
     }
-    .map_err(|error| match error.provider_outage() {
-        Some(retry_after) => McpCodeExecutionError::ProviderUnavailable { retry_after },
-        None => match error {
-            EngineRunError::Binding(error) => McpCodeExecutionError::RunBinding(error),
-            EngineRunError::Run(
-                oneiron::engine_executor::EngineExecutorError::ResumeDivergence(report),
-            ) => McpCodeExecutionError::ResumeDivergence(report.to_string()),
-            EngineRunError::Run(error) if is_config_drift(&error) => {
-                McpCodeExecutionError::RunBinding(error.to_string())
-            }
-            EngineRunError::Run(error) => McpCodeExecutionError::Run(error.to_string()),
-            EngineRunError::Payer(fault) => McpCodeExecutionError::RunBinding(fault.to_string()),
-        },
+    .map_err(|error| {
+        // A Task run whose window outgrew its model's limit ends with the
+        // refusal to start again, not a crash (FIX CODE-MODE-LENDING-W6).
+        if matches!(
+            error.llm(),
+            Some(oneiron::LlmError::Fatal(
+                oneiron::FatalLlmError::ContextWindowExceeded { .. }
+            ))
+        ) {
+            return McpCodeExecutionError::WindowOutgrown;
+        }
+        match error.provider_outage() {
+            Some(retry_after) => McpCodeExecutionError::ProviderUnavailable { retry_after },
+            None => match error {
+                EngineRunError::Binding(error) => McpCodeExecutionError::RunBinding(error),
+                EngineRunError::Run(
+                    oneiron::engine_executor::EngineExecutorError::ResumeDivergence(report),
+                ) => McpCodeExecutionError::ResumeDivergence(report.to_string()),
+                EngineRunError::Run(error) if is_config_drift(&error) => {
+                    McpCodeExecutionError::RunBinding(error.to_string())
+                }
+                EngineRunError::Run(error) => McpCodeExecutionError::Run(error.to_string()),
+                EngineRunError::Payer(fault) => {
+                    McpCodeExecutionError::RunBinding(fault.to_string())
+                }
+            },
+        }
     })
 }
 

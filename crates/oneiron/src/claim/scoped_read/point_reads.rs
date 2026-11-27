@@ -359,6 +359,7 @@ impl ScopedRead<'_> {
             reads,
             requested,
             |row| row.occurred.start <= as_of && row.learned_at <= as_of,
+            true,
             |_, _| Ok(false),
             |_, _, rows| Ok::<_, Error>(rows),
         )
@@ -408,6 +409,7 @@ impl ScopedRead<'_> {
             reads,
             requested,
             |_| true,
+            true,
             |_, _| Ok(false),
             project,
         )
@@ -450,6 +452,7 @@ impl ScopedRead<'_> {
             reads,
             requested,
             |_| true,
+            true,
             opaque,
             |txn, _, rows| project(txn, rows),
         )
@@ -458,14 +461,15 @@ impl ScopedRead<'_> {
     /// [`Self::read_projected_opaque_in_txn`], where `keep` is the caller's own
     /// selection: an admitted row it refuses answers as `None`, as a missing
     /// one does, adds no suppression count, and is neither projected nor
-    /// charged to the reader's read exposure (L8-65). `project` also takes
-    /// the authority the rows' gate held.
-    fn read_kept_projected_opaque_in_txn<T, E: From<Error>>(
+    /// charged to the reader's read exposure (L8-65), nor is any row unless
+    /// `charge`. `project` also takes the authority the rows' gate held.
+    pub(super) fn read_kept_projected_opaque_in_txn<T, E: From<Error>>(
         &self,
         txn: &heed::RoTxn<'_>,
         reads: &[PointRead<'_>],
         requested: Option<&RetrievalFilter>,
         keep: impl Fn(&ReadRow) -> bool,
+        charge: bool,
         mut opaque: impl FnMut(&heed::RoTxn<'_>, &EntityId) -> std::result::Result<bool, E>,
         project: impl FnOnce(
             &heed::RoTxn<'_>,
@@ -514,7 +518,9 @@ impl ScopedRead<'_> {
             suppressed,
             Some(&authority),
         );
-        self.charge_served(records_served(value.iter().flatten()));
+        if charge {
+            self.charge_served(records_served(value.iter().flatten()));
+        }
         Ok(ScopedReadResult {
             value: project(txn, &authority, value)?,
             receipt,

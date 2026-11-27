@@ -148,7 +148,7 @@ impl MemoryKey<'_> {
 
 /// Extracts the write-envelope actor stamped into a claim's evidence
 /// (gated candidate path). `None` for claims written without an envelope.
-pub(super) fn claim_envelope_actor(body: &ClaimBody) -> Option<EntityId> {
+pub(in crate::memory) fn claim_envelope_actor(body: &ClaimBody) -> Option<EntityId> {
     let Value::Map(entries) = body.evidence.as_ref()? else {
         return None;
     };

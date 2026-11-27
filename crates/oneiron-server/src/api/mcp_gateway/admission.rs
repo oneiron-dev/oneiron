@@ -102,18 +102,6 @@ pub(crate) fn mcp_admit_scoped_verb(
     mcp_admit_verb_scope(server, tool, arguments, actor)
 }
 
-/// A verb a bound host operation runs on its own behalf: a browser batch's
-/// routine decisions are `ai.verdict` calls. The batch's own binding carries
-/// it, so only the verb's scope is admitted here, never a tool binding.
-pub(crate) fn mcp_admit_step_verb(
-    server: &Arc<SyncServer>,
-    tool: crate::mcp::McpGeneratedVerbTool,
-    arguments: &crate::mcp::McpVerbArguments,
-    actor: &McpCallContext,
-) -> Result<(), McpGatewayError> {
-    mcp_admit_verb_scope(server, tool, arguments, actor)
-}
-
 /// One verb-table row a code run serves itself (`vault.search`,
 /// `vault.claims.put`, …). No tool carries it, so the bound-verb ceiling names it by
 /// its row name. Its world/facet axis is the run's: `execute` admits no
@@ -137,7 +125,10 @@ pub(crate) fn mcp_admit_host_verb(
     mcp_admit_unscoped_execution(actor, verb.as_str(), "name")
 }
 
-fn mcp_admit_bound_tool(actor: &McpCallContext, tool_name: &str) -> Result<(), McpGatewayError> {
+pub(crate) fn mcp_admit_bound_tool(
+    actor: &McpCallContext,
+    tool_name: &str,
+) -> Result<(), McpGatewayError> {
     if actor.admits_tool(tool_name) {
         return Ok(());
     }
