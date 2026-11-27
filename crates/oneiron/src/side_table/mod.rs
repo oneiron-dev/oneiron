@@ -181,6 +181,25 @@ impl SideTableDbs for crate::Vault {
     }
 }
 
+/// A local write context admits rows through the same custody door as its vault.
+impl SideTableDbs for CustodyWrite<'_> {
+    fn side_vault_meta(&self) -> &OverlayDb {
+        self.store.side_vault_meta()
+    }
+
+    fn side_sync_state_opt(&self) -> Option<&OverlayStrDb> {
+        self.store.side_sync_state_opt()
+    }
+
+    fn side_custody(&self) -> Option<CustodyWrite<'_>> {
+        Some(CustodyWrite { ..*self })
+    }
+
+    fn side_owning_store(&self) -> Option<&Store> {
+        Some(self.store)
+    }
+}
+
 /// The bare `vault_meta` handle, for the open gates that read declared rows before a store exists.
 impl SideTableDbs for OverlayDb {
     fn side_vault_meta(&self) -> &OverlayDb {
@@ -670,10 +689,22 @@ impl<K: SideKey, V, C: SideCodec<V>> SideTable<K, V, C> {
         txn: &mut RwTxn<'_>,
         key: &K,
     ) -> Result<bool> {
-        let full = self.key_bytes(key);
+        self.delete_raw(dbs, txn, &self.key_bytes(key))
+    }
+
+    /// Deletes one full stored key without decoding its suffix, even if that suffix is malformed.
+    pub(crate) fn delete_raw(
+        &self,
+        dbs: &impl SideTableDbs,
+        txn: &mut RwTxn<'_>,
+        full: &[u8],
+    ) -> Result<bool> {
+        if !full.starts_with(self.decl.prefix) {
+            return Err(self.decl.row_error(SideTableRowProblem::KeyShape));
+        }
         match self.decl.db {
-            SideDb::VaultMeta => dbs.side_vault_meta().delete(txn, &full),
-            SideDb::SyncState => dbs.side_sync_state()?.delete(txn, self.str_key(&full)?),
+            SideDb::VaultMeta => dbs.side_vault_meta().delete(txn, full),
+            SideDb::SyncState => dbs.side_sync_state()?.delete(txn, self.str_key(full)?),
         }
     }
 

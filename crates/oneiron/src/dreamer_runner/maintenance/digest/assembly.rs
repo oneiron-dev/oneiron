@@ -302,6 +302,8 @@ impl Vault {
         DIGEST.admit(self, txn, &locator, &mut digest)?;
         digest.content_hash = view::content_hash(&digest)?;
         DIGEST.put(&self.store, txn, &locator, &digest)?;
+        // Index the admitted proposals so their erases can find the stored digest.
+        super::erase::index_digest_claims_in_txn(&self.store, txn, &digest)?;
         // Delivery is the reader's inbox, in this same write: one
         // NOTIFICATION per reader, keyed by digest, whose seen and acked
         // marks are the reader's own and never this digest's `seen`. The
