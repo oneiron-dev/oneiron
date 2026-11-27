@@ -183,6 +183,7 @@ impl Vault {
             sweep_dry_run_forced: false,
             live_use: false,
             code_consent_wait: None,
+            run_served_person_rows: false,
             source_rows: Some(Vec::new()),
             approval: None,
             input: None,
@@ -197,6 +198,9 @@ impl Vault {
                 .map(crate::task_verb::HostBinding::parent),
         };
         let Some(named) = named else {
+            let mut pending = pending;
+            pending.run_served_person_rows =
+                super::connector_call_code::run_served_person_rows(memory);
             return self.drive_connector_call(None, None, pending, host);
         };
         // The host's identity names one logical call: run again, it finds
