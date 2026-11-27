@@ -35,7 +35,9 @@ impl Fixture {
             .prepare_install_signing()
             .expect("load this install's signing keys");
         let owner = vault.ensure_embedded_owner_actor().expect("owner");
-        let agent_a = vault.ensure_agent_principal("correct-author").expect("agent A");
+        let agent_a = vault
+            .ensure_agent_principal("correct-author")
+            .expect("agent A");
         let agent_b = vault
             .ensure_agent_principal("correct-bystander")
             .expect("agent B");
@@ -222,11 +224,11 @@ fn a_correction_is_held_and_named_on_the_old_claim() {
     let view = f
         .read_filtered_as(f.agent_a, old)
         .expect("the old claim still reads while its correction waits");
-    let pending = view.pending_correction.clone().expect(
-        "the old claim names its pending correction",
-    );
-    let new_id =
-        resolve_entity_ref(&f.vault, &receipt.claim_short_id).expect("correction id");
+    let pending = view
+        .pending_correction
+        .clone()
+        .expect("the old claim names its pending correction");
+    let new_id = resolve_entity_ref(&f.vault, &receipt.claim_short_id).expect("correction id");
     assert_eq!(
         pending.claim_ref,
         new_id.to_hex(),
@@ -235,6 +237,11 @@ fn a_correction_is_held_and_named_on_the_old_claim() {
     assert_eq!(
         pending.decision_ref, receipt.receipt_ref,
         "the pending correction names the correction's decision"
+    );
+    assert!(
+        f.read_filtered_as(f.agent_b, old)
+            .is_none_or(|view| view.pending_correction.is_none()),
+        "another agent's read of the old claim names no pending correction"
     );
     assert!(
         receipt
@@ -277,7 +284,10 @@ fn an_agents_retract_of_a_corrected_claim_waits() {
     let view = f
         .read_filtered_as(f.agent_a, old)
         .expect("the old claim still reads while its retract waits");
-    let short = view.short_ref.clone().expect("the old claim has a short ref");
+    let short = view
+        .short_ref
+        .clone()
+        .expect("the old claim has a short ref");
     let expected_note = format!(
         "{short} closes when the correction is approved; it stays live if the correction is rejected."
     );
@@ -305,8 +315,7 @@ fn the_owners_approval_closes_the_old_claim() {
     let correction = f
         .correct_as(f.agent_a, &f.correction(old, "Yuki Tanaka"))
         .expect("A corrects its own claim");
-    let new_id =
-        resolve_entity_ref(&f.vault, &correction.claim_short_id).expect("correction id");
+    let new_id = resolve_entity_ref(&f.vault, &correction.claim_short_id).expect("correction id");
 
     let settled = f.settle(new_id, ClaimSettleDecision::Approve);
 
@@ -347,8 +356,7 @@ fn a_rejected_correction_leaves_the_old_claim_live() {
     let correction = f
         .correct_as(f.agent_a, &f.correction(old, "Yuki Tanaka"))
         .expect("A corrects its own claim");
-    let new_id =
-        resolve_entity_ref(&f.vault, &correction.claim_short_id).expect("correction id");
+    let new_id = resolve_entity_ref(&f.vault, &correction.claim_short_id).expect("correction id");
 
     let settled = f.settle(new_id, ClaimSettleDecision::Reject);
 
@@ -386,10 +394,9 @@ fn another_actor_cannot_correct_a_claim_it_did_not_write() {
     );
     let error = refused.expect_err("the correction is refused");
     assert!(
-        error
-            .suggestions
-            .iter()
-            .any(|hint| hint == "you can correct only claims you wrote; propose a new claim instead"),
+        error.suggestions.iter().any(
+            |hint| hint == "you can correct only claims you wrote; propose a new claim instead"
+        ),
         "the authorship refusal names the correction rule: {:?}",
         error.suggestions
     );

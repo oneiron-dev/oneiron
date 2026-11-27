@@ -337,18 +337,17 @@ impl Memory<'_> {
             else {
                 continue;
             };
-            map.entry(old).or_insert_with(|| {
-                (
-                    new_id,
-                    format!("gate:{}", record.decision_id.to_hex()),
-                )
-            });
+            map.entry(old)
+                .or_insert_with(|| (new_id, format!("gate:{}", record.decision_id.to_hex())));
         }
         Ok(map)
     }
 
-    /// Marks the views a parked correction waits on, when the caller's Recorded
-    /// lane admits the new claim.
+    /// Marks each view a parked correction waits on, when the caller wrote
+    /// the correction and its Recorded lane admits it: a correction's tray
+    /// entry is its writer's to read, as a held mark is. The lane admits the
+    /// corrections uncharged; only those marked are charged to the caller's
+    /// read exposure (L8-65) and listed as producers of the answer.
     fn fill_pending_corrections(&self, views: &mut [ClaimView]) -> MemoryResult<()> {
         if views.is_empty() {
             return Ok(());
@@ -357,32 +356,45 @@ impl Memory<'_> {
         if map.is_empty() {
             return Ok(());
         }
-        let mut new_ids: Vec<crate::entity_id::EntityId> =
-            map.values().map(|(new_id, _)| *new_id).collect();
-        new_ids.sort();
-        new_ids.dedup();
-        let reads: Vec<_> = new_ids.iter().copied().map(PointRead::id).collect();
-        let lane = self.read_lane(ClaimReadStatus::Recorded)?;
-        let admitted = lane.read(&reads, None)?;
-        let mut live = std::collections::HashSet::new();
-        for row in admitted.value.into_iter().flatten() {
-            if row.body.is_some() {
-                live.insert(row.id);
-            }
-        }
-        for view in views.iter_mut() {
+        let mut waiting = Vec::new();
+        for (index, view) in views.iter().enumerate() {
             let Ok(old) = crate::entity_id::EntityId::from_hex(&view.claim_ref) else {
                 continue;
             };
             if let Some((new_id, decision_ref)) = map.get(&old) {
-                if live.contains(new_id) {
-                    view.pending_correction = Some(PendingCorrection {
-                        claim_ref: new_id.to_hex(),
-                        decision_ref: decision_ref.clone(),
-                    });
-                }
+                waiting.push((index, *new_id, decision_ref.clone()));
             }
         }
+        if waiting.is_empty() {
+            return Ok(());
+        }
+        let reads: Vec<_> = waiting
+            .iter()
+            .map(|(_, new_id, _)| PointRead::id(*new_id))
+            .collect();
+        let lane = self.read_lane(ClaimReadStatus::Recorded)?;
+        let admitted = lane.read_uncharged(&reads)?;
+        let mut served = Vec::new();
+        for ((index, new_id, decision_ref), row) in waiting.into_iter().zip(admitted.value) {
+            let Some(bytes) = row
+                .as_ref()
+                .filter(|row| row.entity_type == ENTITY_TYPE_CLAIM)
+                .and_then(|row| row.body.as_deref())
+            else {
+                continue;
+            };
+            let body = crate::claim::decode_claim_body(bytes, true)?;
+            if !self.is_own_write(&body) {
+                continue;
+            }
+            views[index].pending_correction = Some(PendingCorrection {
+                claim_ref: new_id.to_hex(),
+                decision_ref,
+            });
+            served.push(new_id);
+        }
+        lane.charge_served(served.iter().copied());
+        self.produced_from(served);
         Ok(())
     }
 }

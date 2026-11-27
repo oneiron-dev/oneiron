@@ -225,6 +225,7 @@ pub use claim_stale::{
     ClaimDemoteActionInput, ClaimDemoteRequest, ClaimDemoteView, ClaimFilteredListRequest,
     ClaimFilteredReadRequest, ReadFilterInput,
 };
+pub use claims::ClaimCorrectionInput;
 pub use claims::{
     ClaimChangeVerdict, ClaimInput, ClaimProposalReview, ClaimProposalReviewRequest,
     ClaimSettleDecision, ClaimSettleRequest, ClaimSettlement, ClaimSettlementAnswer,
@@ -233,7 +234,6 @@ pub use claims::{
     MULTI_CARDINALITY_PREDICATES, MemoryReceipt, PendingWrite, RecordRefusal, RefusalReason,
     SafeDeleteReason, SettleWarning, SettleWarningCode,
 };
-pub use claims::ClaimCorrectionInput;
 pub use conflict_settle::{
     DreamerCandidateDecisionsRequest, DreamerDecidedCandidateView,
     read_dreamer_candidate_decisions_as,

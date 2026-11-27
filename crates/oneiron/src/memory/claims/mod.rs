@@ -183,9 +183,9 @@ fn declared_cardinality(predicate: &str) -> ClaimCardinality {
 }
 
 #[doc(hidden)]
-pub use oneiron_verb_wire::memory::claims::ClaimInput;
-#[doc(hidden)]
 pub use oneiron_verb_wire::memory::claims::ClaimCorrectionInput;
+#[doc(hidden)]
+pub use oneiron_verb_wire::memory::claims::ClaimInput;
 
 /// Receipt for one committed claim. A refused element of a batch never
 /// gets one: it answers [`CommitOutcome::Refused`] instead (OF-063).

@@ -178,7 +178,8 @@ pub struct ClaimView {
     /// the reader is its writer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub held: Option<HeldMark>,
-    /// The pending correction waiting on this claim, when one is parked.
+    /// The pending correction waiting on this claim, when one is parked and
+    /// the reader wrote it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_correction: Option<PendingCorrection>,
 }

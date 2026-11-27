@@ -134,7 +134,10 @@ impl Memory<'_> {
         };
         if old_body.lifecycle != ClaimLifecycleStatus::Active {
             return Err(MemoryError::bad_request_with(
-                format!("corrects {:?} does not name an Active claim", input.corrects),
+                format!(
+                    "corrects {:?} does not name an Active claim",
+                    input.corrects
+                ),
                 &["Name an Active claim you wrote on the same predicate and subject."],
             ));
         }
@@ -214,7 +217,8 @@ impl Memory<'_> {
     /// Whether the claim a correction names is the caller's to correct: its
     /// write-envelope actor is the caller, or the caller is the vault's owner.
     fn check_correction_authorship(&self, body: &crate::claim::ClaimBody) -> MemoryResult<()> {
-        let allowed = self.acts_as_own_person() && self.is_vault_owner()? || claim_envelope_actor(body) == Some(self.actor);
+        let allowed = self.acts_as_own_person() && self.is_vault_owner()?
+            || claim_envelope_actor(body) == Some(self.actor);
         if allowed {
             Ok(())
         } else {
