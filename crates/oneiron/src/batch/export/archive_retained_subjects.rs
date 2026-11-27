@@ -75,11 +75,7 @@ pub(crate) const RETAINED_SUBJECT_RULES: &[(&str, RetainedSubjectRule)] = &[
     ("CONSENT_APPROVE_ONCE_MARKER", NoRecord),
     ("CONSENT_STANDING_GRANT", NoRecord),
     ("CONSENT_WIDEN_PROPOSAL", NoRecord),
-    // The room, then the PERSON, actor and handoff entities its value names.
-    (
-        "CONVERSATION_MEMBERSHIP_ROW",
-        KeyAndValue(membership_row_records),
-    ),
+    ("CONVERSATION_MEMBERSHIP_ROW", ID_AND_U64),
     ("CONVERSATION_MEMBERSHIP_SEQ", ONE_ID),
     // The room, then the grantee PERSON.
     (
