@@ -405,7 +405,10 @@ impl Vault {
                 conversation,
                 imported_at,
                 None,
-                placement,
+                {
+                    let _ = placement;
+                    None
+                },
             ) {
                 Ok(report) => {
                     landed |= report.new > 0 || report.changed > 0;
