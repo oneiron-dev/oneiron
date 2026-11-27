@@ -610,8 +610,7 @@ impl Memory<'_> {
     ) -> MemoryResult<bool> {
         // Room speech is judged by the room, as on the page this probe continues (FIX PR B review).
         let lane = self
-            .read_lane(crate::claim::ClaimReadStatus::Recorded)?
-            .judging_room_speech_by_room();
+            .read_lane(crate::claim::ClaimReadStatus::Recorded)?;
         loop {
             let keys = self.history_rows(room, start, 128, |_, key, turn_id| Ok((key, turn_id)))?;
             count.rows(keys.len());
