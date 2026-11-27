@@ -108,6 +108,20 @@ pub fn encode_chunk_request(request: &ChunkSyncRequest) -> Result<Vec<u8>> {
     encode(request)
 }
 
+/// The distinct chunk hashes of the stored manifest of the object `oid`
+/// names: what [`read_chunk_request_stream`] checks a request's HAVE and
+/// WANT against as they arrive. An object with no manifest here refuses the
+/// request, as its answer would.
+pub fn manifest_chunk_hashes(
+    vault: &Vault,
+    oid: &[u8; 32],
+) -> Result<std::collections::BTreeSet<[u8; 32]>> {
+    let manifest = vault
+        .lfs_manifest(LfsOid::from_bytes(*oid))?
+        .ok_or_else(invalid)?;
+    Ok(manifest.chunks.iter().map(|chunk| chunk.hash).collect())
+}
+
 /// Handles a request after transport authentication. The selector must name that
 /// exact principal. Grant revocation/expiry and the effective scope are checked
 /// for every request, including every subsequent want frame.
@@ -522,8 +536,9 @@ pub use download::ChunkDownload;
 pub use read::{ChunkMark, ChunkRead, LfsMarkedReader, LfsReadAuthority};
 pub(crate) use release::LfsReleaseVerdicts;
 pub use stream::{
-    CHUNK_STREAM_FRAME_BYTES, read_chunk_request_stream, read_chunk_response_stream,
-    write_chunk_request_stream, write_chunk_response_stream,
+    CHUNK_STREAM_FRAME_BYTES, MAX_CHUNK_REQUEST_READ_BYTES, MAX_CHUNK_REQUEST_SELECTOR_BYTES,
+    read_chunk_request_stream, read_chunk_response_stream, write_chunk_request_stream,
+    write_chunk_response_stream,
 };
 
 #[cfg(test)]

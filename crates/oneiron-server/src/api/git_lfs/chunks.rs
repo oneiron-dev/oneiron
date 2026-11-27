@@ -82,7 +82,9 @@ pub(super) async fn exchange(
     let line = server.transfers.lfs_reads_line();
     let questions = Arc::clone(&server.transfers.questions);
     let (served, permit) = crate::api::transfer::spawn_worker(move || {
-        let decoded = oneiron::sync::chunks::read_chunk_request_stream(&mut request);
+        let decoded = oneiron::sync::chunks::read_chunk_request_stream(&mut request, |oid| {
+            oneiron::sync::chunks::manifest_chunk_hashes(&vault, oid)
+        });
         let failed = request.failed();
         let (mut room, room_taken) = request.into_room();
         let served = match decoded {
