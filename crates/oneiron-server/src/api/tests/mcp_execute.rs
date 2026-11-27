@@ -21,8 +21,12 @@ struct Seatless {
 }
 
 fn seatless_server() -> Seatless {
+    seatless_server_with_vault_config(oneiron::VaultConfig::device())
+}
+
+fn seatless_server_with_vault_config(config: oneiron::VaultConfig) -> Seatless {
     let dir = tempfile::tempdir().unwrap();
-    let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
+    let vault = Arc::new(oneiron::Vault::open(dir.path(), config).unwrap());
     crate::test_credentials::install_fixture_keystore(&vault, b"secret");
     let provider = crate::mcp::McpQuickJsProvider::for_caller_source(Arc::new(factory())).unwrap();
     let server = Arc::new(
@@ -619,5 +623,440 @@ async fn result_read_outside_the_credential_allowlist_is_refused_naming_the_verb
             .contains("tail-allowlist-proof"),
         "{:?}",
         reads[1]
+    );
+}
+
+/// Proves (P1-7): a source-only host starts no resident pump; agent attempts wait instead of
+/// being claimed to fail on task config.
+#[tokio::test]
+async fn source_only_host_leaves_the_agent_pump_unstarted() {
+    let seatless = seatless_server();
+    let host = seatless
+        .server
+        .code_execution_host()
+        .expect("a host is bound");
+    assert!(
+        !host.task_runtime_available(),
+        "caller-source readiness only: no task seat"
+    );
+    assert!(
+        seatless.server.spawn_resident_pump().is_none(),
+        "no pump starts on a source-only host"
+    );
+}
+
+/// Proves (P2-10): production boot with no `[models]` binds the verified component as a
+/// caller-source host through `AiHost::attach`, listing both tools and running caller code.
+#[tokio::test]
+async fn attach_with_no_models_binds_caller_source_through_production_boot() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
+    crate::test_credentials::install_fixture_keystore(&vault, b"secret");
+    let server = SyncServer::new(
+        vault,
+        SyncServerConfig {
+            auth_secret: Some("secret".to_owned()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let (server, _host) = crate::ai_host::AiHost::attach(server, None).await;
+    let server = Arc::new(server);
+    let host = server
+        .code_execution_host()
+        .expect("production boot binds a host");
+    assert!(host.production_runtime_available());
+    assert!(
+        !host.task_runtime_available(),
+        "caller-source readiness only: no task seat"
+    );
+    let actor = seeded_test_entity_id(0x0024_66d1);
+    let credential = "execute-attach-seatless";
+    register_mcp_actor(&server, credential, actor, oneiron::EdgeActorClass::Human).await;
+    for path in ["/mcp", MCP_TOOL_FIRST_PATH] {
+        let (_, listing) =
+            route_json(server.clone(), mcp_list_request(path, credential, "list")).await;
+        assert_ready_listing(path, &listing);
+    }
+    let body = execute(&server, credential, "canary", "return 1;", None).await;
+    let answered = structured(&body);
+    assert_eq!(answered["status"], "complete", "{body:?}");
+    assert_eq!(answered["result"], json!(1), "{body:?}");
+}
+
+/// Proves (P1-5): a run parked on an ask that settles by deadline answers
+/// EXPIRED on a resume that carries an answer, instead of WRONG_INPUT; a
+/// resume without an answer re-enters as today and completes on the delivered
+/// deadline result.
+#[tokio::test]
+async fn resume_after_a_delivered_deadline_answers_expired_with_an_answer_and_reenters_without() {
+    const NOW: u64 = 1_772_000_000;
+    const UNTIL: u64 = NOW + 100;
+    const PAST: u64 = NOW + 101;
+    let clock = oneiron::store::ports::ManualClock::new(NOW);
+    let mut config = oneiron::VaultConfig::device();
+    config.store_clock = clock.bundle();
+    let clocked = seatless_server_with_vault_config(config);
+    let actor = seeded_test_entity_id(0x0024_6701);
+    let turn = seeded_test_entity_id(0x0024_6702);
+    let credential = "resume-deadline-credential";
+    register_mcp_actor(
+        &clocked.server,
+        credential,
+        actor,
+        oneiron::EdgeActorClass::Human,
+    )
+    .await;
+    seed_turn(&clocked.vault, turn, actor);
+    let code = format!(
+        r#"const r = await ask({{who: {{responder: {{human: {{actor_ref: "{actor}"}}}}}}, what: {{reference: {{turn: "{turn}"}}, revision: 1, options: {{}}, context_refs: []}}, until: {until}}}); return await wait({{handle: r.handle, step_key: "deadline-wait"}});"#,
+        actor = actor.to_hex(),
+        turn = turn.to_hex(),
+        until = UNTIL,
+    );
+    let paused = execute(
+        &clocked.server,
+        credential,
+        "park",
+        &code,
+        Some("deadline-run"),
+    )
+    .await;
+    let waiting = structured(&paused);
+    assert_eq!(waiting["status"], "paused", "{paused:?}");
+    // The parked wait's key and group, for the settlement trigger below.
+    let context = mcp_test_context(&clocked.server, credential, "ctx").await;
+    let run_id = crate::mcp::mcp_code_run_id("deadline-run", &context);
+    let record = clocked
+        .vault
+        .get_code_run_replay_record(&run_id)
+        .unwrap()
+        .expect("a record");
+    let (key, wait) = oneiron::engine_executor::code_run_parked_wait(&clocked.vault, &record)
+        .unwrap()
+        .expect("parked");
+    let group = wait.wait_id;
+    // Past the cutoff, a status wait settles the ask by deadline and delivers
+    // to the still-parked run.
+    clock.set(PAST);
+    let settle_args = mcp_merge_args(
+        mcp_endpoint_envelope(actor, "read_tasks"),
+        json!({"arguments": {"spec": {"handle": {"group_ref": group.to_hex()}, "step_key": "settle-deadline"}}}),
+    );
+    let (_, settlement) = route_json(
+        clocked.server.clone(),
+        mcp_endpoint_call_request(
+            MCP_TOOL_FIRST_PATH,
+            credential,
+            "settle",
+            "wait",
+            settle_args,
+        ),
+    )
+    .await;
+    let delivered = oneiron::code_run::WaitDeliveries::canonical(&clocked.vault)
+        .delivery(&key)
+        .unwrap();
+    let delivered =
+        delivered.unwrap_or_else(|| panic!("the deadline did not deliver: {settlement:?}"));
+    let status: oneiron::task_verb::TaskAskStatus = serde_json::from_str(&delivered.reply).unwrap();
+    assert!(matches!(
+        status,
+        oneiron::task_verb::TaskAskStatus::Settled(result)
+            if result.settlement.reason == oneiron::task_verb::TaskAskSettlementReason::Deadline
+    ));
+    // With an answer: EXPIRED, not WRONG_INPUT; the run stays parked.
+    let word = json!({"result_ref": actor.to_hex(), "option": null, "inform_for": null});
+    let refused = resume(
+        &clocked.server,
+        credential,
+        "answer-late",
+        "deadline-run",
+        Some(word),
+    )
+    .await;
+    let expired = structured(&refused);
+    assert_eq!(expired["status"], "error", "{refused:?}");
+    assert_eq!(expired["error"]["code"], "EXPIRED", "{refused:?}");
+    // Without an answer: re-enters as today and completes on the delivery.
+    let done = resume(&clocked.server, credential, "reenter", "deadline-run", None).await;
+    let completed = structured(&done);
+    assert_eq!(completed["status"], "complete", "{done:?}");
+    assert_eq!(completed["run_ref"], "deadline-run", "{done:?}");
+}
+
+/// Proves (P1-4 path): a refused answer names `tasks.answer` and leaves the
+/// ask pending, so a good answer still completes the run. The refusal goes
+/// through the answer verb's served rows; a release difference needs a
+/// retained producer and is not asserted here.
+#[tokio::test]
+async fn a_refused_answer_names_the_answer_verb_and_keeps_the_ask() {
+    let seatless = seatless_server();
+    let actor = seeded_test_entity_id(0x0024_6721);
+    let turn = seeded_test_entity_id(0x0024_6722);
+    let missing = seeded_test_entity_id(0x0024_6723);
+    let credential = "resume-refusal-credential";
+    register_mcp_actor(
+        &seatless.server,
+        credential,
+        actor,
+        oneiron::EdgeActorClass::Human,
+    )
+    .await;
+    seed_turn(&seatless.vault, turn, actor);
+    let code = format!(
+        r#"const r = await ask({{who: {{responder: {{human: {{actor_ref: "{actor}"}}}}}}, what: {{reference: {{turn: "{turn}"}}, revision: 1, options: {{}}, context_refs: []}}}}); return await wait({{handle: r.handle, step_key: "refusal-wait"}});"#,
+        actor = actor.to_hex(),
+        turn = turn.to_hex(),
+    );
+    let paused = execute(
+        &seatless.server,
+        credential,
+        "park",
+        &code,
+        Some("refusal-run"),
+    )
+    .await;
+    assert_eq!(structured(&paused)["status"], "paused", "{paused:?}");
+    // A result ref that names nothing the vault holds: the row refuses after
+    // it lists the ask group.
+    let bad = json!({"result_ref": missing.to_hex(), "option": null, "inform_for": null});
+    let refused = resume(
+        &seatless.server,
+        credential,
+        "bad-answer",
+        "refusal-run",
+        Some(bad),
+    )
+    .await;
+    let errored = structured(&refused);
+    assert_eq!(errored["status"], "error", "{refused:?}");
+    assert_eq!(
+        errored["error"]["verb"], "tasks.answer",
+        "the refusal names the verb: {refused:?}"
+    );
+    // The ask is still pending: a good answer completes the run.
+    let good = json!({"result_ref": actor.to_hex(), "option": null, "inform_for": null});
+    let done = resume(
+        &seatless.server,
+        credential,
+        "good-answer",
+        "refusal-run",
+        Some(good),
+    )
+    .await;
+    let completed = structured(&done);
+    assert_eq!(completed["status"], "complete", "{done:?}");
+    assert_eq!(completed["run_ref"], "refusal-run", "{done:?}");
+}
+
+/// P1-2: a resumed TASK whose answer has program feedback keeps an
+/// `InvocationRelease` whose value has no `steps` (and no `_returned_null` or
+/// `structuredContent.program_steps`).
+#[tokio::test]
+async fn claimed_keep_has_no_steps_with_program_feedback() {
+    use crate::api::mcp_gateway::{capturing_for_test, kept_for_test};
+
+    // A real completed TASK: even without a checker the engine keeps
+    // unavailable feedback, and the completed outcome re-reads it from storage.
+    let mode = code_mode_server_with(vec!["finish('feedback canary');".to_owned()], None);
+    let actor = seeded_test_entity_id(0x0024_6e01);
+    let credential = "p1-2-claimed-credential";
+    register_mcp_actor(
+        &mode.server,
+        credential,
+        actor,
+        oneiron::EdgeActorClass::Human,
+    )
+    .await;
+    let started =
+        execute_task_run_for_test(&mode.server, credential, "p1-2-task", "p1-2 task").await;
+    assert!(
+        started.get("error").is_none(),
+        "the task run starts: {started:?}"
+    );
+    assert_eq!(
+        started["result"]["structuredContent"]["resume"]["terminal"], true,
+        "the task completes: {started:?}"
+    );
+    // Resume through the new shape, capturing the claimed keep.
+    let ctx = mcp_test_context(&mode.server, credential, "p1-2-resume").await;
+    let args = crate::mcp::McpResumeToolArgs {
+        run_ref: "p1-2-task".to_owned(),
+        answer: None,
+    };
+    let (resumed, judged) = capturing_for_test(crate::api::mcp_gateway::execute_mcp_resume(
+        &mode.server,
+        &ctx,
+        &args,
+    ))
+    .await;
+    let reply = resumed.expect("the resume renders");
+    assert!(
+        reply["structuredContent"].is_object(),
+        "a tool result: {reply:?}"
+    );
+    assert!(
+        reply["_meta"]["program_steps"]
+            .as_array()
+            .is_some_and(|steps| !steps.is_empty()),
+        "the answer carries program feedback in _meta: {reply:?}"
+    );
+    assert!(
+        reply["structuredContent"].get("program_steps").is_none(),
+        "wire shape strips program_steps from structuredContent: {reply:?}"
+    );
+    let saved = serde_json::json!({ "result": reply.clone() });
+    let kept = kept_for_test(oneiron::authority::PeerMachine::Unknown, &saved, judged)
+        .expect("recorded equals reply, so kept returns Some");
+    assert!(
+        kept.value.pointer("/structuredContent/steps").is_none(),
+        "kept value has no steps: {:?}",
+        kept.value
+    );
+    assert!(
+        kept.value
+            .pointer("/structuredContent/_returned_null")
+            .is_none(),
+        "kept value has no _returned_null: {:?}",
+        kept.value
+    );
+    assert!(
+        kept.value
+            .pointer("/structuredContent/program_steps")
+            .is_none(),
+        "kept value has no structuredContent.program_steps: {:?}",
+        kept.value
+    );
+}
+
+/// P1-8: a syntax error on line 2 of plain JavaScript answers line 2 (and a column).
+#[tokio::test]
+async fn syntax_error_names_line_2() {
+    let seatless = seatless_server();
+    let actor = seeded_test_entity_id(0x0024_6e11);
+    let credential = "p1-8-syntax-credential";
+    register_mcp_actor(
+        &seatless.server,
+        credential,
+        actor,
+        oneiron::EdgeActorClass::Human,
+    )
+    .await;
+    let body = execute(
+        &seatless.server,
+        credential,
+        "syntax",
+        "const a = 1;\nconst b = ;\nreturn a;",
+        Some("p1-8-syntax-run"),
+    )
+    .await;
+    let answered = structured(&body);
+    assert_eq!(answered["status"], "error", "{body:?}");
+    assert_eq!(answered["error"]["code"], "SYNTAX", "{body:?}");
+    assert_eq!(answered["error"]["line"], 2, "{body:?}");
+    assert!(
+        answered["error"]["column"].is_number(),
+        "SYNTAX names its column: {body:?}"
+    );
+}
+
+/// P1-8: a `throw` on line 3 of plain JavaScript answers line 3 (no column).
+#[tokio::test]
+async fn thrown_error_names_line_3() {
+    let seatless = seatless_server();
+    let actor = seeded_test_entity_id(0x0024_6e12);
+    let credential = "p1-8-thrown-credential";
+    register_mcp_actor(
+        &seatless.server,
+        credential,
+        actor,
+        oneiron::EdgeActorClass::Human,
+    )
+    .await;
+    let body = execute(
+        &seatless.server,
+        credential,
+        "thrown",
+        "const a = 1;\nconst b = 2;\nthrow new Error('boom');",
+        Some("p1-8-thrown-run"),
+    )
+    .await;
+    let answered = structured(&body);
+    assert_eq!(answered["status"], "error", "{body:?}");
+    assert_eq!(answered["error"]["code"], "THROWN", "{body:?}");
+    assert_eq!(answered["error"]["line"], 3, "{body:?}");
+    assert!(
+        answered["error"].get("column").is_none(),
+        "THROWN names its line only: {body:?}"
+    );
+}
+
+/// P1-9: caller code `tasks.create` that lands shows its `task_ref`.
+#[tokio::test]
+async fn landed_tasks_create_shows_its_task_ref() {
+    let seatless = seatless_server();
+    let actor = seeded_test_entity_id(0x0024_6e21);
+    let credential = "p1-9-tasks-create-credential";
+    register_mcp_actor(
+        &seatless.server,
+        credential,
+        actor,
+        oneiron::EdgeActorClass::Human,
+    )
+    .await;
+    seed_auto_ceiling(&seatless.vault, actor, seeded_test_entity_id(0x0024_6e22));
+    let body = execute(
+        &seatless.server,
+        credential,
+        "create",
+        "return await tasks.create({spec: {goal: \"p1-9-task\"}, label: \"p1-9-task\"});",
+        Some("p1-9-create-run"),
+    )
+    .await;
+    let answered = structured(&body);
+    assert_eq!(answered["status"], "complete", "{body:?}");
+    let call = call_entry(&answered["calls"], "tasks.create");
+    assert_eq!(call["outcome"], "landed", "{body:?}");
+    let task_ref = answered["result"]["task_ref"]
+        .as_str()
+        .expect("the receipt names its task_ref");
+    assert_eq!(call["ref"], task_ref, "{body:?}");
+}
+
+/// P1-10: a run logging past the cap ends its console with the cut line.
+#[tokio::test]
+async fn console_past_cap_ends_with_cut_line() {
+    let seatless = seatless_server();
+    let actor = seeded_test_entity_id(0x0024_6e31);
+    let credential = "p1-10-console-credential";
+    register_mcp_actor(
+        &seatless.server,
+        credential,
+        actor,
+        oneiron::EdgeActorClass::Human,
+    )
+    .await;
+    let body = execute(
+        &seatless.server,
+        credential,
+        "console",
+        "for (let i = 0; i < 1000; i++) console.log(\"line \" + i + \" \" + \"x\".repeat(50)); return \"done\";",
+        Some("p1-10-console-run"),
+    )
+    .await;
+    let answered = structured(&body);
+    assert_eq!(answered["status"], "complete", "{body:?}");
+    let console = answered["console"].as_array().expect("console array");
+    assert!(
+        console.len() < 1000,
+        "the console is cut: {}",
+        console.len()
+    );
+    let omitted = 1_000 - (console.len() - 1);
+    let marker = format!("console cut at 20,000 characters; {omitted} lines not shown");
+    assert_eq!(
+        console.last().and_then(Value::as_str),
+        Some(marker.as_str())
     );
 }

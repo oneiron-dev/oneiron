@@ -189,8 +189,8 @@ pub enum McpCodeExecutionError {
     RunBinding(String),
     #[error("execute run failed: {0}")]
     Run(String),
-    /// The same run handle with other code (FIX EXECUTE-CALLER-CODE): the engine's config check
-    /// refused it, and nothing ran.
+    /// The same run handle with other input (FIX EXECUTE-CALLER-CODE): the host's explicit input
+    /// comparison refused it before entry (P2-1), and nothing ran.
     #[error("execute run refused: run_ref reused with other code")]
     RunRefReused,
     /// A model call no provider answered stopped the run (FIX 3194): its

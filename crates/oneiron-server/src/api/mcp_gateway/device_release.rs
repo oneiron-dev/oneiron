@@ -163,8 +163,11 @@ fn release_result(
     owner_whole_vault_export: bool,
 ) -> Result<Value, McpGatewayError> {
     // A claimed call keeps the result it is about to judge, for the calls
-    // waiting on it (FIX 7914).
-    super::claimed_release::record(&result, rows);
+    // waiting on it (FIX 7914). The new execute/resume endpoint releases
+    // unrecorded (P1-2): its wire shape is recorded explicitly instead.
+    if super::claimed_release::recording_enabled() {
+        super::claimed_release::record(&result, rows);
+    }
     let refused = |hold: ReleaseHold| {
         if continued {
             mcp_page_cursor_error(crate::mcp::McpPageCursorError::SnapshotMismatch)
@@ -605,7 +608,7 @@ pub(super) fn mcp_release_listed(
     result: Value,
     owner_whole_vault_export: bool,
 ) -> Result<Value, McpGatewayError> {
-    if rows.is_none() {
+    if rows.is_none() && super::claimed_release::recording_enabled() {
         super::claimed_release::record(&result, None);
     }
     match rows {

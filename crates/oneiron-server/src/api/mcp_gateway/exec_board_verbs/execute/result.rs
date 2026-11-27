@@ -60,9 +60,9 @@ pub(super) async fn render(
             );
             let mut shape = error_shape(run_ref, &error);
             if error.kind == "code_run_failed"
-                && let Ok(Some(record)) = record
+                && let Ok(Some(record)) = &record
             {
-                let calls = recorded_calls(server, actor, &record);
+                let calls = recorded_calls(server, actor, record);
                 if let Some(call) = calls.iter().rev().find(|call| {
                     call["code"]
                         .as_str()
@@ -84,30 +84,44 @@ pub(super) async fn render(
                         }
                     }
                 } else {
-                    let code = if error.message.contains("SyntaxError") {
-                        "SYNTAX"
-                    } else {
-                        "THROWN"
-                    };
-                    shape["error"]["code"] = json!(code);
+                    set_syntax_or_thrown(&mut shape, &error.message);
                 }
                 shape["calls"] = json!(compress_calls(&calls));
+            } else if error.kind == "code_run_failed" {
+                // No record (a syntax error before any bridge call): still name
+                // SYNTAX/THROWN with its authored line.
+                set_syntax_or_thrown(&mut shape, &error.message);
             }
             let mut feedback = serde_json::Map::new();
             if let Some(steps) = error.program_steps {
                 type_feedback_release::stamp_error_feedback(*steps, &mut feedback);
             }
             let answer = endpoint_result(server, actor, shape, None, true).await?;
-            let mut answer = super::super::super::device_release::mcp_release_run_result(
-                server,
-                actor,
-                rows.as_deref(),
-                answer,
-            )?;
-            if let Some(meta) = answer["_meta"].as_object_mut() {
-                meta.extend(feedback);
+            let pre = answer.clone();
+            let released = super::super::super::claimed_release::without_recording(|| {
+                super::super::super::device_release::mcp_release_run_result(
+                    server,
+                    actor,
+                    rows.as_deref(),
+                    answer,
+                )
+            });
+            match released {
+                Ok(mut reply) => {
+                    if let Some(meta) = reply["_meta"].as_object_mut() {
+                        meta.extend(feedback);
+                    }
+                    wire_shape(&mut reply);
+                    super::super::super::claimed_release::record(&reply, rows.as_deref());
+                    return Ok(reply);
+                }
+                Err(error) => {
+                    let mut base = pre;
+                    wire_shape(&mut base);
+                    super::super::super::claimed_release::record(&base, rows.as_deref());
+                    return Err(error);
+                }
             }
-            return Ok(answer);
         }
     };
 
@@ -153,42 +167,88 @@ pub(super) async fn render(
     .await?;
     #[cfg(test)]
     super::super::super::device_release::release_hook::run(server);
-    // Check the same full run answer as before. If this call is claimed, its
-    // waiters must never receive the internal steps as a wire result, even
-    // when this destination withheld the result but theirs admits it.
-    let mut projected = answer.clone();
-    clear_internal_steps(&mut projected);
     // The release scans a copy whose hydrate steps' miss echoes are cleared
     // (#10571), so an off-device miss of a device-local row reads as a miss
-    // of a never-used id.
-    let released = super::super::super::device_release::with_run_hydrate_scan(
-        actor,
-        record,
-        answer,
-        |answer| {
-            type_feedback_release::release_run_answer(server, actor, named.clone(), held, answer)
-        },
-    );
-    super::super::super::claimed_release::record(&projected, named.as_deref());
-    let mut released = released?;
-    clear_internal_steps(&mut released);
-    if let Some(steps) = released["structuredContent"]
-        .as_object_mut()
-        .and_then(|fields| fields.remove("program_steps"))
-        .filter(|steps| steps.as_array().is_some_and(|steps| !steps.is_empty()))
-    {
-        released["_meta"]["program_steps"] = steps;
+    // of a never-used id. The release runs unrecorded (P1-2): the only kept
+    // value is the wire shape recorded below, never the full answer with its
+    // internal steps. Waiters must never receive those steps, even when this
+    // destination withheld the result but theirs admits it.
+    let pre = answer.clone();
+    let released = super::super::super::claimed_release::without_recording(|| {
+        super::super::super::device_release::with_run_hydrate_scan(
+            actor,
+            record,
+            answer,
+            |answer| {
+                type_feedback_release::release_run_answer(
+                    server,
+                    actor,
+                    named.clone(),
+                    held,
+                    answer,
+                )
+            },
+        )
+    });
+    match released {
+        Ok(mut reply) => {
+            wire_shape(&mut reply);
+            super::super::super::claimed_release::record(&reply, named.as_deref());
+            Ok(reply)
+        }
+        Err(error) => {
+            // Withheld: the safe pre-release base in its wire shape, with its
+            // rows, omitting separate feedback that was never admitted.
+            let mut base = pre;
+            wire_shape(&mut base);
+            super::super::super::claimed_release::record(&base, named.as_deref());
+            Err(error)
+        }
     }
-    type_feedback_release::sync_content(&mut released);
-    Ok(released)
 }
 
-fn clear_internal_steps(answer: &mut Value) {
-    if let Some(fields) = answer["structuredContent"].as_object_mut() {
+/// An answer in its wire shape: no internal `steps`, `_returned_null` or
+/// `structuredContent.program_steps`; released program feedback in
+/// `_meta.program_steps` (P1-2). Applied to the recorded copy and to the reply.
+fn wire_shape(answer: &mut Value) {
+    let moved = if let Some(fields) = answer["structuredContent"].as_object_mut() {
         fields.remove("steps");
         fields.remove("_returned_null");
+        fields
+            .remove("program_steps")
+            .filter(|steps| steps.as_array().is_some_and(|steps| !steps.is_empty()))
+    } else {
+        None
+    };
+    if let Some(steps) = moved {
+        answer["_meta"]["program_steps"] = steps;
     }
     type_feedback_release::sync_content(answer);
+}
+
+/// The authored line and column in `message`'s position suffix, when it carries
+/// one: `"; at line {line}, column {column} of the TypeScript source"` or
+/// `" of the JavaScript source"` at its end (P1-8).
+fn authored_position(message: &str) -> Option<(u32, u32)> {
+    let (_, position) = message.rsplit_once("; at line ")?;
+    let position = position
+        .strip_suffix(" of the TypeScript source")
+        .or_else(|| position.strip_suffix(" of the JavaScript source"))?;
+    let (line, column) = position.split_once(", column ")?;
+    Some((line.parse().ok()?, column.parse().ok()?))
+}
+
+/// A `SYNTAX` or `THROWN` refusal in `shape`, with its authored line (and
+/// column for `SYNTAX`) when the message names one (P1-8).
+fn set_syntax_or_thrown(shape: &mut Value, message: &str) {
+    let syntax = message.contains("SyntaxError");
+    shape["error"]["code"] = json!(if syntax { "SYNTAX" } else { "THROWN" });
+    if let Some((line, column)) = authored_position(message) {
+        shape["error"]["line"] = json!(line);
+        if syntax {
+            shape["error"]["column"] = json!(column);
+        }
+    }
 }
 
 pub(super) async fn refusal(
@@ -197,7 +257,7 @@ pub(super) async fn refusal(
     run_ref: &str,
     error: McpGatewayError,
 ) -> Result<Value, McpGatewayError> {
-    refusal_for_verb(server, actor, run_ref, error, None).await
+    refusal_for_verb(server, actor, run_ref, error, Some(&[]), None).await
 }
 
 pub(super) async fn refusal_for_verb(
@@ -205,10 +265,10 @@ pub(super) async fn refusal_for_verb(
     actor: &McpCallContext,
     run_ref: &str,
     error: McpGatewayError,
+    rows: Option<&[oneiron::EntityId]>,
     verb: Option<&str>,
 ) -> Result<Value, McpGatewayError> {
-    let error =
-        super::super::super::device_release::mcp_release_error(server, actor, Some(&[]), error);
+    let error = super::super::super::device_release::mcp_release_error(server, actor, rows, error);
     let mut structured = error_shape(run_ref, &error);
     if let Some(verb) = verb {
         structured["error"]["verb"] = json!(verb);
@@ -400,9 +460,17 @@ fn recorded_calls(
                 value["code"] = json!(code);
             }
             if matches!(kind, "landed" | "held") {
-                if let Some(reference) = ["claim_short_id", "short_id", "ref", "id", "group"]
-                    .into_iter()
-                    .find_map(|key| body[key].as_str())
+                if let Some(reference) = [
+                    "claim_short_id",
+                    "short_id",
+                    "ref",
+                    "id",
+                    "group",
+                    "task_ref",
+                    "proposal_ref",
+                ]
+                .into_iter()
+                .find_map(|key| body[key].as_str())
                 {
                     value["ref"] = json!(reference);
                 }

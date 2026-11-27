@@ -103,6 +103,9 @@ use self::exec_board_verbs::{execute_mcp_board_verb, mcp_verb_family_error};
 // calls (FIX EXECUTE-CALLER-CODE).
 #[cfg(test)]
 pub(crate) use self::exec_board_verbs::execute_mcp_task_run_for_test;
+// Tests drive the claimed-call keep through its seam (P1-2).
+#[cfg(test)]
+pub(crate) use self::claimed_release::{capturing_for_test, kept_for_test};
 pub(crate) use self::owner_call::resolve_mcp_caller;
 use self::served_rows::McpServed;
 pub(crate) use self::stream_reads::{mcp_stream_reads_task, mcp_stream_task_row};

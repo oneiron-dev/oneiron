@@ -62,9 +62,11 @@ as tools, plus `invoke_action`, `execute` and `resume` (`/mcp/tool-first`);
 `invoke_action`, `execute` and `resume`). `invoke_action` runs an app action
 with its live run (`liveRun`; see owner-actions.md). Without `--surface`,
 `oneiron mcp` asks the server at its first request and takes `/mcp` when the
-server has a bound code host (`[models.code_mode]`) and the credential may run
-code (a full-access agent; a read-only or propose-only one may not),
-`/mcp/tool-first` otherwise. You choose it here; the agent cannot change it.
+server has a bound code host and the credential is admitted to `execute`,
+`/mcp/tool-first` otherwise. A verified caller-source host can bind without
+`[models.code_mode]`. `execute` requires Read, not Write, and each verb still
+checks its own permissions. You choose the surface here; the agent cannot
+change it.
 
 **Claude Code** (`-s user` makes it available in every project):
 

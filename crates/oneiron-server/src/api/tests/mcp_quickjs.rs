@@ -409,9 +409,26 @@ async fn quickjs_execute_code_wire_resumes_one_actor_run_without_repeated_writes
     for path in ["/mcp", MCP_TOOL_FIRST_PATH] {
         let (_, listing) =
             route_json(server.clone(), mcp_list_request(path, credential, "list")).await;
-        let mut names = mcp_listed_tool_names(&listing);
-        names.sort_unstable();
-        assert_eq!(names, vec!["execute", "resume"], "{path}: {listing:?}");
+        let names = mcp_listed_tool_names(&listing);
+        for name in ["execute", "resume", "invoke_action"] {
+            assert!(names.contains(&name), "{path} lists {name}: {names:?}");
+        }
+        assert_eq!(
+            names.contains(&"setup_oneiron"),
+            path == "/mcp",
+            "{path}: {names:?}"
+        );
+        assert_eq!(
+            names.contains(&"vault.recall"),
+            path == MCP_TOOL_FIRST_PATH,
+            "{path}: {names:?}"
+        );
+        for retired in ["execute_code", "read_result"] {
+            assert!(
+                !names.contains(&retired),
+                "{path} lists no {retired}: {names:?}"
+            );
+        }
     }
     // 8bd904f78b5 (#3490, FIX 6692): discovery lists the capabilities by
     // family; health carries each family's count and the same digest.
@@ -1314,9 +1331,16 @@ async fn the_served_vault_runs_execute_code_on_its_generative_seat() {
     let (_dir, vault, server, _host) = serve_with_models(&models, credential, actor).await;
     let (_, listing) =
         route_json(server.clone(), mcp_list_request("/mcp", credential, "list")).await;
-    let mut names = mcp_listed_tool_names(&listing);
-    names.sort_unstable();
-    assert_eq!(names, vec!["execute", "resume"], "{listing:?}");
+    let names = mcp_listed_tool_names(&listing);
+    for name in ["execute", "resume", "invoke_action", "setup_oneiron"] {
+        assert!(names.contains(&name), "/mcp lists {name}: {names:?}");
+    }
+    for retired in ["execute_code", "read_result"] {
+        assert!(
+            !names.contains(&retired),
+            "/mcp lists no {retired}: {names:?}"
+        );
+    }
     witness_through_tool_list(
         &server,
         credential,

@@ -39,10 +39,10 @@ pub fn read_caller_run_output(
         .map(|checkpoint| checkpoint.seq);
     let source = has_caller_source(record);
     let mut console_chars = 0usize;
+    let mut omitted_lines = 0u64;
     for checkpoint in &record.step_checkpoints {
         let seq = checkpoint.seq;
-        // Source replay runs the whole body, including its logs, again. The
-        // latest slice already includes the console from the replayed prefix.
+        // A source replay's latest slice already contains the replayed console.
         if source && Some(seq) != last {
             continue;
         }
@@ -55,14 +55,36 @@ pub fn read_caller_run_output(
         }) else {
             continue;
         };
-        let remaining = INLINE_RESULT_CHARS.saturating_sub(console_chars);
+        let remaining = INLINE_RESULT_CHARS - console_chars;
+        let clean = clean_for_context(&storage, Some(record.run_id), output)?;
         if remaining == 0 {
-            break;
+            omitted_lines += if clean { output.lines } else { 1 };
+            continue;
         }
-        let (text, _) = read_body(&storage, record, output, remaining * 4 + 1)?;
-        let (text, _) = char_prefix(&text, remaining);
+        let (body, total, partial) = if clean {
+            let (body, partial) = read_clean_body(&storage, output, remaining * 4 + 1)?;
+            (body, output.lines, partial)
+        } else {
+            // Only the placeholder, not the underlying line count, may leave.
+            (CODE_RUN_OUTPUT_PREVIEW_WITHHELD.to_owned(), 1, false)
+        };
+        let (text, clipped) = char_prefix(&body, remaining);
         console_chars += text.chars().count();
-        view.console.extend(text.lines().map(str::to_owned));
+        // A clipped final line counts as omitted rather than appearing in part.
+        let whole = if (partial || clipped) && !text.ends_with('\n') {
+            text.rfind('\n').map_or("", |end| &text[..=end])
+        } else {
+            text
+        };
+        let before = view.console.len();
+        view.console.extend(whole.lines().map(str::to_owned));
+        omitted_lines += total.saturating_sub((view.console.len() - before) as u64);
+    }
+    if omitted_lines > 0 {
+        view.console.push(format!(
+            "console cut at 20,000 characters; {omitted_lines} line{} not shown",
+            if omitted_lines == 1 { "" } else { "s" }
+        ));
     }
     if unmarked_secret(&json!(view.console)).is_some() {
         view.console = vec![CODE_RUN_OUTPUT_PREVIEW_WITHHELD.to_owned()];
@@ -125,6 +147,14 @@ fn read_body(
     if !clean_for_context(storage, Some(record.run_id), output)? {
         return Ok((CODE_RUN_OUTPUT_PREVIEW_WITHHELD.to_owned(), false));
     }
+    read_clean_body(storage, output, cap)
+}
+
+fn read_clean_body(
+    storage: &ExecutorStorage<'_>,
+    output: &CodeRunRawOutput,
+    cap: usize,
+) -> Result<(String, bool)> {
     let Some(raw) = storage.read_code_run_raw_output_range(output, 0, cap)? else {
         return Err(Error::CorruptedIndex("executor replay output bytes"));
     };

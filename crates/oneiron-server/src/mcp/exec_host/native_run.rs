@@ -5,8 +5,8 @@ use std::sync::Arc;
 
 use oneiron::code_run::{GatedActorWrite, SpawnHostSeat};
 use oneiron::engine_executor::{
-    EngineExecutorConfig, EngineExecutorOutcome, EngineNativeExecutor, JsCodeModeRuntime,
-    RunCompaction, SelfBriefPort,
+    CallerRunInput, EngineExecutorConfig, EngineExecutorOutcome, EngineNativeExecutor,
+    JsCodeModeRuntime, RunCompaction, SelfBriefPort, caller_run_input,
 };
 use oneiron::{EntityId, Vault, WriteActor};
 
@@ -55,6 +55,11 @@ pub(super) fn run_engine_native_code_mode(
     consent_origin: Option<oneiron::code_run::CodeConsentRunOrigin>,
     brief: Option<&dyn SelfBriefPort>,
 ) -> Result<EngineExecutorOutcome, McpCodeExecutionError> {
+    // P2-1: reuse is explicit input comparison under the run's single flight, not the
+    // engine's general config-changed string (which also covers non-input drift).
+    if task_run_input_reused(vault, config.run_id, &config.task) {
+        return Err(McpCodeExecutionError::RunRefReused);
+    }
     let mut gated_write = GatedActorWrite::new(vault, write_actor, run_ref)
         .map_err(|error| McpCodeExecutionError::RunBinding(error.to_string()))?
         .with_agent_verb_door(verbs)
@@ -126,8 +131,8 @@ pub(super) fn run_engine_native_code_mode(
             EngineRunError::Run(
                 oneiron::engine_executor::EngineExecutorError::ResumeDivergence(report),
             ) => McpCodeExecutionError::ResumeDivergence(report.to_string()),
-            EngineRunError::Run(error) if is_run_ref_reused(&error) => {
-                McpCodeExecutionError::RunRefReused
+            EngineRunError::Run(error) if is_config_drift(&error) => {
+                McpCodeExecutionError::RunBinding(error.to_string())
             }
             EngineRunError::Run(error) => McpCodeExecutionError::Run(error.to_string()),
             EngineRunError::Payer(fault) => McpCodeExecutionError::RunBinding(fault.to_string()),
@@ -135,18 +140,45 @@ pub(super) fn run_engine_native_code_mode(
     })
 }
 
-/// The engine's exact refusal when the same run id meets other input (FIX EXECUTE-CALLER-CODE).
+/// The engine's config-changed refusal for an existing run id (FIX EXECUTE-CALLER-CODE): other
+/// input, or non-input drift (model, limits, prompt). Reuse is decided by explicit input
+/// comparison before entry (P2-1); this string only maps leftover drift to a binding error, and
+/// its text is kept as is.
 const CONFIG_CHANGED: &str = "engine executor config changed for existing run";
 
-/// Whether `error` is the engine's config-changed refusal (FIX EXECUTE-CALLER-CODE): the same
-/// run id with other code or task, so the host answers run-ref-reused and nothing ran.
-fn is_run_ref_reused(error: &oneiron::engine_executor::EngineExecutorError) -> bool {
+/// Whether `error` is the engine's config-changed refusal for an existing run id. Without
+/// proof that the submitted input changed, keep this as a binding error (P2-1).
+fn is_config_drift(error: &oneiron::engine_executor::EngineExecutorError) -> bool {
     matches!(
         error,
         oneiron::engine_executor::EngineExecutorError::Engine(oneiron::Error::InvalidConfig(
             msg
         )) if msg.as_str() == CONFIG_CHANGED
     )
+}
+
+/// Whether a task entry reuses `run_id` with other input (P2-1): the submitted task against
+/// the run's kept caller input, read under the run's single flight. Unknown — no record yet,
+/// no kept task, or an unreadable body after erasure — is not reuse; the engine entry below
+/// decides.
+fn task_run_input_reused(vault: &Vault, run_id: EntityId, task: &str) -> bool {
+    match caller_run_input(vault, run_id) {
+        Ok(Some(CallerRunInput::Task(kept))) => kept != task,
+        Ok(Some(CallerRunInput::Source(_))) => true,
+        Ok(None) | Err(_) => false,
+    }
+}
+
+/// Whether a caller-source entry reuses `run_id` with other input (P2-1): the submitted code
+/// against the run's kept caller input, read under the run's single flight. Unknown — no
+/// record yet, or an unreadable body after erasure — is not reuse; the engine entry below
+/// decides.
+fn caller_source_input_reused(vault: &Vault, run_id: EntityId, code: &str) -> bool {
+    match caller_run_input(vault, run_id) {
+        Ok(Some(CallerRunInput::Source(kept))) => kept != code,
+        Ok(Some(CallerRunInput::Task(_))) => true,
+        Ok(None) | Err(_) => false,
+    }
 }
 
 /// Enters the existing substrate for one caller-source run (FIX EXECUTE-CALLER-CODE): the gated
@@ -171,6 +203,10 @@ pub(super) fn run_engine_native_caller_source(
     git_door_base: Option<String>,
     consent_origin: Option<oneiron::code_run::CodeConsentRunOrigin>,
 ) -> Result<EngineExecutorOutcome, McpCodeExecutionError> {
+    // P2-1: as in the task path, reuse is explicit input comparison under single flight.
+    if caller_source_input_reused(vault, config.run_id, code) {
+        return Err(McpCodeExecutionError::RunRefReused);
+    }
     let mut gated_write = GatedActorWrite::new(vault, write_actor, run_ref)
         .map_err(|error| McpCodeExecutionError::RunBinding(error.to_string()))?
         .with_agent_verb_door(verbs)
@@ -188,8 +224,8 @@ pub(super) fn run_engine_native_caller_source(
         executor = executor.with_code_check(feedback);
     }
     executor.run_caller_source(config, code).map_err(|error| {
-        if is_run_ref_reused(&error) {
-            return McpCodeExecutionError::RunRefReused;
+        if is_config_drift(&error) {
+            return McpCodeExecutionError::RunBinding(error.to_string());
         }
         match error {
             oneiron::engine_executor::EngineExecutorError::ResumeDivergence(report) => {

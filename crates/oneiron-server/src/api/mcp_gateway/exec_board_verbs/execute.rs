@@ -208,8 +208,8 @@ pub(in crate::api::mcp_gateway) async fn resume_mcp_code_run(
 
 /// The host request for one entry of `run_id`, the run `run_ref` names
 /// under `actor`, behind the verb door `verbs`, bound for `actor` as the
-/// admitted caller a code consent wait of the run keeps (FIX 4606), with
-/// the run's self brief when `actor`'s connection has one.
+/// admitted caller a code consent wait of the run keeps (FIX 4606), with a task run's
+/// self brief when `actor`'s connection has one (caller-source runs build none, P2-2).
 fn mcp_code_run_request<'a>(
     server: &Arc<SyncServer>,
     actor: &'a McpCallContext,
@@ -218,11 +218,14 @@ fn mcp_code_run_request<'a>(
     run_id: oneiron::EntityId,
     verbs: &Arc<super::code_mode_verbs::McpCodeModeVerbs>,
 ) -> crate::mcp::McpCodeExecutionRequest<'a> {
-    // FIX 17594 D5: the durable run's self brief, keyed by its trusted run
+    // FIX 17594 D5: a task run's self brief, keyed by its trusted run
     // id, for a connection that has one; the host installs it under the
     // run's single flight and closes it when the run completes. A parked
-    // run's automatic re-entry (FIX 4606) takes it the same way.
-    let brief = crate::api::connection_has_brief(actor).then(|| {
+    // run's automatic re-entry (FIX 4606) takes it the same way. A caller-source run
+    // makes no model calls, so it builds none (P2-2).
+    let brief = (matches!(input, McpCodeRunInput::Task(_))
+        && crate::api::connection_has_brief(actor))
+    .then(|| {
         Arc::new(super::code_mode_self_brief::CodeModeSelfBrief::new(
             server, actor, run_id,
         )) as Arc<dyn crate::mcp::McpCodeRunSelfBrief>

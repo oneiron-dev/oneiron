@@ -538,7 +538,7 @@ pub(super) fn context_required(verb: &str, context: VerbContext) -> FacadeApiErr
             format!(
                 "`{verb}` is a browser verb: a code run's own browser session answers it, and a facade call carries none"
             ),
-            "Call it from code mode (`execute`), inside the run whose browser it drives.",
+            "Browser verbs run only inside a run the host starts. Caller code cannot start a browser host through `execute`.",
         ),
         VerbContext::Run => (
             format!(

@@ -292,24 +292,38 @@ impl<'a> PreparedSource<'a> {
         })
     }
 
-    /// Where a failed TypeScript program threw, in its TypeScript source, as
-    /// the suffix its error carries. `None` for a JavaScript program, whose
-    /// error stays exactly as it was, and for a throw outside the authored
-    /// source (the guest envelope, a helper or a prelude line).
+    /// Where a failed program threw, in its authored source, as the suffix its
+    /// error carries: through the TypeScript map for a TypeScript program, and
+    /// the wrapper-adjusted position directly for a plain JavaScript
+    /// caller-source body (one prepared with [`Self::with_return_capture`]).
+    /// `None` for any other JavaScript program, whose error stays exactly as
+    /// it was, and for a throw outside the authored source (the guest
+    /// envelope, a helper or a prelude line).
     pub fn failure_position(&self, at: Option<GuestPosition>) -> Option<String> {
         let mut at = at?;
         if self.capture_return {
             at = at.after_prefix(1)?;
         }
-        let (line, column) = self
-            .transpiled
-            .as_ref()?
-            .source_position(self.original, at)?;
-        let line = line
-            .checked_sub(self.prelude_lines)
-            .filter(|line| *line > 0)?;
+        if let Some(transpiled) = self.transpiled.as_ref() {
+            let (line, column) = transpiled.source_position(self.original, at)?;
+            let line = line
+                .checked_sub(self.prelude_lines)
+                .filter(|line| *line > 0)?;
+            return Some(format!(
+                "; at line {line}, column {column} of the TypeScript source"
+            ));
+        }
+        // A JavaScript program names its position only as caller source: a
+        // hook body's, a foreign step's and a task run's error read as written.
+        if !self.capture_return {
+            return None;
+        }
+        self.original
+            .split('\n')
+            .nth(at.line.checked_sub(1)? as usize)?;
+        let GuestPosition { line, column } = at.after_prefix(self.prelude_lines)?;
         Some(format!(
-            "; at line {line}, column {column} of the TypeScript source"
+            "; at line {line}, column {column} of the JavaScript source"
         ))
     }
 }

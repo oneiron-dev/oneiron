@@ -2,7 +2,7 @@
 //! supersede on the real engine (e), the ai grant refusal (f), secret handles (g), bound
 //! verbs (h), masked reads (i), and the Foreign HTTP door (j).
 
-use super::super::mcp_quickjs::code_mode_server_with;
+use super::super::mcp_quickjs::factory;
 use super::*;
 
 /// Proves (d): a `vault.remember` that proposes shows its call as `held` with its reason
@@ -392,9 +392,20 @@ return {fold_outcome, folds_seen};"#,
         .as_str()
         .expect("fold answer");
     assert!(
-        !fold_outcome.contains("mcp_verb_not_bound"),
+        fold_outcome.starts_with("ok:"),
         "self.fold passes its binding: {fold_outcome}"
     );
+    for expected in [
+        "\"fold\":\"f1\"",
+        "\"from\":0",
+        "\"through\":0",
+        "\"pending\":true",
+    ] {
+        assert!(
+            fold_outcome.contains(expected),
+            "self.fold marks f1 pending: {fold_outcome}"
+        );
+    }
     assert!(
         !answered["calls"].as_array().expect("calls").is_empty(),
         "{body:?}"
@@ -494,22 +505,56 @@ async fn caller_code_formatted_recall_and_focus_refresh_come_back_masked() {
 /// row keeps its facade door while leaving MCP.
 #[tokio::test]
 async fn foreign_http_execute_code_door_still_answers() {
-    let mode = code_mode_server_with(Vec::new(), None);
+    // Deterministic canary: no isolating backend, so source `1 + 1` reaches the Foreign
+    // worker past admission and fails closed with the tier's exact refusal.
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device()).unwrap());
+    crate::test_credentials::install_fixture_keystore(&vault, b"secret");
+    assert!(
+        vault
+            .install_sandbox_backends(Arc::new(oneiron::code_sandbox::microvm::NoSandboxBackends,))
+            .is_ok(),
+        "first backend install wins"
+    );
+    let provider = crate::mcp::McpQuickJsProvider::for_caller_source(Arc::new(factory())).unwrap();
+    let server = Arc::new(
+        SyncServer::new(
+            vault.clone(),
+            SyncServerConfig {
+                auth_secret: Some("secret".to_owned()),
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .with_mcp_quickjs_provider(provider, crate::mcp::CodeRunLimits::default()),
+    );
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    let credential = test_bearer(&format!(
+        "scope=core:read,core:write;principal_ref={};actor_class=human",
+        owner.to_hex()
+    ));
     let (status, body) = route_json(
-        mode.server.clone(),
+        server.clone(),
         core_request_with_authz(
             "POST",
             "/v1/core/facade/execute_code",
-            owner_bearer(),
+            credential,
             Some(&json!({ "source": "1 + 1" })),
         ),
     )
     .await;
-    assert_ne!(status, StatusCode::NOT_FOUND, "{body:?}");
-    assert!(!body.to_string().contains("is not an SDK verb"), "{body:?}");
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body:?}");
+    assert_eq!(body["error"]["code"], json!("BAD_REQUEST"), "{body:?}");
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("no microVM backend is available for guest tier `foreign`"),
+        "{body:?}"
+    );
     // Control: a verb that names nothing answers 404, so the door above is real.
     let (missing_status, _) = route_json(
-        mode.server.clone(),
+        server.clone(),
         core_request_with_authz(
             "POST",
             "/v1/core/facade/definitely.not.a.verb",

@@ -56,11 +56,23 @@ pub(crate) async fn execute_mcp_resume(
         .map_err(|error| McpGatewayError::new(-32603, "engine_error", error.to_string()))?;
     let ask = match parked {
         Some((key, wait)) => {
-            let delivered = WaitDeliveries::canonical(&server.vault)
+            let delivery = WaitDeliveries::canonical(&server.vault)
                 .delivery(&key)
-                .map_err(|error| mcp_engine_error("resume could not read wait delivery", error))?
-                .is_some();
-            if delivered {
+                .map_err(|error| mcp_engine_error("resume could not read wait delivery", error))?;
+            if let Some(delivery) = delivery {
+                // A deadline settlement with an answer still reports EXPIRED
+                // while the run is parked; without an answer it re-enters as
+                // today, and an answer delivery re-enters below (or refuses a
+                // new answer as WRONG_INPUT).
+                if args.answer.is_some()
+                    && matches!(wait.effect, SelfEffect::TasksWait)
+                    && delivered_deadline(&delivery.reply)
+                {
+                    return result::refusal(server, actor, run_ref, McpGatewayError::new(
+                        -32020, "EXPIRED",
+                        "this pause expired; execute the same code again with the same run_ref: writes that landed are not repeated",
+                    )).await;
+                }
                 None
             } else {
                 pending_ask(server, &wait)?
@@ -86,12 +98,14 @@ pub(crate) async fn execute_mcp_resume(
             )
             .await;
         };
-        if let Err(error) = answer_wait(server, actor, group, word).await {
+        let mut served = Default::default();
+        if let Err(error) = answer_wait(server, actor, group, word, &mut served).await {
             return result::refusal_for_verb(
                 server,
                 actor,
                 run_ref,
                 error,
+                served.rows(),
                 Some(oneiron::task_verb::sdk::AgentVerb::TasksAnswer.as_str()),
             )
             .await;
@@ -135,12 +149,15 @@ pub(super) fn pending_ask(
 }
 
 // The word and its provenance are validated by the direct verb's door. A
-// run's author, model line or receipt can lend this call no authority.
+// run's author, model line or receipt can lend this call no authority. The
+// rows the verb served stay in `served`, as a direct call's do, so the outer
+// refusal releases by them.
 async fn answer_wait(
     server: &Arc<SyncServer>,
     actor: &McpCallContext,
     group: oneiron::EntityId,
     word: &Value,
+    served: &mut super::super::super::McpServed,
 ) -> Result<(), McpGatewayError> {
     let verb = oneiron::task_verb::sdk::AgentVerb::TasksAnswer.as_str();
     let surface = crate::mcp::try_registered_surface(crate::mcp::McpSurfaceMode::ToolFirst)
@@ -166,7 +183,6 @@ async fn answer_wait(
         .map_err(super::actor_dispatch::mcp_tool_validation_error)?;
     admission::mcp_admit_scoped_verb(server, tool, &arguments, &actor)?;
     super::actor_dispatch::mcp_verb_gate(server, tool, &arguments, &actor)?;
-    let mut served = Default::default();
     let mut board_hooks = None;
     Box::pin(tasks_response::execute_agent_verb_input(
         server,
@@ -174,9 +190,23 @@ async fn answer_wait(
         input,
         &actor,
         None,
-        &mut served,
+        served,
         &mut board_hooks,
     ))
     .await?;
     Ok(())
+}
+
+// Whether a delivered wait reply is an ask settled by deadline: the run it
+// parked is still on that wait, so its resume reports EXPIRED. Any other
+// reply, or one that is no ask settlement, re-enters as before.
+fn delivered_deadline(reply: &str) -> bool {
+    serde_json::from_str::<oneiron::task_verb::TaskAskStatus>(reply).is_ok_and(|status| {
+        matches!(
+            status,
+            oneiron::task_verb::TaskAskStatus::Settled(result)
+                if result.settlement.reason
+                    == oneiron::task_verb::TaskAskSettlementReason::Deadline
+        )
+    })
 }
