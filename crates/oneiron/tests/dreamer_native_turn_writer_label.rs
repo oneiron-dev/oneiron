@@ -3,7 +3,9 @@
 //! included; in a personal vault a turn the vault's owner wrote alone shows no label, while a turn another PERSON
 //! wrote shows that PERSON's label. Only the transcript line changes: class, landing, review and recall are
 //! unchanged. A deleted writer is not labelled, so the call's source rows still stand and the model run's source
-//! fence lets the call send, while that writer's MESSAGE keeps its words on the line (REVIEW-10620 round 1).
+//! fence lets the call send, while that writer's MESSAGE keeps its words on the line (REVIEW-10620 round 1). In a
+//! personal vault a turn the owner wrote with a since-deleted writer keeps the owner's label: it was not the owner's
+//! alone (REVIEW-10620 round 2).
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test dreamer_native_turn_writer_label`
 
@@ -178,9 +180,9 @@ fn after_member_delete(shared: bool) -> (Vec<String>, usize, Vec<String>, bool) 
     (transcripts, call, head, stand)
 }
 
-#[test]
-fn in_a_shared_vault_a_deleted_co_writer_is_not_labelled_and_the_call_still_sends() {
-    let (transcripts, call, head, stand) = after_member_delete(true);
+/// After the member PERSON's delete, the TURN's line names one writer, the owner, and every call's source rows stand.
+fn a_deleted_co_writer_leaves_the_owners_label(shared: bool) {
+    let (transcripts, call, head, stand) = after_member_delete(shared);
     let head: Vec<&str> = head.iter().map(String::as_str).collect();
     let owner = sole_writer(&head, &transcripts);
     assert_ne!(
@@ -195,14 +197,13 @@ fn in_a_shared_vault_a_deleted_co_writer_is_not_labelled_and_the_call_still_send
 }
 
 #[test]
-fn in_a_personal_vault_a_turn_whose_co_writer_was_deleted_names_no_one_and_still_sends() {
-    let (transcripts, _, head, stand) = after_member_delete(false);
-    assert!(
-        matches!(head.as_slice(), [_, role] if role == "user"),
-        "the owner is the turn's one standing writer, so the line names no one: {head:?} in {transcripts:?}"
-    );
-    assert!(
-        stand,
-        "every row the calls were read from stands, so the source fence lets them send: {transcripts:?}"
-    );
+fn in_a_shared_vault_a_deleted_co_writer_is_not_labelled_and_the_call_still_sends() {
+    a_deleted_co_writer_leaves_the_owners_label(true);
+}
+
+/// The owner did not write the turn alone, so the personal vault's owner-only exception does not apply, though the
+/// owner is its one standing writer.
+#[test]
+fn in_a_personal_vault_a_turn_whose_co_writer_was_deleted_keeps_the_owners_label_and_still_sends() {
+    a_deleted_co_writer_leaves_the_owners_label(false);
 }
