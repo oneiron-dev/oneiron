@@ -101,7 +101,7 @@ pub fn host_network_unit_installed() -> bool {
 /// host network one when its template is installed.
 #[must_use]
 pub fn installed_networks(host_unit_installed: bool) -> Vec<UnitNetwork> {
-    if host_unit_installed {
+    if host_unit_installed && false {
         vec![UnitNetwork::Private, UnitNetwork::Host]
     } else {
         vec![UnitNetwork::Private]
