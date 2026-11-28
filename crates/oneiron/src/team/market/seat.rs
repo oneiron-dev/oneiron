@@ -30,12 +30,13 @@ pub(crate) fn submission_seat_in_txn(
     live_run_slip: Option<[u8; 32]>,
 ) -> Result<Option<TeamMarketSeat>> {
     if let Some(slip_id) = live_run_slip {
-        let paired = vault.paired_seat_in_txn(txn, &slip_id)?;
-        return Ok(paired.map(|paired| TeamMarketSeat {
-            harness: paired.harness,
-            model: paired.model,
-            source: TeamMarketSeatSource::OwnerPaired,
-        }));
+        if let Some(paired) = vault.paired_seat_in_txn(txn, &slip_id)? {
+            return Ok(Some(TeamMarketSeat {
+                harness: paired.harness,
+                model: paired.model,
+                source: TeamMarketSeatSource::OwnerPaired,
+            }));
+        }
     }
     let run = EntityId::from_bytes(*caller.as_bytes())?;
     let receipt = vault.model_seat_receipt_in_txn(txn, run)?;
