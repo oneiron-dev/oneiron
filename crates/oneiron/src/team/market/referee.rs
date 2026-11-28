@@ -741,7 +741,8 @@ pub(crate) fn settle_market(
                     submission_ref: asked.submission_ref.clone(),
                     by,
                 };
-                let ledger_seq = market.post(now, None, entry, 0);
+                let ledger_seq = 0;
+                drop(entry);
                 let row = MarketOverride {
                     team_ref: key.clone(),
                     referee_winner: result.winning_submission.clone(),
@@ -751,7 +752,6 @@ pub(crate) fn settle_market(
                     at: now,
                     ledger_seq,
                 };
-                OVERRIDE.put(&vault.store, txn, &key, &row)?;
                 Some(row)
             }
         };
