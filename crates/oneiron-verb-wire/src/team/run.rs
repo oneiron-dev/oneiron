@@ -44,7 +44,7 @@ pub struct TeamMarketInput {
     pub pool: u64,
     /// The unit the pool, every share and the peek price count in. Absent,
     /// GPU seconds, the market's only unit.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub unit: Option<TeamLeaseUnit>,
     /// The share of the pool held back as the bounty, in [0, 1). Absent,
     /// one fifth.
