@@ -62,6 +62,7 @@ pub mod checker_masked_candidate;
 pub mod checkpoint_descriptor;
 pub mod checkpoint_pins;
 pub mod checkpoint_registry;
+pub mod cited_source_dependency_backfill;
 pub mod claim_body_damage;
 pub mod claim_facet_birth;
 pub mod claim_publication_text;

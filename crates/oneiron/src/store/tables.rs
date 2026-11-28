@@ -928,6 +928,9 @@ crate::side_table::side_tables! {
     SAVED_QUERY_MEMO: VaultMeta b"saved_query.memo.v1:" Raw
         // Payload family: A saved query's verdict memo (FIX 10089), carried whole (FIX 10533).
         [restore: content] [family: dispatch Response] [tier: canonical];
+    /// Progress of the one-time cited-source dependency backfill. Key: ().
+    CITED_SOURCE_DEPENDENCY_BACKFILL: VaultMeta b"dreamer.cited_source_dependency.v1.backfill" Raw
+        [restore: content] [family: unclassified] [tier: canonical];
     /// Storage schema stamp. Key: ().
     STORAGE_SCHEMA_VERSION: VaultMeta b"schema_version" Raw
         [restore: content] [family: structure] [tier: canonical];

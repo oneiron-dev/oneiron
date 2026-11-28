@@ -28,7 +28,8 @@ mod redact;
 mod retained;
 pub use redact::{ClaimValueRedactionBinding, LocalClaimValueRedaction};
 pub(crate) use redact::{ClaimValueRedactionRow, redact_claim_value_fields_in_txn};
-pub(super) use retained::{retained_rows_in_txn, row_revisions_starting_with_in_txn};
+pub(crate) use retained::retained_rows_in_txn;
+pub(super) use retained::row_revisions_starting_with_in_txn;
 
 pub(super) const STATE: SideTable<EntityId, RevisionState, Named> =
     SideTable::new(&side_table::ENTITY_REVISION_STATE);

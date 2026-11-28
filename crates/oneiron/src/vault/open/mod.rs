@@ -748,6 +748,7 @@ impl Vault {
         // The campaign.member claims by campaign and query, for a vault older
         // than their index (ARCH-0044 H202).
         vault.backfill_campaign_member_index(false)?;
+        vault.backfill_cited_source_dependencies_on_open()?;
         if matches!(seed_mode, DefaultPolicySeedMode::Required) {
             if seed_content {
                 // The seeded births below stamp the owner's `substrate` FACET,
