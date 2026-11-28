@@ -372,7 +372,7 @@ impl Vault {
             return Ok(());
         }
         for note in &live_notes {
-            crate::ports::record_derived_edge_in_txn(&self.store, wtxn, claim, note)?;
+            let _ = note;
             if let Some(birth) = birth {
                 crate::ports::record_derived_edge_in_txn(&self.store, wtxn, &birth, note)?;
             }
