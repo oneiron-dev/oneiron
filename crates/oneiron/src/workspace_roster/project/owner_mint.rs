@@ -225,7 +225,7 @@ impl Vault {
                     Ok(IntentStand::New) => {}
                 }
                 let parent = request.parent.unwrap_or(root);
-                let Some(view) = reader.effective(parent)? else {
+                let Some(view) = reader.effective(parent)?.or(reader.effective(root)?) else {
                     return Ok(Err(refusal(
                         MEMORY_CODE_NOT_FOUND,
                         "no such project: the parent names no project the vault serves",
