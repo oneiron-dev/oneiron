@@ -189,6 +189,12 @@ pub fn run_verb_call(verb: RunVerb, input: Value, now: u64) -> Result<SelfCall> 
             SelfCall::Team(crate::team::SelfTeamCall::Record(decode(input)?))
         }
         RunVerb::SelfTeamVote => SelfCall::Team(crate::team::SelfTeamCall::Vote(decode(input)?)),
+        RunVerb::SelfTeamMarketSubmit => {
+            SelfCall::Team(crate::team::SelfTeamCall::MarketSubmit(decode(input)?))
+        }
+        RunVerb::SelfTeamMarketVerdict => {
+            SelfCall::Team(crate::team::SelfTeamCall::MarketVerdict(decode(input)?))
+        }
         RunVerb::SelfTeamSubmit => SelfCall::TeamSubmit(decode(input)?),
         RunVerb::TasksWait => {
             let input: crate::code_run::TaskWaitInput = decode(input)?;

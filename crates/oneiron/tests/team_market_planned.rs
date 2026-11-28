@@ -859,3 +859,36 @@ fn a_guest_named_setter_or_time_in_planned_terms_does_not_decode() -> TestResult
     }
     Ok(())
 }
+
+/// [RSI-SEALED-EVAL]: a planned market's referee contract is pinned in the
+/// writer that queues the group, so a NOTE that is not sealed drops the whole
+/// group.
+#[test]
+fn a_planned_market_whose_contract_is_not_sealed_queues_nothing() -> TestResult {
+    let f = fixture()?;
+    let runner = Runner::default();
+    let at = f.vault.now_recorded_at();
+    let note = f
+        .vault
+        .create_note(
+            "research",
+            "the referee contract, not sealed",
+            WriteActor::new(f.person, EdgeActorClass::Human),
+        )
+        .map_err(|error| format!("FIXTURE: the NOTE is written: {error:?}"))?;
+    let mut unsealed = terms(DIGEST);
+    unsealed["referee"]["contract"] = json!(note.to_hex());
+    let rows = f.rows()?;
+
+    let view = f.launch_as_owner(
+        "unsealed-contract",
+        ask(CoordinationPattern::Market, 3, Some(unsealed))?,
+        &runner,
+        at,
+    )?;
+
+    let refusal = refused(&view);
+    assert!(refusal.contains("is not sealed"), "{refusal}");
+    assert_eq!(f.rows()?, rows, "nothing is queued");
+    Ok(())
+}

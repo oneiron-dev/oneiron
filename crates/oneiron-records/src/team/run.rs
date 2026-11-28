@@ -4,6 +4,10 @@
 use oneiron_verb_wire::team::pattern::TeamPattern;
 pub use oneiron_verb_wire::team::run::TeamCoverageInput;
 pub use oneiron_verb_wire::team::run::TeamDecisionInput;
+pub use oneiron_verb_wire::team::run::TeamMarketOutcome;
+pub use oneiron_verb_wire::team::run::TeamMarketSubmitInput;
+pub use oneiron_verb_wire::team::run::TeamMarketVerdictInput;
+pub use oneiron_verb_wire::team::run::TeamMarketVerdictOutcome;
 pub use oneiron_verb_wire::team::run::TeamMemberInput;
 pub use oneiron_verb_wire::team::run::TeamRecordInput;
 pub use oneiron_verb_wire::team::run::TeamStartInput;
@@ -19,6 +23,8 @@ pub enum SelfTeamCall {
     Start(TeamStartInput),
     Record(TeamRecordInput),
     Vote(TeamVoteInput),
+    MarketSubmit(TeamMarketSubmitInput),
+    MarketVerdict(TeamMarketVerdictInput),
 }
 
 /// What a `self.team.*` call answered.
@@ -54,6 +60,30 @@ pub enum TeamRunAnswer {
         /// The loaded pattern skill the receipt names, hex.
         pattern_skill: Option<String>,
         /// Whether the receipt was already written.
+        replay: bool,
+        /// A market team's result: the referee's, with any CEO override
+        /// beside it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        market: Option<TeamMarketOutcome>,
+    },
+    /// The calling member's submission, under the member key the host
+    /// queued it as.
+    #[serde(rename_all = "camelCase")]
+    MarketSubmitted {
+        team_ref: String,
+        submission_ref: String,
+        participant: String,
+        at: u64,
+        /// Whether the same submission was already recorded.
+        replay: bool,
+    },
+    /// What a relayed referee verdict did to its submission.
+    #[serde(rename_all = "camelCase")]
+    MarketVerdict {
+        team_ref: String,
+        submission_ref: String,
+        outcome: TeamMarketVerdictOutcome,
+        /// Whether the same verdict was already recorded.
         replay: bool,
     },
 }

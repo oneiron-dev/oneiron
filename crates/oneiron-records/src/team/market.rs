@@ -71,6 +71,13 @@ pub enum LedgerKind {
     Return,
     /// The bounty paid to the winner.
     Award,
+    /// The CEO adopting `submission_ref` over the referee's winner; the
+    /// award stays the referee's (ARCH-0079 #market: "A CEO who overrides
+    /// the referee writes a logged entry with its own receipt").
+    Override {
+        submission_ref: String,
+        by: EntityId,
+    },
 }
 
 /// One central-ledger line.
@@ -93,6 +100,93 @@ pub struct Submission {
     pub score: Option<f64>,
     /// Whether the submission passed the signed rule; `None` until refereed.
     pub passed: Option<bool>,
+    /// SHA-256 of the candidate its member submitted, lower hex: the
+    /// referee's verdict must name it.
+    #[serde(default)]
+    pub candidate_sha256: Option<String>,
+    /// The sealed referee run behind `score` and `passed`.
+    #[serde(default)]
+    pub evidence: Option<VerdictEvidence>,
+    /// The latest development-cohort screen: never a score, never a pass.
+    #[serde(default)]
+    pub screen: Option<ScreenScore>,
+    /// Why the latest verdict relayed for it did not count. A valid sealed
+    /// verdict clears it.
+    #[serde(default)]
+    pub invalid: Option<InvalidVerdict>,
+}
+
+/// The referee's contract, pinned from its sealed NOTE before the work.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RefereeContract {
+    /// The sealed NOTE whose text is the contract.
+    pub note: EntityId,
+    /// SHA-256 of that text, lower hex: the referee's digest.
+    pub sha256: String,
+    /// What each candidate is paired against.
+    pub comparator: ContractComparator,
+    /// SHA-256 of the sealed prompt cohort: only the referee runs it.
+    pub cohort_sha256: String,
+    /// The development cohorts screens run on, disjoint from the sealed one.
+    pub screens: Vec<String>,
+    /// The harness revision: the code commit, 40 lower hex.
+    pub harness_commit: String,
+    /// The approved workload digest the referee runs (pass 33 `JOB_WORKLOAD`).
+    pub harness_workload: String,
+    /// The output of the referee's run that holds its verdict.
+    pub verdict_output: String,
+    pub bar: ContractBar,
+}
+
+/// The incumbent a candidate is paired against.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ContractComparator {
+    pub name: String,
+    pub sha256: String,
+}
+
+/// The paired release bar (NOT-WORSE = A): a candidate passes when the low
+/// end of its paired interval against the comparator stays above
+/// `-margin`, on at least `min_tasks` tasks; fewer tasks are unknown.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ContractBar {
+    pub metric: String,
+    pub margin: f64,
+    pub min_tasks: u64,
+}
+
+/// The sealed referee run a score rests on.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct VerdictEvidence {
+    /// The unit claim, also its job's id.
+    pub claim: EntityId,
+    pub workload: String,
+    /// SHA-256 of the verdict output, as the machine hashed it.
+    pub output_sha256: String,
+    pub tasks: u64,
+    pub paired_low: f64,
+    /// Fewer tasks than the bar needs: not a pass.
+    pub unknown: bool,
+    pub at: u64,
+}
+
+/// One screen on a development cohort.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ScreenScore {
+    pub score: f64,
+    pub cohort_sha256: String,
+    pub claim: EntityId,
+    pub output_sha256: String,
+    pub at: u64,
+}
+
+/// A relayed verdict whose evidence did not hold.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InvalidVerdict {
+    pub reason: String,
+    /// The unit claim it named; none when no such claim exists.
+    pub claim: Option<EntityId>,
+    pub at: u64,
 }
 
 /// How a market closed.

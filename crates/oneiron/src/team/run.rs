@@ -53,8 +53,10 @@ use crate::receipt::task_type_ref::TypeRef;
 use crate::team::team_shape::CoordinationPattern;
 use crate::team::team_shape::team_pattern;
 
+use super::market::referee::{market_outcome, settle_market};
 use super::market::{
-    DEFAULT_BOUNTY_SHARE, Market, MarketMode, RefereeKind, SignedReferee, bind_market, market,
+    DEFAULT_BOUNTY_SHARE, Market, MarketBind, MarketMode, RefereeKind, SignedReferee, bind_market,
+    market,
 };
 use super::observations::team_run_observations;
 use super::pattern::{TeamPattern, pattern_skills};
@@ -69,7 +71,9 @@ const MAX_KEY_BYTES: usize = 64;
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::team::run::{
-    TeamCoverageInput, TeamDecisionInput, TeamMarketInput, TeamMarketModeInput, TeamMemberInput,
+    TeamCoverageInput, TeamDecisionInput, TeamMarketClaimInput, TeamMarketInput,
+    TeamMarketModeInput, TeamMarketOutcome, TeamMarketSubmitInput, TeamMarketVerdictInput,
+    TeamMarketVerdictOutcome, TeamMemberInput, TeamOverrideInput, TeamOverrideView,
     TeamRecordInput, TeamRefereeInput, TeamRefereeKindInput, TeamStartInput, TeamVoteInput,
 };
 
@@ -147,11 +151,30 @@ pub(crate) fn bind_market_start(
         Err(Error::InvalidClaimBody(_)) => return Ok(Err("team_start_market_invalid")),
         Err(error) => return Err(error),
     };
-    Ok(if bind_market(vault, &opening)? {
-        Ok(())
-    } else {
-        Err("team_start_market_moved")
+    let Ok(contract) = contract_note(terms) else {
+        return Ok(Err("team_start_market_contract"));
+    };
+    Ok(match bind_market(vault, &opening, contract)? {
+        MarketBind::Bound => Ok(()),
+        MarketBind::Moved => Err("team_start_market_moved"),
+        MarketBind::Contract(_) => Err("team_start_market_contract"),
     })
+}
+
+/// The sealed NOTE `terms` name as the referee's contract, if any.
+///
+/// # Errors
+///
+/// Why an id that is no hex NOTE id names none.
+pub(crate) fn contract_note(
+    terms: &TeamMarketInput,
+) -> std::result::Result<Option<EntityId>, &'static str> {
+    terms
+        .referee
+        .contract
+        .as_deref()
+        .map(|note| EntityId::from_hex(note).map_err(|_| "a referee's contract is a NOTE id, hex"))
+        .transpose()
 }
 
 /// The market `terms` open under `team_ref` among `agents`, with `setter`
@@ -371,8 +394,24 @@ pub(crate) fn record_led_team(
     if decided_by.kind() != pattern.decider_kind() {
         return Ok(Err("team_record_decider"));
     }
+    if input.referee_override.is_some() && pattern != TeamPattern::Market {
+        return Ok(Err("team_record_override_outside_market"));
+    }
     if let Some(existing) = team_receipt(vault, &input.team_ref)? {
-        return Ok(Ok(recorded(&existing, true)));
+        // A replay answers the result as it reads now, the override beside
+        // it; an override it did not write is not written now.
+        let outcome = market_outcome(vault, &input.team_ref)?;
+        if let Some(asked) = &input.referee_override
+            && !outcome
+                .as_ref()
+                .and_then(|outcome| outcome.referee_override.as_ref())
+                .is_some_and(|kept| {
+                    kept.chosen == asked.submission_ref && kept.reason == asked.reason
+                })
+        {
+            return Ok(Err("team_record_override_moved"));
+        }
+        return Ok(Ok(recorded(&existing, true, outcome)));
     }
     if pattern == TeamPattern::Market && ledger.is_none() {
         return Ok(Err("team_record_market_unbound"));
@@ -426,11 +465,31 @@ pub(crate) fn record_led_team(
     if receipt.validate().is_err() {
         return Ok(Err("team_record_invalid_input"));
     }
+    // A market closes on its referee's verdicts in its own writer before the
+    // receipt, and the CEO's override is logged beside it; a replay after a
+    // fault between the two finds both kept.
+    let outcome = if pattern == TeamPattern::Market {
+        match settle_market(
+            vault,
+            &input.team_ref,
+            input.referee_override.as_ref(),
+            actor,
+        )? {
+            Ok(outcome) => Some(outcome),
+            Err(code) => return Ok(Err(code)),
+        }
+    } else {
+        None
+    };
     record_team_receipt(vault, &receipt)?;
-    Ok(Ok(recorded(&receipt, false)))
+    Ok(Ok(recorded(&receipt, false, outcome)))
 }
 
-fn recorded(receipt: &TeamReceipt, replay: bool) -> TeamRunAnswer {
+fn recorded(
+    receipt: &TeamReceipt,
+    replay: bool,
+    market: Option<TeamMarketOutcome>,
+) -> TeamRunAnswer {
     TeamRunAnswer::Recorded {
         team_ref: receipt.team_ref.clone(),
         pattern: receipt.pattern,
@@ -442,6 +501,7 @@ fn recorded(receipt: &TeamReceipt, replay: bool) -> TeamRunAnswer {
             .as_ref()
             .map(|skill| skill.skill.to_hex()),
         replay,
+        market,
     }
 }
 

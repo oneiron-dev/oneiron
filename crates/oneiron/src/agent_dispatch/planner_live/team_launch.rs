@@ -37,8 +37,8 @@ use crate::edge::EdgeActorClass;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::skill::LoadedSkillPack;
-use crate::team::market::{Market, bind_market_in_txn};
-use crate::team::run::{TeamMarketInput, market_opening};
+use crate::team::market::{Market, MarketBind, bind_market_in_txn};
+use crate::team::run::{TeamMarketInput, contract_note, market_opening};
 use crate::team::{
     PatternLaunchRunner, PatternLaunchSpec, PatternSkillRef, PlannedIntentView, PlannedSpawnHost,
     PlannedSpawnRequest, SpawnPhase, TeamPattern, TeamRunBinding, record_team_start_in_txn,
@@ -421,8 +421,11 @@ impl AgentDispatcher<'_> {
             let (terms, setter) = anchor.market.ok_or_else(|| invalid(MARKET_UNBOUND))?;
             let now = self.vault.now_recorded_at();
             let opening = planned_market(&team_ref, terms, setter, member_contexts.len(), now)?;
-            if !bind_market_in_txn(self.vault, wtxn, &opening)? {
-                return Err(invalid(MARKET_MOVED));
+            let contract = contract_note(terms).map_err(invalid)?;
+            match bind_market_in_txn(self.vault, wtxn, &opening, contract)? {
+                MarketBind::Bound => {}
+                MarketBind::Moved => return Err(invalid(MARKET_MOVED)),
+                MarketBind::Contract(why) => return Err(invalid(why)),
             }
         }
         let stamp = TeamRunStamp::new(team_ref, pattern)?;
@@ -516,6 +519,7 @@ fn planned_market(
     members: usize,
     now: u64,
 ) -> Result<Market> {
+    contract_note(terms).map_err(invalid)?;
     let agents: Vec<String> = (0..members)
         .map(|ordinal| format!("member:{ordinal}"))
         .collect();
