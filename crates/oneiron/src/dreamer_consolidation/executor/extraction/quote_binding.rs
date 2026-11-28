@@ -74,11 +74,9 @@ pub(in crate::dreamer_consolidation) fn bind_quote(
     let text = shown.text.unwrap_or_default();
     // A fenced call showed the fenced view: the quote is found there and
     // its range mapped back to the stored bytes.
-    let view: Cow<'_, str> = if shown.one_line_fenced {
-        Cow::Owned(crate::context_board::one_line_token(text))
-    } else {
-        Cow::Borrowed(text)
-    };
+    // RED (proof only): the fenced view undone; every source is searched
+    // in its stored text, as before the fix.
+    let view: Cow<'_, str> = Cow::Borrowed(text);
     let found = match exact(&view, quote) {
         Found::Absent if QUOTE_WHITESPACE_FOLD => folded(&view, quote),
         found => found,
