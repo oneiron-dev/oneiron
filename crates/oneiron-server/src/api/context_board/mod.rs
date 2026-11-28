@@ -706,6 +706,13 @@ async fn hydrate_inner(
         .as_ref()
         .map_or(&board_render, |split| &split.render.render);
     let cut = presented_render.shed.cut_rows > 0;
+    // The ids a cut frame still shows, read before the response takes the
+    // render's text and the split.
+    let cut_shown = if cut {
+        chat_emit::cut_shown_set(presented_render)
+    } else {
+        Default::default()
+    };
     let chat_context = chat_emit::capture_chat_context(
         &auth,
         memories.as_ref(),
@@ -851,7 +858,7 @@ async fn hydrate_inner(
         // settled shown_ids still contain it.
         delivered.extend(parts.pinned_named.iter().copied());
         delivered.extend(chat_emit::cut_shown_ids(
-            presented_render,
+            &cut_shown,
             &parts.named,
             hits_of(response.pack.as_ref()),
         ));

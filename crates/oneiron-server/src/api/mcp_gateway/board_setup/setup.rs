@@ -108,6 +108,9 @@ pub(crate) async fn execute_mcp_setup(
                 brief.resident_people().clone()
             });
         let board = mcp_current_board_with_roster(server, actor, &resident).await?;
+        // Read before the header takes the board's scope label; the cut
+        // below adds its own truncation to these facts.
+        let omissions = board.omissions();
         let header = oneiron::context_board::BoardBlockHeader {
             epoch: board.epoch,
             scope: board.scope_label,
@@ -129,7 +132,7 @@ pub(crate) async fn execute_mcp_setup(
         // alone reported a keyframe the render window had truncated — or one
         // whose TASK scan stopped at its cap — as healthy (ONE-1704 repair).
         // The final cut truncates on the window axis too.
-        let health = board.omissions().with_cut(board_shed.cut_rows).health();
+        let health = omissions.with_cut(board_shed.cut_rows).health();
         // The keyframe shows the connector actor's layout batch: once this
         // page resolves, the batch it shows becomes live (BOARD-LAYOUT).
         layout_candidate = board.layout_candidate.clone();

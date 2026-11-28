@@ -585,19 +585,24 @@ fn keep_chat_history(
     }
 }
 
-/// The `named` ids and pack hits a cut frame still shows: those its
-/// settled `shown_ids` still contain. Ids no section places stay out.
-pub(super) fn cut_shown_ids(
-    render: &BoardRender,
-    named: &[EntityId],
-    hits: impl IntoIterator<Item = EntityId>,
-) -> Vec<EntityId> {
-    let shown: BTreeSet<EntityId> = render
+/// The ids a cut frame's settled sections still show: every section's
+/// settled `shown_ids`.
+pub(super) fn cut_shown_set(render: &BoardRender) -> BTreeSet<EntityId> {
+    render
         .shed
         .sections
         .iter()
         .flat_map(|section| section.shown_ids.iter().flatten().copied())
-        .collect();
+        .collect()
+}
+
+/// The `named` ids and pack hits a cut frame still shows: those in its
+/// [`cut_shown_set`]. Ids no section places stay out.
+pub(super) fn cut_shown_ids(
+    shown: &BTreeSet<EntityId>,
+    named: &[EntityId],
+    hits: impl IntoIterator<Item = EntityId>,
+) -> Vec<EntityId> {
     named
         .iter()
         .copied()
