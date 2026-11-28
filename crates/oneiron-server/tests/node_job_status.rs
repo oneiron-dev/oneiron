@@ -807,3 +807,104 @@ fn a_checkpoint_notice_reaches_the_workload_only_when_its_template_names_a_signa
         JobStatusAnswer::Refused(JobRefusal::NotTheKeysIssuer)
     );
 }
+
+/// What a workload wrote to its returnable output before its cutoff.
+const PARTIAL_VERDICT: &[u8] = br#"{"verdict":"partial","steps":3}"#;
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    oneiron_hex::encode(&<sha2::Sha256 as sha2::Digest>::digest(bytes))
+}
+
+/// Row GPU-JOB-CUTOFF-PROOF, the node's half: a key its cutoff timer stops at
+/// its maximum ends `TimeLimit`, measured to the maximum, its unit empty and
+/// its device given back. The partial outputs it wrote before the cutoff are
+/// hashed as any end's are: the returnable one is handed out whole under the
+/// receipt's digest and size, the other never, and neither is cleaned while
+/// no `Ack` came. Bytes that run past the hashed ones (a write after the
+/// hash) are never handed out under that digest. The real systemd half (the
+/// cutoff fires, the whole process tree is reaped, `out/` stays) is
+/// qualify_systemd_scope.sh T18b.
+#[test]
+fn a_job_cut_off_at_its_maximum_ends_time_limit_and_keeps_its_partial_outputs() {
+    let fixture = fixture();
+    let jobs = fixture.node.open();
+    let key = "job-cutoff/chunk-0";
+    fixture.run(&jobs, key);
+    let out = fixture.out_dir(key);
+    std::fs::write(out.join("verdict.json"), PARTIAL_VERDICT).expect("partial verdict");
+    std::fs::write(out.join("trace.bin"), b"partial trace").expect("partial trace");
+
+    fixture
+        .node
+        .clock
+        .advance_ms(pin().request.maximum_secs * 1_000);
+    fixture.node.units.cut_off(key);
+    jobs.tick();
+    let hashed = wait_for(&jobs, key, |entry| entry.outputs != OutputsState::Pending);
+    assert_eq!(hashed.end, Some(JobEnd::TimeLimit));
+    jobs.tick();
+    wait_for(&jobs, key, |entry| {
+        matches!(entry.release, DeviceRelease::Confirmed { .. })
+    });
+    assert_eq!(
+        fixture.node.devices.taken_by(DEVICE),
+        None,
+        "the device is back once the unit is empty"
+    );
+    let ended = known(jobs.find(fixture.issuer, key));
+    assert_eq!(ended.state, JobState::Ended);
+    assert_eq!(ended.end, Some(JobEnd::TimeLimit), "never a natural exit");
+    assert!(ended.started);
+    assert_eq!(ended.measured_secs, Some(pin().request.maximum_secs));
+    let OutputsState::Hashed(digests) = &ended.outputs else {
+        panic!(
+            "the partial outputs are hashed at a time-limit end: {:?}",
+            ended.outputs
+        );
+    };
+    let verdict = digests
+        .iter()
+        .find(|digest| digest.name == "verdict.json")
+        .expect("the partial verdict's digest");
+    assert!(verdict.returnable);
+    assert_eq!(verdict.sha256, sha256_hex(PARTIAL_VERDICT));
+    assert_eq!(
+        verdict.bytes,
+        u64::try_from(PARTIAL_VERDICT.len()).expect("a small output")
+    );
+    let trace = digests
+        .iter()
+        .find(|digest| digest.name == "trace.bin")
+        .expect("the partial trace's digest");
+    assert!(!trace.returnable);
+    assert_eq!(trace.sha256, sha256_hex(b"partial trace"));
+
+    match jobs.fetch(fixture.issuer, key, "verdict.json") {
+        JobStatusAnswer::Output { bytes } => assert_eq!(bytes, PARTIAL_VERDICT),
+        other => panic!("expected the partial verdict, got {other:?}"),
+    }
+    assert!(not_fetchable(&jobs.fetch(fixture.issuer, key, "trace.bin")));
+
+    // A year with no `Ack`: both stay, and the verdict is still handed out.
+    fixture.node.clock.advance_ms(365 * 86_400_000);
+    for _ in 0..3 {
+        jobs.tick();
+    }
+    assert!(out.join("verdict.json").exists());
+    assert!(out.join("trace.bin").exists());
+    assert!(!entry(&jobs, key).expect("the key").cleaned);
+    assert!(matches!(
+        jobs.fetch(fixture.issuer, key, "verdict.json"),
+        JobStatusAnswer::Output { .. }
+    ));
+
+    // Bytes past the hashed ones are refused, not handed out as the result.
+    let mut past = PARTIAL_VERDICT.to_vec();
+    past.extend_from_slice(b"\n{\"verdict\":\"late\"}");
+    std::fs::write(out.join("verdict.json"), &past).expect("a late write");
+    assert!(not_fetchable(&jobs.fetch(
+        fixture.issuer,
+        key,
+        "verdict.json"
+    )));
+}

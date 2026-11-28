@@ -10,7 +10,9 @@
 //! no slip or seed appears in argv, logs or error text. Review repros
 //! (#1346): a tier holds at every write door and the latest mint replaces
 //! the earlier slips; the bridge bounds every request in time and size and
-//! keeps the credential out of curl's environment.
+//! keeps the credential out of curl's environment. Row OM-MCP-HOST-DOORS: an
+//! agent quotes a GPU job through the same bridge, the path an agy seat
+//! (`agy mcp`) takes as the Claude Code plugin does.
 
 #![allow(clippy::unwrap_used)]
 
@@ -2216,4 +2218,211 @@ fn the_bridge_takes_the_code_mode_pair_only_for_a_credential_that_may_run_code()
     // waiting call, one after another, would be four.
     let probes = seen.lock().unwrap().len();
     assert!(probes < 4, "{probes} probes in {:?}", started.elapsed());
+}
+
+/// The `[gpu_jobs]` section the GPU job test serves: one offer at 2
+/// credit-micros a second with 20 seconds of startup, teardown and rounding,
+/// on a backend this binary does not register.
+const GPU_JOBS_SECTION: &str = r#"
+[gpu_jobs]
+default_maximum_secs = 3600
+step_secs = 30
+
+[gpu_jobs.offers.h100-test]
+class = "h100"
+provider = "example-cloud"
+region = "test-region"
+backend = "unregistered"
+price_per_second = 2
+cost_unit = "credit-micros"
+catalog_revision = "gpu-prices-1"
+startup_secs = 10
+teardown_secs = 5
+rounding_secs = 5
+"#;
+
+/// The owner's host root credential, read on the stopped vault under this
+/// install's own host issuer (#4015).
+struct OwnerRoot {
+    issuer: oneiron::authority::HostSlipIssuer,
+    slip: CapabilitySlip,
+}
+
+impl OwnerRoot {
+    fn load(vault_path: &Path) -> Self {
+        let vault = oneiron::Vault::open_owned(vault_path, oneiron::VaultConfig::server()).unwrap();
+        oneiron_server::config::KeystoreConfig::default().install_on(&vault, vault_path);
+        let issuer = vault.load_host_slip_issuer().unwrap();
+        let slip = vault.ensure_host_root_slip(&issuer).unwrap();
+        Self { issuer, slip }
+    }
+
+    /// The owner's facade call of `verb` with `input`, with a fresh holder
+    /// proof: the HTTP status and the answer.
+    fn call(&self, origin: &str, verb: &str, input: &Value) -> (u16, Value) {
+        let timestamp = unix_seconds_now();
+        let nonce = oneiron::EntityId::now().to_hex();
+        let challenge = format!("oneiron-request:{timestamp}:{nonce}");
+        let signature: String = self
+            .issuer
+            .binding_proof(&self.slip, challenge.as_bytes())
+            .unwrap()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        let response = reqwest::blocking::Client::new()
+            .post(format!("{origin}/v1/core/facade/{verb}"))
+            .bearer_auth(self.slip.to_token().unwrap())
+            .header(
+                "x-oneiron-binding",
+                json!({"timestamp": timestamp, "nonce": nonce, "signature": signature}).to_string(),
+            )
+            .json(input)
+            .send()
+            .unwrap();
+        let status = response.status().as_u16();
+        (status, response.json().unwrap_or(Value::Null))
+    }
+}
+
+/// A tool call's refusal message, asserted refused.
+fn refusal_message(answer: &Value) -> &str {
+    assert!(answer.get("result").is_none(), "refused: {answer:#}");
+    answer["error"]["message"].as_str().unwrap_or_default()
+}
+
+/// Row OM-MCP-HOST-DOORS, the agy path: the first tenant's lead is an agy
+/// seat (Gemini in the Antigravity harness), whose MCP servers run through
+/// `agy mcp`. It starts this same shipped bridge, `oneiron mcp --surface
+/// tool-first --credential-file <cred>`, as the Claude Code plugin's
+/// `.mcp.json` does: the client is any MCP host that starts the bridge. On a
+/// served vault with one `[gpu_jobs]` offer and a `token agent` credential
+/// file, the bridge lists the three GPU job doors; the quote is refused until
+/// the owner mints the agent a Grant naming the verbs (here over REST, as a
+/// fixture of the owner's own act OM-AGENT-GRANT); then the quote answers its
+/// terms (the rate times the maximum plus startup, teardown and rounding), a
+/// status of an unknown job gets the door's own not-found, and a start gets
+/// the door's own refusal for a backend this host does not register. Each
+/// call passed the bridge, the MCP gate and the agent's Grant and reached its
+/// door. The in-process half is `customer_gpu_job_maximum.rs`.
+#[test]
+fn an_agent_quotes_a_gpu_job_through_the_stdio_bridge() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = init_vault(dir.path());
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(&config)
+        .unwrap()
+        .write_all(GPU_JOBS_SECTION.as_bytes())
+        .unwrap();
+    let agent = Minted::new(
+        &config,
+        dir.path().join("tenant-lead.cred"),
+        "tenant-lead",
+        "full-access",
+    );
+    let principal = agent.printed["principal_ref"].as_str().unwrap().to_owned();
+    let owner = OwnerRoot::load(&dir.path().join("vault"));
+    let port = free_port();
+    let origin = format!("http://127.0.0.1:{port}");
+    let _server = serve(&config, port, &dir.path().join("serve.log"));
+    let curl_dir = argv_recording_curl(dir.path(), &dir.path().join("curl-argv.log"));
+    let mut bridge = Bridge::spawn(
+        &origin,
+        &agent.file,
+        &curl_dir,
+        &dir.path().join("mcp.stderr"),
+    );
+
+    let initialized = bridge.call(
+        1,
+        "initialize",
+        json!({
+            "protocolVersion": "2025-06-18",
+            "capabilities": {},
+            "clientInfo": { "name": "agy", "version": "1" },
+        }),
+    );
+    assert_eq!(
+        initialized["result"]["actor"]["actor_ref"],
+        json!(principal),
+        "{initialized:#}"
+    );
+    bridge.send(&json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }));
+    let listed = bridge.call(2, "tools/list", json!({}));
+    let tools = listed["result"]["tools"].as_array().expect("tools");
+    let names: BTreeSet<&str> = tools
+        .iter()
+        .filter_map(|tool| tool["name"].as_str())
+        .collect();
+    for name in [
+        "vault.gpu.jobs.quote",
+        "vault.gpu.jobs.start",
+        "vault.gpu.jobs.status",
+    ] {
+        assert!(names.contains(name), "the bridge lists {name}: {names:?}");
+    }
+    let version = tools[0]["inputSchema"]["properties"]["schema_version"]["const"].clone();
+    let quote = json!({ "spec": {
+        "offer": "h100-test", "job_type": "fine-tune",
+        "image": "registry.example.com/trainer@sha256:00", "maximum_secs": 100,
+        "inputs": { "dataset": "tenant-bets" }, "resume_job": null,
+    }});
+
+    // The agent's tier alone names no GPU verb: the door refuses the quote.
+    let (id, params) = tool_call(3, "vault.gpu.jobs.quote", &version, quote.clone());
+    let refused = bridge.call(id, "tools/call", params);
+    assert!(
+        refusal_message(&refused).contains("an agent's own Grant that names it"),
+        "{refused:#}"
+    );
+
+    let (status, minted) = owner.call(
+        &origin,
+        "vault.agents.grants.mint",
+        &json!({
+            "agent": principal,
+            "authority_scope": {
+                "worlds": {"kind": "all"},
+                "facets": {"kind": "all"},
+                "bands": {"kind": "all"},
+                "audience": {"kind": "all"},
+                "verbs": {"kind": "some", "values": [
+                    "read",
+                    "vault.gpu.jobs.quote",
+                    "vault.gpu.jobs.status",
+                    "vault.gpu.jobs.start",
+                ]},
+                "sensitivity": {"kind": "at_most", "value": "restricted"},
+            },
+        }),
+    );
+    assert_eq!(status, 200, "the owner mints the agent's Grant: {minted:#}");
+
+    let (id, params) = tool_call(4, "vault.gpu.jobs.quote", &version, quote);
+    let quoted = bridge.call(id, "tools/call", params);
+    assert!(quoted.get("error").is_none(), "{quoted:#}");
+    let terms = output(&quoted).clone();
+    assert_eq!(terms["offer"], json!("h100-test"), "{terms:#}");
+    assert_eq!(terms["maximum_secs"], json!(100), "{terms:#}");
+    assert_eq!(terms["quantity"], json!(120), "100 s and 20 s of overhead");
+    assert_eq!(terms["units"], json!(240), "at 2 credit-micros a second");
+
+    let unknown = json!({ "spec": { "job": oneiron::EntityId::now().to_hex() } });
+    let (id, params) = tool_call(5, "vault.gpu.jobs.status", &version, unknown);
+    let missing = bridge.call(id, "tools/call", params);
+    assert!(
+        refusal_message(&missing).contains("no such GPU job"),
+        "{missing:#}"
+    );
+    assert_eq!(missing["error"]["code"], json!(-32004), "{missing:#}");
+
+    let start = json!({ "spec": { "quote": terms, "resume": false } });
+    let (id, params) = tool_call(6, "vault.gpu.jobs.start", &version, start);
+    let unbacked = bridge.call(id, "tools/call", params);
+    assert!(
+        refusal_message(&unbacked).contains("gpu_jobs.no_backend"),
+        "the start reached the door, which names the missing backend: {unbacked:#}"
+    );
+    bridge.close();
 }
