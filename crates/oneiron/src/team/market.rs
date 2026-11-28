@@ -274,13 +274,25 @@ pub fn open_market(
 ///
 /// Storage errors.
 pub(crate) fn bind_market(vault: &Vault, opening: &Market) -> Result<bool> {
-    vault.with_write_txn_grouped(|wtxn| {
-        if let Some(kept) = MARKET.get(&vault.store, wtxn, &opening.team_ref)? {
-            return Ok(kept.same_opening(opening));
-        }
-        MARKET.put(&vault.store, wtxn, &opening.team_ref, opening)?;
-        Ok(true)
-    })
+    vault.with_write_txn_grouped(|wtxn| bind_market_in_txn(vault, wtxn, opening))
+}
+
+/// [`bind_market`] in the caller's writer: a planned team's launch records
+/// its market in the transaction that queues the team, before its members.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn bind_market_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    opening: &Market,
+) -> Result<bool> {
+    if let Some(kept) = MARKET.get(&vault.store, wtxn, &opening.team_ref)? {
+        return Ok(kept.same_opening(opening));
+    }
+    MARKET.put(&vault.store, wtxn, &opening.team_ref, opening)?;
+    Ok(true)
 }
 
 /// Spends `units` from an agent's run-local share. The share is the limit.

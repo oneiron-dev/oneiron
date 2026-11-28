@@ -30,8 +30,9 @@ pub struct TeamStartInput {
     pub market: Option<TeamMarketInput>,
 }
 
-/// A market start's terms. The host records them with the leader as the
-/// referee's setter and the vault's time, before any member spawns.
+/// A market's terms, on a start or a planned ask. The host records them
+/// before any member spawns, with the vault's time and, as the referee's
+/// setter, the start's leader or the planned ask's asker.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct TeamMarketInput {
@@ -45,8 +46,9 @@ pub struct TeamMarketInput {
     /// one fifth.
     #[serde(default)]
     pub bounty_share: Option<f64>,
-    /// Members, by their `intentKey`, that a halving round keeps first as
-    /// its wildcard (protected exploration).
+    /// Members that a halving round keeps first as its wildcard (protected
+    /// exploration): by their `intentKey` on a start, and as `member:<n>`,
+    /// the n-th member in launch order from 0, on a planned ask.
     #[serde(default)]
     pub protected: Vec<String>,
 }

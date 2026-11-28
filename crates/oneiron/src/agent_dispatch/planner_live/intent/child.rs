@@ -135,7 +135,7 @@ impl AgentDispatcher<'_> {
         };
         // Custody is committed: no writer is held while placement and the
         // planner may ask a model.
-        let placed = self.place_and_plan_for_attempt(leased, request, host, at);
+        let placed = self.place_and_plan_for_attempt(leased, actor, request, host, at);
         // FIX 9180: the seat the plan resolved, noted before its settle can
         // fail.
         if let Ok((_, plan)) = &placed {
@@ -165,10 +165,13 @@ impl AgentDispatcher<'_> {
     /// Places the request's type once against the tree the parent works
     /// in, the requested stamp kept when that tree holds it, then plans the
     /// ask at that stamp over the parent's lease, as a leased planned spawn
-    /// always has. Runs only under custody, with no writer held.
+    /// always has, and checks the ask's market terms against the plan, with
+    /// the agent `actor` as their setter. Runs only under custody, with no
+    /// writer held.
     fn place_and_plan_for_attempt(
         &self,
         leased: &AttemptRecord,
+        actor: &EntityId,
         request: &LeasedSpawnRequest,
         host: &PlannedSpawnHost<'_>,
         at: u64,
@@ -190,6 +193,7 @@ impl AgentDispatcher<'_> {
             },
             at,
         )?;
+        self.check_market_plan(&request.ask, &plan, *actor)?;
         Ok((placed, plan))
     }
 

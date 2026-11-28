@@ -47,6 +47,9 @@ const SPAWN_UNQUEUED: &str = "this planned spawn's launch names no queued agent;
 /// FIX 9183: every erase stores its cause on the intent, so an erased view
 /// without one is a damaged row.
 const SPAWN_ERASED_UNCAUSED: &str = "planned spawn intent erased without its cause";
+const MARKET_UNLAUNCHED: &str = "market terms bind a team this host launches from its plan, and \
+     this spawn launches none; drop `market`, or spawn where the host's planner and pattern \
+     runner are bound";
 
 /// The host's planner (OF-541, OF-389): the skills, seats, executor and
 /// ladders a planned spawn, its type placement and the leader's advice read
@@ -648,6 +651,16 @@ fn task_subproject_id(wrapper: EntityId) -> Result<EntityId> {
 /// refusals answer: invalid dispatch input.
 fn refused(reason: &'static str) -> Error {
     Error::Artifact(ArtifactError::InvalidAgentDispatchInput(reason))
+}
+
+/// Market terms bind a team the host launches from its plan (DOOR-111 S4c-4,
+/// ARCH-0079 #market): a spawn that `launches` none refuses them before
+/// anything is planned or queued, and never drops them.
+pub(super) fn refuse_market_unlaunched(ask: Option<&SelfSpawnAsk>, launches: bool) -> Result<()> {
+    if !launches && ask.is_some_and(|ask| ask.market.is_some()) {
+        return Err(refused(MARKET_UNLAUNCHED));
+    }
+    Ok(())
 }
 
 /// A budget the spawner set narrows the child's hard carve; it never

@@ -166,6 +166,12 @@ pub struct AgentSpawnInput {
     /// power the parent does not hold is refused.
     #[serde(default)]
     pub powers: Option<crate::agent_def::ChildPowerRequest>,
+    /// A planned market team's referee and ledger terms (ARCH-0079 #market),
+    /// recorded with the parent as their setter before any member is
+    /// queued. Only a spawn the host launches as a planned team takes them;
+    /// a market plan without them is refused.
+    #[serde(default)]
+    pub market: Option<crate::team::run::TeamMarketInput>,
 }
 
 /// One spawn field as the parent sets it (ARCH-0079 #seed-pin): a seed is
@@ -277,6 +283,7 @@ impl AgentSpawnInput {
                 .transpose()?,
             budget_cap_units: self.budget.map(|knob| knob.map(Ok)).transpose()?,
             balance_free_prompt: self.balance_free_prompt,
+            market: self.market,
         };
         Ok(super::SelfAgentSpawnCall {
             target: self

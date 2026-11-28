@@ -141,27 +141,8 @@ pub(crate) fn bind_market_start(
         .iter()
         .map(|member| member.intent_key.clone())
         .collect();
-    if !terms.protected.iter().all(|key| agents.contains(key)) {
-        return Ok(Err("team_start_market_invalid"));
-    }
     let now = vault.now_recorded_at();
-    let referee = SignedReferee {
-        kind: referee_kind(terms.referee.kind),
-        rule_ref: terms.referee.rule.clone(),
-        digest: terms.referee.digest.clone(),
-        signed_by: setter,
-        signed_at: now,
-    };
-    let opening = match Market::opening(
-        team_ref,
-        market_mode(terms.mode),
-        referee,
-        terms.pool,
-        terms.bounty_share.unwrap_or(DEFAULT_BOUNTY_SHARE),
-        &agents,
-        &terms.protected,
-        now,
-    ) {
+    let opening = match market_opening(team_ref, terms, setter, &agents, now) {
         Ok(opening) => opening,
         Err(Error::InvalidClaimBody(_)) => return Ok(Err("team_start_market_invalid")),
         Err(error) => return Err(error),
@@ -171,6 +152,45 @@ pub(crate) fn bind_market_start(
     } else {
         Err("team_start_market_moved")
     })
+}
+
+/// The market `terms` open under `team_ref` among `agents`, with `setter`
+/// as the referee's setter and `now`, the vault's time, as its time. A
+/// code-mode start and a planned launch open theirs here. Nothing is stored.
+///
+/// # Errors
+///
+/// [`Error::InvalidClaimBody`] for terms no ledger opens on, a protected
+/// name among them that is no agent's.
+pub(crate) fn market_opening(
+    team_ref: &str,
+    terms: &TeamMarketInput,
+    setter: EntityId,
+    agents: &[String],
+    now: u64,
+) -> Result<Market> {
+    if !terms.protected.iter().all(|key| agents.contains(key)) {
+        return Err(Error::InvalidClaimBody(
+            "a market protects only its own members",
+        ));
+    }
+    let referee = SignedReferee {
+        kind: referee_kind(terms.referee.kind),
+        rule_ref: terms.referee.rule.clone(),
+        digest: terms.referee.digest.clone(),
+        signed_by: setter,
+        signed_at: now,
+    };
+    Market::opening(
+        team_ref,
+        market_mode(terms.mode),
+        referee,
+        terms.pool,
+        terms.bounty_share.unwrap_or(DEFAULT_BOUNTY_SHARE),
+        agents,
+        &terms.protected,
+        now,
+    )
 }
 
 const fn referee_kind(kind: TeamRefereeKindInput) -> RefereeKind {

@@ -99,6 +99,12 @@ pub struct SpawnIntentRequest {
     /// envelope, which the host enforces either way.
     #[serde(default)]
     pub balance_free_prompt: bool,
+    /// A market team's referee and ledger terms (ARCH-0079 #market), recorded
+    /// with the owner as their setter and the vault's time before any member
+    /// is queued. A market plan without them is refused, as they are on any
+    /// other plan.
+    #[serde(default)]
+    pub market: Option<crate::team::run::TeamMarketInput>,
 }
 
 /// Where the owner's planned spawn stands: its phase, the type the engine
@@ -197,6 +203,7 @@ fn planned_request(input: SpawnIntentRequest) -> MemoryResult<PlannedSpawnReques
             .map(|knob| knob.into_override(Ok))
             .transpose()?,
         balance_free_prompt: input.balance_free_prompt,
+        market: input.market,
     };
     Ok(PlannedSpawnRequest {
         intent_key: input.intent_key,
