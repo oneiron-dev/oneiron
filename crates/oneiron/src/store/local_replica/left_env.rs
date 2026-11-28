@@ -143,8 +143,8 @@ static LEAVE_KEPT_FAMILIES: &[&SideTableDecl] = &[
     // world pick.
     &side_table::PROVENANCE_BODY_RELEASED,
     &side_table::SYNC_RESIDENCE_DEVICE_MODE,
-    &side_table::SYNC_RESIDENCE_RESOLVED_MODE,
     &side_table::SYNC_RESIDENCE_DEVICE_WORLDS,
+    &side_table::SYNC_RESIDENCE_RESOLVED_MODE,
     // Format pins and what a reopen reads: the store's open gates, the
     // vault's open (the LFS chunk seed and the pack map head refuse when
     // missing) and its done-markers.

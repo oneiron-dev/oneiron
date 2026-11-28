@@ -196,15 +196,15 @@ crate::side_table::side_tables! {
     /// node-local, never synced. Key: ().
     SYNC_RESIDENCE_DEVICE_MODE: SyncState b"rs:mode" Raw
         [restore: live] [family: unclassified] [tier: canonical];
+    /// The worlds the owner picked for this machine to follow (ARCH-0023b #partial-sync): each
+    /// world's 16 id bytes, ascending; node-local, never synced. Key: ().
+    SYNC_RESIDENCE_DEVICE_WORLDS: SyncState b"rs:worlds" Raw
+        [restore: live] [family: unclassified] [tier: canonical];
     /// The residence mode this machine's own sync connection last resolved (sync all or sync
     /// what it opened); node-local, never synced; written at each resolution
     /// (sync/connection/home_search.rs); no row reads as not opened. Key: (). Value: one byte,
     /// 1 = Opened, 2 = All.
     SYNC_RESIDENCE_RESOLVED_MODE: SyncState b"rs:resolved" Raw
-        [restore: live] [family: unclassified] [tier: canonical];
-    /// The worlds the owner picked for this machine to follow (ARCH-0023b #partial-sync): each
-    /// world's 16 id bytes, ascending; node-local, never synced. Key: ().
-    SYNC_RESIDENCE_DEVICE_WORLDS: SyncState b"rs:worlds" Raw
         [restore: live] [family: unclassified] [tier: canonical];
     /// This device's record that it left the shared vault its env holds (OF-158): the notice it
     /// confirmed and the unsynced edits it discarded; local only, never synced. Key: string (the
