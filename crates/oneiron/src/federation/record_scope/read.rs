@@ -147,6 +147,11 @@ impl Vault {
         use crate::scope_summary::WordSources;
 
         // The roots this fence judges: every row whose words came from others.
+        let header =
+            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("record header"))?;
+        if header.entity_type == crate::registry::ENTITY_TYPE_BLOB_ARTIFACT {
+            return Ok(true);
+        }
         let mut pending = match self.fence_word_sources_in(txn, &id, raw) {
             Ok(WordSources::Own) => return Ok(true),
             Ok(WordSources::Unresolved) | Err(Error::InvalidClaimBody(_)) => return Ok(false),
