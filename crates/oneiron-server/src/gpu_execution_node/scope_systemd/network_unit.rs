@@ -161,7 +161,7 @@ pub fn listed_job_units(listing: &str) -> Vec<(JobKeyId, UnitNetwork)> {
         .lines()
         .filter_map(|line| line.split_whitespace().next())
         .filter_map(|name| {
-            [UnitNetwork::Private, UnitNetwork::Host]
+            [UnitNetwork::Private]
                 .into_iter()
                 .find_map(|network| {
                     name.strip_prefix(network.template_prefix())
