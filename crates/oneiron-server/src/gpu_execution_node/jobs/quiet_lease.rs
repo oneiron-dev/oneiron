@@ -97,7 +97,6 @@ pub(super) fn holder(table: &KeyTable) -> Option<&NodeKey> {
 #[must_use]
 pub fn idle(key: &NodeKey) -> bool {
     key.is_ended()
-        && !matches!(key.release, DeviceRelease::Unconfirmed { .. })
         && (!key.started() || key.outputs != OutputsState::Pending)
 }
 
