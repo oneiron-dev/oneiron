@@ -506,7 +506,7 @@ fn head_reads(vault: &Vault, head: &EntityId) -> Result<bool> {
 /// outcome for the Coach's own edit record; an admitting one, when
 /// [`TEAM_SHAPE_GATE_ADMITS`], admits the revision and supersedes the head
 /// in one transaction, unless the owner pinned that head: then the revision
-/// stays a proposal and the outcome is the ruling alone. A revision the
+/// is answered without going in force and the outcome is the ruling alone. A revision the
 /// owner approved on an agent-health
 /// card settles through that approval instead (FIX 3725). `None` when no
 /// revision is open.
@@ -594,9 +594,10 @@ pub(super) fn drive(
 /// The gate's last step once a ruling admits `proposal` over
 /// `predecessor`, in one write: optimizer admission and supersession, unless
 /// the owner pinned `predecessor`. The owner's pinned tree is a seed of
-/// infinite weight (ARCH-0079 #seed-pin): a win over it stays a proposal,
-/// [`TreeGateOutcome::Ruled`] with the admitting `disposition`, and only the
-/// owner replaces it, through `vault.task_types.promote`.
+/// infinite weight (ARCH-0079 #seed-pin): a win over it is answered and
+/// stays a Candidate that never goes in force, [`TreeGateOutcome::Ruled`]
+/// with the admitting `disposition`, and only the owner replaces the head,
+/// through `vault.task_types.promote`.
 fn put_revision_in_force(
     vault: &Vault,
     proposal: &EntityId,
@@ -610,6 +611,11 @@ fn put_revision_in_force(
     };
     vault.with_write_txn_grouped(|txn| {
         if vault.owner_pinned_tree_in_txn(txn, predecessor)? {
+            // The ruling answers the proposal: it is closed on the approval
+            // axis as every answered proposal is, its record and verdict
+            // kept, so the Coach's next proposal is not held behind it and
+            // the gate never picks it again.
+            crate::skill_optimize::close_answered_proposal_in_txn(vault, txn, proposal, now)?;
             return Ok(TreeGateOutcome::Ruled(disposition));
         }
         if let Some(refusal) = vault.admit_optimized_skill_in_txn(txn, proposal, occurred, now)? {

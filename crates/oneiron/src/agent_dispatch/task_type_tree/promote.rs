@@ -25,8 +25,8 @@ use super::{
 /// Where a promoted tree comes from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TreePromoteSource {
-    /// The tree `vault.task_types.pin` stored on the open fork `fork`, at
-    /// the version that pin stored it at.
+    /// The tree the owner's `vault.task_types.pin` stored on the open fork
+    /// `fork`, at the version that pin stored it at, unchanged since.
     Pin { fork: EntityId, tree_version: u64 },
     /// The tree the earlier revision `revision` on the vault's team-shape
     /// chain carried; the seed when it carried none.
@@ -108,8 +108,36 @@ pub(crate) fn promote_team_type_tree(
     })
 }
 
+/// [`super::store_team_type_tree`] as the owner's `vault.task_types.pin` stores
+/// it: in the same write, the stored tree is staged as the owner's, the one
+/// tree `vault.task_types.promote` takes from `fork` while the fork's
+/// package stays as this write left it. The Coach's own fork writes store
+/// through [`super::store_team_type_tree`] and stage nothing.
+///
+/// # Errors
+///
+/// As [`super::store_team_type_tree`].
+pub(crate) fn store_owner_team_type_tree(
+    vault: &Vault,
+    fork: EntityId,
+    tree: &TaskTypeTree,
+    project: Option<EntityId>,
+    at: u64,
+) -> Result<u64> {
+    super::validate_tree(tree)?;
+    vault.with_write_txn_grouped(|txn| {
+        let version = super::store_team_type_tree_in_txn(vault, txn, fork, tree, project, at)?;
+        vault.stage_owner_tree_in_txn(txn, &fork, version)?;
+        Ok(version)
+    })
+}
+
 /// The tree `vault.task_types.pin` stored on `fork`: an open local fork in
-/// the team-shape lineage holding a vault-scoped tree at `tree_version`.
+/// the team-shape lineage holding a vault-scoped tree at `tree_version`,
+/// which the owner's last pin on that fork stored at that version and which
+/// no write has changed since (the pin's stage, checked against the fork's
+/// package hash). A tree the fork holds some other way, the seed copied at
+/// its birth or a tree the Coach stored there, is never promoted.
 fn staged_tree_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -125,6 +153,11 @@ fn staged_tree_in_txn(
     }
     if !in_lineage_in_txn(vault, txn, fork, root)? {
         return Err(invalid("fork is not in the team-shape skill's lineage"));
+    }
+    if !vault.owner_staged_tree_in_txn(txn, &fork, &record, tree_version)? {
+        return Err(invalid(
+            "a promoted tree is the one the owner's vault.task_types.pin stored on this fork at this version, unchanged since; pin it again",
+        ));
     }
     let tree = stored_tree_unchecked_in_txn(vault, txn, &fork, &mut Reads::Off)?
         .ok_or_else(|| invalid("the fork holds no stored task-type tree"))?;

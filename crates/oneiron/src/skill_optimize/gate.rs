@@ -245,10 +245,9 @@ use basis::{
     ScoredBasis, cycle_cap_in_txn, evidence_identity, held_out_outcome_results_in_txn,
     held_out_receipts_in_txn, host_replay_scorer, validate_score,
 };
-use decision::{
-    approval_deferral_in_txn, close_answered_proposal_in_txn, readable_target,
-    standing_verdict_in_txn,
-};
+// Also the team-shape tree gate's: it answers a win an owner-pinned head holds.
+pub(crate) use decision::close_answered_proposal_in_txn;
+use decision::{approval_deferral_in_txn, readable_target, standing_verdict_in_txn};
 use goal_axis::{
     GoalDefinition, dominates, floor_regressed, goal_definition_in_txn, goal_id_in_txn,
     goal_reader_in_txn, is_tradeoff, score_goal_axes, validate_goal_vector,

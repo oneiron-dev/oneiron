@@ -9,8 +9,17 @@
 //! - `vault.task_types.promote` puts that tree in force for the vault in one
 //!   write: a new revision of the team-shape head, owner-pinned, which
 //!   supersedes the head. No gate scores it.
+//! - A promote takes only the tree the owner's pin stored on the fork, as it
+//!   stored it: not the seed a fresh fork copies, nor a tree another writer
+//!   stored there after the pin. Red with the stage check undone: both
+//!   promoted.
+//! - The same tree pinned again after a version clash keeps the version its
+//!   first pin stored, so the first receipt still promotes. Red with the
+//!   version reuse undone: the retry stored the next version.
 //! - The Coach's gate, on an admitting ruling over a pinned head, puts
-//!   nothing in force: its revision stays a proposal.
+//!   nothing in force, and answers the proposal so the Coach's next one is
+//!   not held behind it. Red with the answer undone: the proposal stayed
+//!   open.
 //! - The owner reverts through the same door: a third revision carries the
 //!   earlier tree, and the pinned tree's version still reads from the chain.
 //!
@@ -22,7 +31,8 @@
 #![cfg(oneiron_test_support)]
 
 use oneiron::agent_dispatch::{
-    load_team_type_tree, load_team_type_tree_at, team_shape_skill, team_shape_skill_in_force,
+    load_team_type_tree, load_team_type_tree_at, store_team_type_tree, team_shape_skill,
+    team_shape_skill_in_force,
 };
 use oneiron::claim::ClaimApprovalStatus;
 use oneiron::consent::AuthenticatedOwner;
@@ -34,7 +44,7 @@ use oneiron::task_type::TaskTypeTree;
 use oneiron::team::doors::{pin_tree_as, promote_tree_as};
 use oneiron::team::{TaskTypeNodeSpec, TaskTypeTreePin, TaskTypeTreePromote};
 use oneiron::test_doors::bootstrap_skills::seed_bootstrap_skills_adding;
-use oneiron::test_doors::team_tree_promote::coach_tree_gate_last_step;
+use oneiron::test_doors::team_tree_promote::{coach_proposal_over, coach_tree_gate_last_step};
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -123,19 +133,33 @@ impl Fixture {
     /// The owner's pin of a tree with one child `child` under the root on
     /// `fork`, at the version above the seed's: the version stored.
     fn pin(&self, fork: EntityId, child: &str) -> TestResult<u64> {
+        Ok(self
+            .pin_at(fork, TaskTypeTree::seeded().version + 1, child)?
+            .0)
+    }
+
+    /// The owner's pin of a tree with one child `child` under the root on
+    /// `fork`, at `tree_version`: the version stored, and the version
+    /// requested when the pin stored another.
+    fn pin_at(
+        &self,
+        fork: EntityId,
+        tree_version: u64,
+        child: &str,
+    ) -> TestResult<(u64, Option<u64>)> {
         let receipt = pin_tree_as(
             &self.vault,
             &self.owner()?,
             TaskTypeTreePin {
                 fork_ref: fork,
-                tree_version: TaskTypeTree::seeded().version + 1,
+                tree_version,
                 nodes: nodes(child),
                 project_ref: None,
             },
         )
         .map_err(at("pin"))?;
         assert_eq!(receipt.in_force, Some(false), "a pin stores a candidate");
-        Ok(receipt.stored.tree_version)
+        Ok((receipt.stored.tree_version, receipt.requested_tree_version))
     }
 
     /// The owner's promote of `input`.
@@ -250,12 +274,79 @@ fn a_promote_takes_only_the_version_the_pin_stored() -> TestResult {
 }
 
 #[test]
+fn a_promote_takes_only_the_tree_the_owners_pin_stored() -> TestResult {
+    let fx = Fixture::open()?;
+    let owner = fx.owner()?;
+    let seed = TaskTypeTree::seeded().version;
+    // A fresh fork holds the seed its birth copied; no pin stored it.
+    let fork = fx.fork("team-shape-owner-staging")?;
+    assert!(
+        promote_tree_as(&fx.vault, &owner, pinned(fork, seed)).is_err(),
+        "a fork's copied seed is not the owner's pin"
+    );
+    // A tree another writer (the Coach's fork store) puts on the fork after
+    // the owner's pin is not the owner's either.
+    let stored = fx.pin(fork, "research")?;
+    let written = store_team_type_tree(&fx.vault, fork, &TaskTypeTree::seeded(), None, 20)
+        .map_err(at("another writer's store"))?;
+    assert_eq!(written, seed);
+    assert!(
+        promote_tree_as(&fx.vault, &owner, pinned(fork, written)).is_err(),
+        "a tree stored after the pin is not the owner's"
+    );
+    assert!(
+        promote_tree_as(&fx.vault, &owner, pinned(fork, stored)).is_err(),
+        "the pinned version no longer names the fork's tree"
+    );
+    assert_eq!(fx.in_force()?, fx.head, "a refused promote changes nothing");
+    // The owner's pin again stages the fork's tree, and it promotes.
+    let again = fx.pin(fork, "research")?;
+    let receipt = fx.promote(pinned(fork, again))?;
+    assert_eq!(fx.in_force()?, receipt.in_force_skill_ref);
+    Ok(())
+}
+
+#[test]
+fn a_retried_pin_after_a_clash_keeps_its_stored_version() -> TestResult {
+    let fx = Fixture::open()?;
+    let fork = fx.fork("team-shape-owner-staging")?;
+    let seed = TaskTypeTree::seeded().version;
+    // The seed holds the requested version with another structure.
+    let (stored, requested) = fx.pin_at(fork, seed, "research")?;
+    assert_eq!(requested, Some(seed), "the pin clashed with the seed");
+    assert!(stored > seed);
+    let skill_version = fx.record(&fork)?.version;
+    let (again, requested) = fx.pin_at(fork, seed, "research")?;
+    assert_eq!(
+        again, stored,
+        "the same tree pinned again keeps the version its first pin stored"
+    );
+    assert_eq!(requested, Some(seed));
+    assert_eq!(
+        fx.record(&fork)?.version,
+        skill_version,
+        "the same tree stored again keeps the fork's skill version"
+    );
+    let receipt = fx.promote(pinned(fork, stored))?;
+    assert_eq!(
+        receipt.tree.tree_version, stored,
+        "the first receipt promotes"
+    );
+    Ok(())
+}
+
+#[test]
 fn a_later_coach_win_over_the_pin_only_proposes() -> TestResult {
     let fx = Fixture::open()?;
     let fork = fx.fork("team-shape-owner-staging")?;
     let stored = fx.pin(fork, "research")?;
     let pinned_head = fx.promote(pinned(fork, stored))?.in_force_skill_ref;
-    let revision = fx.fork("team-shape-coach-revision")?;
+    let revision = coach_proposal_over(&fx.vault, &pinned_head, 10).map_err(at("proposal"))?;
+    assert_eq!(
+        fx.record(&revision)?.approval_status,
+        ClaimApprovalStatus::Proposed,
+        "the Coach's revision is born an open proposal"
+    );
     let outcome = coach_tree_gate_last_step(
         &fx.vault,
         &revision,
@@ -269,10 +360,16 @@ fn a_later_coach_win_over_the_pin_only_proposes() -> TestResult {
         TreeGateOutcome::Ruled(SkillEditDisposition::Accepted)
     );
     assert_eq!(fx.in_force()?, pinned_head, "the pin stays in force");
+    let answered = fx.record(&revision)?;
     assert_eq!(
-        fx.record(&revision)?.lifecycle_status,
+        answered.lifecycle_status,
         SkillLifecycle::Candidate,
-        "the Coach's revision stays a proposal"
+        "the Coach's revision never goes in force"
+    );
+    assert_eq!(
+        answered.approval_status,
+        ClaimApprovalStatus::Rejected,
+        "the ruling answered it, so the Coach's next proposal is not held behind it"
     );
     assert!(
         load_team_type_tree(&fx.vault, None)

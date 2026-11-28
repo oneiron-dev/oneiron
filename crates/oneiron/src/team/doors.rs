@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::agent_dispatch::{
     TreePromoteSource, load_team_type_tree_at_in_txn, load_team_type_tree_in_txn,
-    promote_team_type_tree, store_team_type_tree, team_shape_skill_in_force_in_txn,
+    promote_team_type_tree, store_owner_team_type_tree, team_shape_skill_in_force_in_txn,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::error::Error;
@@ -285,7 +285,9 @@ pub struct PlannedSpawnObservation {
 /// behind its parent's tree, and stores a version that already names
 /// another structure in its lookup scope at the next free one). The receipt
 /// gives the version stored and says whether the fork is in force for the
-/// vault or `input.project_ref`.
+/// vault or `input.project_ref`. The stored tree is staged as the owner's:
+/// `vault.task_types.promote` takes it from the fork at that version while
+/// no other write changes the fork.
 ///
 /// # Errors
 ///
@@ -307,7 +309,7 @@ pub fn pin_tree_as(
     }
     check_structure(&input.nodes)?;
     let mut tree = authored_tree(version, &input.nodes);
-    tree.version = store_team_type_tree(
+    tree.version = store_owner_team_type_tree(
         vault,
         input.fork_ref,
         &tree,
