@@ -187,11 +187,13 @@ fn prepare(context: &StepContext, record: &mut PreparedRecord) -> Result<(), Str
     }
     let unit = context.unit();
     effective_stop_grace_matches(&unit, settings.stop_grace_secs)?;
+    effective_slice_matches(&unit, settings.job_cgroup.slice.as_deref())?;
     let protected = installed_protected_paths(&unit_text, &settings.state_dir);
 
+    let leased = leased_device_ids(&launch)?;
     let mut allowed = Vec::new();
-    for device_id in leased_device_ids(&launch)? {
-        allowed.extend(device_files::files_of(&device_id, &settings.device_files)?);
+    for device_id in &leased {
+        allowed.extend(device_files::files_of(device_id, &settings.device_files)?);
     }
     allowed.sort();
     allowed.dedup();
@@ -256,6 +258,12 @@ fn prepare(context: &StepContext, record: &mut PreparedRecord) -> Result<(), Str
         format!("MemoryMax={memory_bytes}"),
         format!("TasksMax={}", template.tasks_max),
         format!("CPUQuota={}%", u64::from(cpu_threads).saturating_mul(100)),
+        // A share, not a cap: a job that leases no device yields to one that
+        // does (row NODE-JOB-SLICE-AND-WEIGHT).
+        format!(
+            "CPUWeight={}",
+            settings.job_cgroup.job_cpu_weight(!leased.is_empty())
+        ),
     ];
     properties.extend(
         allowed
@@ -263,6 +271,15 @@ fn prepare(context: &StepContext, record: &mut PreparedRecord) -> Result<(), Str
             .map(|path| format!("DeviceAllow={} rw", path.display())),
     );
     set_properties(&unit, &properties).map_err(|why| format!("unit_limits_not_set: {why}"))?;
+    // The whole job slice's share against the rest of the host, set at each
+    // launch, since the node file is read fresh.
+    if let (Some(slice), Some(weight)) = (
+        settings.job_cgroup.slice.as_deref(),
+        settings.job_cgroup.slice_cpu_weight,
+    ) {
+        set_properties(slice, &[format!("CPUWeight={weight}")])
+            .map_err(|why| format!("slice_weight_not_set: {slice}: {why}"))?;
+    }
     let write_rate = format!(
         "IOWriteBandwidthMax={} {}",
         settings.work_dir.display(),
@@ -373,6 +390,23 @@ fn effective_stop_grace_matches(unit: &str, stop_grace_secs: u64) -> Result<(), 
             "stop_grace_not_unit_timeout: the unit's TimeoutStopSec is {text:?} and the node file's stop grace {stop_grace_secs} s: run `oneiron execution-node install` again"
         )),
     }
+}
+
+/// With a slice in the node file, the unit's effective slice is that one:
+/// a template `install` wrote before the slice was named, or for another
+/// one, runs its jobs elsewhere, so the slice's weight would not reach them.
+fn effective_slice_matches(unit: &str, slice: Option<&str>) -> Result<(), String> {
+    let Some(slice) = slice else {
+        return Ok(());
+    };
+    let found = show(unit, &["Slice"]).map_err(|why| format!("unit_slice_unknown: {why}"))?;
+    let text = found.get("Slice").map_or("", String::as_str);
+    if text == slice {
+        return Ok(());
+    }
+    Err(format!(
+        "unit_slice_differs: the unit runs in {text:?} and the node file names {slice}: run `oneiron execution-node install` again"
+    ))
 }
 
 /// A systemd time span as `systemctl show` prints it (`10s`, `1min 30s`,

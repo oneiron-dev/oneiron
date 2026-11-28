@@ -24,6 +24,9 @@ pub struct UnitInputs {
     pub engine_account: String,
     /// The account the job runs as.
     pub job_account: String,
+    /// The slice every job unit runs in (`[execution_node.job_cgroup]`
+    /// `slice`); `None`: systemd's own slice for the template.
+    pub slice: Option<String>,
     pub state_dir: PathBuf,
     pub work_dir: PathBuf,
     /// Paths no job may open, besides `state_dir`: the vault's trees, the
@@ -74,6 +77,9 @@ pub fn sandbox_properties(inputs: &UnitInputs, instance: &str) -> Vec<(String, S
     set("AmbientCapabilities", String::new());
     set("UMask", "0022".to_owned());
     set("KeyringMode", "private".to_owned());
+    if let Some(slice) = &inputs.slice {
+        set("Slice", slice.clone());
+    }
     let mut inaccessible = vec![quote_path(&inputs.state_dir)];
     for path in &inputs.protected {
         inaccessible.push(format!("-{}", quote_path(path)));
@@ -283,6 +289,7 @@ mod tests {
             node_file: "/etc/oneiron/execution-node.toml".into(),
             engine_account: "oneiron".to_owned(),
             job_account: "oneiron-job".to_owned(),
+            slice: None,
             state_dir: "/var/lib/oneiron/jobs".into(),
             work_dir: "/data/oneiron-jobs".into(),
             protected: vec!["/var/lib/oneiron".into()],
@@ -303,6 +310,34 @@ mod tests {
         assert!(text.contains("BindPaths=-/run/oneiron-payloads/%i:/data/oneiron-jobs/%i\n"));
         assert!(text.contains("BindReadOnlyPaths=-/run/oneiron-jobs/%i\n"));
         assert_eq!(installed_runtime_max_secs(&text), Some(172_800));
+    }
+
+    #[test]
+    fn the_template_names_the_node_files_slice_and_no_slice_without_one() {
+        let without = render_job_unit(&inputs());
+        assert!(
+            !without.lines().any(|line| line.starts_with("Slice=")),
+            "no slice in the node file: systemd's own slice, as before"
+        );
+        let with = render_job_unit(&UnitInputs {
+            slice: Some("oneiron.slice".to_owned()),
+            ..inputs()
+        });
+        assert!(with.contains("\nSlice=oneiron.slice\n"), "{with}");
+        assert_eq!(
+            sandbox_properties(
+                &UnitInputs {
+                    slice: Some("oneiron.slice".to_owned()),
+                    ..inputs()
+                },
+                "probe"
+            )
+            .iter()
+            .filter(|(name, _)| name == "Slice")
+            .count(),
+            1,
+            "the probe unit runs in the same slice"
+        );
     }
 
     #[test]

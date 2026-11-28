@@ -16,6 +16,7 @@ pub mod availability;
 pub mod device;
 pub mod device_probes;
 pub mod issuer;
+pub mod job_cgroup;
 #[cfg(unix)]
 pub mod jobs;
 pub mod machine_policy;
