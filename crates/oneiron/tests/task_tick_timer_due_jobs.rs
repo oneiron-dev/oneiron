@@ -156,6 +156,8 @@ impl Fixture {
                     first_at,
                     every_secs,
                 },
+                expected: None,
+                project: None,
             })
             .expect("arm the timer program")
             .registration

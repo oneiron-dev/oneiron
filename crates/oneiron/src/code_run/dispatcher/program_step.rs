@@ -18,8 +18,8 @@ use crate::code_run::types::{
     SelfDispatchOutcome, SelfEffect, SelfFailedResult,
 };
 use crate::dreamer_runner::{
-    DREAMER_TURN_PROGRAM_ATTEMPT_KIND, ProgramWrite, bind_program_write_in_txn,
-    note_program_write_uncertain, settle_program_write_in_txn,
+    DREAMER_TURN_PROGRAM_ATTEMPT_KIND, ProgramWrite, answer_is_pending, bind_program_write_in_txn,
+    end_project_run_in_txn, note_program_write_uncertain, settle_program_write_in_txn,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -286,12 +286,13 @@ impl<'a> HostSelfDispatcher<'a> {
             );
         }
         let digest = answer_digest(receipt);
+        let refused = answer_refused(receipt);
         vault.put_code_run_replay_record_if_generation_with_heal_and(
             receipt,
             expected,
             None,
             |wtxn| {
-                settle_answer(vault, wtxn, write, digest, now);
+                settle_answer(vault, wtxn, write, digest, refused, now);
                 Ok(())
             },
         )
@@ -313,6 +314,7 @@ impl<'a> HostSelfDispatcher<'a> {
         };
         let now = vault.now_recorded_at();
         let digest = answer_digest(receipt);
+        let refused = answer_refused(receipt);
         vault.put_code_run_replay_record_if_generation_in_txn(
             wtxn,
             receipt,
@@ -321,7 +323,7 @@ impl<'a> HostSelfDispatcher<'a> {
             |_| Ok(()),
             |wtxn| {
                 if let Some(write) = program {
-                    settle_answer(vault, wtxn, write, digest, now);
+                    settle_answer(vault, wtxn, write, digest, refused, now);
                 }
                 Ok(())
             },
@@ -335,27 +337,61 @@ impl<'a> HostSelfDispatcher<'a> {
     /// never finishes the program (FIX 5878). A run no program binds holds
     /// none.
     pub(crate) fn pinned_entry_finished(&self, record: &CodeRunReplayRecord) -> bool {
-        let Some(program) = &self.program else {
-            return false;
-        };
-        record.step_checkpoints.iter().any(|checkpoint| {
-            let Some(range) = checkpoint.bridge_range() else {
-                return false;
-            };
-            let Some(root) = record
+        self.pinned_entry_answer(record).is_some()
+    }
+
+    /// Whether the pinned callable's finished root call ([`Self::pinned_entry_finished`])
+    /// answered pending ([RSI-PROJECT-WORKFLOW]): a stage it started has not ended, so a project
+    /// run keeps waking. `false` for an entry that did not finish.
+    pub(crate) fn pinned_entry_pending(&self, record: &CodeRunReplayRecord) -> bool {
+        self.pinned_entry_answer(record)
+            .is_some_and(|answer| answer_is_pending(&answer))
+    }
+
+    /// What the pinned callable's root call returned, when an entry finished it.
+    fn pinned_entry_answer(&self, record: &CodeRunReplayRecord) -> Option<serde_json::Value> {
+        let program = self.program.as_ref()?;
+        record.step_checkpoints.iter().find_map(|checkpoint| {
+            let range = checkpoint.bridge_range()?;
+            let root = record
                 .bridge_calls
                 .get(range.start)
-                .filter(|_| !range.is_empty())
-            else {
-                return false;
-            };
-            root.seq == range.start as u64
-                && root.effect == SelfEffect::SkillsCall
-                && matches!(
-                    decode_self_dispatch_outcome(&root.outcome),
-                    Ok(SelfDispatchOutcome::SkillCall(result)) if result.skill == program.skill
-                )
+                .filter(|_| !range.is_empty())?;
+            if root.seq != range.start as u64 || root.effect != SelfEffect::SkillsCall {
+                return None;
+            }
+            match decode_self_dispatch_outcome(&root.outcome) {
+                Ok(SelfDispatchOutcome::SkillCall(result)) if result.skill == program.skill => {
+                    Some(result.output)
+                }
+                _ => None,
+            }
         })
+    }
+
+    /// Ends a program's project run when the door refused one of its calls for authority
+    /// ([RSI-PROJECT-WORKFLOW]): a revoked Grant or a slip that no longer admits the call. A
+    /// read keeps no step, so its refusal is the step that ends the run, in a writer of its own.
+    /// A run no program binds, a program armed for no project and every other answer change
+    /// nothing; a disarm that cannot be written is logged and the answer stands.
+    pub(super) fn end_program_run_on_authority_refusal(&self, outcome: &SelfDispatchOutcome) {
+        let (Some(program), ExecutorStorage::Canonical(vault)) = (&self.program, &self.storage)
+        else {
+            return;
+        };
+        if !matches!(outcome, SelfDispatchOutcome::Denied(denied) if denied.outcome == MEMORY_CODE_FORBIDDEN)
+        {
+            return;
+        }
+        let attempt = program.lease.attempt;
+        if let Err(error) =
+            vault.with_write_txn_grouped(|wtxn| end_project_run_in_txn(vault, wtxn, attempt))
+        {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "a project run refused for authority was not disarmed; its next wake is refused"
+            );
+        }
     }
 
     /// A program's write found its receipt holding no answer: it is never
@@ -372,15 +408,26 @@ fn settle_answer(
     wtxn: &mut heed::RwTxn<'_>,
     write: &ProgramWrite,
     digest: Option<[u8; 32]>,
+    refused: bool,
     now: u64,
 ) {
     match digest {
-        Some(digest) => settle_program_write_in_txn(vault, wtxn, write, digest, now),
+        Some(digest) => settle_program_write_in_txn(vault, wtxn, write, digest, refused, now),
         None => tracing::warn!(
             receipt = %write.receipt.to_hex(),
             "a program write's answer did not digest; its step stays issued"
         ),
     }
+}
+
+/// Whether the answer a receipt keeps as its first row is the door's refusal.
+fn answer_refused(receipt: &CodeRunReplayRecord) -> bool {
+    receipt.bridge_calls.first().is_some_and(|row| {
+        matches!(
+            decode_self_dispatch_outcome(&row.outcome),
+            Ok(SelfDispatchOutcome::Denied(_))
+        )
+    })
 }
 
 /// The digest of the answer a receipt keeps as its first row.

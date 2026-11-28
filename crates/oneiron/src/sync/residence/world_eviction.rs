@@ -506,6 +506,11 @@ fn evict_cached_items(vault: &Vault, worlds: &BTreeSet<EntityId>) -> Result<(usi
                 continue;
             }
             vault.store.sync_state.delete(txn, &key)?;
+            crate::sync::residence::delete_index_by_item_for_listing_in_txn(
+                &vault.store,
+                txn,
+                &key,
+            )?;
         }
         Ok((removed, held.len()))
     })

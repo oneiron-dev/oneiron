@@ -20,6 +20,7 @@ mod custody;
 mod directives;
 mod discover;
 mod home_handoff;
+mod index_by_item;
 mod kit_fetch;
 mod machine_history;
 mod machine_names;
@@ -111,6 +112,11 @@ pub use home_handoff::{
     free_time_arming, home_handoff_cancel, home_handoff_commit, home_handoff_keys,
     home_handoff_part, home_handoff_retire, home_handoff_retired, home_handoff_session,
     home_handoff_status, prepare_home_handoff,
+};
+pub(crate) use index_by_item::{
+    delete_index_by_item_for_listing_in_txn, delete_index_by_item_in_txn,
+    delete_index_by_item_of_items_in_txn, index_by_item_key_of_listing,
+    listing_key_of_index_by_item, put_index_by_item_in_txn,
 };
 pub use kit_fetch::{
     KIT_BUNDLE_FETCH_MAX_AGE_SECS, KIT_BUNDLE_FETCH_NONCE_BYTES, KIT_BUNDLE_FETCH_PATH,
