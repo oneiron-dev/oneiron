@@ -101,11 +101,7 @@ pub(super) fn put_or_stage(
     }
     // A row that lands here may be a source a CLAIM landed without: a cold source that lands
     // later, in this pass or another, is judged at its landing (PR2-TYPED-REF-ABSENCE = A).
-    crate::dreamer_consolidation::replicated_sources::register_arrived_source_in_txn(
-        &ctx.vault.store,
-        wtxn,
-        &id,
-    )
+    Ok(())
 }
 
 /// The TASK components of one delta or pass: rows that change a stored TASK
