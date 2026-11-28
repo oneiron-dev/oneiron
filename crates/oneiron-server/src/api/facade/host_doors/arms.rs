@@ -17,12 +17,14 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron::experiment_arm::{
     ARMS_ADMIT_VERB, ARMS_FORECAST_VERB, ARMS_GET_VERB, ARMS_LIST_VERB, ARMS_UNITS_CANCEL_VERB,
     ARMS_UNITS_RESERVE_VERB, ArmAdmitRequest, ArmForecastRequest, ArmList, ArmListRequest, ArmRef,
-    ArmView, UnitCancel, UnitCancelRequest, UnitReserveRequest, UnitView, arm_admit_as,
-    arm_forecast_as, arm_get_as, arm_list_as, unit_cancel_as, unit_reserve_as,
+    ArmView, UnitCancel, UnitCancelRequest, UnitReserveAnswer, UnitReserveRequest, UnitView,
+    arm_admit_as, arm_forecast_as, arm_get_as, arm_list_as, unit_cancel_as, unit_order_as,
+    unit_ordered_view_as, unit_reserve_as,
 };
 use oneiron::gpu_job::{GpuJobActor, GpuJobConnector, GpuJobError, UnitJobStart};
 use oneiron::gpu_line::ClaimKey;
 use oneiron::memory::{MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
+use oneiron::work_order::{OrderState, WaitRule};
 
 use super::support::Listed;
 use super::verb_grant::verb_grant_door;
@@ -31,6 +33,9 @@ use crate::config::gpu_jobs::GpuOfferSettings;
 use crate::gpu_execution_node::issuer::not_the_issuer;
 use crate::gpu_host::{NoProvider, job_backend, now_ms, offer_with_backend};
 use crate::server::SyncServer;
+use crate::work_order_host::locked_order_pass;
+
+use super::work_orders::refusal_of_end;
 
 /// `vault.arms.admit`: admits one arm into a seated family of a GPU line,
 /// with its first allowance held from now until rung 1 leaves `Open`, the
@@ -101,11 +106,19 @@ pub(crate) async fn vault_arms_list(
 /// and answers the refusal; a provider's refusal holds the job and answers
 /// the released unit. A repeat of a unit that started or ended answers it as
 /// it stands.
+///
+/// With a wait other than `no` (row H3) the door makes a work order instead,
+/// holding nothing (pass 34, 1.1), runs one pass of the loop at once, and
+/// answers the order as the caller reads it, judged on this verb over the line
+/// and not under a `vault.jobs.order` Grant; the loop reserves the unit and
+/// starts its job when it can run. An order no wait can clear answers its
+/// refusal, as `vault.jobs.order` does.
 pub(crate) async fn vault_arms_units_reserve(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: UnitReserveRequest,
-) -> Listed<UnitView> {
+) -> Listed<UnitReserveAnswer> {
+    let shared = Arc::clone(server);
     verb_grant_door(
         server,
         auth,
@@ -135,8 +148,25 @@ pub(crate) async fn vault_arms_units_reserve(
                     &["Reserve on an offer of the line that this host can start."],
                 )
             })?;
+            if input.wait != WaitRule::No {
+                let now = now_ms();
+                let view = unit_order_as(memory, owner, &input, now)?;
+                if view.replayed {
+                    return Ok(UnitReserveAnswer::Order(Box::new(view)));
+                }
+                locked_order_pass(&shared, now)?;
+                let view = unit_ordered_view_as(memory, owner, input.line, &view.order.id)?
+                    .unwrap_or(view);
+                if let OrderState::GivenUp { why } = &view.order.state
+                    && let Some(refusal) = refusal_of_end(why)
+                {
+                    return Err(refusal);
+                }
+                return Ok(UnitReserveAnswer::Order(Box::new(view)));
+            }
             let reserved = unit_reserve_as(memory, owner, &input, now_ms())?;
             start_reserved_unit(server, memory, owner, offer, connector.as_ref(), reserved)
+                .map(UnitReserveAnswer::Unit)
         },
     )
     .await
