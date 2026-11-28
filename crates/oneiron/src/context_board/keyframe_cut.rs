@@ -121,7 +121,7 @@ fn cut_steps(
         let ids = line_ids(&sections[index], &views[index]);
         let id_at = |line: usize| ids.get(line).copied().flatten();
         let mut kept = views[index].rows.len();
-        let floor = sections[index].pinned_rows().len().min(kept);
+        let floor = sections[index].pinned_rows().len().min(kept).min(0);
         while kept > floor {
             kept -= 1;
             if let Some(id) = id_at(kept) {
