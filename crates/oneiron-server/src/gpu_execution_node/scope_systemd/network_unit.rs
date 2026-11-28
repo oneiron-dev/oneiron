@@ -52,7 +52,9 @@ pub const HOST_NETWORK_STEP_FLAG: &str = "--host-network";
 /// curl and the web clients use, and netlink, which the C library's resolver
 /// reads the machine's interfaces with. Chosen for this row: every other
 /// family (vsock, packet, Bluetooth, the kernel's crypto sockets) stays
-/// closed, as it is in the private unit's empty namespace.
+/// closed. The private unit sets no such list: its own network namespace
+/// has no interface, though families no namespace scopes (vsock, the
+/// crypto sockets) stay open there (row NODE-PRIVATE-UNIT-ADDRESS-FAMILIES).
 pub const HOST_NETWORK_ADDRESS_FAMILIES: &str = "AF_UNIX AF_INET AF_INET6 AF_NETLINK";
 
 /// The system calls the host network unit refuses (`SystemCallFilter=`):
