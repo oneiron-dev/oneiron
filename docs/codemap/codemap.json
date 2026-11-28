@@ -100663,14 +100663,14 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/test_doors/note_review_pass.rs",
-     "purpose": "Runs one NOTE review for `tests/note_review_claim_depends_on_note.rs`",
+     "purpose": "Runs one NOTE review for `tests/note_review_claim_depends_on_note.rs` and…",
      "surface": {
       "crate-vis": 1,
-      "fn": 5
+      "fn": 6
      }
     },
     {
@@ -118634,6 +118634,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/note_review_claim_takes_note_world.rs",
+     "purpose": "NOTE-REVIEW-CLAIM-DROPS-NOTE-WORLD: a CLAIM learnt from a NOTE is born in the NOTE's one world; a NOTE in…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/note_scalar_edit_lands_by_grant.rs",
      "purpose": "An edit through the scalar NOTE doors lands by the Grant's answer for the writer and the NOTE, never by the…",
      "surface": {}
@@ -126293,7 +126301,7 @@
    "over_bar": 276,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 8672,
-   "test_files": 2368
+   "test_files": 2369
   },
   "oneiron-agent-runtime": {
    "files": [
