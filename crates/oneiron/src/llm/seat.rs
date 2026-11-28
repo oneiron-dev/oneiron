@@ -135,8 +135,16 @@ impl Vault {
     /// Resolve the owner manifest row, or the shipped default data for v2
     /// manifests that do not set an explicit seat policy.
     pub fn seat_policy(&self) -> Result<SeatPolicy> {
+        self.seat_policy_in_txn(&self.store.env.read_txn()?)
+    }
+
+    /// [`Self::seat_policy`] in the caller's snapshot: a write that checks a
+    /// row against the policy reads the policy its own commit sees, so an
+    /// owner manifest replaced meanwhile cannot let a row past a bound now in
+    /// force (review r1 of FIX SEAT-DESCRIPTION-ROW-NO-PUBLIC-DOOR).
+    pub(crate) fn seat_policy_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<SeatPolicy> {
         match self
-            .model_manifest()?
+            .model_manifest_in_txn(txn)?
             .and_then(|manifest| manifest.seat_policy)
         {
             Some(policy) => {

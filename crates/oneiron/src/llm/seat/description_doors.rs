@@ -72,10 +72,12 @@ impl SeatDescriptionsView {
 impl Vault {
     /// `vault.models.descriptions.set` as `owner`: stores `description` as
     /// the seat description row of its model, replacing the model's row.
-    /// The row passes the seat policy's checks (a facet and at least one
-    /// line, each within its bound), its model is registered, and the owner
-    /// is checked again, all inside the write. Answers the row stored and
-    /// the one it replaced; the host's facet is the caller's to add
+    /// The owner is checked again, the row passes the seat policy in force
+    /// in the same write (a facet and at least one line, each within its
+    /// bound), and its model is registered, all inside the write. Answers
+    /// the row as stored, read back in the write (the side-row wall puts a
+    /// custody handle in place of a secret a line holds), and the row it
+    /// replaced; the host's facet is the caller's to add
     /// ([`SeatDescriptionWrite::on_host`]).
     ///
     /// # Errors
@@ -87,9 +89,9 @@ impl Vault {
         owner: &AuthenticatedOwner,
         description: ModelDescription,
     ) -> Result<SeatDescriptionWrite> {
-        let policy = self.seat_policy()?;
         let mut txn = self.store.env.write_txn()?;
         owner.revalidate_in_txn(self, &txn)?;
+        let policy = self.seat_policy_in_txn(&txn)?;
         description.validate_with(&policy)?;
         if self
             .model_registry_row_in_txn(&txn, &description.model)?
@@ -100,9 +102,12 @@ impl Vault {
         let key = description.model.as_str().to_owned();
         let replaced = DESCRIPTIONS.get(&self.store, &txn, &key)?;
         DESCRIPTIONS.put(self, &mut txn, &key, &description)?;
+        let stored = DESCRIPTIONS
+            .get(&self.store, &txn, &key)?
+            .ok_or_else(|| invalid("the seat description row did not read back in its write"))?;
         txn.commit()?;
         Ok(SeatDescriptionWrite {
-            description,
+            description: stored,
             replaced,
             seat_facet: None,
             host_facet_matches: None,

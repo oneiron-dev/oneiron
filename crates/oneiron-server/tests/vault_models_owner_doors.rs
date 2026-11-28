@@ -890,6 +890,46 @@ fn the_seat_description_read_answers_what_the_owner_wrote() {
     });
 }
 
+/// The set answers the row as stored, not the row it was given: an owner's
+/// line that holds a provider token goes to custody on its way in (the
+/// side-row wall, ARCH-0038 #secret-scan-target), so the answer carries the
+/// handle the read answers and no token (review r1 of #10658).
+#[test]
+fn a_seat_description_set_answers_the_row_as_stored() {
+    run_on_engine_stack("models-seat-description-stored", || async {
+        let host = host();
+        let trial = ensure_completed_trial_offer(&host.vault).expect("a completed trial offer");
+        let owner = host.owner_proof();
+        let mut row = seat_row(&trial.incumbent, "code-task");
+        row.owner =
+            Some("code-task work; TOKEN=ghp_0123456789abcdefghijklmnopqrstuvwxyz".to_owned());
+        let written = host
+            .vault
+            .set_model_description_as_owner(&owner, row.clone())
+            .expect("the owner's set");
+        let read = host
+            .vault
+            .model_descriptions_as_owner(
+                &owner,
+                SeatDescriptionsRead {
+                    model: Some(row.model.clone()),
+                },
+            )
+            .expect("the owner's read");
+        assert_eq!(
+            read.rows,
+            vec![written.description.clone()],
+            "the set answers the row the read answers"
+        );
+        let line = written.description.owner.as_deref().unwrap_or_default();
+        assert!(
+            !line.contains("ghp_"),
+            "the answer carries no token: {line}"
+        );
+        assert_ne!(written.description, row, "the token went to custody");
+    });
+}
+
 /// A seat description is its owner's word: a person on their own slip, a
 /// full-access agent that holds no grant and another vault's owner are
 /// refused at the set and the read, no refusal names a model, and nothing is
