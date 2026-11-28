@@ -431,6 +431,7 @@ pub(crate) use scheduling::{acquire_task_symbols, task_dispatch_ready, terminal_
 mod symbol_lease_tests;
 
 #[cfg(oneiron_test_support)]
+pub(crate) use ask_guest::check_disclosure;
 pub(crate) use ask_record::ask_group_route;
 #[cfg(oneiron_test_support)]
 pub(crate) use code_consent_word::{

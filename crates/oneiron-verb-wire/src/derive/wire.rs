@@ -46,8 +46,9 @@ pub struct DeriveEvidenceInput {
     pub local: String,
     /// The claim the evidence supports.
     pub head: DeriveRef,
-    /// The supporting rows: TURNs, cited whole, or admissible claims. A
-    /// stored one names its version in the request's `sources`.
+    /// The supporting rows: TURNs, cited whole, or admissible claims, never
+    /// a foreign copy (a claim in a received foreign WORLD). A stored one
+    /// names its version in the request's `sources`.
     pub sources: Vec<DeriveRef>,
 }
 

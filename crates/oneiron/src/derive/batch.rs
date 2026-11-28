@@ -65,7 +65,8 @@ pub struct DerivedEvidence {
     pub local: String,
     /// The claim the evidence supports.
     pub head: ItemRef,
-    /// The supporting rows: TURNs, cited whole, or admissible claims.
+    /// The supporting rows: TURNs, cited whole, or admissible claims, never
+    /// a foreign copy.
     pub sources: Vec<ItemRef>,
 }
 
