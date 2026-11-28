@@ -40,6 +40,7 @@ static JOBS: &[&JobSpec] = &[
     &crate::agent_dispatch::CHILD_WAIT_UNTIL_JOB,
     &crate::runtime_hooks::TASK_TICK_JOB,
     &crate::dreamer_runner::PROGRAM_TIMER_JOB,
+    &crate::project_lead_turn::PROJECT_LEAD_TURN_TIMER_JOB,
     &crate::outbound::UNDO_SEND_RELEASE_JOB,
     &crate::runtime_hooks::verb::PACED_VERB_LINE_JOB,
     &crate::outbound_intent_ledger::REMOTE_TASK_POLL_JOB,

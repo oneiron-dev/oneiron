@@ -372,7 +372,11 @@ const UNKEPT_REPLY_VERBS: [&str; 20] = [
 /// either (`hooks::row_hooks_pre_decided`): the drain would save its answer
 /// for the retry.
 pub(crate) fn verb_reply_is_kept(verb: &str) -> bool {
+    // A project's lead-turn doors judge the project's reach and its lead in their own act
+    // (FIX NEON-LEAD-TURN-TRIGGER), which the row's door proof does not: a kept reply would
+    // answer a same-id retry after the Grant or the lead changed. None of them is kept.
     !UNKEPT_REPLY_VERBS.contains(&verb)
+        && !oneiron::project_lead_turn::LEAD_TURNS_VERBS.contains(&verb)
 }
 
 /// A live claim, with a durable intent for ordinary calls. Session-owned

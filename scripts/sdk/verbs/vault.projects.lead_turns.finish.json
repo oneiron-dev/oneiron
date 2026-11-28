@@ -1,0 +1,16 @@
+{
+  "name": "vault.projects.lead_turns.finish",
+  "description": "The project's lead closes its claimed turn with its outcome, status, exit code, the model it ran and the named files, which the turn keeps. A failed turn places the failure hold.",
+  "input": "crate::project_lead_turn::LeadTurnsFinishRequest",
+  "output": "crate::project_lead_turn::LeadTurn",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.projects.lead_turns.finish\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "act_class": "unstated",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "verb_grant_caller"
+}

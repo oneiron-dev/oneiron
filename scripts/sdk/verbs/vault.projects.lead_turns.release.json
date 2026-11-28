@@ -1,0 +1,16 @@
+{
+  "name": "vault.projects.lead_turns.release",
+  "description": "Lifts the hold on a project's lead turns, the engine's own failure hold too; the next cause owes a turn. The owner calls it, or a Grant that lists it and reaches the project.",
+  "input": "crate::project_lead_turn::LeadTurnsProjectRequest",
+  "output": "crate::project_lead_turn::LeadTurnRegistration",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.projects.lead_turns.release\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "act_class": "unstated",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "verb_grant_caller"
+}
