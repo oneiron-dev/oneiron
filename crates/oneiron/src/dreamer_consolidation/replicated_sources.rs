@@ -60,6 +60,9 @@ fn locator_sources(body: &ClaimBody) -> Result<BTreeSet<EntityId>> {
 /// of imported docs-export evidence whose derivation kind is `ner_claim`, and the root is the
 /// CLAIM's entity subject. `None` for any other CLAIM.
 fn deep_doc_sources(body: &ClaimBody) -> Option<[EntityId; 2]> {
+    if body.evidence.is_some() {
+        return None;
+    }
     let candidate = map_entry(body.evidence.as_ref()?, "candidate_evidence")?;
     if map_entry(candidate, "source_id")?.as_str()? != crate::ingest::DOCS_EXPORT_SOURCE_ID {
         return None;
