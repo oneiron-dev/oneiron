@@ -112,6 +112,14 @@ impl Vault {
                     "export",
                     &withheld,
                 )?
+                && self.word_source_fence_in(
+                    &txn,
+                    id,
+                    &raw,
+                    [selector, slip, channel],
+                    "export",
+                    &withheld,
+                )?
                 && self.esign_dependencies_admitted_in(
                     &txn,
                     h.entity_type,

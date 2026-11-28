@@ -398,6 +398,7 @@ pub mod slack_install_rows;
 pub mod slate_scope_signals;
 #[cfg(feature = "sync")]
 pub mod slim_drop_note_scrub;
+pub mod slip_door_word_sources;
 pub mod slip_store_fault;
 pub mod snapshot_page_accounting;
 pub mod sound_match_birth;
