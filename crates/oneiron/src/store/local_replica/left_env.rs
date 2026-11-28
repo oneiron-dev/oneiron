@@ -175,6 +175,7 @@ static LEAVE_KEPT_FAMILIES: &[&SideTableDecl] = &[
     &side_table::ORIGIN_CAS_BACKFILL,
     &side_table::SCOPE_STAMP_SWEEP_DONE,
     &side_table::SCOPE_POLICY_SWEEP_DONE,
+    &side_table::CITED_SOURCE_DEPENDENCY_BACKFILL,
 ];
 
 /// Most kept entities one result names; [`LeftEnvPurge::kept_total`] counts

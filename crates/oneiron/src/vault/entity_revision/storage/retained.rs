@@ -39,7 +39,7 @@ pub(in crate::vault::entity_revision) fn row_revisions_starting_with_in_txn(
 
 /// `id`'s row as stored, then as it stood at every revision its document
 /// retains.
-pub(in crate::vault::entity_revision) fn retained_rows_in_txn(
+pub(crate) fn retained_rows_in_txn(
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     id: &EntityId,
