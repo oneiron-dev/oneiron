@@ -67,6 +67,7 @@ pub(crate) mod psych_profile_step;
 mod recipe_failure;
 pub(crate) mod redirty;
 mod relation_extraction;
+pub(crate) mod replicated_sources;
 mod request_sources;
 mod residency;
 mod resident_dream;

@@ -120,7 +120,7 @@ impl SyncConnection {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let configured = self.config.client_config.residence_mode;
-        let mut mode = crate::sync::residence::resolve_residence_mode(vault, configured)?;
+        let mut mode = vault.resolve_and_record_device_residence(configured)?;
         loop {
             if mode == SyncResidenceMode::Opened {
                 // Before the mark goes and the mode publishes: the mark tells
@@ -154,7 +154,7 @@ impl SyncConnection {
             }
             // An election that committed after the first resolution; an
             // owner's switch waits for `mode_publish`.
-            let resolved = crate::sync::residence::resolve_residence_mode(vault, configured)?;
+            let resolved = vault.resolve_and_record_device_residence(configured)?;
             if resolved == mode {
                 return Ok(());
             }

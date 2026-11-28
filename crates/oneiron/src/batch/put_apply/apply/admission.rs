@@ -27,6 +27,8 @@ pub(super) struct FixedPut<'a> {
     /// row, which the witness check reads for this row and these bytes only
     /// (FIX 9600).
     pub(super) own_device: Option<&'a VerifiedOwnDeviceLane>,
+    pub(super) claim_source_replay:
+        Option<&'a crate::dreamer_consolidation::replicated_sources::ClaimSourceReplay>,
     pub(super) replicated: bool,
     pub(super) allow_reserved_predicate: bool,
     pub(super) hub_sync_imported: bool,
@@ -91,6 +93,9 @@ pub(super) fn admit_put<'a>(
     request: PutRequest<'a>,
     authority_beside: Option<crate::store::authority_rows::RowsBeside<'a>>,
     own_device: Option<&'a VerifiedOwnDeviceLane>,
+    claim_source_replay: Option<
+        &'a crate::dreamer_consolidation::replicated_sources::ClaimSourceReplay,
+    >,
 ) -> Result<Admission<'a>> {
     let PutRequest {
         row:
@@ -284,6 +289,7 @@ pub(super) fn admit_put<'a>(
             prepared_agent_birth,
             authority_beside,
             own_device,
+            claim_source_replay,
             replicated,
             allow_reserved_predicate,
             hub_sync_imported,

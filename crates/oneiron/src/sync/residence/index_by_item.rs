@@ -2,7 +2,9 @@
 //! `ri:w:{window}:{item}` listing, written and deleted beside it, so a transaction finds the
 //! windows that list an item by the `ri:i:{item}:` prefix without scanning every listing. The
 //! rows are device-local and never synced: they live in `sync_state`, which no sync path
-//! exports, and change no wire.
+//! exports, and change no wire. The soft-drop marker (`ri:u:{item}`) and the listing reader live
+//! here too: the marker records that the home stopped listing an item the device does not hold,
+//! and the reader finds the item's first decodable listing in any window.
 //!
 //! A vault written before the twin existed holds listings without one until its next index fetch
 //! rewrites the window's page. A shared-vault leave judges each pair once, by its listing's key,
@@ -78,6 +80,132 @@ pub(crate) fn delete_index_by_item_of_items_in_txn(
     for item in items {
         let prefix = format!("{}:", item.to_hex());
         RESIDENCE_INDEX_BY_ITEM.delete_from(store, txn, prefix.as_bytes())?;
+    }
+    Ok(())
+}
+
+/// Device-local `ri:u:{item}`: a thin source dropped by the home or a soft tombstone.
+const SOFT_DROP: SideTable<String, [u8; 1], Raw> =
+    SideTable::new(&side_table::SYNC_RESIDENCE_INDEX_SOFT_DROP);
+
+pub(crate) fn put_soft_drop_marker_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    item_hex: &str,
+) -> crate::Result<()> {
+    SOFT_DROP.put(store, txn, &item_hex.to_owned(), &[1])
+}
+
+pub(crate) fn delete_soft_drop_marker_in_txn(
+    store: &impl crate::store::ManifestDbs,
+    txn: &mut heed::RwTxn<'_>,
+    item_hex: &str,
+) -> crate::Result<()> {
+    SOFT_DROP.delete(store, txn, &item_hex.to_owned())?;
+    Ok(())
+}
+
+pub(crate) fn soft_drop_marker_exists_in_txn(
+    dbs: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    item_hex: &str,
+) -> crate::Result<bool> {
+    SOFT_DROP.contains(dbs, txn, &item_hex.to_owned())
+}
+
+/// Device-local `ri:k:{claim}:{source}`: a cited source an opened device landed a CLAIM without.
+const COLD_CITATION: SideTable<String, [u8; 1], Raw> =
+    SideTable::new(&side_table::SYNC_RESIDENCE_INDEX_COLD_CITATION);
+
+/// Records that `claim` landed on this opened device while its cited `source` was absent and
+/// unlisted, so the read gate can judge that source with no registration row.
+pub(crate) fn put_cold_citation_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    claim: &crate::EntityId,
+    source: &crate::EntityId,
+) -> crate::Result<()> {
+    let key = format!("{}:{}", claim.to_hex(), source.to_hex());
+    COLD_CITATION.put(store, txn, &key, &[1])
+}
+
+/// The sources `claim` landed without on this opened device, in key order. A key that does not
+/// decode fails closed, as a registration row that does not decode does.
+pub(crate) fn cold_citation_sources_in_txn(
+    dbs: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    claim: &crate::EntityId,
+) -> crate::Result<Vec<crate::EntityId>> {
+    let prefix = format!("ri:k:{}:", claim.to_hex());
+    let mut sources = Vec::new();
+    for row in dbs.sync_state().prefix_iter(txn, &prefix)? {
+        let (key, _) = row?;
+        let source = key
+            .strip_prefix(&prefix)
+            .and_then(|hex| crate::EntityId::from_hex(hex).ok())
+            .ok_or(crate::Error::CorruptedIndex("cold citation key"))?;
+        sources.push(source);
+    }
+    Ok(sources)
+}
+
+/// Whether local evidence drops an absent cold-cited source: a deletion mark (`dt:`, a row fence,
+/// a deletion state) or a soft-drop marker. The mode row and a missing listing never do, so a CLAIM
+/// that landed readable stays readable until such evidence arrives (#10654 review r1).
+pub(crate) fn cold_source_dropped_in_txn(
+    dbs: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    source: &crate::EntityId,
+) -> crate::Result<bool> {
+    Ok(
+        crate::ports::source_deleted_or_withdrawn_in_txn(dbs, txn, source)?
+            || soft_drop_marker_exists_in_txn(dbs, txn, &source.to_hex())?,
+    )
+}
+
+/// The first decodable thin index listing of `item_hex` in any window: the `ri:w:{window}:{item}`
+/// twin behind a `ri:i:{item}:{window}` row, decoded as the home listed it. `None` when no window
+/// lists the item or no twin decodes; an undecodable twin is skipped, never an error. Windows scan
+/// in key order, so the answer is deterministic. Reads use the manifest's sync-state accessor.
+pub(crate) fn index_listing_of_item_in_txn(
+    dbs: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    item_hex: &str,
+) -> crate::Result<Option<crate::sync::residence::window_index::WindowIndexEntry>> {
+    let prefix = format!("ri:i:{item_hex}:");
+    for row in dbs.sync_state().prefix_iter(txn, &prefix)? {
+        let (key, _) = row?;
+        let Some(window) = key.strip_prefix(&prefix) else {
+            continue;
+        };
+        let twin = format!("ri:w:{window}:{item_hex}");
+        let Some(raw) = dbs.sync_state().get(txn, &twin)? else {
+            continue;
+        };
+        if let Ok(entry) =
+            rmp_serde::from_slice::<crate::sync::residence::window_index::WindowIndexEntry>(&raw)
+        {
+            return Ok(Some(entry));
+        }
+    }
+    Ok(None)
+}
+
+/// Marks entries dropped by the fresh page of a still-current window. A
+/// window leaving the current set does not call this before purging its rows.
+pub(crate) fn mark_index_items_absent_from_page_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    prefix: &str,
+    old_keys: &[String],
+    fresh_item_hex: &std::collections::HashSet<&str>,
+) -> crate::Result<()> {
+    for key in old_keys {
+        if let Some(item) = key.strip_prefix(prefix)
+            && !fresh_item_hex.contains(item)
+        {
+            put_soft_drop_marker_in_txn(store, txn, item)?;
+        }
     }
     Ok(())
 }

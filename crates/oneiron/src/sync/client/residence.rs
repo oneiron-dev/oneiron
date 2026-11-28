@@ -47,6 +47,8 @@ pub(crate) use machine_history::fetch_owed_machine_history;
 pub(crate) use machine_names::exchange_machine_names;
 pub(crate) use media_vectors::request_media_vectors;
 pub use search::ResidenceSearchPage;
+#[cfg(test)]
+pub(crate) use tombstones::drop_soft_deleted_thin_copy;
 pub(crate) use tombstones::refresh_followed_tombstones;
 
 use serde::Deserialize;

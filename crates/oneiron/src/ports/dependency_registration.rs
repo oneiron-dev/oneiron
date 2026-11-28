@@ -106,6 +106,33 @@ pub(super) fn record(
     Ok(())
 }
 
+/// Registers a thin-index-listed source at its advertised learned-at without
+/// requiring a resident body. The caller has already checked deletion evidence.
+#[cfg(feature = "sync")]
+pub(crate) fn record_index_listed_dependency_in_txn(
+    store: &impl ManifestDbs,
+    txn: &mut RwTxn<'_>,
+    source: &EntityId,
+    dependent: &EntityId,
+) -> Result<bool> {
+    let Some(entry) =
+        crate::sync::residence::index_listing_of_item_in_txn(store, txn, &source.to_hex())?
+    else {
+        return Ok(false);
+    };
+    record(
+        store,
+        txn,
+        SourceSpan {
+            document: *source,
+            frontier: entry.learned_at,
+        },
+        dependent,
+        None,
+    )?;
+    Ok(true)
+}
+
 /// Registers this exact generated fork without claiming an ordinary registration.
 pub(crate) fn record_fork_dependency_in_txn(
     store: &impl ManifestDbs,

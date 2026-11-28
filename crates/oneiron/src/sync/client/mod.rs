@@ -82,6 +82,8 @@ pub(crate) use self::residence::IndexFetchFault;
 pub use self::residence::custody::drain_custody_residence_member_as;
 pub(crate) use self::residence::custody::relay_custody;
 pub(crate) use self::residence::default_claim_vector;
+#[cfg(test)]
+pub(crate) use self::residence::drop_soft_deleted_thin_copy;
 pub(crate) use self::residence::home_handoff::{HandoffLane, TargetCancel, TargetStanding};
 pub use self::residence::kit_fetch::fetch_custody_with_kit;
 pub(crate) use self::residence::secret_same_value::exchange_secret_same_value;

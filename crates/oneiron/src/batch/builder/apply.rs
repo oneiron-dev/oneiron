@@ -61,6 +61,25 @@ impl BatchBuilder<'_> {
         )
     }
 
+    /// Applies the ingest door's own-vault CLAIM put in its savepoint.
+    #[cfg(feature = "sync")]
+    pub(crate) fn apply_ingested_claim(
+        self,
+        wtxn: &mut RwTxn<'_>,
+        replay: crate::dreamer_consolidation::replicated_sources::ClaimSourceReplay,
+    ) -> Result<()> {
+        let mut gate_mode = ApplyOpsGateMode::new(false, true);
+        gate_mode.claim_source_replay = Some(replay);
+        self.apply_with_gate_mode(
+            wtxn,
+            gate_mode,
+            None,
+            crate::core_write::CoreWriteLaneRef::Unbound,
+            None,
+            None,
+        )
+    }
+
     /// Applies queued promotion operations while recording their gate decisions
     /// in the caller's transaction.
     pub(crate) fn apply_recording_gate_decisions(self, wtxn: &mut RwTxn<'_>) -> Result<()> {
