@@ -3,10 +3,22 @@
 //! windows that list an item by the `ri:i:{item}:` prefix without scanning every listing. The
 //! rows are device-local and never synced: they live in `sync_state`, which no sync path
 //! exports, and change no wire.
+//!
+//! Two states hold a listing without its twin for a while. A vault written before the twin
+//! existed has none until its next index fetch rewrites the window's page. A shared-vault leave
+//! interrupted between two purge passes may have swept the twins (`ri:i:` sorts before `ri:w:`)
+//! but not yet their listings, which the same leave removes when its purge resumes. A finished
+//! leave keeps or removes each pair together, since both keys name the same item and window.
 
-/// The by-item twin key of one thin index listing: `ri:i:{item}:{window}`.
+use crate::side_table::{self, Raw, SideTable};
+
+/// The by-item twin rows (`ri:i:`). Key: `{item}:{window}`. Value: `[1]`.
+const RESIDENCE_INDEX_BY_ITEM: SideTable<String, Vec<u8>, Raw> =
+    SideTable::new(&side_table::SYNC_RESIDENCE_INDEX_BY_ITEM);
+
+/// The by-item twin key of one thin index listing, after the `ri:i:` prefix: `{item}:{window}`.
 fn index_by_item_key(window: &str, item: &str) -> String {
-    format!("ri:i:{item}:{window}")
+    format!("{item}:{window}")
 }
 
 /// Puts the `[1]` by-item twin of one thin index listing.
@@ -16,9 +28,7 @@ pub(crate) fn put_index_by_item_in_txn(
     window: &str,
     item: &str,
 ) -> crate::Result<()> {
-    store
-        .sync_state
-        .put(txn, &index_by_item_key(window, item), &[1])
+    RESIDENCE_INDEX_BY_ITEM.put(store, txn, &index_by_item_key(window, item), &vec![1])
 }
 
 /// Deletes the by-item twin of one thin index listing; absent-ok.
@@ -28,9 +38,7 @@ pub(crate) fn delete_index_by_item_in_txn(
     window: &str,
     item: &str,
 ) -> crate::Result<()> {
-    store
-        .sync_state
-        .delete(txn, &index_by_item_key(window, item))?;
+    RESIDENCE_INDEX_BY_ITEM.delete(store, txn, &index_by_item_key(window, item))?;
     Ok(())
 }
 
@@ -56,15 +64,8 @@ pub(crate) fn delete_index_by_item_of_items_in_txn(
     items: &[crate::EntityId],
 ) -> crate::Result<()> {
     for item in items {
-        let prefix = format!("ri:i:{}:", item.to_hex());
-        let keys: Vec<String> = store
-            .sync_state
-            .prefix_iter(txn, &prefix)?
-            .map(|row| row.map(|(key, _)| key.to_string()))
-            .collect::<std::result::Result<Vec<_>, _>>()?;
-        for key in &keys {
-            store.sync_state.delete(txn, key)?;
-        }
+        let prefix = format!("{}:", item.to_hex());
+        RESIDENCE_INDEX_BY_ITEM.delete_from(store, txn, prefix.as_bytes())?;
     }
     Ok(())
 }
