@@ -112,7 +112,7 @@ pub(super) fn source_withdrawn_in(
             .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_EVENT);
         return Ok(!(event && survives_source_deletion(store, txn, *dependent)?));
     }
-    // A source an opened device landed `dependent` without falls only to local evidence.
+    // A source this device landed `dependent` without falls only to local evidence.
     #[cfg(feature = "sync")]
     for source in crate::sync::residence::cold_citation_sources_in_txn(store, txn, dependent)? {
         let resident = store.entities().get(txn, source.as_bytes())?.is_some();
