@@ -40,8 +40,12 @@ pub struct TeamMarketInput {
     pub referee: TeamRefereeInput,
     /// How the market runs.
     pub mode: TeamMarketModeInput,
-    /// The run's lease entering the market, in units.
+    /// The run's lease entering the market, in `unit`.
     pub pool: u64,
+    /// The unit the pool, every share and the peek price count in. Absent,
+    /// GPU seconds, the market's only unit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit: Option<TeamLeaseUnit>,
     /// The share of the pool held back as the bounty, in [0, 1). Absent,
     /// one fifth.
     #[serde(default)]
@@ -51,6 +55,18 @@ pub struct TeamMarketInput {
     /// the n-th member in launch order from 0, on a planned ask.
     #[serde(default)]
     pub protected: Vec<String>,
+}
+
+/// The unit a market's lease counts in (FIX MARKET-SEAT-LEASE-UNIT): one
+/// unit the engine meters the same on every harness, so seats on
+/// subscriptions and seats the engine prices meet at equal lease (ARCH-0079
+/// #market). A seat's own time is not metered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TeamLeaseUnit {
+    /// GPU seconds: each verdict spends, from its submitting member's
+    /// share, the seconds the referee run's machine-signed end charged.
+    GpuSeconds,
 }
 
 /// The referee a market start records.
@@ -210,6 +226,17 @@ pub enum TeamMarketVerdictOutcome {
     Invalid { reason: String },
 }
 
+/// What a verdict spent from its submitting member's share.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct TeamMarketSpend {
+    pub unit: TeamLeaseUnit,
+    /// What the referee run's machine-signed end charged.
+    pub charged: u64,
+    /// What the member's share has left after it.
+    pub left: u64,
+}
+
 /// The seat behind a submission: the harness its member ran in and the
 /// model behind it, frozen when the member submitted (FIX
 /// MARKET-SEAT-MODEL-STAMP). It names no credential.
@@ -247,6 +274,27 @@ pub struct TeamMarketOutcome {
     /// order, so a comparison groups results per model (ARCH-0079).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub submissions: Vec<TeamMarketSubmissionView>,
+    /// The unit the pool and every share count in; none for a market opened
+    /// before the unit was recorded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit: Option<TeamLeaseUnit>,
+    /// Each member's share, what it spent and what it has left, in member
+    /// key order, so a comparison reads each seat's lease beside its score.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lease: Vec<TeamMarketLeaseView>,
+}
+
+/// One member's lease in a closed market, in the market's unit.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct TeamMarketLeaseView {
+    /// The member key.
+    pub participant: String,
+    pub share: u64,
+    pub spent: u64,
+    /// Peek income and the bounty, if it won.
+    pub earned: u64,
+    pub left: u64,
 }
 
 /// One submission of a closed market, as the team's result shows it.
