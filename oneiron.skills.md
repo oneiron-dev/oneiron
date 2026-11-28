@@ -1705,6 +1705,7 @@ Codes the server's HTTP error type defines:
 - `PAYLOAD_TOO_LARGE`
 - `HOST_ACTION_REQUIRES_SUPPORT_GRANT`
 - `OWNER_BINDING_REQUIRED`
+- `OWNER_CONFIRM_REQUIRED` (428): a one-way act's call carried no confirm, or one that is not the owner's live preview of it; preview it again and pass its confirm back.
 - `COURTESY_DELETE_UNAUTHENTICATED`
 - `CONTROL_SCOPE_DENIED`
 - `PROCESS_NOT_READY` (503): this vault process's event loop is hung (`draining`) or recovering from a hang (`recovering`); it takes no new work, and work it admitted runs to its end. Retry after the `Retry-After` wait (`details.retryAfterSecs`).
