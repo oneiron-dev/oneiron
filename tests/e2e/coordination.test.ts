@@ -1543,31 +1543,376 @@ suite.todo(test, "COORDINATION-06", "waits on typed child spawn and evidence-or-
  * declared prior; learned estimates and own runs are observed, never seeded
  * via hand-written learning.* claims. No consumer gets a private type list.
  *
- * Missing: typed HTTP/SDK planned spawn/team call, public type-tree fixture
- * pin/read and typed cross-consumer planner/typeRef receipt observations.
- * A manually supplied brief.type_ref alone does not test once-only placement.
+ * Case: the owner imports team-shape and one pattern skill through the default hub, forks
+ * the team-shape head, pins the fixture's v7 tree on the fork and puts it in force with
+ * vault.task_types.promote; three planned spawns then read that tree (one placement each,
+ * the uncertain one on the root), and spawn.get compares every consumer's stamp.
  */
-/* COORDINATION-07 — stays TODO (Engine E2E-PARTIAL option A).
- * Promise (planned): one placed task type drives the team plan: placement once with node and
- *   tree version, unsure lands on the root, every consumer (plan, launched team, seat route,
- *   critic, learning) carries the same stamp, pinned width/model are kept under the hard cap.
- * Doors that exist: vault.agents.spawn / vault.agents.spawn.get, vault.task_types.get/pin,
- *   vault.settings.learning.put (all owner HTTP facade).
- * Why no case: in a fresh vault the owner's spawn is refused before any plan. The live planner
- *   loads the team-shape skill first (agent_dispatch/planner_live/root_plan.rs:59-62, 93-97);
- *   bootstrap installs only skill-optimize, judge, goal-intake, wake and agent-health-review
- *   (skill_hub/bootstrap.rs:39-54), and team_shape_skill() is a namespace id with no record
- *   (agent_dispatch/team_shape.rs:30-35, 61-70). The reply is phase "refused", "entity not
- *   found", placed/plan null, so not even the placed stamp is public.
- * Why no case: vault.task_types.pin needs a team-shape fork and stores a candidate only
- *   (team/doors.rs:560-589, in_force from fork_in_force); no public door puts it in force, so
- *   the fixture's v7 tree cannot drive anything.
- * Why no case: seat routes need a vault model manifest the host config does not publish
- *   (team/door_reads.rs:527-551); critics need review artifacts; learning needs receipts.
- * Weak subsets rejected: candidate pin + learning-row writes are setup reads; the refused spawn
- *   is not the title's promise.
+/** COORDINATION-07 authored inputs (fixture discriminant, not a wire DTO). */
+interface Coordination07Scenario {
+  id: "COORDINATION-07";
+  inputs: {
+    tree: { version: number; root: string; seedTypes: string[]; selected: string };
+    placementCases: { label: string; need: string; expectedNode: string }[];
+    prior: { pattern: string; width: number };
+    budgetCapUnits: number;
+    pinnedSpawn: { newIntent: boolean; width: { mode: "pin"; value: number }; model: { mode: "pin"; value: string } };
+    receiptConsumers: string[];
+    expectedPlacementCallsPerNewSpawn: number;
+    replayPlacementCalls: number;
+  };
+  expected: {
+    requiredStampFields: string[];
+    treeVersion: number;
+    certainNode: string;
+    uncertainNode: string;
+    missingTypeValid: boolean;
+    placementCallsPerNewSpawn: number;
+    placementCallsOnReplay: number;
+    allConsumersUseSameStamp: boolean;
+    defaultWidth: number;
+    pinnedWidth: number;
+    pinnedModel: string;
+    overridesRecorded: boolean;
+    budgetWidens: boolean;
+    handwrittenLearningClaims: number;
+  };
+}
+type Coordination07Observation = FacadeResult<"vault.agents.spawn.get">;
+
+/** The host-configured decision wording; the Big rung sends it as the first system text (big_rung.rs:319-323). */
+const COORDINATION07_DECISION_WORDING = "You answer one typed question about the state you are given.";
+/** The placement question on the Big rung is a buffered call (ladder/generation.rs:167-188). Its own wording,
+ * the host's PLACEMENT_WORDING, rides in the user text, so the origin alone tells a placement call apart. */
+const COORDINATION07_DECIDE = { method: "POST", path: "/v1/chat/completions", model: "coord07-decider",
+  fields: { stream: false }, system: COORDINATION07_DECISION_WORDING } as const;
+/** The worker model's provider and model name, as the scripted worker origin sees them. */
+const COORDINATION07_WORKER_PROVIDER = "coord07worker";
+/** ARCH-0079's pattern-table row for CEO decides, as the shipped seed binds it (skill_hub/bootstrap.rs PATTERNS),
+ * in the hub's pattern.json shape (team/pattern.rs HubPatternFile). */
+const COORDINATION07_CEO_PATTERN = {
+  pattern: "ceo_decides", default_axis: "converge",
+  works_well_for: "most work; work with independent advice streams", works_well_for_types: [],
+} as const;
+
+function coordination07InputId(label: string): string {
+  return createHash("sha256").update(`coordination-e2e:COORDINATION-07:${label}`).digest("hex").slice(0, 32);
+}
+async function coordination07Scenario(): Promise<Coordination07Scenario> {
+  const data = await (await loadFixtures()).readJson<{ scenarios: { id: string }[] }>("coordination-scenarios");
+  const row = data.scenarios.find(item => item.id === "COORDINATION-07");
+  if (!row) throw new Error("Missing COORDINATION-07 fixture scenario");
+  return row as Coordination07Scenario; // Fixture discriminant, not an invented wire DTO.
+}
+/** A fixture type label as the engine node it names: `type-root` is the authored root `root` (an authored
+ * tree's root is exactly `root`, team/doors.rs check_structure), `type-<seed>` the seed node `<seed>`. */
+function coordination07Node(label: string): string {
+  if (!label.startsWith("type-")) throw new Error(`Fixture type label ${label} is not type-<node>`);
+  return label.slice("type-".length);
+}
+/** The fixture's model label `name@revision`, served by this case's scripted worker provider. */
+function coordination07Model(label: string): { id: string; name: string; revision: string } {
+  const [name, revision, ...rest] = label.split("@");
+  if (!name || !revision || rest.length !== 0) throw new Error(`Fixture model ${label} is not name@revision`);
+  return { id: `${COORDINATION07_WORKER_PROVIDER}/${name}@${revision}`, name, revision };
+}
+/** A shipped SKILL.md as a hub publishes a workflow skill: its own text with `role: workflow` in the frontmatter.
+ * An imported SKILL.md without a role line is a knowledge skill (store/skill_package/folder.rs), and a pattern
+ * run and the planner's pattern pack load take workflow skills only. */
+function coordination07Workflow(markdown: string): string {
+  const open = "---\n";
+  if (!markdown.startsWith(open)) throw new Error("A shipped SKILL.md opens with its frontmatter");
+  return `${open}role: workflow\n${markdown.slice(open.length)}`;
+}
+/** Imports team-shape and the CEO-decides pattern skill through the default hub, repointed at a local Git folder at
+ * one full commit, as coordination01InstallProjectProposal does. The pattern skill carries its pattern.json, so the
+ * import binds it as a pattern the planner offers (skill_hub/doors.rs bind_hub_pattern_in_txn). One pattern keeps
+ * every plan here at three quotes or fewer, so the planner's cheap classifier picks and no shape question reaches
+ * a model (agent_dispatch/planner.rs planner_rung_for). Returns the imported SKILL entities and the pattern's
+ * SKILL.md as it was published. */
+async function coordination07InstallTeamSkills(engine: EngineFixture): Promise<{ teamShape: string; ceo: string; ceoSkillMd: string }> {
+  const dir = resolve(engine.root, "coordination-07-hub");
+  const shipped = async (name: string) => await readFile(resolve(import.meta.dir, `../../skills/${name}/SKILL.md`), "utf8");
+  const ceoSkillMd = coordination07Workflow(await shipped("team-ceo-decides"));
+  const files: [string, string][] = [
+    ["skills/team-shape/SKILL.md", coordination07Workflow(await shipped("team-shape"))],
+    ["skills/team-ceo-decides/SKILL.md", ceoSkillMd],
+    ["skills/team-ceo-decides/pattern.json", `${JSON.stringify(COORDINATION07_CEO_PATTERN)}\n`],
+  ];
+  for (const [path, text] of files) {
+    await mkdir(resolve(dir, path, ".."), { recursive: true });
+    await Bun.write(resolve(dir, path), text);
+  }
+  coordination01Git(dir, ["init", "-q"]);
+  coordination01Git(dir, ["add", ...files.map(([path]) => path)]);
+  coordination01Git(dir, ["commit", "-q", "-m", "team skills"]);
+  const commit = coordination01Git(dir, ["rev-parse", "HEAD"]);
+  const { hub } = await engine.client.call("vault.skill_hubs.default.get", {});
+  const configured = await engine.client.call("vault.skill_hubs.put", {
+    hub, kind: "local-dir", endpoint: dir, trust_tier: "community", sync_policy: "pinned-commit" });
+  expect(configured.consent.outcome).toBe("approved");
+  await engine.client.call("vault.skill_hubs.refs.set", {
+    hub_ref: { hub_id: hub, ref_string: "skills", pin: { type: "commit", value: commit } }, sync_policy: "pinned-commit" });
+  const imported = async (name: string): Promise<string> => {
+    const hub_ref = { hub_id: hub, ref_string: `skills/${name}`, pin: { type: "commit" as const, value: commit } };
+    const { entity } = await engine.client.call("vault.skills.import", { hub_ref, publisher: "oneiron-e2e-local" });
+    const latest = async () => (await engine.client.call("vault.skills.receipts", { entity })).imports.at(-1)?.disposition;
+    if (await latest() === "pending_permission") await engine.client.call("vault.skills.permissions.approve", { entity, hub_ref });
+    const disposition = await latest();
+    if (disposition !== "installed" && disposition !== "already_installed") {
+      throw new Error(`${name} import not active: ${JSON.stringify(disposition)}`);
+    }
+    return entity;
+  };
+  return { teamShape: await imported("team-shape"), ceo: await imported("team-ceo-decides"), ceoSkillMd };
+}
+/** The calls the scripted decider origin has seen: every Big-rung question, placement included. */
+function coordination07DeciderCalls(providers: ScriptedProviders): (string | null)[] {
+  return providers.seenFixtureCalls.filter(call => call.origin === "decider").map(call => call.fixtureId);
+}
+/** The FIFO calls the worker origin has seen: each planned team's one pattern-launch turn. Member runs are
+ * answered by the standing step and are not counted here. */
+function coordination07LaunchCalls(providers: ScriptedProviders): (string | null)[] {
+  return providers.seenFixtureCalls.filter(call => call.origin === "worker" && !call.standing).map(call => call.fixtureId);
+}
+/** Each knob as the spawn asked for it (PlanObservation.asked); a knob the call left to the planner reads as null. */
+function coordination07Asked(plan: FacadeResult<"vault.agents.spawn">["plan"]): Record<string, unknown> {
+  const asked = plan?.asked;
+  return { model: asked?.model ?? null, width: asked?.width ?? null, pattern: asked?.pattern ?? null,
+    budget_cap_units: asked?.budget_cap_units ?? null };
+}
+/* COORDINATION-07 promise: one task type, placed once at spawn with its node and tree version, drives the team plan;
+ *   an unsure placement is the root; the plan, the launched agents and the resolved team carry that stamp, and no
+ *   consumer reports another; a pinned width and model are kept under the hard cap and recorded beside what was
+ *   resolved; a keyed replay places and launches nothing again, and one key never carries another ask.
+ * Doors: typed HTTP facade (skill hub import, vault.skills.fork, vault.task_types.pin/promote/get,
+ *   vault.settings.learning.put, vault.agents.create, vault.agents.spawn, vault.agents.spawn.get); ScriptedProviders
+ *   for the one placement question, the team's pattern-launch turn and the launched agents' code-mode turns.
+ * Fixture labels: type-root and type-build are the engine nodes root and build; the fixture model
+ *   fixture-worker@coordination-v1 is coord07worker/fixture-worker@coordination-v1 on the scripted worker.
+ * Placement counts (PLAN 24 Nov 22:42, not contested): placement climbs only as far as it must (ARCH-0079 Fig. 3),
+ *   so the rule rung places the keyword-certain need with no model call and only the uncertain need asks the Big
+ *   rung, once. Each new spawn is placed once (one stamp); the keyed replay asks nothing.
+ * Unproved (FIX rows filed with this case): the seat-route stamp: a run's seat is born only on a model with a seat
+ *   description row for the host's [models.decisions.seat] facet (llm/seat.rs), and no public door writes one
+ *   (SEAT-DESCRIPTION-ROW-NO-PUBLIC-DOOR), so every run here reads as not seated, with no stamp. The critic stamp:
+ *   vault.critic.review keeps the caller's type_node and type_tree_version, not the named spawn's
+ *   (CRITIC-REVIEW-STAMP-CALLER-ECHOED), so a review that passes the placed stamp proves only an echo. The learning
+ *   view: it reads the team receipt the leader's own self.team.record writes, and a scripted provider cannot tell the
+ *   leader's code-mode turn from its member's (one model, generated prompts) (COORDINATION-07-LEARNING-VIEW-UNPROVED).
  */
-suite.todo(test, "COORDINATION-07", "waits on a team-shape planner skill a fresh vault can hold and a public door that puts a pinned task-type tree in force (vault.agents.spawn refuses 'entity not found'; vault.task_types.pin stores a candidate only), plus seat-route, critic and learning typeRef producers");
+suite.test(test, "COORDINATION-07", "One placed task type drives the team plan: placed once, unsure on the root, the plan, launched agents and resolved team on that stamp, pinned width and model kept under the hard cap, and a keyed replay places nothing again", async () => {
+  const c = await coordination07Scenario();
+  const tree = { version: c.inputs.tree.version, root: coordination07Node(c.inputs.tree.root) };
+  const certain = c.inputs.placementCases.find(row => coordination07Node(row.expectedNode) !== tree.root);
+  const uncertain = c.inputs.placementCases.find(row => coordination07Node(row.expectedNode) === tree.root);
+  if (!certain || !uncertain) throw new Error("COORDINATION-07 fixture needs a certain and an uncertain placement case");
+  expect(coordination07Node(certain.expectedNode)).toBe(coordination07Node(c.expected.certainNode));
+  expect(coordination07Node(c.inputs.tree.selected)).toBe(coordination07Node(c.expected.certainNode));
+  expect(coordination07Node(uncertain.expectedNode)).toBe(coordination07Node(c.expected.uncertainNode));
+  expect(tree.version).toBe(c.expected.treeVersion);
+  const certainStamp = { node_id: coordination07Node(certain.expectedNode), tree_version: tree.version };
+  const rootStamp = { node_id: tree.root, tree_version: tree.version };
+  const model = coordination07Model(c.inputs.pinnedSpawn.model.value);
+  expect(c.inputs.pinnedSpawn.model.value).toBe(c.expected.pinnedModel);
+  expect(c.inputs.pinnedSpawn.width.value).toBe(c.expected.pinnedWidth);
+  const cap = c.inputs.budgetCapUnits;
+  const agentRef = coordination07InputId("planner-seat-agent");
+  const providers = await ScriptedProviders.start({ id: "coordination07-models", origins: ["worker", "decider"], steps: [] });
+  const engine = await EngineFixture.start({ id: "COORDINATION-07", profile, serverLog: "oneiron=info", serverConfig: `
+[models.providers.${COORDINATION07_WORKER_PROVIDER}]
+kind = "local-openai-compat"
+base_url = "${providers.urls.worker}"
+revision = "${model.revision}"
+[models.providers.coord07decider]
+kind = "local-openai-compat"
+base_url = "${providers.urls.decider}"
+revision = "${model.revision}"
+[models.roles.generative_reasoner]
+model = "${COORDINATION07_WORKER_PROVIDER}:${model.name}"
+[models.roles.checker]
+model = "coord07decider:coord07-decider"
+[models.decisions.big]
+role = "checker"
+version = "${model.revision}"
+wording = ${JSON.stringify(COORDINATION07_DECISION_WORDING)}
+reply = "json"
+[models.dreamer]
+enabled = false
+[models.workflows]
+enabled = false
+[models.code_mode]
+prompt_package = ${JSON.stringify(resolve(import.meta.dir, "fixtures/hooks/host/prompts"))}
+[[models.planner.seats]]
+model = "${model.id}"
+agent = "${agentRef}"
+` });
+  try {
+    const owner = engine.client;
+    // The planner seat's AGENT_DEF, at the id the host config names; every planned agent runs as it.
+    const created = await owner.call("vault.agents.create", {
+      agent_def_ref: agentRef,
+      definition: { agent_id: "coord07-worker", display_name: "coord07-worker", desc: "COORDINATION-07 planned worker", version: "1" },
+    });
+    expect(created.agent_def_ref).toBe(agentRef);
+
+    // The team-shape skill and one pattern skill, from the hub; the imported team-shape is the head in force.
+    const skills = await coordination07InstallTeamSkills(engine);
+    const before = await owner.call("vault.task_types.get", {});
+    expect(before.in_force_skill_ref).toBe(skills.teamShape);
+    const seededVersion = before.tree?.tree_version;
+    if (seededVersion === undefined) throw new Error("The imported team-shape head reads no tree");
+    expect(seededVersion).toBeLessThan(tree.version);
+
+    // The fixture tree, pinned on an owner fork and put in force at once (lead COORD-E2E-TREE-PIN = A).
+    const fork = await owner.call("vault.skills.fork", { parent: skills.teamShape, skill_id: "team-shape-coordination-07" });
+    const nodes = [
+      { node_id: tree.root, name: "Any task" },
+      ...c.inputs.tree.seedTypes.map(seed => ({ node_id: seed, parent: tree.root, name: `${seed} work` })),
+    ];
+    const pinned = await owner.call("vault.task_types.pin", { fork_ref: fork.entity, tree_version: tree.version, nodes });
+    expect(pinned.stored.tree_version).toBe(tree.version);
+    expect(pinned.requested_tree_version ?? null).toBeNull();
+    expect(pinned.in_force).toBe(false);
+    const promoted = await owner.call("vault.task_types.promote", { fork_ref: fork.entity, tree_version: tree.version });
+    expect(promoted.superseded_skill_ref).toBe(skills.teamShape);
+    expect(promoted.tree.tree_version).toBe(tree.version);
+    expect(promoted.tree.root).toEqual(rootStamp);
+    const inForce = await owner.call("vault.task_types.get", {});
+    expect(inForce.in_force_skill_ref).toBe(promoted.in_force_skill_ref);
+    expect(inForce.tree?.tree_version).toBe(tree.version);
+    expect(inForce.tree?.nodes.filter(node => node.live).map(node => node.node_id).sort())
+      .toEqual([tree.root, ...c.inputs.tree.seedTypes].sort());
+
+    // The declared solo-first prior: the owner's seeds on the spawn choices, never a learning.* claim.
+    for (const choice of [{ key: "pattern", choice: { pattern: c.inputs.prior.pattern } }, { key: "width", choice: { width: c.inputs.prior.width } }]) {
+      await owner.call("vault.settings.learning.put", { ...choice, mode: "seed", weight_runs: 4, why: "COORDINATION-07 solo-first prior" });
+    }
+
+    // Every launched agent's code-mode turn ends its run: one standing answer for each solo agent, the team's
+    // leader and its member. No run is a placement or a plan, so none is counted below.
+    providers.enqueue({ id: "coordination07-agent-run", origin: "worker", role: "generative_reasoner", purpose: "planned agent run",
+      request: { method: "POST", path: "/v1/chat/completions", model: model.name,
+        fields: { stream: true, stream_options: { include_usage: true } } },
+      response: openaiStream("coordination07-agent-run", model.name, [`finish("Checklist step done.");`],
+        { inputTokens: 256, outputTokens: 32 }),
+      standing: true });
+
+    // Spawn 1: the keyword-certain need under the hard cap. The rule rung places it; no model is asked.
+    const base = { prompt: "Work through the request in the need.", care: "light", budget_cap_units: { mode: "pin" as const, value: cap } };
+    const first = await owner.call("vault.agents.spawn", { ...base, intent_key: "coordination-07-certain", need: certain.need });
+    expect(first.refusal ?? null).toBeNull();
+    expect(first.phase).toBe("launched");
+    expect(first.placed).toEqual(certainStamp);
+    expect(coordination07DeciderCalls(providers)).toEqual([]);
+    expect(first.plan?.type_ref).toEqual(certainStamp);
+    expect(first.plan?.team_shape?.skill_ref).toBe(promoted.in_force_skill_ref);
+    expect(first.plan?.width).toBe(c.expected.defaultWidth);
+    expect(first.plan?.pattern).toBe("solo");
+    expect(first.plan?.hard_cap_units).toBe(cap);
+    expect(coordination07Asked(first.plan)).toEqual({ model: null, width: null, pattern: null, budget_cap_units: { mode: "pin", value: cap } });
+    expect(first.member_attempts).toEqual([]);
+    expect(first.root_attempt).toMatch(/^[a-f0-9]{32}$/);
+
+    // Spawn 2: the uncertain need. The rule rung reads nothing, so the Big rung is asked once; its unsure
+    // guess is not a placement: an unsure verdict is the root (task_type/placement.rs unsure_is_root).
+    providers.enqueue({ id: "coordination07-place-uncertain", origin: "decider", role: "checker", purpose: "task-type placement",
+      request: COORDINATION07_DECIDE,
+      response: openaiText("coordination07-place-uncertain", "coord07-decider",
+        JSON.stringify({ answer: c.inputs.tree.seedTypes.find(seed => seed !== certainStamp.node_id), probability: 0.2 }),
+        { inputTokens: 256, outputTokens: 16 }) });
+    const second = await owner.call("vault.agents.spawn", { ...base, intent_key: "coordination-07-uncertain", need: uncertain.need });
+    expect(second.refusal ?? null).toBeNull();
+    expect(second.phase).toBe("launched");
+    expect(second.placed).toEqual(rootStamp);
+    expect(second.plan?.type_ref).toEqual(rootStamp);
+    expect(coordination07DeciderCalls(providers)).toHaveLength(c.expected.placementCallsPerNewSpawn);
+    expect(coordination07DeciderCalls(providers)).toEqual(["coordination07-place-uncertain"]);
+
+    // Spawn 3: a NEW intent with the width and the fixture model pinned. The planner keeps both, under the cap.
+    providers.enqueue({ id: "coordination07-team-start", origin: "worker", role: "generative_reasoner", purpose: "pattern launch start",
+      request: { method: "POST", path: "/v1/chat/completions", model: model.name, fields: { stream: false }, system: skills.ceoSkillMd },
+      response: openaiText("coordination07-team-start", model.name, JSON.stringify({
+        leader_briefing: "Decide the checklist after the member's advice.",
+        member_briefings: ["Advise on the checklist's order."], axis: "converge",
+      }), { inputTokens: 512, outputTokens: 64 }) });
+    const pinnedAsk = { ...base, intent_key: "coordination-07-pinned", need: certain.need,
+      width: c.inputs.pinnedSpawn.width, model: { mode: "pin" as const, value: model.id } };
+    expect(c.inputs.pinnedSpawn.newIntent).toBe(true);
+    const third = await owner.call("vault.agents.spawn", pinnedAsk);
+    expect(third.refusal ?? null).toBeNull();
+    expect(third.phase).toBe("launched");
+    expect(third.placed).toEqual(certainStamp);
+    expect(coordination07DeciderCalls(providers)).toEqual(["coordination07-place-uncertain"]);
+    expect(coordination07LaunchCalls(providers)).toEqual(["coordination07-team-start"]);
+    expect(third.plan?.type_ref).toEqual(certainStamp);
+    expect(third.plan?.width).toBe(c.expected.pinnedWidth);
+    expect(third.plan?.model).toBe(model.id);
+    expect(third.plan?.pattern).toBe(COORDINATION07_CEO_PATTERN.pattern);
+    expect(third.plan?.pattern_skill?.skill_ref).toBe(skills.ceo);
+    expect(coordination07Asked(third.plan)).toEqual({
+      model: { mode: "pin", value: model.id }, width: c.inputs.pinnedSpawn.width, pattern: null,
+      budget_cap_units: { mode: "pin", value: cap },
+    });
+    // The cap is the asked cap: a pin and a seed never widen a budget.
+    expect(c.expected.budgetWidens).toBe(false);
+    expect(third.plan?.hard_cap_units).toBe(cap);
+    expect(third.member_attempts).toHaveLength(c.expected.pinnedWidth - 1);
+    expect(third.team_ref).toEqual(expect.any(String));
+
+    // The keyed replay answers what it kept: no second placement, no second team start.
+    const replay = await owner.call("vault.agents.spawn", pinnedAsk);
+    expect(replay).toEqual(third);
+    expect(coordination07DeciderCalls(providers)).toHaveLength(1 + c.expected.placementCallsOnReplay);
+    expect(coordination07LaunchCalls(providers)).toEqual(["coordination07-team-start"]);
+    // One key never carries another ask.
+    await coordination04Refused(owner.call("vault.agents.spawn", { ...pinnedAsk, width: { mode: "pin", value: c.expected.pinnedWidth + 1 } }),
+      "this intent key already names a different ask");
+
+    // What the stores hold for each spawn, every stamp as stored: a consumer whose stamp is not the dispatch's
+    // would be a stamp_mismatch issue, never a correction (team/door_reads.rs).
+    const mismatches = (seen: Coordination07Observation) => seen.issues.filter(issue => issue.kind === "stamp_mismatch");
+    // No run is seated (see Unproved): each launched run's route says so, and names no stamp.
+    const unseated = (seen: Coordination07Observation) => seen.launched.map(row => ({ kind: "unavailable", consumer: "route",
+      reason: `run ${row.attempt_ref} is not seated: not started, or no model manifest` }));
+    const routeIssues = (seen: Coordination07Observation) => seen.issues
+      .filter(issue => issue.kind === "unavailable" && issue.consumer === "route");
+    for (const [spawned, stamp] of [[first, certainStamp], [second, rootStamp]] as const) {
+      const seen = await owner.call("vault.agents.spawn.get", { spawn_ref: spawned.root_attempt! });
+      expect(seen.type_ref).toEqual(stamp);
+      expect(seen.plan).toEqual(spawned.plan);
+      expect(seen.launched.map(row => row.attempt_ref)).toEqual([spawned.root_attempt]);
+      expect(seen.launched.map(row => row.type_ref)).toEqual([stamp]);
+      expect(seen.routes).toEqual([]);
+      expect(routeIssues(seen)).toEqual(unseated(seen));
+      expect(mismatches(seen)).toEqual([]);
+    }
+    // The team resolves once its leader's run has leased the plan's frozen pattern pack (resolve_team,
+    // leader_loaded): the plan's pattern and width in distinct launched agents, every stamp the dispatch's.
+    const team = await awaitPublic(() => owner.call("vault.agents.spawn.get", { spawn_ref: third.root_attempt! }),
+      seen => seen.resolved !== null && seen.resolved !== undefined, { label: "COORDINATION-07 resolved team" });
+    expect(team.type_ref).toEqual(certainStamp);
+    expect(team.plan).toEqual(third.plan);
+    expect(team.launched.map(row => row.attempt_ref)).toEqual([third.root_attempt, ...third.member_attempts]);
+    expect(team.launched.map(row => row.type_ref)).toEqual(team.launched.map(() => certainStamp));
+    expect(team.resolved).toMatchObject({
+      type_ref: certainStamp, pattern: COORDINATION07_CEO_PATTERN.pattern, width: c.expected.pinnedWidth, model: model.id,
+      root_attempt_ref: third.root_attempt, member_attempt_refs: third.member_attempts, team_ref: third.team_ref,
+    });
+    expect(team.binding?.team_ref).toBe(third.team_ref);
+    expect(team.binding?.pattern).toBe(COORDINATION07_CEO_PATTERN.pattern);
+    expect(team.binding?.member_attempt_refs).toEqual(third.member_attempts);
+    expect(team.routes).toEqual([]);
+    expect(routeIssues(team)).toEqual(unseated(team));
+    expect(mismatches(team)).toEqual([]);
+    // The prior was the owner's seeds; nothing here wrote a learning claim.
+    expect(c.expected.handwrittenLearningClaims).toBe(0);
+    await engine.artifacts.json("coordination07-spawns.json", { promoted, first, second, third, team });
+  } finally {
+    await engine.artifacts.json("coordination07-provider-calls.json", providers.seenFixtureCalls);
+    try { await engine.close(); } finally { await providers.close(); }
+  }
+});
 
 /** COORDINATION-08 authored inputs (fixture discriminant, not a wire DTO). */
 interface Coordination08Scenario {
