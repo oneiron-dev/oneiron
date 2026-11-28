@@ -238,6 +238,7 @@ pub use inbox_card::{
     CalendarInboxCard, CheckInReAsk, run_calendar_card_pass,
 };
 pub(crate) use inbox_card::{calendar_inbox_card_lens, calendar_inbox_items};
+pub(crate) use ingest::apply_admitted_passport_revision_in_txn;
 pub(crate) use ingest::calendar_ics_feed_cursor_accepts_masked;
 pub use ingest::{
     CustodyDoorIcsFeedFetcher, ICS_POLL_ATTEMPT_KIND, IcsFeedCursorSnapshot, IcsFeedFetcher,
@@ -264,8 +265,9 @@ pub use outcome::{
     record_event_outcome, resolve_owner_check_in,
 };
 pub use passport::{
-    PassportDecision, all_live_inbound_passports_absent, classify_passport, index_passport_uid,
-    live_passport_for, live_passports_for_event, resolve_event_by_uid, supersede_calendar_passport,
+    PassportDecision, PassportRevision, all_live_inbound_passports_absent, classify_passport,
+    index_passport_uid, live_passport_for, live_passports_for_event, resolve_event_by_uid,
+    supersede_calendar_passport,
 };
 pub use prep::{
     CHECK_IN_RE_ASK_LOCAL_HOUR, DEFAULT_PREP_LEAD_SECS, DEFAULT_PREP_MAX_WORDS,

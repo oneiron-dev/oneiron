@@ -99,15 +99,20 @@ impl PollAdmission<'_> {
             }
             PassportDecision::MarkSourceAbsent { .. } => {}
             PassportDecision::UpdateExisting { event_ref } => {
+                // The source's EVENT follows its admitted passport head as
+                // any imported EVENT does.
+                let filing = self.file_revision_over_admitted_head(event_ref, event)?;
+                if filing == RevisionFiling::Waits {
+                    return Ok(());
+                }
                 self.rewrite_event(event_ref, event)?;
                 self.admit_properties(event_ref, event)?;
-                let next = self.passport_value(event_ref, event, CalendarPassportPresence::Live)?;
-                let body = screen_body(event);
-                self.admit_superseding_passport(event_ref, &next, &body)?;
-                if !event.cancelled {
-                    self.clear_absence_cancellation(event_ref)?;
+                if filing == RevisionFiling::Owed {
+                    let next =
+                        self.passport_value(event_ref, event, CalendarPassportPresence::Live)?;
+                    self.admit_superseding_passport(event_ref, &next, &screen_body(event))?;
                 }
-                self.apply_imported_cancel(event_ref, event)?;
+                self.apply_feed_status(event_ref, event)?;
             }
         }
         Ok(())

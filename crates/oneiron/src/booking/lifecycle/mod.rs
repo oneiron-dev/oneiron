@@ -105,7 +105,10 @@ pub use self::feed_move::{
     BOOKING_REVISION_INVITE_ATTEMPT_KIND, BookingRevisionInviteDrain, BookingRevisionInvitePayload,
     run_booking_revision_invites,
 };
-pub(crate) use self::feed_move::{FeedMoveOutcome, is_booking_event, move_booking_by_feed};
+pub(crate) use self::feed_move::{
+    FeedMoveOutcome, carries_live_booking_in, is_booking_event, is_booking_event_in,
+    move_booking_by_feed,
+};
 pub use self::hold_source::VaultActiveHoldSource;
 pub use self::owner_card::BookingOwnerCardRefundMarkedOutside;
 pub use self::owner_card::{

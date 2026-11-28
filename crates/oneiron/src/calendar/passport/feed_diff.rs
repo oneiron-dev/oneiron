@@ -305,6 +305,20 @@ pub(in crate::calendar) fn classify_event_passport(
     Ok(PassportDecision::SkipUnchanged { event_ref })
 }
 
+/// What filing a passport revision did to the admitted head of its
+/// `(system × UID)` ([`revise_passport_in_txn`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PassportRevision {
+    /// No admitted passport carried the key: the revision replaced only
+    /// waiting or rejected filings, and nothing had authority to keep.
+    NoAdmittedHead,
+    /// The revision landed admitted and closed the admitted head at once.
+    HeadClosed,
+    /// The revision waits for review: the head's closure is staged, and the
+    /// owner's approval of the revision completes it in the approving write.
+    HeadStaged,
+}
+
 /// Files `new_id` as the next revision of `(system × UID)` on `event_ref`,
 /// against the live passports it replaces (ARCH-0060 §3: only an admitted
 /// passport carries authority, and a pending or rejected proposal can neither
@@ -319,7 +333,8 @@ pub(in crate::calendar) fn classify_event_passport(
 /// `new_id` completes it in the approving write, and a rejection drops it, so
 /// the head keeps its authority while the revision waits and after it is
 /// rejected. A `new_id` that landed admitted closes the head at once. Answers
-/// whether any live passport, rejected ones included, carried the key.
+/// what the filing did to the admitted head, or `None` when no live passport,
+/// rejected ones included, carried the key.
 ///
 /// # Errors
 ///
@@ -333,7 +348,7 @@ pub(in crate::calendar) fn revise_passport_in_txn(
     uid: &str,
     new_id: &EntityId,
     now: u64,
-) -> Result<bool, CalendarError> {
+) -> Result<Option<PassportRevision>, CalendarError> {
     let (found, head, waiting) = {
         let reader: &heed::RwTxn<'_> = txn;
         let mut keyed = Vec::new();
@@ -403,17 +418,22 @@ pub(in crate::calendar) fn revise_passport_in_txn(
         )?;
         vault.supersede_claim_in_txn(txn, new_id, &old, now)?;
     }
-    if let Some(head) = head {
-        let landed = vault
-            .get_claim_in_txn(txn, new_id)?
-            .is_some_and(|body| claim_surfaceable(&body));
-        if landed {
-            vault.supersede_claim_in_txn(txn, new_id, &head, now)?;
-        } else {
-            vault.stage_stored_claim_supersession_in_txn(txn, new_id, &head, now)?;
-        }
+    if !found {
+        return Ok(None);
     }
-    Ok(found)
+    let Some(head) = head else {
+        return Ok(Some(PassportRevision::NoAdmittedHead));
+    };
+    let landed = vault
+        .get_claim_in_txn(txn, new_id)?
+        .is_some_and(|body| claim_surfaceable(&body));
+    if landed {
+        vault.supersede_claim_in_txn(txn, new_id, &head, now)?;
+        Ok(Some(PassportRevision::HeadClosed))
+    } else {
+        vault.stage_stored_claim_supersession_in_txn(txn, new_id, &head, now)?;
+        Ok(Some(PassportRevision::HeadStaged))
+    }
 }
 
 /// Points the UID index at `event_ref`. Called when a passport is minted;

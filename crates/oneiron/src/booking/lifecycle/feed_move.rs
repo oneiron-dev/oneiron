@@ -29,7 +29,7 @@ use super::storage::{
 };
 use super::transition::booking_read_rows;
 use super::types::{BOOKING_PASSPORT_SYSTEM, BookingStatus, CalendarRevision};
-use super::{BookingContent, CalendarCancellation, LifecycleReceiptRow};
+use super::{BookingContent, BookingFacts, CalendarCancellation, LifecycleReceiptRow};
 use crate::attempt_queue::{
     AttemptQueue, AttemptRecord, ClaimAttempt, ClaimOutcome, CompleteAttempt, EnqueueAttempt,
     FailAttempt, RequeueAttempt,
@@ -118,18 +118,9 @@ pub(crate) fn move_booking_by_feed(
     now_utc: u64,
 ) -> Result<FeedMoveOutcome, BookingError> {
     booking_writer(vault, |wtxn| {
-        if !carries_outbound_passport(vault, &*wtxn, &event_ref)? {
+        let Some(booking) = live_booking_in(vault, &*wtxn, &event_ref)? else {
             return Ok(FeedMoveOutcome::NotBooking);
-        }
-        let booking = match read_booking_facts(vault, &*wtxn, &event_ref) {
-            Ok(booking) => booking,
-            // Held or missing heads: not a confirmed booking.
-            Err(BookingError::InvalidConstraint(_)) => return Ok(FeedMoveOutcome::NotBooking),
-            Err(error) => return Err(error),
         };
-        if booking.status == BookingStatus::Cancelled {
-            return Ok(FeedMoveOutcome::NotBooking);
-        }
         if booking.calendar_cancellation == CalendarCancellation::Standing {
             return Ok(FeedMoveOutcome::Unchanged);
         }
@@ -211,6 +202,38 @@ pub(crate) fn move_booking_by_feed(
     })
 }
 
+/// The live booking `event_ref` carries, as [`move_booking_by_feed`] reads
+/// it: an admitted outbound booking passport, confirmed heads, and a status
+/// of its own that is not cancelled (a calendar's cancellation may stand on
+/// it). `None` for any other EVENT.
+fn live_booking_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    event_ref: &EntityId,
+) -> Result<Option<BookingFacts>, BookingError> {
+    if !carries_outbound_passport(vault, txn, event_ref)? {
+        return Ok(None);
+    }
+    let booking = match read_booking_facts(vault, txn, event_ref) {
+        Ok(booking) => booking,
+        // Held or missing heads: not a confirmed booking.
+        Err(BookingError::InvalidConstraint(_)) => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    Ok((booking.status != BookingStatus::Cancelled).then_some(booking))
+}
+
+/// Whether `event_ref` carries a live booking ([`move_booking_by_feed`]'s
+/// reading): a feed revision moves such an EVENT through its booking, never
+/// by rewriting it.
+pub(crate) fn carries_live_booking_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    event_ref: &EntityId,
+) -> Result<bool, BookingError> {
+    Ok(live_booking_in(vault, txn, event_ref)?.is_some())
+}
+
 /// Whether `event_ref` is a booking's EVENT ([`carries_outbound_passport`]),
 /// whatever the booking's status. Calendar ingest asks it before a feed's
 /// cancellation would rewrite the EVENT: a booking's EVENT keeps its booked
@@ -220,7 +243,20 @@ pub(crate) fn move_booking_by_feed(
 ///
 /// [`BookingError::SlotOracle`] on a store failure.
 pub(crate) fn is_booking_event(vault: &Vault, event_ref: &EntityId) -> Result<bool, BookingError> {
-    carries_outbound_passport(vault, &read_txn(vault)?, event_ref)
+    is_booking_event_in(vault, &read_txn(vault)?, event_ref)
+}
+
+/// [`is_booking_event`] read in `txn`.
+///
+/// # Errors
+///
+/// [`BookingError::SlotOracle`] on a store failure.
+pub(crate) fn is_booking_event_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    event_ref: &EntityId,
+) -> Result<bool, BookingError> {
+    carries_outbound_passport(vault, txn, event_ref)
 }
 
 /// Whether the EVENT carries an admitted outbound booking passport: the one

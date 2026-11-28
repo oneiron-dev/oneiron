@@ -677,6 +677,11 @@ impl Vault {
                 super::supersession_provenance::settle_coaching_in_txn(
                     self, txn, id, &old, &body, &envelope, closer, now,
                 )?;
+                // An approved calendar passport revision moves its EVENT in
+                // this same write (PASSPORT-EVENT-REWRITE-INTENT = B).
+                crate::calendar::apply_admitted_passport_revision_in_txn(
+                    self, txn, id, &body, now,
+                )?;
                 decision
             }
             DeferredAction::Retract => {

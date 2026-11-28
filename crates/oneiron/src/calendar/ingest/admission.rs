@@ -1,6 +1,7 @@
 //! Diff-to-claim admission path and its test module.
 
 mod absence_sweep;
+mod admitted_revision;
 mod connector;
 mod continuation;
 mod host_cancel;
@@ -21,8 +22,8 @@ use crate::calendar::claims::{
 };
 use crate::calendar::ics::ParsedVEvent;
 use crate::calendar::passport::{
-    PassportDecision, all_live_inbound_passports_absent, classify_passport, index_passport_uid,
-    live_passports_for_event, supersede_calendar_passport,
+    PassportDecision, PassportRevision, all_live_inbound_passports_absent, classify_passport,
+    index_passport_uid, live_passports_for_event, supersede_calendar_passport,
 };
 use crate::calendar::safeguard::{CalendarBodyScreener, CalendarInboundBody, screen_then_claim};
 use crate::claim::ClaimLifecycleStatus;
@@ -33,6 +34,8 @@ use crate::registry::ENTITY_TYPE_EVENT;
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
 use crate::write_envelope::WriteActor;
+pub(crate) use admitted_revision::apply_admitted_passport_revision_in_txn;
+use admitted_revision::{RevisionFiling, event_occurrence, rewrite_event_in_txn};
 pub(in crate::calendar) use connector::{
     ConnectorAdmissionSource, ConnectorScreen, admit_connector_event, connector_event_ref,
     defer_connector_cancel, defer_connector_delete, delete_connector_resource,
@@ -144,28 +147,36 @@ impl PollAdmission<'_> {
                 self.repeat_imported_cancel(event_ref, event)?;
             }
             PassportDecision::UpdateExisting { event_ref } => {
-                // The update verdict moves the EVENT, not just the passport
-                // head: occurred and name follow the drifted VEVENT, and
-                // `calendar.time` re-mints when its value moved. A live
+                // The update verdict moves the EVENT as its admitted passport
+                // head moves (ARCH-0060 :88): occurred, name, properties and
+                // status follow the drifted VEVENT once its revision is the
+                // head, now or at the owner's approval
+                // ([`Self::file_revision_over_admitted_head`]). A live
                 // booking's EVENT moves through its booking instead.
-                match self.move_booking(event_ref, event)? {
-                    FeedMoveOutcome::NotBooking => self.rewrite_event(event_ref, event)?,
-                    FeedMoveOutcome::Unchanged | FeedMoveOutcome::Moved(_) => {}
+                let rewrite = match self.move_booking(event_ref, event)? {
+                    FeedMoveOutcome::NotBooking => true,
+                    FeedMoveOutcome::Unchanged | FeedMoveOutcome::Moved(_) => false,
                     // Only this item waits: no claim, no passport head, and
                     // the next read of the source sees the move again.
                     FeedMoveOutcome::HeldBack => {
                         self.owed_booking_moves += 1;
                         return Ok(());
                     }
+                };
+                let filing = self.file_revision_over_admitted_head(event_ref, event)?;
+                if filing == RevisionFiling::Waits {
+                    return Ok(());
+                }
+                if rewrite {
+                    self.rewrite_event(event_ref, event)?;
                 }
                 self.admit_properties(event_ref, event)?;
-                let next = self.passport_value(event_ref, event, CalendarPassportPresence::Live)?;
-                let body = screen_body(event);
-                self.admit_superseding_passport(event_ref, &next, &body)?;
-                if !event.cancelled {
-                    self.clear_absence_cancellation(event_ref)?;
+                if filing == RevisionFiling::Owed {
+                    let next =
+                        self.passport_value(event_ref, event, CalendarPassportPresence::Live)?;
+                    self.admit_superseding_passport(event_ref, &next, &screen_body(event))?;
                 }
-                self.apply_imported_cancel(event_ref, event)?;
+                self.apply_feed_status(event_ref, event)?;
             }
             PassportDecision::MarkSourceAbsent { .. } => {
                 // Constructed only by the absence sweep, never by per-event
@@ -413,57 +424,31 @@ impl PollAdmission<'_> {
     }
 
     /// Drift changes the EVENT's time/name without erasing its origin or
-    /// extraction/import fields. Imported provenance follows this feed version;
-    /// a native EVENT with an attached passport remains native.
+    /// extraction/import fields ([`rewrite_event_in_txn`]).
     fn rewrite_event(
         &self,
         event_ref: EntityId,
         event: &ParsedVEvent,
     ) -> Result<(), CalendarError> {
-        let input = crate::calendar::origin::CalendarEventInput {
-            origin: Some(CalendarOrigin::Imported),
-            name: event_name(event).to_owned(),
-            import_source: Some(self.source_record_id(event)),
-            external_id: Some(event.uid.clone()),
-            ..Default::default()
-        };
+        let import_source = self.source_record_id(event);
         self.vault.with_write_txn_grouped(|txn| {
-            // A pack calendar source's EVENT keeps its stamp through drift:
-            // its landing marks it born again, rewrites it under its proof
-            // and binds it where it was born.
-            let landing =
-                crate::mail_pack::calendar_source_landing_in(self.vault, txn, self.system)?;
-            let birth = landing
-                .as_ref()
-                .map(|landing| landing.mark_in_txn(self.vault, txn, &event_ref))
-                .transpose()?;
-            self.vault.update_calendar_import_in_txn(
+            rewrite_event_in_txn(
+                self.vault,
                 txn,
+                self.system,
+                import_source,
                 event_ref,
-                &input,
-                self.event_occurred(event),
+                event,
                 self.now,
-                birth,
-            )?;
-            match &landing {
-                Some(landing) => landing.bind_in_txn(self.vault, txn, &event_ref),
-                None => Ok(()),
-            }
+            )
         })?;
         Ok(())
     }
 
-    /// The EVENT's stored occurrence from the parsed times. An unanchored
-    /// event uses the existing undated sentinel, never the poll instant.
+    /// The EVENT's stored occurrence from the parsed times
+    /// ([`event_occurrence`]).
     fn event_occurred(&self, event: &ParsedVEvent) -> TimeRange {
-        match (event.starts_at_utc, event.ends_at_utc) {
-            (Some(start), Some(end)) => TimeRange {
-                start,
-                end: end.max(start),
-            },
-            (Some(start), None) => TimeRange { start, end: start },
-            (None, _) => TimeRange { start: 0, end: 0 },
-        }
+        event_occurrence(event)
     }
 
     /// Reconciles this source's properties, including removing its time kind
@@ -500,14 +485,15 @@ impl PollAdmission<'_> {
 
     /// Screens and admits the next passport head for `(system × UID)` —
     /// through the same hook + Gate door a fresh admission crosses — then
-    /// supersedes exactly the scoped live claim. Supersessions carry the
-    /// archived complete feed's provenance (`blob#vN:uid`), never a bare UID.
+    /// files it against exactly the scoped live claims
+    /// ([`supersede_calendar_passport`]). Supersessions carry the archived
+    /// complete feed's provenance (`blob#vN:uid`), never a bare UID.
     fn admit_superseding_passport(
         &mut self,
         event_ref: EntityId,
         next: &CalendarPassportValue,
         body: &CalendarInboundBody,
-    ) -> Result<(), CalendarError> {
+    ) -> Result<PassportRevision, CalendarError> {
         let source_record_id = format!("{}:{}", self.blob_ref, next.uid);
         let new_id = self.admit_screened(
             event_ref,

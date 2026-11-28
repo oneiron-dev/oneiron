@@ -20,7 +20,7 @@
 
 mod feed_diff;
 pub use feed_diff::{
-    PassportDecision, classify_passport, index_passport_uid, resolve_event_by_uid,
+    PassportDecision, PassportRevision, classify_passport, index_passport_uid, resolve_event_by_uid,
 };
 pub(crate) use feed_diff::{
     admitted_passport_for_in_txn, importer_pending_passports_in_txn, resolve_admitted_event_by_uid,
@@ -160,7 +160,7 @@ pub(crate) fn resolve_invite_event_in_txn(
 /// as the next revision of exactly `(system × UID)` on `event_ref`, never
 /// touching a sibling source's passport on the same EVENT
 /// ([`revise_passport_in_txn`]): the admitted head stays the head until
-/// `new_id` is approved.
+/// `new_id` is approved. Answers what the filing did to that head.
 ///
 /// Admission is the caller's half and runs FIRST, through CAL-09's
 /// `screen_then_claim` hook and the imported-evidence Gate door
@@ -179,13 +179,10 @@ pub fn supersede_calendar_passport(
     uid: &str,
     new_id: &EntityId,
     recorded_at: u64,
-) -> Result<(), CalendarError> {
+) -> Result<PassportRevision, CalendarError> {
     vault.try_with_write_txn_grouped(|txn| {
-        if revise_passport_in_txn(vault, txn, &event_ref, system, uid, new_id, recorded_at)? {
-            Ok(())
-        } else {
-            Err(ingest("no live passport carries this (system, uid) pair"))
-        }
+        revise_passport_in_txn(vault, txn, &event_ref, system, uid, new_id, recorded_at)?
+            .ok_or_else(|| ingest("no live passport carries this (system, uid) pair"))
     })
 }
 
