@@ -563,7 +563,6 @@ impl VerifiedEvidenceSet {
         // (READ-LINEAGE L1: a row whose dependencies were registered). A pin
         // whose birth does not resolve fails the write, which rolls back.
         if let Some(birth) = signed_birth_in_txn(vault, txn, citing)? {
-            self.record_signed_birth_dependencies_in_txn(vault, txn, citing, &birth)?;
             crate::source_audience::raise_floors_in_txn(vault, txn, [birth])?;
         }
         // A claim drawn from a kept copy of mail the provider deleted is
