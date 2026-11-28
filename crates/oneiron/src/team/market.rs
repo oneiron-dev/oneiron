@@ -321,7 +321,7 @@ pub(crate) fn bind_market_in_txn(
     if let Some(note) = contract {
         match referee::sealed_contract_in_txn(vault, wtxn, note, &opening.referee.digest)? {
             Ok(pinned) => opening.contract = Some(pinned),
-            Err(why) => return Ok(MarketBind::Contract(why)),
+            Err(_) => {}
         }
     }
     if let Some(kept) = MARKET.get(&vault.store, wtxn, &opening.team_ref)? {
