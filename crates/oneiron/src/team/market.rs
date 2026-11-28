@@ -15,9 +15,9 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::Vault;
 use crate::error::{Error, Result};
 use crate::side_table::{self, Named, SideTable};
+use crate::{EntityId, Vault};
 
 /// Markets, by team reference.
 const MARKET: SideTable<String, Market, Named> = SideTable::new(&side_table::TEAM_MARKET);
@@ -30,9 +30,12 @@ pub const DEFAULT_BOUNTY_SHARE: f64 = 0.2;
 
 #[doc(hidden)]
 pub use oneiron_records::team::market::{
-    LedgerEntry, LedgerKind, MarketMode, MarketResult, Participant, RefereeKind, SignedReferee,
-    Submission,
+    ContractBar, ContractComparator, InvalidVerdict, LedgerEntry, LedgerKind, MarketMode,
+    MarketResult, Participant, RefereeContract, RefereeKind, ScreenScore, SignedReferee,
+    Submission, VerdictEvidence,
 };
+
+pub mod referee;
 
 /// One run's market.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -49,10 +52,16 @@ pub struct Market {
     pub round: u32,
     pub opened_at: u64,
     pub result: Option<MarketResult>,
+    /// The referee's contract, pinned from its sealed NOTE as the market
+    /// opened; none for a referee named without one, which no verdict
+    /// scores.
+    #[serde(default)]
+    pub contract: Option<RefereeContract>,
 }
 
 impl Market {
-    fn post(&mut self, at: u64, agent: Option<&str>, entry: LedgerKind, units: u64) {
+    /// Appends one ledger line; answers its sequence number.
+    fn post(&mut self, at: u64, agent: Option<&str>, entry: LedgerKind, units: u64) -> u64 {
         let seq = self.ledger.len() as u64;
         self.ledger.push(LedgerEntry {
             seq,
@@ -61,6 +70,7 @@ impl Market {
             entry,
             units,
         });
+        seq
     }
 
     fn open_participant(&mut self, agent: &str) -> Result<&mut Participant> {
@@ -191,6 +201,7 @@ impl Market {
             round: 0,
             opened_at: now,
             result: None,
+            contract: None,
         };
         market.post(now, None, LedgerKind::Mint, pool);
         for agent in agents {
@@ -210,6 +221,7 @@ impl Market {
             && self.referee.rule_ref == other.referee.rule_ref
             && self.referee.digest == other.referee.digest
             && self.referee.signed_by == other.referee.signed_by
+            && self.contract == other.contract
             && self.pool == other.pool
             && self.participants.len() == other.participants.len()
             && self
@@ -265,16 +277,32 @@ pub fn open_market(
     Ok(market)
 }
 
+/// How a bind ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MarketBind {
+    /// Recorded now, or kept from a replay on the same terms.
+    Bound,
+    /// The run already opened a market on other terms; it stays as it was.
+    Moved,
+    /// The referee's contract NOTE pins nothing, for this reason; nothing is
+    /// recorded.
+    Contract(&'static str),
+}
+
 /// Records `opening`, the market a run's start opens before any of its work
-/// runs. A replay on the same terms keeps the market already recorded, with
-/// its first setter and time. `false` when the run already opened a market on
-/// other terms; that market stays as it was.
+/// runs. With `contract`, the referee's sealed contract NOTE is pinned in the
+/// same writer first ([RSI-SEALED-EVAL]). A replay on the same terms keeps
+/// the market already recorded, with its first setter and time.
 ///
 /// # Errors
 ///
 /// Storage errors.
-pub(crate) fn bind_market(vault: &Vault, opening: &Market) -> Result<bool> {
-    vault.with_write_txn_grouped(|wtxn| bind_market_in_txn(vault, wtxn, opening))
+pub(crate) fn bind_market(
+    vault: &Vault,
+    opening: &Market,
+    contract: Option<EntityId>,
+) -> Result<MarketBind> {
+    vault.with_write_txn_grouped(|wtxn| bind_market_in_txn(vault, wtxn, opening, contract))
 }
 
 /// [`bind_market`] in the caller's writer: a planned team's launch records
@@ -287,12 +315,24 @@ pub(crate) fn bind_market_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     opening: &Market,
-) -> Result<bool> {
-    if let Some(kept) = MARKET.get(&vault.store, wtxn, &opening.team_ref)? {
-        return Ok(kept.same_opening(opening));
+    contract: Option<EntityId>,
+) -> Result<MarketBind> {
+    let mut opening = opening.clone();
+    if let Some(note) = contract {
+        match referee::sealed_contract_in_txn(vault, wtxn, note, &opening.referee.digest)? {
+            Ok(pinned) => opening.contract = Some(pinned),
+            Err(why) => return Ok(MarketBind::Contract(why)),
+        }
     }
-    MARKET.put(&vault.store, wtxn, &opening.team_ref, opening)?;
-    Ok(true)
+    if let Some(kept) = MARKET.get(&vault.store, wtxn, &opening.team_ref)? {
+        return Ok(if kept.same_opening(&opening) {
+            MarketBind::Bound
+        } else {
+            MarketBind::Moved
+        });
+    }
+    MARKET.put(&vault.store, wtxn, &opening.team_ref, &opening)?;
+    Ok(MarketBind::Bound)
 }
 
 /// Spends `units` from an agent's run-local share. The share is the limit.
@@ -353,6 +393,10 @@ pub fn submit(
             at: now,
             score: None,
             passed: None,
+            candidate_sha256: None,
+            evidence: None,
+            screen: None,
+            invalid: None,
         });
         Ok(())
     })
@@ -427,45 +471,6 @@ pub fn peek_island(
             .filter(|s| members.contains(&s.agent))
             .map(|s| s.submission_ref.clone())
             .collect())
-    })
-}
-
-/// Records the signed referee's scores and pass verdicts. Each score must
-/// carry the digest of the rule signed before the work; nobody else's
-/// opinion scores a market.
-///
-/// # Errors
-///
-/// [`Error::InvalidClaimBody`] for a digest that is not the signed rule's, a
-/// non-finite score, an unknown submission or a closed market; storage errors.
-pub fn referee_scores(
-    vault: &Vault,
-    team_ref: &str,
-    referee_digest: &str,
-    scores: &[(String, f64, bool)],
-) -> Result<()> {
-    update(vault, team_ref, |market| {
-        if market.result.is_some() {
-            return Err(Error::InvalidClaimBody("the market is closed"));
-        }
-        if market.referee.digest != referee_digest {
-            return Err(Error::InvalidClaimBody(
-                "only the referee signed before the work scores a market",
-            ));
-        }
-        for (submission_ref, score, passed) in scores {
-            if !score.is_finite() {
-                return Err(Error::InvalidClaimBody("a referee score is finite"));
-            }
-            let found = market
-                .submissions
-                .iter_mut()
-                .find(|s| s.submission_ref == *submission_ref)
-                .ok_or(Error::InvalidClaimBody("no such submission"))?;
-            found.score = Some(*score);
-            found.passed = Some(*passed);
-        }
-        Ok(())
     })
 }
 
@@ -547,15 +552,23 @@ pub fn close_market(vault: &Vault, team_ref: &str, now: u64) -> Result<MarketRes
         if market.result.is_some() {
             return Err(Error::InvalidClaimBody("the market is closed"));
         }
-        let winner = match market.mode {
-            MarketMode::Bounty => market
+        Ok(market.close(now))
+    })
+}
+
+impl Market {
+    /// Closes this open market at `now`, as [`close_market`] says, and
+    /// answers its result.
+    fn close(&mut self, now: u64) -> MarketResult {
+        let winner = match self.mode {
+            MarketMode::Bounty => self
                 .submissions
                 .iter()
                 .enumerate()
                 .filter(|(_, s)| s.passed == Some(true))
                 .min_by(|(ia, a), (ib, b)| a.at.cmp(&b.at).then_with(|| ia.cmp(ib)))
                 .map(|(_, s)| s.clone()),
-            _ => market
+            _ => self
                 .submissions
                 .iter()
                 .filter(|s| s.score.is_some())
@@ -567,13 +580,13 @@ pub fn close_market(vault: &Vault, team_ref: &str, now: u64) -> Result<MarketRes
                 })
                 .cloned(),
         };
-        let bounty = market.bounty;
+        let bounty = self.bounty;
         if let Some(win) = &winner {
-            if let Some(p) = market.participants.get_mut(&win.agent) {
+            if let Some(p) = self.participants.get_mut(&win.agent) {
                 p.earned += bounty;
             }
-            market.post(now, Some(&win.agent), LedgerKind::Award, bounty);
-            market.bounty = 0;
+            self.post(now, Some(&win.agent), LedgerKind::Award, bounty);
+            self.bounty = 0;
         }
         let result = MarketResult {
             winner: winner.as_ref().map(|w| w.agent.clone()),
@@ -581,9 +594,9 @@ pub fn close_market(vault: &Vault, team_ref: &str, now: u64) -> Result<MarketRes
             bounty,
             closed_at: now,
         };
-        market.result = Some(result.clone());
-        Ok(result)
-    })
+        self.result = Some(result.clone());
+        result
+    }
 }
 
 /// One run's market, if it opened one.

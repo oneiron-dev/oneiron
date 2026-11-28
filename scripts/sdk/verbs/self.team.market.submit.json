@@ -1,0 +1,11 @@
+{
+  "name": "self.team.market.submit",
+  "description": "Submits the calling member's candidate digest to its team's market, under the member key the host queued it as and the vault's time; one candidate is one submission.",
+  "input": "crate::team::run::TeamMarketSubmitInput",
+  "output": "crate::team::TeamRunAnswer",
+  "scope": "Write",
+  "act_class": "reversible_work",
+  "context": "run",
+  "effect": "Team",
+  "run_surface": "live"
+}

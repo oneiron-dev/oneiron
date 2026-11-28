@@ -13,6 +13,11 @@ crate::side_table::side_tables! {
     /// Key: string (team reference).
     TEAM_MARKET: VaultMeta b"team:market:v1:" Named
         [restore: content] [family: unclassified] [tier: canonical];
+    /// A market CEO's override of its referee, its own receipt: the referee's winner, the
+    /// submission adopted, why, by whom and when, and its ledger line. Key: string (team
+    /// reference).
+    TEAM_MARKET_OVERRIDE: VaultMeta b"team:market_override:v1:" Named
+        [restore: content] [family: unclassified] [tier: canonical];
     /// A workflow skill's binding to the coordination pattern it teaches, with its works-well-for
     /// line. Key: id16 (skill entity).
     TEAM_PATTERN_SKILL: VaultMeta b"team:pattern_skill:v1:" Named

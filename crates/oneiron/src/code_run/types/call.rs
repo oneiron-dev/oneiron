@@ -188,6 +188,8 @@ impl SelfCall {
             Self::Team(SelfTeamCall::Start(_)) => "self.team.start",
             Self::Team(SelfTeamCall::Record(_)) => "self.team.record",
             Self::Team(SelfTeamCall::Vote(_)) => "self.team.vote",
+            Self::Team(SelfTeamCall::MarketSubmit(_)) => "self.team.market.submit",
+            Self::Team(SelfTeamCall::MarketVerdict(_)) => "self.team.market.verdict",
             Self::TeamSubmit(_) => "self.team.submit",
             Self::Leader(SelfLeaderCall::Advice { .. }) => "self.leader.advice",
             Self::Leader(SelfLeaderCall::Pattern { .. }) => "self.leader.pattern",

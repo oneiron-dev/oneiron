@@ -48,7 +48,7 @@ pub use doors::{
 pub use market::{
     LedgerEntry, LedgerKind, Market, MarketMode, MarketResult, Participant, RefereeKind,
     SignedReferee, Submission, close_market, halving_round, market, open_market, peek_island,
-    referee_scores, spend_share, submit,
+    spend_share, submit,
 };
 pub use observations::{TeamRunObservations, team_run_observations};
 pub(crate) use owner_outcome::settle_team_owner_verdict_in_txn;

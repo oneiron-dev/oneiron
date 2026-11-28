@@ -26,6 +26,7 @@ use crate::error::Error;
 use crate::memory::{MemoryError, MemoryResult};
 use crate::receipt::task_type_ref::TypeRef;
 use crate::task_type::{ROOT_NODE_ID, TaskTypeNode, TaskTypeRef, TaskTypeTree, TreeScope};
+use crate::team::run::TeamMarketOutcome;
 use crate::team::team_shape::CoordinationPattern;
 use crate::team::{SpawnErasure, SpawnPhase, TeamAxis, TeamPattern};
 use crate::{EntityId, Vault};
@@ -239,6 +240,10 @@ pub struct TeamReceiptView {
     /// The receipt the anchored outcome rests on, once one settled the team.
     #[serde(default)]
     pub outcome_receipt: Option<String>,
+    /// A market team's result once it closed: the referee's, with the CEO's
+    /// override beside it.
+    #[serde(default)]
+    pub market: Option<TeamMarketOutcome>,
 }
 
 /// What the stores hold for one spawned agent. Each list is what was found;

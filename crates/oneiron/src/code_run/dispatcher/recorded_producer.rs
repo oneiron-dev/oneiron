@@ -81,6 +81,8 @@ fn shared_row(row: &CodeRunBridgeCall) -> Option<&'static str> {
                     "start" => RunVerb::SelfTeamStart,
                     "record" => RunVerb::SelfTeamRecord,
                     "vote" => RunVerb::SelfTeamVote,
+                    "market_submit" => RunVerb::SelfTeamMarketSubmit,
+                    "market_verdict" => RunVerb::SelfTeamMarketVerdict,
                     _ => return None,
                 }
             }

@@ -62,6 +62,13 @@ pub struct TeamRefereeInput {
     pub rule: String,
     /// The rule's digest, 1..=256 bytes. Every score must carry it.
     pub digest: String,
+    /// The referee's contract: a sealed NOTE, hex, whose text hashes to
+    /// `digest` (SHA-256, lower hex) and pins the comparator, the sealed
+    /// cohort, the screens' development cohorts, the harness and the bar
+    /// (`oneiron.market_referee_contract.v1`). Only a market with one takes
+    /// `self.team.market.verdict`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contract: Option<String>,
 }
 
 /// What kind of rule referees a market.
@@ -128,6 +135,103 @@ pub struct TeamRecordInput {
     pub roles: Option<BTreeMap<String, u32>>,
     /// How much of the campaign's cell grid the outputs covered.
     pub coverage: Option<TeamCoverageInput>,
+    /// A market's CEO override: the submission the team adopts in place of
+    /// the referee's winner. It is logged on the ledger with its own
+    /// receipt; the referee's result and award stand.
+    #[serde(default, rename = "override", skip_serializing_if = "Option::is_none")]
+    pub referee_override: Option<TeamOverrideInput>,
+}
+
+/// The submission a CEO adopts over the referee's winner, and why.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct TeamOverrideInput {
+    pub submission_ref: String,
+    /// 1..=2048 bytes.
+    pub reason: String,
+}
+
+/// `self.team.market.submit`: the calling member's candidate, for its
+/// market's referee. The member is named by the host, never here.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct TeamMarketSubmitInput {
+    pub team_ref: String,
+    /// The submission's name in the market, 1..=256 bytes.
+    pub submission_ref: String,
+    /// SHA-256 of the candidate, lower hex. The referee's verdict must name
+    /// it, and no other submission of the market may.
+    pub candidate_sha256: String,
+}
+
+/// `self.team.market.verdict`: one referee run's output for one
+/// submission, checked against the run's machine-signed end.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct TeamMarketVerdictInput {
+    pub team_ref: String,
+    pub submission_ref: String,
+    /// The arm unit the referee ran as.
+    pub claim: TeamMarketClaimInput,
+    /// The bytes of the referee's verdict output, UTF-8 JSON
+    /// (`oneiron.market_referee_verdict.v1`).
+    pub verdict: String,
+}
+
+/// An arm unit claim, by its logical attempt.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct TeamMarketClaimInput {
+    /// The arm's id, hex.
+    pub arm: String,
+    pub rung: u8,
+    pub unit_key: String,
+    pub attempt: u16,
+}
+
+/// What a relayed verdict did to its submission.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TeamMarketVerdictOutcome {
+    /// The sealed referee scored it. `unknown`: fewer tasks than the bar
+    /// needs, which is not a pass.
+    Scored {
+        score: f64,
+        passed: bool,
+        unknown: bool,
+    },
+    /// A development-cohort screen: never a score or a pass.
+    Screened { score: f64 },
+    /// The evidence did not hold: no score, never a loss.
+    Invalid { reason: String },
+}
+
+/// A market team's result: the referee's, and the CEO's override beside it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct TeamMarketOutcome {
+    /// The referee's winner, by member key; none when nothing won.
+    pub winner: Option<String>,
+    pub winning_submission: Option<String>,
+    /// The bounty the referee's winner was paid, in lease units.
+    pub bounty: u64,
+    pub closed_at: u64,
+    #[serde(rename = "override")]
+    pub referee_override: Option<TeamOverrideView>,
+}
+
+/// A CEO override, as its receipt records it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct TeamOverrideView {
+    /// The submission the team adopts.
+    pub chosen: String,
+    pub reason: String,
+    /// The CEO's AGENT_DEF, hex.
+    pub by: String,
+    pub at: u64,
+    /// The ledger line that logs it.
+    pub ledger_seq: u64,
 }
 
 /// `self.team.vote`: the calling participant's own choice in its team.

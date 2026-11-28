@@ -37,8 +37,10 @@ use super::doors::{
     LearningEvidenceView, LearningObservation, ObservationIssue, PlannedSpawnObservation,
     ResolvedTeam, RouteObservation, SkillRevisionView, TeamBindingView, TeamReceiptView, TypeStamp,
 };
+use super::market::referee::market_outcome_in_txn;
 use super::pattern::{PAYOFF_AXIS, pattern_cell};
 use super::receipt::{PatternSkillRef, TeamReceipt, placed_ancestry_in_txn, team_receipt_in_txn};
+use super::run::TeamMarketOutcome;
 use super::run_binding::{TeamRunBinding, team_starts_in_txn};
 use super::spawn_intent::{SpawnErasure, SpawnPhase};
 
@@ -161,7 +163,13 @@ pub(super) fn observe_spawn(
         launched,
         resolved,
         binding: binding.as_ref().map(binding_view).transpose()?,
-        receipt: receipt.as_ref().map(receipt_view),
+        receipt: match &receipt {
+            Some(receipt) => Some(receipt_view(
+                receipt,
+                market_outcome_in_txn(vault, &txn, &receipt.team_ref)?,
+            )),
+            None => None,
+        },
         routes,
         critics,
         learning,
@@ -388,7 +396,9 @@ fn binding_view(binding: &TeamRunBinding) -> Result<TeamBindingView> {
     })
 }
 
-fn receipt_view(receipt: &TeamReceipt) -> TeamReceiptView {
+/// `receipt` as a read shows it, with a market team's result joined from its
+/// market and override rows: the referee's, the CEO's override beside it.
+fn receipt_view(receipt: &TeamReceipt, market: Option<TeamMarketOutcome>) -> TeamReceiptView {
     TeamReceiptView {
         team_ref: receipt.team_ref.clone(),
         type_ref: TypeStamp::from(&receipt.type_ref),
@@ -401,6 +411,7 @@ fn receipt_view(receipt: &TeamReceipt) -> TeamReceiptView {
             .outcome
             .as_ref()
             .map(|outcome| outcome.receipt.clone()),
+        market,
     }
 }
 

@@ -1,4 +1,5 @@
-//! `self.team.start`, `self.team.record` and `self.team.vote` (OF-540): a
+//! `self.team.start`, `self.team.record`, `self.team.vote` and a market's
+//! `self.team.market.submit` and `self.team.market.verdict` (OF-540): a
 //! pattern-skill run's own team, bound to the running agent attempt. The team rules are
 //! [`crate::team::run`]'s; this binds them to the run. Members spawn as the
 //! run's children through the one code-mode spawn door, each with the team's
@@ -32,6 +33,12 @@ impl HostSelfDispatcher<'_> {
             SelfTeamCall::Start(input) => self.team_start(input)?,
             SelfTeamCall::Record(input) => self.team_record(&input)?,
             SelfTeamCall::Vote(input) => self.team_vote(&input)?,
+            SelfTeamCall::MarketSubmit(input) => self.team_market(|vault, caller| {
+                crate::team::market::referee::submit_candidate(vault, caller, &input)
+            })?,
+            SelfTeamCall::MarketVerdict(input) => self.team_market(|vault, caller| {
+                crate::team::market::referee::relay_verdict(vault, caller, &input)
+            })?,
         };
         Ok(match answered {
             Ok(answer) => SelfDispatchOutcome::Team(answer),
@@ -186,6 +193,30 @@ impl HostSelfDispatcher<'_> {
             answered.map(|answer| SelfTeamResult {
                 answer,
                 source_rows: None,
+            })
+        })
+    }
+
+    /// A market call of the bound attempt: a member's submission or a
+    /// relayed verdict. A market is a durable record: an off-record run
+    /// keeps none. Its answer reads no entity row.
+    fn team_market(
+        &self,
+        call: impl FnOnce(
+            &crate::Vault,
+            crate::attempt_queue::AttemptId,
+        ) -> Result<std::result::Result<TeamRunAnswer, &'static str>>,
+    ) -> Result<Answered> {
+        let Some(caller) = self.agent_parent else {
+            return Ok(Err("team_unbound"));
+        };
+        let ExecutorStorage::Canonical(vault) = &self.storage else {
+            return Ok(Err("team_off_record"));
+        };
+        call(*vault, caller).map(|answered| {
+            answered.map(|answer| SelfTeamResult {
+                answer,
+                source_rows: Some(Vec::new()),
             })
         })
     }
