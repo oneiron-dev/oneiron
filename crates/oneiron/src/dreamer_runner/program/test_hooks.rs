@@ -50,6 +50,7 @@ pub(crate) fn plant_slip_wake(
         contract_digest: [0; 32],
         executor: "test".into(),
         args: "{}".into(),
+        project: None,
     };
     let arming = TurnProgramArming {
         registration,
@@ -251,6 +252,7 @@ pub(crate) fn plant_timer_arming(
         contract_digest: [0; 32],
         executor: "test".into(),
         args: "{}".into(),
+        project: None,
     };
     let arming = TurnProgramArming {
         registration,

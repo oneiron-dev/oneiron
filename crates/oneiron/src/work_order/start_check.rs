@@ -4,8 +4,10 @@
 //! next one under the job id the order fixes. The loop's fit asks the same authority question
 //! ([`Vault::order_authority_in_txn`]), so a pass and the start's write never disagree on it.
 use crate::authority::principal_standing_covering_or_lapse_in_txn;
+use crate::experiment_arm::{ARMS_UNITS_RESERVE_VERB, role_for};
 use crate::federation::{FederationGrant, agent_grants_for_store_in_txn};
 use crate::gpu_job::GpuJobVerb;
+use crate::gpu_line::{UnitClaim, line_in_txn};
 use crate::job_workload::WorkloadStartAsk;
 use crate::{EdgeActorClass, EntityId, Vault};
 
@@ -106,9 +108,13 @@ impl Vault {
     /// carried out only while it does): the owner who ordered is not gone; or the exact Grant
     /// the agent ordered under still stands for it and `vault.jobs.order`, and, for an offer's
     /// charge, still stands for it and `vault.gpu.jobs.start` (the charge is "the caller's
-    /// allowance (the built start)", 1.1). Each is asked for this Grant first: a revoked order
-    /// Grant ends the order even while another Grant of the agent names the verb, and another
-    /// live Grant that outranks it never does.
+    /// allowance (the built start)", 1.1). A line unit's order is made with
+    /// `vault.arms.units.reserve` (row H3), so its Grant stands for that verb instead and still
+    /// holds the line's lead role (the reviewer role for a review check), as the reserve judges
+    /// the caller; the Grant's reach over the line's project was judged when the order was made.
+    /// Each is asked for this Grant first: a revoked order Grant ends the order even while
+    /// another Grant of the agent names the verb, and another live Grant that outranks it never
+    /// does.
     ///
     /// # Errors
     ///
@@ -134,9 +140,22 @@ impl Vault {
                 class,
                 grant,
             } => {
-                if !matches!(class, EdgeActorClass::Agent | EdgeActorClass::System)
-                    || !grant_stands_for_in_txn(self, txn, actor, class, grant, ORDER_VERB)?
-                {
+                if !matches!(class, EdgeActorClass::Agent | EdgeActorClass::System) {
+                    return Ok(None);
+                }
+                if let OrderCharge::Line { line, purpose, .. } = &order.charge {
+                    let stands = grant_stands_for_in_txn(
+                        self,
+                        txn,
+                        actor,
+                        class,
+                        grant,
+                        ARMS_UNITS_RESERVE_VERB,
+                    )? && line_in_txn(self, txn, line)?
+                        .is_some_and(|line| line.holds_role(&grant, role_for(*purpose)));
+                    return Ok(stands.then_some(OrderStarter::Agent { actor, grant }));
+                }
+                if !grant_stands_for_in_txn(self, txn, actor, class, grant, ORDER_VERB)? {
                     return Ok(None);
                 }
                 if matches!(order.charge, OrderCharge::Offer { .. })
@@ -244,6 +263,74 @@ impl Vault {
             return Ok(Err(AttemptRefused::OrderChanged));
         }
         Ok(Ok(starter))
+    }
+
+    /// The starter of the unit claim `claim` for the order attempt `attempt` (row H3), read in
+    /// the claimed start's write: the claim is the one the attempt's reserve made (the order's
+    /// claim key for attempt `n`, under the job id the order and `n` fix), reserved by the
+    /// order's requester under the authority the order records. `None` for any other claim,
+    /// which the start refuses and leaves as it is.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub fn order_claim_starter_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        attempt: &OrderAttemptRef,
+        claim: &UnitClaim,
+    ) -> crate::Result<Option<EntityId>> {
+        let Some(order) = WORK_ORDERS.get(&self.store, txn, &attempt.order)? else {
+            return Ok(None);
+        };
+        if order.claim_key(attempt.n) != Some(claim.key())
+            || attempt_job_id(&order.id, attempt.n)? != claim.id
+        {
+            return Ok(None);
+        }
+        Ok(match order.ordered_by {
+            OrderedBy::Owner { owner: Some(owner) } => {
+                (claim.grant.is_none() && claim.reserved_by == Some(owner)).then_some(owner)
+            }
+            OrderedBy::Agent {
+                actor: Some(actor),
+                grant,
+                ..
+            } => (claim.grant == Some(grant) && claim.reserved_by == Some(actor)).then_some(actor),
+            OrderedBy::Owner { owner: None } | OrderedBy::Agent { actor: None, .. } => None,
+        })
+    }
+
+    /// Whether the order attempt `attempt` may still start the job `job` its reserve fixed,
+    /// read in the claimed start's write (row H3): the attempt is the order's live one with no
+    /// end, no cancel reached the order, and its requester's authority lives. The reserve's
+    /// write moved the order to `Running` and bumped its revision, so the revision the loop
+    /// read is not compared; a cancel or an end written since shows in the order itself.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors. Every refusal is the inner `Err`.
+    pub fn order_attempt_starts_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        attempt: &OrderAttemptRef,
+        job: &EntityId,
+    ) -> crate::Result<Result<(), AttemptRefused>> {
+        let Some(order) = WORK_ORDERS.get(&self.store, txn, &attempt.order)? else {
+            return Ok(Err(AttemptRefused::OrderChanged));
+        };
+        let live = matches!(order.state, OrderState::Running { attempt: n } if n == attempt.n)
+            && order.cancel.is_none()
+            && order
+                .last_attempt()
+                .is_some_and(|last| last.n == attempt.n && last.job == *job && last.end.is_none());
+        if !live {
+            return Ok(Err(AttemptRefused::OrderChanged));
+        }
+        if self.order_authority_in_txn(txn, &order)?.is_none() {
+            return Ok(Err(AttemptRefused::Blocked(Blocker::GrantNotLive)));
+        }
+        Ok(Ok(()))
     }
 
     /// Whether the loop may stop `job` for the order `attempt` names, read in `txn` (the built

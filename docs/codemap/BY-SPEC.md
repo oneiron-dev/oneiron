@@ -1270,7 +1270,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | ARCH-0079 | `crates/oneiron/src/team/owner_outcome.rs` | s |
 | ARCH-0079 | `crates/oneiron/src/team/pattern.rs` | m |
 | ARCH-0079 | `crates/oneiron/src/team/payoff.rs` | m |
-| ARCH-0079 | `crates/oneiron/src/team/planner_card_door.rs` | s |
+| ARCH-0079 | `crates/oneiron/src/team/planner_card_door.rs` | m |
 | ARCH-0079 | `crates/oneiron/src/team/receipt.rs` | m |
 | ARCH-0079 | `crates/oneiron/src/team/stack.rs` | s |
 | ARCH-0079 | `crates/oneiron/src/verbs/self_verbs.rs` | s |
@@ -2790,7 +2790,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | OF-579 | `crates/oneiron-server/src/api/context_pack/audience.rs` | s |
 | OF-580 | `crates/oneiron-remote/src/invocation.rs` | s |
 | OF-580 | `crates/oneiron-sdk-generator/src/generate/emit_http.rs` | s |
-| OF-580 | `crates/oneiron-server/src/api/facade/invocations.rs` | m |
+| OF-580 | `crates/oneiron-server/src/api/facade/invocations.rs` | L |
 | OF-580 | `crates/oneiron-server/src/api/owner_routes/handoff_alarm_routes.rs` | s |
 | OF-580 | `crates/oneiron-server/src/api/owner_routes/root_routes.rs` | m |
 | OF-580 | `crates/oneiron-server/src/commands/mcp_bridge.rs` | L |

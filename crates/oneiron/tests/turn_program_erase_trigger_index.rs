@@ -112,6 +112,8 @@ impl Fixture {
                 args: serde_json::json!({"value": 41}),
                 conversation: None,
                 trigger,
+                expected: None,
+                project: None,
             })
             .expect("arm")
             .registration

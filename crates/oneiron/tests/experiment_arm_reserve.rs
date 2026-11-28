@@ -56,6 +56,7 @@ use oneiron::test_doors::gpu_line_hold_is_the_claim::{read_txn, start_claim};
 use oneiron::test_doors::room_facet_set::create_owner_project;
 use oneiron::test_doors::store_writes::last_committed_write;
 use oneiron::verbs::{AgentGrantMintRequest, mint_agent_grant_as};
+use oneiron::work_order::WaitRule;
 use oneiron::workspace_roster::ProjectRecord;
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
 
@@ -449,6 +450,7 @@ impl Fixture {
             code_sha: COMMIT.to_owned(),
             contract_sha256: arm.contract.sha256.clone(),
             secs,
+            wait: WaitRule::No,
         }
     }
 
@@ -2304,4 +2306,859 @@ fn a_written_off_units_job_ends_its_claim_in_the_same_write() {
     assert_eq!(terminal.charged_secs, 0);
     assert_eq!(terminal.ended_at_ms, NOW_MS + 1_000);
     assert_eq!(fixture.allocation_room(claim), room_before_reserve);
+}
+
+use std::cell::Cell;
+
+use oneiron::experiment_arm::{unit_order_as, unit_ordered_view_as};
+use oneiron::memory::MEMORY_CODE_BAD_REQUEST;
+use oneiron::work_order::{
+    AttemptOutcome, AttemptRefused, AttemptToMake, CancelWhy, DecidedBy, EndKind, MachineFacts,
+    MachineReach, OrderAttemptRef, OrderCharge, OrderHost, OrderState, Room, SlotDecision,
+    SlotName, TemplateFact, WorkOrder, WorkOrderRef, attempt_job_id, ordered_view_as,
+    work_order_cancel_as,
+};
+
+fn h3_line_room(fixture: &Fixture, line: EntityId, period: u32) -> u64 {
+    let txn = read_txn(&fixture.vault).expect("read snapshot");
+    let stored = stored_period_in_txn(&fixture.vault, &txn, &line, period)
+        .expect("read period")
+        .expect("period minted");
+    allocation_standing_in_txn(
+        &fixture.vault,
+        &txn,
+        &stored.allocation.allocation(gpu_seconds()),
+        &[fixture.machine],
+    )
+    .expect("read allocation standing")
+    .room()
+}
+
+fn h3_machine_facts(machine: EntityId, now_ms: u64) -> MachineFacts {
+    MachineFacts {
+        machine,
+        reach: MachineReach::Answered { at_ms: now_ms },
+        enabled: true,
+        refusal: None,
+        paused: None,
+        drained: None,
+        templates: Some(vec![TemplateFact {
+            name: "fixture-template".to_owned(),
+            digest: "a1".repeat(32),
+        }]),
+        room: Room::default(),
+        devices: None,
+        window: None,
+        keep_headroom_pct: None,
+        roles: Vec::new(),
+        warm: Vec::new(),
+        warm_absent: Vec::new(),
+    }
+}
+
+struct H3Host<'a> {
+    vault: &'a Vault,
+    jobs: &'a UnitJobs,
+    now_ms: Cell<u64>,
+    calls: Cell<usize>,
+    skip_start: Cell<bool>,
+}
+
+impl OrderHost for H3Host<'_> {
+    fn machine_facts(&self, machines: &[EntityId]) -> Vec<MachineFacts> {
+        machines
+            .iter()
+            .map(|machine| h3_machine_facts(*machine, self.now_ms.get()))
+            .collect()
+    }
+
+    fn make_attempt(&self, attempt: &AttemptToMake<'_>) -> AttemptOutcome {
+        self.calls.set(self.calls.get() + 1);
+        let now = self.now_ms.get();
+        let reserved = self
+            .vault
+            .reserve_order_attempt(attempt, now)
+            .expect("reserve attempt write");
+        match reserved {
+            Err(AttemptRefused::OrderChanged) => AttemptOutcome::OrderChanged,
+            Err(AttemptRefused::Blocked(blocker)) => AttemptOutcome::Refused(vec![blocker]),
+            Ok(_) => {
+                if self.skip_start.get() {
+                    return AttemptOutcome::Made;
+                }
+                let key = attempt
+                    .order
+                    .claim_key(attempt.n)
+                    .expect("a line order has a claim key");
+                let request = self
+                    .vault
+                    .unit_job_request(&key, now)
+                    .expect("read job request")
+                    .expect("the claim stands claimed");
+                let quote = self
+                    .jobs
+                    .offer
+                    .quote_for(
+                        attempt.job,
+                        &request,
+                        attempt.order.request.maximum_secs,
+                        now,
+                    )
+                    .expect("quote the claim's job");
+                let reference = attempt.reference();
+                let _ = self.vault.start_claimed_gpu_job(
+                    UnitJobStart {
+                        actor: GpuJobActor::Order(&reference),
+                        offer: &self.jobs.offer,
+                        quote: &quote,
+                    },
+                    &key,
+                    &self.jobs.permits,
+                    &self.jobs.connector,
+                    now,
+                );
+                AttemptOutcome::Made
+            }
+        }
+    }
+
+    fn stop_attempt(&self, _order: &WorkOrder, _job: &EntityId) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+#[test]
+fn a_waiting_unit_holds_no_claim_and_no_seconds_until_its_attempt() {
+    let fixture = fixture();
+    let lead = fixture.agent("lead");
+    let arm = fixture.lead_arm(lead, 0);
+    let before_room = h3_line_room(&fixture, arm.line, 0);
+    let mut ask = fixture.ask(&arm, "waiting-unit", 60, Some(lead));
+    ask.wait = WaitRule::Open;
+    let (memory, owner) = fixture.caller(Some(lead));
+    let ordered = unit_order_as(&memory, owner, &ask, NOW_MS).expect("order the waiting unit");
+    assert!(!ordered.replayed);
+    assert!(matches!(ordered.order.state, OrderState::Open { .. }));
+    match &ordered.order.charge {
+        OrderCharge::Line {
+            arm: charge_arm,
+            rung,
+            line,
+            offer,
+            purpose,
+        } => {
+            assert_eq!(*charge_arm, arm.id);
+            assert_eq!(*rung, 1);
+            assert_eq!(*line, arm.line);
+            assert_eq!(offer, OFFER);
+            assert_eq!(*purpose, UnitPurpose::Work);
+        }
+        other => panic!("a waiting unit is charged to its line: {other:?}"),
+    }
+    assert_eq!(ordered.order.limits.machines, vec![fixture.machine]);
+    assert!(ordered.order.attempts.is_empty());
+    assert!(fixture.claims(&arm, 1).is_empty());
+    assert_eq!(h3_line_room(&fixture, arm.line, 0), before_room);
+
+    let replayed = unit_order_as(&memory, owner, &ask, NOW_MS).expect("same key and ask replays");
+    assert!(replayed.replayed);
+    assert_eq!(replayed.order.id, ordered.order.id);
+    assert!(fixture.claims(&arm, 1).is_empty());
+
+    let mut reserve_same_key = ask.clone();
+    reserve_same_key.wait = WaitRule::No;
+    let ordered_key = fixture
+        .reserve(Some(lead), &reserve_same_key, NOW_MS)
+        .expect_err("an ordered key does not reserve");
+    assert_eq!(ordered_key.code, MEMORY_CODE_INVALID_STATE);
+    assert!(
+        ordered_key.message.starts_with("intent_key_ordered"),
+        "unexpected message: {:?}",
+        ordered_key.message
+    );
+
+    let mut no_wait = ask.clone();
+    no_wait.intent_key = "waiting-unit-no-wait".to_owned();
+    no_wait.wait = WaitRule::No;
+    let no_wait_err = unit_order_as(&memory, owner, &no_wait, NOW_MS)
+        .expect_err("wait No is the reserve, not an order");
+    assert_eq!(no_wait_err.code, MEMORY_CODE_BAD_REQUEST);
+
+    let second = fixture.ask(&arm, "second-unit", 60, Some(lead));
+    fixture
+        .reserve(Some(lead), &second, NOW_MS)
+        .expect("reserve the second unit at once");
+    let mut order_reserved_key = second.clone();
+    order_reserved_key.wait = WaitRule::Open;
+    let reserved_key = unit_order_as(&memory, owner, &order_reserved_key, NOW_MS)
+        .expect_err("a reserved key does not order");
+    assert_eq!(reserved_key.code, MEMORY_CODE_INVALID_STATE);
+    assert!(
+        reserved_key.message.starts_with("intent_key_reserved"),
+        "unexpected message: {:?}",
+        reserved_key.message
+    );
+}
+
+#[test]
+fn a_waiting_units_key_under_another_wait_is_a_different_ask() {
+    let fixture = fixture();
+    let lead = fixture.agent("lead");
+    let arm = fixture.lead_arm(lead, 0);
+    let (memory, owner) = fixture.caller(Some(lead));
+    let deadline_ms = NOW_MS + 60_000;
+    let mut open = fixture.ask(&arm, "open-unit", 60, Some(lead));
+    open.wait = WaitRule::Open;
+    let ordered = unit_order_as(&memory, owner, &open, NOW_MS).expect("order the open unit");
+    assert!(!ordered.replayed);
+
+    // The ask's digest leaves the wait out: the order's own wait refuses a deadline under its key.
+    let mut until = open.clone();
+    until.wait = WaitRule::Until { ms: deadline_ms };
+    let refused = unit_order_as(&memory, owner, &until, NOW_MS)
+        .expect_err("the same key and ask with a deadline is another ask");
+    assert_eq!(refused.code, MEMORY_CODE_INVALID_STATE);
+    assert_eq!(refused.message, DIFFERENT_ASK);
+
+    let replayed = unit_order_as(&memory, owner, &open, NOW_MS).expect("the same wait replays");
+    assert!(replayed.replayed);
+    assert_eq!(replayed.order.id, ordered.order.id);
+    assert_eq!(replayed.order.wait, WaitRule::Open);
+
+    let mut timed = fixture.ask(&arm, "timed-unit", 60, Some(lead));
+    timed.wait = WaitRule::Until { ms: deadline_ms };
+    let timed_order = unit_order_as(&memory, owner, &timed, NOW_MS).expect("order the timed unit");
+    let mut later = timed.clone();
+    later.wait = WaitRule::Until {
+        ms: deadline_ms + 60_000,
+    };
+    let later_err = unit_order_as(&memory, owner, &later, NOW_MS)
+        .expect_err("another deadline under the same key is another ask");
+    assert_eq!(later_err.code, MEMORY_CODE_INVALID_STATE);
+    assert_eq!(later_err.message, DIFFERENT_ASK);
+    let timed_again =
+        unit_order_as(&memory, owner, &timed, NOW_MS).expect("the same deadline replays");
+    assert!(timed_again.replayed);
+    assert_eq!(timed_again.order.id, timed_order.order.id);
+    assert_eq!(timed_again.order.wait, WaitRule::Until { ms: deadline_ms });
+    assert!(fixture.claims(&arm, 1).is_empty());
+}
+
+#[test]
+fn a_line_orders_attempt_reserves_its_claim_and_entry_in_one_write_and_starts_under_it() {
+    let fixture = fixture();
+    let lead = fixture.agent("lead");
+    let arm = fixture.lead_arm(lead, 0);
+    let before_room = h3_line_room(&fixture, arm.line, 0);
+    let mut ask = fixture.ask(&arm, "line-unit", 60, Some(lead));
+    ask.wait = WaitRule::Open;
+    let (memory, owner) = fixture.caller(Some(lead));
+    let ordered = unit_order_as(&memory, owner, &ask, NOW_MS).expect("order the line unit");
+    let jobs = UnitJobs::new(None);
+    let host = H3Host {
+        vault: &fixture.vault,
+        jobs: &jobs,
+        now_ms: Cell::new(NOW_MS),
+        calls: Cell::new(0),
+        skip_start: Cell::new(false),
+    };
+    fixture
+        .vault
+        .work_order_pass(&host, NOW_MS)
+        .expect("first pass makes the attempt");
+    assert_eq!(host.calls.get(), 1);
+    let order = fixture
+        .vault
+        .work_order(&ordered.order.id)
+        .expect("read order")
+        .expect("order row");
+    assert!(matches!(order.state, OrderState::Running { attempt: 1 }));
+    assert_eq!(order.attempts.len(), 1);
+    let attempt = &order.attempts[0];
+    let job_id = attempt_job_id(&order.id, 1).expect("attempt job id");
+    assert_eq!(attempt.job, job_id);
+    assert_eq!(attempt.machine, Some(fixture.machine));
+    let key = order.claim_key(1).expect("line order has a claim key");
+    let claims = fixture.claims(&arm, 1);
+    let claim = only_claim(&claims);
+    assert_eq!(claim.key(), key);
+    assert_eq!(claim.id, attempt.job);
+    assert_eq!(claim.unit_key, order.id.to_hex());
+    assert_eq!(claim.attempt, 1);
+    assert_eq!(claim.reserved_by, Some(lead.actor));
+    assert_eq!(claim.grant, Some(lead.grant));
+    assert_eq!(claim.state, ClaimState::Started);
+    let job = fixture
+        .vault
+        .gpu_job(&attempt.job)
+        .expect("read job")
+        .expect("job row");
+    assert_eq!(job.claim, Some(key));
+    assert_eq!(job.started_by, Some(lead.actor));
+    assert_eq!(h3_line_room(&fixture, arm.line, 0), before_room - ask.secs);
+
+    host.now_ms.set(NOW_MS + 1_000);
+    fixture
+        .vault
+        .work_order_pass(&host, NOW_MS + 1_000)
+        .expect("second pass makes nothing");
+    assert_eq!(host.calls.get(), 1);
+}
+
+#[test]
+fn a_waiting_units_answer_reads_its_order_under_the_reserve_grant_alone() {
+    let fixture = fixture();
+    let lead = fixture.agent("lead");
+    let arm = fixture.lead_arm(lead, 0);
+    let mut ask = fixture.ask(&arm, "answer-read", 60, Some(lead));
+    ask.wait = WaitRule::Open;
+    let (memory, owner) = fixture.caller(Some(lead));
+    let ordered = unit_order_as(&memory, owner, &ask, NOW_MS).expect("order the waiting unit");
+    let jobs = UnitJobs::new(None);
+    let host = H3Host {
+        vault: &fixture.vault,
+        jobs: &jobs,
+        now_ms: Cell::new(NOW_MS),
+        calls: Cell::new(0),
+        skip_start: Cell::new(false),
+    };
+    fixture
+        .vault
+        .work_order_pass(&host, NOW_MS)
+        .expect("the pass makes the attempt");
+    assert_eq!(host.calls.get(), 1);
+
+    // The lead's Grant names the reserve and not `vault.jobs.order`: the order door's read
+    // refuses it, and the reserve's answer reads the order on the reserve's Grant over the line.
+    let generic = ordered_view_as(&memory, owner, &ordered.order.id)
+        .expect_err("the order door's read needs a vault.jobs.order Grant");
+    assert_eq!(generic.code, MEMORY_CODE_FORBIDDEN);
+    let answer = unit_ordered_view_as(&memory, owner, ask.line, &ordered.order.id)
+        .expect("the reserve's caller reads its order")
+        .expect("the order stands and is the caller's");
+    assert_eq!(answer.order.id, ordered.order.id);
+    assert!(!answer.replayed);
+    assert!(matches!(
+        answer.order.state,
+        OrderState::Running { attempt: 1 }
+    ));
+    assert_eq!(answer.order.attempts.len(), 1);
+
+    // Another agent the line admits does not read this lead's order.
+    let other = fixture.agent("other-lead");
+    let (other_memory, other_owner) = fixture.caller(Some(other));
+    let unseen = unit_ordered_view_as(&other_memory, other_owner, ask.line, &ordered.order.id)
+        .expect("the reserve admits the other agent over the line");
+    assert!(unseen.is_none(), "{unseen:?}");
+}
+
+#[test]
+fn a_line_order_with_no_room_waits_on_line_room_and_holds_nothing() {
+    let fixture = fixture();
+    let lead = fixture.agent("lead");
+    let arm = fixture.lead_arm(lead, 0);
+    let before_room = h3_line_room(&fixture, arm.line, 0);
+    let before_refusals = fixture.refusals(&arm, 0).len();
+    // The room is made small by asking above the rung cap: the attempt's reserve then refuses
+    // `over_rung_cap` (a budget refusal), which the order maps onto `line_room`.
+    let mut ask = fixture.ask(&arm, "too-big", RUNG_1_SECS + 1, Some(lead));
+    ask.wait = WaitRule::Open;
+    let (memory, owner) = fixture.caller(Some(lead));
+    let ordered = unit_order_as(&memory, owner, &ask, NOW_MS).expect("order the oversized unit");
+    let jobs = UnitJobs::new(None);
+    let host = H3Host {
+        vault: &fixture.vault,
+        jobs: &jobs,
+        now_ms: Cell::new(NOW_MS),
+        calls: Cell::new(0),
+        skip_start: Cell::new(false),
+    };
+    fixture
+        .vault
+        .work_order_pass(&host, NOW_MS)
+        .expect("pass refuses the attempt");
+    let order = fixture
+        .vault
+        .work_order(&ordered.order.id)
+        .expect("read order")
+        .expect("order row");
+    assert!(order.attempts.is_empty());
+    let blocked = match &order.state {
+        OrderState::Open { blocked, .. } => blocked,
+        other => panic!("the order waits open: {other:?}"),
+    };
+    assert!(
+        blocked.iter().any(|on| on.blocker.code() == "line_room"),
+        "the order waits on line room: {blocked:?}"
+    );
+    assert!(fixture.claims(&arm, 1).is_empty());
+    assert_eq!(fixture.refusals(&arm, 0).len(), before_refusals);
+    assert_eq!(h3_line_room(&fixture, arm.line, 0), before_room);
+}
+
+#[test]
+fn a_line_attempt_never_started_ends_after_custody_and_the_next_attempt_reserves() {
+    let fixture = fixture();
+    let lead = fixture.agent("lead");
+    let arm = fixture.lead_arm(lead, 0);
+    let before_room = h3_line_room(&fixture, arm.line, 0);
+    let mut ask = fixture.ask(&arm, "never-started", 60, Some(lead));
+    ask.wait = WaitRule::Open;
+    let (memory, owner) = fixture.caller(Some(lead));
+    let ordered = unit_order_as(&memory, owner, &ask, NOW_MS).expect("order the unit");
+    let jobs = UnitJobs::new(None);
+    let host = H3Host {
+        vault: &fixture.vault,
+        jobs: &jobs,
+        now_ms: Cell::new(NOW_MS),
+        calls: Cell::new(0),
+        skip_start: Cell::new(true),
+    };
+    fixture
+        .vault
+        .work_order_pass(&host, NOW_MS)
+        .expect("first pass reserves the claim");
+    assert_eq!(host.calls.get(), 1);
+    let order = fixture
+        .vault
+        .work_order(&ordered.order.id)
+        .expect("read order")
+        .expect("order row");
+    assert!(matches!(order.state, OrderState::Running { attempt: 1 }));
+    assert_eq!(order.attempts.len(), 1);
+    let job_id = attempt_job_id(&order.id, 1).expect("attempt job id");
+    assert_eq!(order.attempts[0].job, job_id);
+    let key_one = order.claim_key(1).expect("claim key");
+    let claims = fixture.claims(&arm, 1);
+    let claim = only_claim(&claims);
+    assert_eq!(claim.key(), key_one);
+    assert_eq!(claim.state, ClaimState::Claimed);
+    assert!(fixture.vault.gpu_job(&job_id).expect("read job").is_none());
+
+    host.now_ms.set(NOW_MS + 1_000);
+    fixture
+        .vault
+        .work_order_pass(&host, NOW_MS + 1_000)
+        .expect("second pass inside custody");
+    assert_eq!(host.calls.get(), 1);
+    let order = fixture
+        .vault
+        .work_order(&ordered.order.id)
+        .expect("read order")
+        .expect("order row");
+    assert!(matches!(order.state, OrderState::Running { attempt: 1 }));
+    let claims = fixture.claims(&arm, 1);
+    assert_eq!(only_claim(&claims).state, ClaimState::Claimed);
+
+    let period = fixture
+        .vault
+        .gpu_line_period(&arm.line, 0)
+        .expect("read period")
+        .expect("period minted");
+    let custody_ms = period.policy.claim_custody_secs * 1_000;
+    let lapsed_now = NOW_MS + custody_ms + 1_000;
+    host.now_ms.set(lapsed_now);
+    fixture
+        .vault
+        .work_order_pass(&host, lapsed_now)
+        .expect("third pass past custody");
+    let order = fixture
+        .vault
+        .work_order(&ordered.order.id)
+        .expect("read order")
+        .expect("order row");
+    let first = &order.attempts[0];
+    let end = first.end.as_ref().expect("the attempt ended");
+    assert_eq!(end.kind, EndKind::NeverStarted);
+    let claims = fixture.claims(&arm, 1);
+    let claim = claims
+        .iter()
+        .find(|claim| claim.key() == key_one)
+        .expect("the first claim");
+    let ClaimState::Ended(terminal) = &claim.state else {
+        panic!("the first claim ended: {claim:?}");
+    };
+    assert_eq!(terminal.end, UnitEnd::Released("custody_lapsed".to_owned()));
+    assert_eq!(terminal.charged_secs, 0);
+    // The AFTER rule retries a never-started attempt after 30 s, so the same pass that ends it
+    // does not make attempt 2 yet: the room is back to what it was before.
+    assert_eq!(host.calls.get(), 1);
+    assert_eq!(order.attempts.len(), 1);
+    assert_eq!(h3_line_room(&fixture, arm.line, 0), before_room);
+
+    // Attempt 2 reserves once the retry's backoff has passed, and its job starts.
+    let retry_at = order
+        .retry_not_before_ms
+        .expect("a never-started attempt retries after a backoff");
+    let retry_now = retry_at + 1_000;
+    host.skip_start.set(false);
+    host.now_ms.set(retry_now);
+    fixture
+        .vault
+        .work_order_pass(&host, retry_now)
+        .expect("the retry pass makes attempt 2");
+    assert_eq!(host.calls.get(), 2);
+    let order = fixture
+        .vault
+        .work_order(&ordered.order.id)
+        .expect("read order")
+        .expect("order row");
+    assert!(
+        matches!(order.state, OrderState::Running { attempt: 2 }),
+        "attempt 2 runs: {:?}",
+        order.state
+    );
+    assert_eq!(order.attempts.len(), 2);
+    let key_two = order.claim_key(2).expect("claim key of attempt 2");
+    let job_two = attempt_job_id(&order.id, 2).expect("attempt 2 job id");
+    assert_eq!(order.attempts[1].job, job_two);
+    let claims = fixture.claims(&arm, 1);
+    let second = claims
+        .iter()
+        .find(|claim| claim.key() == key_two)
+        .expect("the second claim");
+    assert_eq!(second.id, job_two);
+    assert_eq!(second.attempt, 2);
+    assert_eq!(second.state, ClaimState::Started);
+    let job = fixture
+        .vault
+        .gpu_job(&job_two)
+        .expect("read job")
+        .expect("attempt 2's job row");
+    assert_eq!(job.claim, Some(key_two));
+    assert_eq!(h3_line_room(&fixture, arm.line, 0), before_room - ask.secs);
+}
+
+#[test]
+fn a_cancel_between_the_reserve_and_the_start_releases_the_claim_and_starts_nothing() {
+    let fixture = fixture();
+    let lead = fixture.agent("lead");
+    let arm = fixture.lead_arm(lead, 0);
+    let before_room = h3_line_room(&fixture, arm.line, 0);
+    let mut ask = fixture.ask(&arm, "cancel-race", 60, Some(lead));
+    ask.wait = WaitRule::Open;
+    let (memory, owner) = fixture.caller(Some(lead));
+    let ordered = unit_order_as(&memory, owner, &ask, NOW_MS).expect("order the unit");
+    let jobs = UnitJobs::new(None);
+    let host = H3Host {
+        vault: &fixture.vault,
+        jobs: &jobs,
+        now_ms: Cell::new(NOW_MS),
+        calls: Cell::new(0),
+        skip_start: Cell::new(true),
+    };
+    fixture
+        .vault
+        .work_order_pass(&host, NOW_MS)
+        .expect("pass reserves the claim");
+    assert_eq!(host.calls.get(), 1);
+    let order = fixture
+        .vault
+        .work_order(&ordered.order.id)
+        .expect("read order")
+        .expect("order row");
+    let key = order.claim_key(1).expect("claim key");
+    let job_id = attempt_job_id(&order.id, 1).expect("attempt job id");
+    let claims = fixture.claims(&arm, 1);
+    assert_eq!(only_claim(&claims).state, ClaimState::Claimed);
+
+    // The lead's Grant names only `vault.arms.units.*`, not `vault.jobs.orders.cancel`, so the
+    // owner cancels.
+    let cancel_at = NOW_MS + 1_000;
+    let (owner_memory, owner_proof) = fixture.caller(None);
+    work_order_cancel_as(
+        &owner_memory,
+        owner_proof,
+        &WorkOrderRef {
+            order: ordered.order.id,
+        },
+        cancel_at,
+    )
+    .expect("the owner cancels the running order");
+
+    let order = fixture
+        .vault
+        .work_order(&ordered.order.id)
+        .expect("read order")
+        .expect("order row");
+    let last = order.last_attempt().expect("one attempt");
+    let reference = OrderAttemptRef {
+        order: order.id,
+        revision: order.revision,
+        n: last.n,
+        machine: last.machine,
+        ranked: last.ranked.clone(),
+        placed: last.placed.clone(),
+    };
+    let request = fixture
+        .vault
+        .unit_job_request(&key, cancel_at)
+        .expect("read job request")
+        .expect("the claim stands claimed");
+    let quote = jobs
+        .offer
+        .quote_for(job_id, &request, ask.secs, cancel_at)
+        .expect("quote the claim's job");
+    let refused = fixture.vault.start_claimed_gpu_job(
+        UnitJobStart {
+            actor: GpuJobActor::Order(&reference),
+            offer: &jobs.offer,
+            quote: &quote,
+        },
+        &key,
+        &jobs.permits,
+        &jobs.connector,
+        cancel_at,
+    );
+    assert!(
+        matches!(
+            refused,
+            Err(GpuJobError::Order(AttemptRefused::OrderChanged))
+        ),
+        "a cancelled order does not start: {refused:?}"
+    );
+    assert!(fixture.vault.gpu_job(&job_id).expect("read job").is_none());
+    let claims = fixture.claims(&arm, 1);
+    let claim = only_claim(&claims);
+    let ClaimState::Ended(terminal) = &claim.state else {
+        panic!("the claim was released: {claim:?}");
+    };
+    assert_eq!(terminal.end, UnitEnd::Released("order_changed".to_owned()));
+    assert_eq!(h3_line_room(&fixture, arm.line, 0), before_room);
+    assert_eq!(jobs.creates(), 0);
+
+    host.now_ms.set(cancel_at + 1_000);
+    fixture
+        .vault
+        .work_order_pass(&host, cancel_at + 1_000)
+        .expect("pass settles the cancel");
+    let order = fixture
+        .vault
+        .work_order(&ordered.order.id)
+        .expect("read order")
+        .expect("order row");
+    assert!(matches!(order.state, OrderState::Cancelled { .. }));
+}
+
+#[test]
+fn an_order_attempt_never_starts_another_callers_claim() {
+    let fixture = fixture();
+    let lead = fixture.agent("lead");
+    let arm = fixture.lead_arm(lead, 0);
+    let first = fixture.ask(&arm, "first-claim", 60, Some(lead));
+    let view = fixture
+        .reserve(Some(lead), &first, NOW_MS)
+        .expect("reserve the first claim");
+    let key = ClaimKey::of(first.arm, first.rung, &first.unit_key, first.attempt);
+    let claims = fixture.claims(&arm, 1);
+    let before = only_claim(&claims).clone();
+    assert_eq!(before.key(), key);
+    assert_eq!(before.state, ClaimState::Claimed);
+
+    let mut second = fixture.ask(&arm, "second-order", 60, Some(lead));
+    second.wait = WaitRule::Open;
+    let (memory, owner) = fixture.caller(Some(lead));
+    let ordered = unit_order_as(&memory, owner, &second, NOW_MS).expect("order the second unit");
+    let other = OrderAttemptRef {
+        order: ordered.order.id,
+        revision: ordered.order.revision,
+        n: 1,
+        machine: Some(fixture.machine),
+        ranked: SlotDecision {
+            slot: SlotName::Rank,
+            options: Vec::new(),
+            pick: ordered.order.id.to_hex(),
+            by: DecidedBy::Rule {
+                name: "test".to_owned(),
+            },
+            why: String::new(),
+        },
+        placed: SlotDecision {
+            slot: SlotName::Place,
+            options: vec![fixture.machine.to_hex()],
+            pick: fixture.machine.to_hex(),
+            by: DecidedBy::Rule {
+                name: "test".to_owned(),
+            },
+            why: String::new(),
+        },
+    };
+    let jobs = UnitJobs::new(None);
+    let (quote_key, quote) = jobs.quote(&fixture, &first, &view, NOW_MS);
+    assert_eq!(quote_key, key);
+    let refused = fixture.vault.start_claimed_gpu_job(
+        UnitJobStart {
+            actor: GpuJobActor::Order(&other),
+            offer: &jobs.offer,
+            quote: &quote,
+        },
+        &key,
+        &jobs.permits,
+        &jobs.connector,
+        NOW_MS,
+    );
+    assert!(
+        matches!(
+            refused,
+            Err(GpuJobError::LineManaged(LineStartRefused::ClaimMismatch(_)))
+        ),
+        "another order does not start this claim: {refused:?}"
+    );
+    let claims = fixture.claims(&arm, 1);
+    let after = only_claim(&claims).clone();
+    assert_eq!(after, before);
+    assert!(fixture.vault.gpu_jobs().expect("read jobs").is_empty());
+}
+
+#[test]
+fn a_cancel_of_an_order_whose_claim_is_still_claimed_releases_it_at_the_next_pass() {
+    let fixture = fixture();
+    let lead = fixture.agent("lead");
+    let arm = fixture.lead_arm(lead, 0);
+    let before_room = h3_line_room(&fixture, arm.line, 0);
+    let mut ask = fixture.ask(&arm, "cancel-claimed", 60, Some(lead));
+    ask.wait = WaitRule::Open;
+    let (memory, owner) = fixture.caller(Some(lead));
+    let ordered = unit_order_as(&memory, owner, &ask, NOW_MS).expect("order the unit");
+    let jobs = UnitJobs::new(None);
+    let host = H3Host {
+        vault: &fixture.vault,
+        jobs: &jobs,
+        now_ms: Cell::new(NOW_MS),
+        calls: Cell::new(0),
+        skip_start: Cell::new(true),
+    };
+    fixture
+        .vault
+        .work_order_pass(&host, NOW_MS)
+        .expect("pass reserves the claim");
+    let order = fixture
+        .vault
+        .work_order(&ordered.order.id)
+        .expect("read order")
+        .expect("order row");
+    let key = order.claim_key(1).expect("claim key");
+    let job_id = attempt_job_id(&order.id, 1).expect("attempt job id");
+    let claims = fixture.claims(&arm, 1);
+    assert_eq!(only_claim(&claims).state, ClaimState::Claimed);
+
+    // The lead's Grant names only `vault.arms.units.*`, so the owner cancels.
+    let cancel_at = NOW_MS + 1_000;
+    let (owner_memory, owner_proof) = fixture.caller(None);
+    work_order_cancel_as(
+        &owner_memory,
+        owner_proof,
+        &WorkOrderRef {
+            order: ordered.order.id,
+        },
+        cancel_at,
+    )
+    .expect("the owner cancels the running order");
+
+    // No start comes: the next pass releases the claim for the cancel and ends the order.
+    let pass_at = cancel_at + 1_000;
+    host.now_ms.set(pass_at);
+    fixture
+        .vault
+        .work_order_pass(&host, pass_at)
+        .expect("pass settles the cancel");
+    let claims = fixture.claims(&arm, 1);
+    let claim = only_claim(&claims);
+    assert_eq!(claim.key(), key);
+    let ClaimState::Ended(terminal) = &claim.state else {
+        panic!("the claim was released: {claim:?}");
+    };
+    assert_eq!(
+        terminal.end,
+        UnitEnd::Released("order_cancelled".to_owned())
+    );
+    assert_eq!(terminal.charged_secs, 0);
+    let order = fixture
+        .vault
+        .work_order(&ordered.order.id)
+        .expect("read order")
+        .expect("order row");
+    assert!(
+        matches!(order.state, OrderState::Cancelled { .. }),
+        "the order is cancelled: {:?}",
+        order.state
+    );
+    let end = order.attempts[0].end.as_ref().expect("the attempt ended");
+    assert_eq!(end.kind, EndKind::NeverStarted);
+    assert_eq!(host.calls.get(), 1);
+    assert!(fixture.vault.gpu_job(&job_id).expect("read job").is_none());
+    assert_eq!(jobs.creates(), 0);
+    assert_eq!(h3_line_room(&fixture, arm.line, 0), before_room);
+}
+
+#[test]
+fn a_line_order_whose_agent_lost_its_lead_role_is_cancelled_authority_ended() {
+    let fixture = fixture();
+    let lead = fixture.agent("lead");
+    let arm = fixture.lead_arm(lead, 0);
+    let before_room = h3_line_room(&fixture, arm.line, 0);
+    let mut ask = fixture.ask(&arm, "lost-role", 60, Some(lead));
+    ask.wait = WaitRule::Open;
+    let (memory, owner) = fixture.caller(Some(lead));
+    let ordered = unit_order_as(&memory, owner, &ask, NOW_MS).expect("order the unit");
+
+    // The owner sets the line again with another lead: the ordering agent's Grant still
+    // stands, and it holds no role on the line.
+    let other = fixture.agent("other-lead");
+    let line = fixture
+        .vault
+        .gpu_line(&arm.line)
+        .expect("read line")
+        .expect("line row");
+    let (owner_memory, owner_proof) = fixture.caller(None);
+    owner_memory
+        .set_gpu_line(
+            owner_proof,
+            &GpuLineSetRequest {
+                intent_key: "drop-lead".to_owned(),
+                project: arm.line,
+                policy: GpuLinePolicy {
+                    unit: line.unit.clone(),
+                    wallet: line.wallet.clone(),
+                    offers: line.offers.clone(),
+                    machines: line.machines.clone(),
+                    leads: vec![other.grant],
+                    reviewers: line.reviewers.clone(),
+                    planners: line.planners.clone(),
+                    period_secs: line.period_secs,
+                    period_anchor_ms: line.period_anchor_ms,
+                    budget: line.budget.clone(),
+                },
+            },
+            NOW_MS + 500,
+        )
+        .expect("the owner sets the line with another lead");
+
+    let jobs = UnitJobs::new(None);
+    let host = H3Host {
+        vault: &fixture.vault,
+        jobs: &jobs,
+        now_ms: Cell::new(NOW_MS + 1_000),
+        calls: Cell::new(0),
+        skip_start: Cell::new(false),
+    };
+    fixture
+        .vault
+        .work_order_pass(&host, NOW_MS + 1_000)
+        .expect("the pass reads the order's authority");
+    assert_eq!(host.calls.get(), 0);
+    let order = fixture
+        .vault
+        .work_order(&ordered.order.id)
+        .expect("read order")
+        .expect("order row");
+    assert_eq!(
+        order.state,
+        OrderState::Cancelled {
+            why: CancelWhy::AuthorityEnded
+        }
+    );
+    assert!(order.attempts.is_empty());
+    assert!(fixture.claims(&arm, 1).is_empty());
+    assert_eq!(h3_line_room(&fixture, arm.line, 0), before_room);
 }

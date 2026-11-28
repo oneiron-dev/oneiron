@@ -470,6 +470,10 @@ pub fn settle_unit_in_txn(
     Ok(Ok(settlement))
 }
 
+/// The release reason of a claim whose job did not start within its custody: the reserve's
+/// next attempt, a late start and the order pass give it alike.
+pub(crate) const CUSTODY_LAPSED: &str = "custody_lapsed";
+
 /// Whether `claim`, still `Claimed`, has passed its custody at `now_ms`: its job has not
 /// started within the `claim_custody_secs` of the policy its period was minted under, read
 /// here only, so the reserve's next attempt and a late start judge it alike (design 5.2).

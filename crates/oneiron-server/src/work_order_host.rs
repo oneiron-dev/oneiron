@@ -3,7 +3,9 @@
 //! order may run on what it offers now (`Node` on the job protocol), and makes an attempt
 //! through the built quote and start on the order's offer, with the machine the PLACE rule
 //! picked as the quote's `inputs.machine`. The start's own write checks the order again and
-//! writes its attempt entry beside the job.
+//! writes its attempt entry beside the job. A line unit's attempt (row H3) is the line's
+//! reserve, which writes the claim and the attempt entry in one write, then the claimed start
+//! of the claim's one job on the order's offer.
 //!
 //! The pass runs on the built job worker (`gpu_host.rs`, OPUS-LE-FLEET's file), on its tick and
 //! on each wake: one worker. Its readiness read is the child module `readiness_read`.
@@ -14,7 +16,9 @@ use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use oneiron::EntityId;
-use oneiron::gpu_job::{GpuJobActor, GpuJobError, GpuJobRequest, GpuJobStart};
+use oneiron::gpu_job::{
+    GpuJobActor, GpuJobConnector, GpuJobError, GpuJobRequest, GpuJobStart, GpuOffer, UnitJobStart,
+};
 use oneiron::llm::decision::{DecisionAnswer, DecisionRung, HumanAskReason};
 use oneiron::memory::MEMORY_CODE_MODEL_UNAVAILABLE;
 use oneiron::task_verb::sdk::{AiVerdict, AiVerdictRequest};
@@ -182,6 +186,103 @@ impl<'a> ServerOrderHost<'a> {
         }
     }
 
+    /// Makes a line unit's attempt (row H3): the line's reserve writes the claim and the order's
+    /// attempt entry in one write, then the claimed start writes the claim's one job on
+    /// `offer_name` under `GpuJobActor::Order`. Once the reserve's write commits the attempt is
+    /// made, whatever the start answers: a start the gate refuses releases the claim, and a
+    /// claim that never starts is released by custody; the loop reads either as the attempt's
+    /// end.
+    fn make_line_attempt(&self, attempt: &AttemptToMake<'_>, offer_name: &str) -> AttemptOutcome {
+        if let Err(blocker) = dispatches_offer(self.server, offer_name) {
+            return AttemptOutcome::Refused(vec![blocker]);
+        }
+        let (offer, connector) = match offer_with_backend(self.server, offer_name) {
+            Ok(found) => found,
+            Err(GpuHostError::NoBackend(_)) => {
+                return AttemptOutcome::Refused(vec![Blocker::NotEnabled]);
+            }
+            Err(error) => {
+                return AttemptOutcome::Refused(vec![Blocker::MachineRefuses {
+                    reason: error.to_string(),
+                }]);
+            }
+        };
+        match self
+            .server
+            .vault
+            .reserve_order_attempt(attempt, self.now_ms)
+        {
+            Ok(Ok(_)) => {}
+            Ok(Err(AttemptRefused::OrderChanged)) => return AttemptOutcome::OrderChanged,
+            Ok(Err(AttemptRefused::Blocked(blocker))) => {
+                return AttemptOutcome::Refused(vec![blocker]);
+            }
+            // A store failure: the order waits and the next pass asks again.
+            Err(error) => {
+                return AttemptOutcome::Refused(vec![Blocker::LineNotReady {
+                    reason: format!("store_failure: {error}"),
+                }]);
+            }
+        }
+        if let Err(why) = self.start_line_attempt(attempt, &offer.offer, connector.as_ref()) {
+            tracing::warn!(
+                order = %attempt.order.id.to_hex(),
+                attempt = attempt.n,
+                why = %why,
+                "a line unit's attempt reserved its claim and did not start its job"
+            );
+        }
+        AttemptOutcome::Made
+    }
+
+    /// The claimed start of the claim `attempt`'s reserve made: quoted on the claim's id with
+    /// the claim's job request (its machine is the PLACE pick the reserve pinned), and the one
+    /// device the machine's facts give it, when they give one.
+    fn start_line_attempt(
+        &self,
+        attempt: &AttemptToMake<'_>,
+        offer: &GpuOffer,
+        connector: &dyn GpuJobConnector,
+    ) -> Result<(), String> {
+        let key = attempt
+            .order
+            .claim_key(attempt.n)
+            .ok_or("a line unit's order has a claim key")?;
+        let mut request = self
+            .server
+            .vault
+            .unit_job_request(&key, self.now_ms)
+            .map_err(|error| error.to_string())?
+            .ok_or("the attempt's claim no longer stands claimed")?;
+        if let [device] = attempt.devices.as_slice() {
+            request.inputs["device_id"] = serde_json::Value::String(device.clone());
+        }
+        let quote = offer
+            .quote_for(
+                attempt.job,
+                &request,
+                self.server.config.gpu_jobs.default_maximum_secs,
+                self.now_ms,
+            )
+            .map_err(|error| error.to_string())?;
+        let reference = attempt.reference();
+        self.server
+            .vault
+            .start_claimed_gpu_job(
+                UnitJobStart {
+                    actor: GpuJobActor::Order(&reference),
+                    offer,
+                    quote: &quote,
+                },
+                &key,
+                self.server.gpu_jobs.permits(),
+                connector,
+                self.now_ms,
+            )
+            .map(drop)
+            .map_err(|error| error.to_string())
+    }
+
     /// The reference the built cancel checks for the live attempt of `order`.
     fn stop_reference(order: &WorkOrder) -> Option<OrderAttemptRef> {
         let last = order.last_attempt()?;
@@ -212,7 +313,7 @@ impl OrderHost for ServerOrderHost<'_> {
     fn holds(&self, order: &WorkOrder) -> bool {
         match &order.charge {
             OrderCharge::Offer { name } => dispatches_offer(self.server, name).is_ok(),
-            OrderCharge::Line { .. } => true,
+            OrderCharge::Line { offer, .. } => dispatches_offer(self.server, offer).is_ok(),
         }
     }
 
@@ -267,9 +368,10 @@ impl OrderHost for ServerOrderHost<'_> {
     }
 
     fn make_attempt(&self, attempt: &AttemptToMake<'_>) -> AttemptOutcome {
-        let OrderCharge::Offer { name } = &attempt.order.charge else {
-            // A line unit's attempt is the line's reserve (hunk H3), never a bare start.
-            return AttemptOutcome::Refused(vec![Blocker::MachineMissing]);
+        let name = match &attempt.order.charge {
+            OrderCharge::Offer { name } => name,
+            // A line unit's attempt is the line's reserve (row H3), never a bare start.
+            OrderCharge::Line { offer, .. } => return self.make_line_attempt(attempt, offer),
         };
         let (offer, connector) = match offer_with_backend(self.server, name) {
             Ok(found) => found,

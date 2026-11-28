@@ -148,6 +148,8 @@ impl Armer {
                 args: serde_json::json!({"value": 41}),
                 conversation: None,
                 trigger,
+                expected: None,
+                project: None,
             })
             .expect("arm the program")
             .registration
@@ -237,6 +239,8 @@ fn arm_agent_timer(vault: &Vault, agent: EntityId, skill: EntityId) -> EntityId 
                 first_at: AGENT_FIRST_AT,
                 every_secs: AGENT_EVERY_SECS,
             },
+            expected: None,
+            project: None,
         })
         .expect("arm the agent's timer")
         .registration
