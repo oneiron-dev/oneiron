@@ -80,6 +80,11 @@ pub(crate) use self::solved_runs::draft_checked_span;
 // The integration tests' door to a run call's admitted lane (FIX-LIST 25102).
 #[cfg(oneiron_test_support)]
 pub(crate) use self::dispatch::admit_run_call_for_test;
+#[cfg(test)]
+pub(crate) use self::dispatch::{
+    admit_outer_skill_call_for_test, admit_recorded_verb_for_test, admit_run_call_on_door_for_test,
+    admit_run_row_for_test, admit_session_read_for_test,
+};
 
 use self::dispatch::*;
 use self::field_writer::RunFieldWriter;

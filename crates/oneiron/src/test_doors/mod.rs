@@ -280,6 +280,7 @@ pub mod native_person_mint;
 pub mod nightly;
 pub mod nightly_arc_summary;
 pub mod note_bm25f_repair;
+pub mod note_claim_dependency_backfill;
 #[cfg(feature = "sync")]
 pub mod note_fork_upload;
 pub mod note_review_pass;
@@ -320,6 +321,7 @@ pub mod proactivity_digest_index;
 pub mod profiles_other_machine;
 #[cfg(feature = "sync")]
 pub mod project_replicated_revision;
+pub mod project_run;
 pub mod provenance_body_checkpoint;
 pub mod psych_profile;
 pub mod question_saved_lane;

@@ -37,6 +37,8 @@ mod review;
 mod score;
 pub(crate) mod tables;
 mod unit_cancel;
+mod unit_order;
+mod unit_terms;
 mod unit_view;
 mod verdict;
 mod wire;
@@ -45,6 +47,7 @@ pub use admit::{ARMS_ADMIT_VERB, ArmAdmitRequest, ArmContractAsk, arm_admit_as};
 pub use forecast::{ARMS_FORECAST_VERB, ArmForecastRequest, PASS_PER_MILLE_MAX, arm_forecast_as};
 pub use outcome::rung_receipt_ref;
 pub use read::{ARMS_GET_VERB, ARMS_LIST_VERB, arm_get_as, arm_list_as};
+pub(crate) use reserve::role_for;
 pub use reserve::{ARMS_UNITS_RESERVE_VERB, UnitReserveRequest, unit_reserve_as};
 pub use review::{ARMS_REVIEW_VERB, ArmReviewRequest, arm_review_as};
 pub use score::{
@@ -53,6 +56,7 @@ pub use score::{
 pub use unit_cancel::{
     ARMS_UNITS_CANCEL_VERB, StartedUnitCancel, UnitCancel, UnitCancelRequest, unit_cancel_as,
 };
+pub use unit_order::{UnitReserveAnswer, unit_order_as, unit_ordered_view_as};
 pub use unit_view::UnitView;
 pub use verdict::{ARMS_VERDICT_VERB, ArmVerdictRequest, EVIDENCE_NAME_MAX_BYTES, arm_verdict_as};
 pub use wire::{ArmList, ArmListRequest, ArmRef, ArmView};

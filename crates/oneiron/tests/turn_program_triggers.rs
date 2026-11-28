@@ -133,6 +133,8 @@ impl Fixture {
             args: serde_json::json!({"value": 41}),
             conversation,
             trigger,
+            expected: None,
+            project: None,
         }
     }
 

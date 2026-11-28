@@ -12,7 +12,8 @@ use super::authority::TurnProgramAuthority;
 pub(super) use oneiron_verb_wire::dreamer_runner::program::types::OccurrenceKind;
 #[doc(hidden)]
 pub use oneiron_verb_wire::dreamer_runner::program::types::{
-    ArmTurnProgram, DisarmTurnProgram, ProgramRecipePin, ProgramTrigger, TurnProgramRegistration,
+    ArmTurnProgram, DisarmTurnProgram, ExpectedSkillRevision, ProgramRecipePin, ProgramTrigger,
+    TurnProgramRegistration,
 };
 
 #[doc(hidden)]
