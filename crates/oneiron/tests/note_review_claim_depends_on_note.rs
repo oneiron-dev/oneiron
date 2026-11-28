@@ -1,5 +1,6 @@
 //! PROMOTED-CLAIM-SOURCE-DEPENDENCY-GAPS, NOTE review path: the CLAIM learnt
 //! from a NOTE depends on it, and the NOTE's erase clears its review row.
+//! Erasing the NOTE also withdraws the CLAIM's signed birth copy.
 //! Editing the NOTE keeps the CLAIM; a new NOTE with the same text is reviewed.
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test note_review_claim_depends_on_note`.
@@ -14,7 +15,10 @@ use oneiron::note::{NoteProgramEdit, NoteProgramEditOutcome};
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
 use oneiron::temporal::TimeRange;
-use oneiron::test_doors::note_review_pass::{note_review_seen, review_notes_once};
+use oneiron::test_doors::note_review_pass::{
+    note_dependency_exists, note_review_seen, record_note_dependencies_for_test, review_notes_once,
+    review_notes_once_after_reply,
+};
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig, WriteActor};
 
 const MARKDOWN: &str = "Mira Vale keeps a lantern list.";
@@ -73,25 +77,15 @@ impl Fixture {
         }
     }
 
-    fn review_new_note(&self) -> (EntityId, EntityId) {
-        let note = self
-            .vault
+    fn create_note(&self) -> EntityId {
+        self.vault
             .create_note("observation", MARKDOWN, self.owner)
-            .expect("the owner creates an observation NOTE");
-        let landed = review_notes_once(
-            &self.vault,
-            serde_json::json!({
-                "candidates": [{
-                    "subject": "P1",
-                    "predicate": "profile.preference",
-                    "value": "keeps a lantern list",
-                    "confidence": 0.9,
-                    "evidence_refs": [{"source": "N1", "quote": MARKDOWN}],
-                }],
-                "importance": 0.2,
-            }),
-        )
-        .expect("run the NOTE review");
+            .expect("the owner creates an observation NOTE")
+    }
+
+    fn review_new_note(&self) -> (EntityId, EntityId) {
+        let note = self.create_note();
+        let landed = review_notes_once(&self.vault, keep_reply()).expect("run the NOTE review");
         assert_eq!(
             landed.len(),
             1,
@@ -109,6 +103,27 @@ impl Fixture {
         (note, claim)
     }
 
+    fn signed_birth(&self, claim: EntityId) -> EntityId {
+        let mut births =
+            oneiron::test_doors::gate_receipt_unclear::machine_history_controls(&self.vault, claim)
+                .expect("read the CLAIM's machine history controls")
+                .into_iter()
+                .filter(|id| {
+                    self.vault
+                        .get_claim(id)
+                        .expect("read a machine history control")
+                        .is_some_and(|body| body.predicate == "machine.birth")
+                });
+        let birth = births
+            .next()
+            .expect("the NOTE review's promotion has no signed birth: it is not a MACHINE claim");
+        assert!(
+            births.next().is_none(),
+            "the NOTE review's promotion has more than one signed birth"
+        );
+        birth
+    }
+
     fn assert_withdrawn(&self, note: EntityId, claim: EntityId) {
         assert!(
             self.vault
@@ -122,6 +137,19 @@ impl Fixture {
             "the deleted NOTE's review row is still stored"
         );
     }
+}
+
+fn keep_reply() -> serde_json::Value {
+    serde_json::json!({
+        "candidates": [{
+            "subject": "P1",
+            "predicate": "profile.preference",
+            "value": "keeps a lantern list",
+            "confidence": 0.9,
+            "evidence_refs": [{"source": "N1", "quote": MARKDOWN}],
+        }],
+        "importance": 0.2,
+    })
 }
 
 #[test]
@@ -160,6 +188,56 @@ fn a_hard_deleted_note_withdraws_its_claim() {
 }
 
 #[test]
+fn a_soft_deleted_note_withdraws_its_claims_signed_birth() {
+    let f = Fixture::new();
+    let (note, claim) = f.review_new_note();
+    let birth = f.signed_birth(claim);
+    assert!(
+        f.vault
+            .get_claim(&birth)
+            .expect("read the signed birth")
+            .is_some(),
+        "the signed birth does not read before the delete"
+    );
+    assert!(f.vault.delete_entity(&note).expect("soft delete the NOTE"));
+    f.assert_withdrawn(note, claim);
+    assert!(
+        f.vault
+            .get_claim(&birth)
+            .expect("read the signed birth")
+            .is_none(),
+        "the signed birth of a deleted NOTE's CLAIM still reads"
+    );
+}
+
+#[test]
+fn a_hard_deleted_note_withdraws_its_claims_signed_birth() {
+    let f = Fixture::new();
+    let (note, claim) = f.review_new_note();
+    let birth = f.signed_birth(claim);
+    assert!(
+        f.vault
+            .get_claim(&birth)
+            .expect("read the signed birth")
+            .is_some(),
+        "the signed birth does not read before the delete"
+    );
+    let deleted = f
+        .vault
+        .delete_entity_with_reason_as_owner(&f.proof, &note, DeleteReason::UserHardDelete)
+        .expect("the owner hard deletes the NOTE");
+    assert!(deleted.existed);
+    f.assert_withdrawn(note, claim);
+    assert!(
+        f.vault
+            .get_claim(&birth)
+            .expect("read the signed birth")
+            .is_none(),
+        "the signed birth of a deleted NOTE's CLAIM still reads"
+    );
+}
+
+#[test]
 fn an_edited_note_keeps_its_claim() {
     let f = Fixture::new();
     let (note, claim) = f.review_new_note();
@@ -194,4 +272,84 @@ fn a_new_note_after_the_delete_is_learnt_under_a_new_id() {
     let (new_note, new_claim) = f.review_new_note();
     assert_ne!(new_note, note);
     assert_ne!(new_claim, claim);
+}
+
+#[test]
+fn a_note_deleted_while_its_review_waits_on_the_model_leaves_no_row_or_claim() {
+    let f = Fixture::new();
+    let note = f.create_note();
+    let landed = review_notes_once_after_reply(&f.vault, keep_reply(), move |vault| {
+        assert!(vault.delete_entity(&note).expect("soft delete the NOTE"));
+    })
+    .expect("run the NOTE review");
+    assert!(
+        !note_review_seen(&f.vault, note).expect("read the NOTE's review row"),
+        "the deleted NOTE's review row is still stored"
+    );
+    assert!(
+        landed.is_empty(),
+        "a CLAIM learnt from a deleted NOTE still reads"
+    );
+}
+
+#[test]
+fn a_note_hard_deleted_while_its_review_waits_on_the_model_leaves_no_row_or_claim() {
+    let f = Fixture::new();
+    let note = f.create_note();
+    let proof = f.proof.clone();
+    let landed = review_notes_once_after_reply(&f.vault, keep_reply(), move |vault| {
+        let deleted = vault
+            .delete_entity_with_reason_as_owner(&proof, &note, DeleteReason::UserHardDelete)
+            .expect("the owner hard deletes the NOTE");
+        assert!(deleted.existed);
+    })
+    .expect("run the NOTE review");
+    assert!(
+        !note_review_seen(&f.vault, note).expect("read the NOTE's review row"),
+        "the deleted NOTE's review row is still stored"
+    );
+    assert!(
+        landed.is_empty(),
+        "a CLAIM learnt from a deleted NOTE still reads"
+    );
+}
+
+#[test]
+fn a_promotion_whose_cited_note_is_gone_at_the_write_is_refused() {
+    let f = Fixture::new();
+    let claim = EntityId::now();
+    let live = f.create_note();
+    let soft = f.create_note();
+    let hard = f.create_note();
+    assert!(f.vault.delete_entity(&soft).expect("soft delete the NOTE"));
+    let deleted = f
+        .vault
+        .delete_entity_with_reason_as_owner(&f.proof, &hard, DeleteReason::UserHardDelete)
+        .expect("the owner hard deletes the NOTE");
+    assert!(deleted.existed);
+
+    record_note_dependencies_for_test(&f.vault, claim, &[live])
+        .expect("register the live NOTE dependency");
+    assert!(note_dependency_exists(&f.vault, claim, live).expect("read the live NOTE dependency"));
+    assert!(
+        matches!(
+            record_note_dependencies_for_test(&f.vault, claim, &[live, hard]),
+            Err(oneiron::Error::InvalidClaimBody(_))
+        ),
+        "a purged NOTE was accepted at the write"
+    );
+    assert!(
+        !note_dependency_exists(&f.vault, claim, hard).expect("read the purged NOTE dependency")
+    );
+    assert!(
+        matches!(
+            record_note_dependencies_for_test(&f.vault, claim, &[live, soft]),
+            Err(oneiron::Error::InvalidClaimBody(_))
+        ),
+        "a soft-deleted NOTE was accepted at the write"
+    );
+    assert!(
+        !note_dependency_exists(&f.vault, claim, soft)
+            .expect("read the soft-deleted NOTE dependency")
+    );
 }
