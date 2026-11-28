@@ -12,6 +12,13 @@
 //! ([`exchange`]): every node holds the latest dated cell of each, and a clear is a dated cell
 //! without a name.
 //!
+//! Each owner name carries its source (lead ruling 17 Nov 06:5x, name provenance; Engine TASK
+//! 08:18 and RULING STACK-8607-PROVENANCE-ORDER = B): `owner_set` for a rename, and
+//! `owner_confirmed` for the name a device was shown by when the owner signed it his
+//! ([`Vault::confirm_machine_name_in_txn`]). A device's later report never overwrites either:
+//! the owner row is read before the report. The list serves the source beside the name, and a
+//! prompt that names a device reads both in its own transaction ([`Vault::machine_names_in_txn`]).
+//!
 //! Display only. Nothing here enters the signed machine profile, and no authority, policy or
 //! routing code reads it: a name changes no machine's revision, role or reach.
 
@@ -43,6 +50,9 @@ pub const MACHINE_NAME_MAX_BYTES: usize = 128;
 const OWNER_NAME_REASON_SET: &str = "gate.machine.owner_name.set";
 /// Gate reason code: the owner cleared his name for one of his machines.
 const OWNER_NAME_REASON_CLEARED: &str = "gate.machine.owner_name.cleared";
+/// Gate reason code: the owner signed a machine his, and the name it was
+/// shown by became his own name for it.
+const OWNER_NAME_REASON_CONFIRMED: &str = "gate.machine.owner_name.confirmed";
 /// The Gate content kind of a machine-name ruling.
 const OWNER_NAME_CONTENT_KIND: &str = "machine_owner_name";
 
@@ -51,7 +61,9 @@ const OWNER_NAME_CONTENT_KIND: &str = "machine_owner_name";
 /// its writer, and the cell's date: the writer's recording time and the
 /// writer's MACHINE row. The Gate row behind the receipt, on the writer,
 /// carries who set it. A row written before rows were dated reads as dated
-/// 0 by no writer, and so loses to every dated cell.
+/// 0 by no writer, and so loses to every dated cell. `source` says which
+/// owner act wrote the name; a row without it came from a rename, and so
+/// reads as `owner_set`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct MachineOwnerName {
     pub(crate) name: String,
@@ -60,6 +72,8 @@ pub(crate) struct MachineOwnerName {
     pub(crate) written_at: u64,
     #[serde(default)]
     pub(crate) writer: Option<EntityId>,
+    #[serde(default)]
+    pub(crate) source: MachineOwnerNameSource,
 }
 
 /// Whether a masked copy of an owner-name row still reads as one, for the
@@ -68,18 +82,68 @@ pub(crate) fn accepts_masked(bytes: &[u8]) -> bool {
     crate::side_table::decodes::<MachineOwnerName, Named>(bytes)
 }
 
+/// Which owner act wrote an owner name.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MachineOwnerNameSource {
+    /// A rename: the owner typed the name.
+    #[default]
+    OwnerSet,
+    /// The owner signed the machine his, and the name it was shown by then
+    /// became his own name for it.
+    OwnerConfirmed,
+}
+
 /// Where the name a machine is shown by comes from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MachineNameSource {
-    /// The owner's own name for it.
-    Owner,
+    /// The owner's own name for it, from a rename.
+    OwnerSet,
+    /// The owner's own name for it, confirmed when he signed the machine his.
+    OwnerConfirmed,
     /// The name the machine reports for itself.
     Reported,
     /// The model the machine reports for itself.
     Model,
     /// Its class: `Phone` or `Computer`.
     Class,
+}
+
+impl From<MachineOwnerNameSource> for MachineNameSource {
+    fn from(source: MachineOwnerNameSource) -> Self {
+        match source {
+            MachineOwnerNameSource::OwnerSet => Self::OwnerSet,
+            MachineOwnerNameSource::OwnerConfirmed => Self::OwnerConfirmed,
+        }
+    }
+}
+
+/// The names held for one machine, and the one it is shown by: what its list
+/// row shows, and what a prompt that names the device reads.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct MachineNames {
+    /// The name it is shown by.
+    pub(crate) name: String,
+    /// Where [`Self::name`] comes from.
+    pub(crate) source: MachineNameSource,
+    /// The owner's own name for it, as the side-row wall stored it.
+    pub(crate) owner_name: Option<String>,
+    /// The name it reports for itself.
+    pub(crate) reported_name: Option<String>,
+    /// The model it reports for itself.
+    pub(crate) reported_model: Option<String>,
+}
+
+/// One owner act on a machine's name, as its Gate record names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OwnerNameAct {
+    /// A rename to a name.
+    Set,
+    /// A rename to no name.
+    Cleared,
+    /// The name the machine was shown by, confirmed when he signed it his.
+    Confirmed,
 }
 
 /// One machine of the owner's list.
@@ -199,19 +263,14 @@ impl Vault {
             .ok_or(Error::EntityNotFound)?;
         let trimmed = name.map(str::trim).filter(|text| !text.is_empty());
         if let Some(text) = trimmed {
-            if text.len() > MACHINE_NAME_MAX_BYTES {
-                return Err(Error::Gate(GateError::InvalidConsentBound(
-                    "a machine name is at most 128 bytes",
-                )));
-            }
-            if text.contains(['\n', '\r', '\0']) {
-                return Err(Error::Gate(GateError::InvalidConsentBound(
-                    "a machine name is one line without NUL",
-                )));
-            }
+            judge_owner_name(text)?;
         }
-        let decision =
-            append_owner_name_ruling_in_txn(self, txn, actor, machine, trimmed.is_some())?;
+        let act = if trimmed.is_some() {
+            OwnerNameAct::Set
+        } else {
+            OwnerNameAct::Cleared
+        };
+        let decision = append_owner_name_ruling_in_txn(self, txn, actor, machine, act)?;
         let held = OWNER_NAME.get(&self.store, txn, &machine)?;
         let written_at =
             exchange::written_at_past_in_txn(self, txn, held.as_ref().map(|held| held.written_at))?;
@@ -220,6 +279,7 @@ impl Vault {
             receipt: decision.as_bytes(),
             written_at,
             writer: serving,
+            source: MachineOwnerNameSource::OwnerSet,
         };
         put_owner_name_in_txn(self, txn, machine, held.as_ref(), &row)?;
         let listing = self
@@ -228,6 +288,131 @@ impl Vault {
         Ok(MachineOwnerNameSet {
             machine: listing,
             receipt: format!("gate:{}", decision.to_hex()),
+        })
+    }
+
+    /// Makes `name`, the name `machine` was shown by when the owner signed it
+    /// his (a held answer's confirm, or his answer `yours`), his own name for
+    /// it, with source `owner_confirmed` (lead ruling 17 Nov 06:5x). An owner
+    /// row with a name, a rename's or an earlier confirm's, is kept and
+    /// nothing is written; a cleared row is replaced. The row is written as a
+    /// rename's is: judged by the same rules, through the side-row wall, kept
+    /// by a Gate record, and dated past the cell it replaces, so it reaches
+    /// every machine of the owner's the home reaches ([`exchange`]). The
+    /// owner's proof is rechecked in `txn`. Returns the act's Gate receipt,
+    /// or `None` when an owner name was held.
+    ///
+    /// # Errors
+    /// [`GateError::ConsentOwnerNotAuthenticated`] when the proof is not the
+    /// live owner's. [`Error::EntityNotFound`] for a machine the authority
+    /// fold does not name. [`GateError::InvalidConsentBound`] for a blank
+    /// name, one past the byte cap, or one holding a line break or NUL.
+    #[cfg_attr(
+        not(oneiron_test_support),
+        expect(
+            dead_code,
+            reason = "the owner's yours doors call it in OPUS-SPLIT-6's prompt-route PR"
+        )
+    )]
+    pub(crate) fn confirm_machine_name_in_txn(
+        &self,
+        txn: &mut RwTxn<'_>,
+        owner: &AuthenticatedOwner,
+        machine: EntityId,
+        name: &str,
+    ) -> Result<Option<GateDecisionId>> {
+        let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
+        if self
+            .authority_view_readonly_in_txn(txn)?
+            .machine(machine)
+            .is_none()
+        {
+            return Err(Error::EntityNotFound);
+        }
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(Error::Gate(GateError::InvalidConsentBound(
+                "a confirmed machine name is not blank",
+            )));
+        }
+        judge_owner_name(name)?;
+        let held = OWNER_NAME.get(&self.store, txn, &machine)?;
+        if held.as_ref().is_some_and(|held| !held.name.is_empty()) {
+            return Ok(None);
+        }
+        let decision =
+            append_owner_name_ruling_in_txn(self, txn, actor, machine, OwnerNameAct::Confirmed)?;
+        let written_at =
+            exchange::written_at_past_in_txn(self, txn, held.as_ref().map(|held| held.written_at))?;
+        let row = MachineOwnerName {
+            name: name.to_owned(),
+            receipt: decision.as_bytes(),
+            written_at,
+            writer: self.serving_machine_in_txn(txn)?,
+            source: MachineOwnerNameSource::OwnerConfirmed,
+        };
+        put_owner_name_in_txn(self, txn, machine, held.as_ref(), &row)?;
+        Ok(Some(decision))
+    }
+
+    /// The names of `machine`, a device of class `class`, read in `txn`, and
+    /// the one it is shown by, with its source: what a prompt that names the
+    /// device reads. A machine the fold does not name yet (a held answer's)
+    /// is read the same way, from the rows held for its id.
+    ///
+    /// # Errors
+    /// The store's and the fold's.
+    #[cfg_attr(
+        not(oneiron_test_support),
+        expect(
+            dead_code,
+            reason = "the owner's prompt routes read it in OPUS-SPLIT-6's prompt-route PR"
+        )
+    )]
+    pub(crate) fn machine_names_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        machine: EntityId,
+        class: MachineDeviceClass,
+    ) -> Result<MachineNames> {
+        let this_install = self.serving_machine_in_txn(txn)? == Some(machine);
+        self.machine_names_held_in_txn(txn, machine, class, this_install)
+    }
+
+    /// [`Self::machine_names_in_txn`] for a caller that knows whether
+    /// `machine` is this install's own.
+    fn machine_names_held_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        machine: EntityId,
+        class: MachineDeviceClass,
+        this_install: bool,
+    ) -> Result<MachineNames> {
+        let owner = OWNER_NAME
+            .get(&self.store, txn, &machine)?
+            .filter(|row| !row.name.is_empty());
+        let (reported_name, reported_model) = if this_install {
+            (
+                declared(self.config.machine_reported_name.as_deref()),
+                declared(self.config.machine_reported_model.as_deref()),
+            )
+        } else {
+            exchange::REPORTED_NAME
+                .get(&self.store, txn, &machine)?
+                .map_or((None, None), |row| (row.name, row.model))
+        };
+        let (name, source) = shown_name(
+            owner.as_ref().map(|row| (row.name.as_str(), row.source)),
+            reported_name.as_deref(),
+            reported_model.as_deref(),
+            class,
+        );
+        Ok(MachineNames {
+            name,
+            source,
+            owner_name: owner.map(|row| row.name),
+            reported_name,
+            reported_model,
         })
     }
 
@@ -277,36 +462,17 @@ impl Vault {
             return Ok(None);
         };
         let class = chain.profile.device_class;
-        let owner_name = OWNER_NAME
-            .get(&self.store, txn, &machine)?
-            .map(|row| row.name)
-            .filter(|name| !name.is_empty());
-        let (reported_name, reported_model) = if this_install {
-            (
-                declared(self.config.machine_reported_name.as_deref()),
-                declared(self.config.machine_reported_model.as_deref()),
-            )
-        } else {
-            exchange::REPORTED_NAME
-                .get(&self.store, txn, &machine)?
-                .map_or((None, None), |row| (row.name, row.model))
-        };
-        let (name, name_source) = shown_name(
-            owner_name.as_deref(),
-            reported_name.as_deref(),
-            reported_model.as_deref(),
-            class,
-        );
+        let names = self.machine_names_held_in_txn(txn, machine, class, this_install)?;
         Ok(Some(MachineListing {
             machine,
             class,
             role: folded.roster.as_ref().map(|roster| roster.profile.role),
             live: folded.chains().any(|(_, chain)| chain.is_live()),
-            name,
-            name_source,
-            owner_name,
-            reported_name,
-            reported_model,
+            name: names.name,
+            name_source: names.source,
+            owner_name: names.owner_name,
+            reported_name: names.reported_name,
+            reported_model: names.reported_model,
             this_install,
             revision: folded.answer_revision(pin),
         }))
@@ -314,15 +480,16 @@ impl Vault {
 }
 
 /// The name a machine is shown by, and where it comes from: the owner's,
-/// else the reported name, else the reported model, else the class word.
+/// with the act that wrote it, else the reported name, else the reported
+/// model, else the class word.
 fn shown_name(
-    owner: Option<&str>,
+    owner: Option<(&str, MachineOwnerNameSource)>,
     reported: Option<&str>,
     model: Option<&str>,
     class: MachineDeviceClass,
 ) -> (String, MachineNameSource) {
-    if let Some(name) = owner {
-        (name.to_owned(), MachineNameSource::Owner)
+    if let Some((name, source)) = owner {
+        (name.to_owned(), source.into())
     } else if let Some(name) = reported {
         (name.to_owned(), MachineNameSource::Reported)
     } else if let Some(model) = model {
@@ -334,6 +501,22 @@ fn shown_name(
         };
         (word.to_owned(), MachineNameSource::Class)
     }
+}
+
+/// Judges a trimmed, non-blank owner name as a label is judged: at most
+/// [`MACHINE_NAME_MAX_BYTES`] bytes, one line, no NUL.
+fn judge_owner_name(text: &str) -> Result<()> {
+    if text.len() > MACHINE_NAME_MAX_BYTES {
+        return Err(Error::Gate(GateError::InvalidConsentBound(
+            "a machine name is at most 128 bytes",
+        )));
+    }
+    if text.contains(['\n', '\r', '\0']) {
+        return Err(Error::Gate(GateError::InvalidConsentBound(
+            "a machine name is one line without NUL",
+        )));
+    }
+    Ok(())
 }
 
 /// A host's report as the list shows it: its first line, trimmed, without
@@ -375,20 +558,19 @@ fn put_owner_name_in_txn(
     OWNER_NAME.put(vault, txn, &machine, row)
 }
 
-/// Appends the owner's machine-name set or clear to the Gate receipt
-/// family, in `txn`. The details name the machine and the act only, never
-/// the name.
+/// Appends the owner's machine-name act to the Gate receipt family, in
+/// `txn`. The details name the machine and the act only, never the name.
 fn append_owner_name_ruling_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
     actor: EntityId,
     machine: EntityId,
-    set: bool,
+    act: OwnerNameAct,
 ) -> Result<GateDecisionId> {
-    let (reason, action) = if set {
-        (OWNER_NAME_REASON_SET, "action:set")
-    } else {
-        (OWNER_NAME_REASON_CLEARED, "action:cleared")
+    let (reason, action) = match act {
+        OwnerNameAct::Set => (OWNER_NAME_REASON_SET, "action:set"),
+        OwnerNameAct::Cleared => (OWNER_NAME_REASON_CLEARED, "action:cleared"),
+        OwnerNameAct::Confirmed => (OWNER_NAME_REASON_CONFIRMED, "action:confirmed"),
     };
     let decision_id = GateDecisionId::from_bytes(vault.store.clock.ulid()?);
     let record = GateDecisionRecord {

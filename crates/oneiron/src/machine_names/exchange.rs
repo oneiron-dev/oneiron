@@ -18,12 +18,16 @@
 //! leaves the cells to the next one. The home keeps an owner cell only from the machine that wrote
 //! it, and a reported cell only from the machine it names. Every node judges a cell it takes as
 //! its own writer does: a machine its fold names, one line without NUL, at most
-//! [`MACHINE_NAME_MAX_BYTES`] bytes.
+//! [`MACHINE_NAME_MAX_BYTES`] bytes. An owner cell carries the act that wrote it (`owner_set`
+//! or `owner_confirmed`), so each of the owner's machines shows the same source; a confirm
+//! always names a name, so a clear that says it was confirmed is left out.
 
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
 
-use super::{MACHINE_NAME_MAX_BYTES, MachineOwnerName, OWNER_NAME, declared};
+use super::{
+    MACHINE_NAME_MAX_BYTES, MachineOwnerName, MachineOwnerNameSource, OWNER_NAME, declared,
+};
 use crate::Vault;
 use crate::authority::AuthorityView;
 use crate::entity_id::EntityId;
@@ -57,13 +61,16 @@ pub(crate) fn accepts_masked_report(bytes: &[u8]) -> bool {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum MachineNameCell {
     /// The owner's name for `machine`, or its clear (`name` null), as `writer` set it at
-    /// `written_at`. `receipt` (32 hex) names the act's Gate record on the writer.
+    /// `written_at`. `receipt` (32 hex) names the act's Gate record on the writer, and `source`
+    /// the act: a rename (`owner_set`, also when absent) or a confirm (`owner_confirmed`).
     Owner {
         machine: EntityId,
         name: Option<String>,
         written_at: u64,
         writer: EntityId,
         receipt: String,
+        #[serde(default)]
+        source: MachineOwnerNameSource,
     },
     /// The name and model `machine` reports for itself, as it wrote them at `written_at`.
     Reported {
@@ -220,6 +227,7 @@ fn merge_cell_in_txn(
             written_at,
             writer,
             receipt,
+            source: name_source,
         } => {
             if matches!(source, CellSource::Machine { peer } if peer != writer)
                 || fold.machine(machine).is_none()
@@ -229,6 +237,9 @@ fn merge_cell_in_txn(
             let Some(name) = judged_owner_name(name) else {
                 return Ok(false);
             };
+            if name.is_none() && name_source == MachineOwnerNameSource::OwnerConfirmed {
+                return Ok(false);
+            }
             let Some(receipt) = oneiron_hex::decode_any_case::<16>(&receipt) else {
                 return Ok(false);
             };
@@ -244,6 +255,7 @@ fn merge_cell_in_txn(
                 receipt,
                 written_at,
                 writer: Some(writer),
+                source: name_source,
             };
             super::put_owner_name_in_txn(vault, txn, machine, held.as_ref(), &row)?;
             Ok(true)
@@ -348,5 +360,6 @@ fn owner_cell(machine: EntityId, row: MachineOwnerName, writer: EntityId) -> Mac
         written_at: row.written_at,
         writer: row.writer.unwrap_or(writer),
         receipt: GateDecisionId::from_bytes(row.receipt).to_hex(),
+        source: row.source,
     }
 }

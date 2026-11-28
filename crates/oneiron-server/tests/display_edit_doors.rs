@@ -655,7 +655,7 @@ fn an_accepted_machine_name_proposal_names_the_machine() {
         assert_eq!(status, StatusCode::OK, "the owner accepts: {body}");
         let mine = served.this_install().await;
         assert_eq!(mine["name"], "Office server", "{mine}");
-        assert_eq!(mine["name_source"], "owner", "{mine}");
+        assert_eq!(mine["name_source"], "owner_set", "{mine}");
         assert_eq!(mine["owner_name"], "Office server", "{mine}");
     });
 }
