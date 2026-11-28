@@ -429,6 +429,7 @@ fn zero_role_devices_do_not_count_as_quorum_participants() {
         refused_world_edits: Default::default(),
         grant_travel: Default::default(),
         refused_grant_travel: Default::default(),
+        grant_lines: Default::default(),
         checkpoint_policy: Default::default(),
         home_pick: Default::default(),
         origin_cut: Default::default(),

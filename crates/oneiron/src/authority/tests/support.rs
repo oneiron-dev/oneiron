@@ -349,6 +349,7 @@ pub(super) fn single_owner_state(
         refused_world_edits: Default::default(),
         grant_travel: Default::default(),
         refused_grant_travel: Default::default(),
+        grant_lines: Default::default(),
         checkpoint_policy: Default::default(),
         home_pick: Default::default(),
         origin_cut: Default::default(),

@@ -13,24 +13,35 @@ use super::*;
 /// does; this install never counts what it grants. A frontier join, which
 /// grants nothing, lands so too, so such an act above it keeps its effect;
 /// so does a custody permit piece, which has no effect alone (FIX 11866).
+/// So do a Grant's ends (pass 28 R1; review #8845 P1-1): a membership
+/// record's withdrawals and the owner's revoke of his agent Grant still end
+/// their lines. The owner's mint of his agent Grant stays refused: the
+/// funding and history readers count any valid mint until they read its line
+/// (pass 28 R3b).
 pub(super) fn lands_restriction_only(op: &AuthorityOp) -> bool {
-    matches!(
-        op,
-        AuthorityOp::WorldPrivacy(_)
-            | AuthorityOp::GrantTravelSet(_)
-            | AuthorityOp::CheckpointPolicySet(_)
-            | AuthorityOp::HomeNodePick(_)
-            | AuthorityOp::OriginCut(_)
-            | AuthorityOp::DeviceSuccession(_)
-            | AuthorityOp::ConversationTrainingSet(_)
-            | AuthorityOp::ConversationTrainingVaultSet(_)
-            | AuthorityOp::PolicySettingSet(_)
-            | AuthorityOp::SettingCopy(_)
-            | AuthorityOp::SettingPackHead(_)
-            | AuthorityOp::MachineProfile(_)
-            | AuthorityOp::FrontierJoin(_)
-            | AuthorityOp::CustodyPermitPiece(_)
-    )
+    match op {
+        AuthorityOp::AgentGrantAct(record) => {
+            matches!(record.change, AgentGrantChange::Revoke { .. })
+        }
+        _ => matches!(
+            op,
+            AuthorityOp::WorldPrivacy(_)
+                | AuthorityOp::GrantTravelSet(_)
+                | AuthorityOp::CheckpointPolicySet(_)
+                | AuthorityOp::HomeNodePick(_)
+                | AuthorityOp::OriginCut(_)
+                | AuthorityOp::DeviceSuccession(_)
+                | AuthorityOp::ConversationTrainingSet(_)
+                | AuthorityOp::ConversationTrainingVaultSet(_)
+                | AuthorityOp::PolicySettingSet(_)
+                | AuthorityOp::SettingCopy(_)
+                | AuthorityOp::SettingPackHead(_)
+                | AuthorityOp::MachineProfile(_)
+                | AuthorityOp::FrontierJoin(_)
+                | AuthorityOp::CustodyPermitPiece(_)
+                | AuthorityOp::MembershipExecution(_)
+        ),
+    }
 }
 
 /// A row that changes the roster: a genesis, an enrollment (an agent key or

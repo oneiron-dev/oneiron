@@ -527,8 +527,8 @@ pub(super) fn unpinned_anchor_of(
     }
 }
 
-/// The live world edits, grant travel choices, owner and person choices and
-/// machine answers `machine` carried, and the owner work requests it carried
+/// The live world edits, grant travel choices, Grant givings, owner and
+/// person choices and machine answers `machine` carried, and the owner work requests it carried
 /// that await a result (a root request the owner cancelled or a newer one
 /// superseded awaits none, FIX 5583): what a new profile revision lists as
 /// seen, every one of them (FIX 7911: an observed act is never left out, so
@@ -542,6 +542,7 @@ pub(super) fn live_edits_by(fold: &AuthorityFold, machine: EntityId) -> Vec<Auth
         .filter(|(_, signer)| **signer == machine)
         .map(|(hash, _)| *hash)
         .chain(super::grant_travel::live_choices_by(fold, machine))
+        .chain(super::grant_lines::live_givings_by(fold, machine))
         .chain(super::owner_choice::live_choices_by(
             &fold.checkpoint_policy,
             machine,

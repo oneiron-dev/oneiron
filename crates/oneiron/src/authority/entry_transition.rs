@@ -247,6 +247,7 @@ fn transition_entry(
             refused_world_edits: PersistentSet::new(),
             grant_travel: PersistentMap::new(),
             refused_grant_travel: PersistentSet::new(),
+            grant_lines: super::grant_lines::GrantLines::default(),
             checkpoint_policy: super::checkpoint_choice::CheckpointChoiceState::default(),
             home_pick: super::home_pick::HomePickChoiceState::default(),
             origin_cut: super::origin_cut::OriginCutChoiceState::default(),
@@ -493,8 +494,9 @@ fn fold_merged_entry(
         state.seqs.insert(entry.signer_key().clone(), entry.seq);
         return EntryFold::Ready(state);
     }
-    // So is the owner's mint or revoke of an agent's Grant, which moves no
-    // fold state: the Grant row is the state (FIX 5628).
+    // So is the owner's mint or revoke of an agent's Grant, which moves its
+    // Grant's line alone: the line, not the row, says what the Grant gives
+    // (FIX 5628, pass 28 R1).
     if let AuthorityOp::AgentGrantAct(record) = &entry.op {
         if let Err(issue) = super::agent_grant_act::apply_agent_grant_act(
             &state,
@@ -505,6 +507,14 @@ fn fold_merged_entry(
         ) {
             return EntryFold::Invalid(issue);
         }
+        super::grant_lines::apply_owner_agent_grant_line(
+            &mut state,
+            entry,
+            record,
+            hash,
+            (context.pin, context.machine_standing),
+            restriction_only,
+        );
         state.seqs.insert(entry.signer_key().clone(), entry.seq);
         return EntryFold::Ready(state);
     }
@@ -851,6 +861,10 @@ fn fold_merged_entry(
         // A consent cosigner cannot launder an agent primary into a mint issuer.
         if !state.has_live_owner(&signer) || state.slips.apply(entry, hash).is_err() {
             return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
+        }
+        // A counted grant revoke ends its Grant's line too (pass 28 R1).
+        if let AuthorityOp::SlipGrantRevoke { grant_ref, .. } = &entry.op {
+            state.grant_lines.end(*grant_ref, hash);
         }
         state.seqs.insert(signer, entry.seq);
         return EntryFold::Ready(state);
