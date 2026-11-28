@@ -190,15 +190,6 @@ impl Vault {
                     "a legal hold wrote no sealed capture",
                 ))?;
             hold_store::put_hold_in_txn(&self.store, txn, &hold)?;
-            if let Some((capture, records)) = &sealed.records {
-                hold_store::sealed_records::put_in_txn(
-                    &self.store,
-                    txn,
-                    hold_id.as_bytes(),
-                    capture.as_bytes(),
-                    records,
-                )?;
-            }
             let row = LegalHoldEvent {
                 clone_fingerprint: Some(first.fingerprint),
                 ..hold_store::events::event_row(
