@@ -11,7 +11,7 @@
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
-use super::super::super::roles::{DREAMER_VERDICT_ROLE, RoleCall};
+use super::super::super::roles::RoleCall;
 use super::{Decider, ScopedRead, VERDICT_CEILING};
 use crate::Vault;
 use crate::dreamer_consolidation::call_labels::CallLabelMap;
@@ -104,7 +104,7 @@ pub(in crate::dreamer_consolidation) async fn decide_pack_with_charges(
     let vault = read.step.vault;
     let seal = |request: LlmRequest| -> Result<LlmRequest> {
         let mut request = vault
-            .authorize_model_role(DREAMER_VERDICT_ROLE, request, &read.call.inference)?
+            .authorize_dreamer_verdict(request, &read.call.inference)?
             .into_request();
         super::super::super::roles::bind_reasoning(vault, read.call.backend, &mut request)?;
         Ok(request)

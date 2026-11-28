@@ -264,15 +264,27 @@ fn native_view_of(row: &ModelRegistryRow) -> bool {
         )
 }
 
+/// Which calls the extraction-egress check judges.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ExtractionEgressScope {
+    /// Calls whose purpose is admitted as extraction (the caller's label).
+    AdmittedAsExtraction,
+    /// Every call: the Dreamer's own verdict calls, whatever purpose they carry.
+    EveryCall,
+}
+
 /// The same final-request predicate for role-bound calls and raw HTTP calls,
-/// for extraction and every purpose admitted as one.
+/// for extraction and every purpose admitted as one, and for every Dreamer
+/// verdict call.
 fn admit_extraction(
     snapshot: &InferencePolicySnapshot,
     request: &LlmRequest,
     binding: &BoundInference,
     host: &HostInferenceContext<'_>,
+    scope: ExtractionEgressScope,
 ) -> Result<()> {
-    if *admitted_as(&request.envelope.purpose) != CallPurpose::Extraction
+    if (scope == ExtractionEgressScope::AdmittedAsExtraction
+        && *admitted_as(&request.envelope.purpose) != CallPurpose::Extraction)
         || binding.locality == ModelLocality::OnDevice
     {
         return Ok(());
@@ -295,6 +307,7 @@ impl Vault {
         role: Option<ModelRole>,
         request: LlmRequest,
         host: &HostInferenceContext<'_>,
+        scope: ExtractionEgressScope,
     ) -> Result<AuthorizedInference> {
         let mut request = request;
         let txn = self.store.env.read_txn()?;
@@ -302,7 +315,7 @@ impl Vault {
             InferencePolicySnapshot::load(self, &txn, role, &host.binding, &mut request)?;
         let binding = snapshot.bind(&request, host)?;
         drop(txn); // Host code may read the vault; never call it under an LMDB reader.
-        admit_extraction(&snapshot, &request, &binding, host)?;
+        admit_extraction(&snapshot, &request, &binding, host, scope)?;
         Ok(AuthorizedInference { request, binding })
     }
     pub fn authorize_model_role(
@@ -311,14 +324,43 @@ impl Vault {
         request: LlmRequest,
         host: &HostInferenceContext<'_>,
     ) -> Result<AuthorizedInference> {
-        self.authorize_inference(Some(role), request, host)
+        self.authorize_inference(
+            Some(role),
+            request,
+            host,
+            ExtractionEgressScope::AdmittedAsExtraction,
+        )
     }
     pub fn authorize_raw_inference(
         &self,
         request: LlmRequest,
         host: &HostInferenceContext<'_>,
     ) -> Result<AuthorizedInference> {
-        self.authorize_inference(None, request, host)
+        self.authorize_inference(
+            None,
+            request,
+            host,
+            ExtractionEgressScope::AdmittedAsExtraction,
+        )
+    }
+    /// A Dreamer verdict call (the conflict pack, a merged value, nightly
+    /// links, an arc-open read): bound on the verdict role and judged as an
+    /// extraction whatever purpose it carries, so a bound lowered after the
+    /// pass was prepared, or a host with no egress predicate, refuses at the
+    /// call. A caller-labelled consolidation call on the raw and role doors is
+    /// judged by its purpose, as before: the label is the caller's to set.
+    pub(crate) fn authorize_dreamer_verdict(
+        &self,
+        request: LlmRequest,
+        host: &HostInferenceContext<'_>,
+    ) -> Result<AuthorizedInference> {
+        self.authorize_inference(
+            Some(crate::dreamer_consolidation::DREAMER_VERDICT_ROLE),
+            request,
+            host,
+            // The Dreamer's own verdict calls are judged whatever purpose they carry (FIX CONSOLIDATION-CALL-EXTRACTION-EGRESS-GATE).
+            ExtractionEgressScope::EveryCall,
+        )
     }
 }
 
