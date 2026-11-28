@@ -210,6 +210,7 @@ impl HostSelfDispatcher<'_> {
                     &**door,
                 ),
             );
+            self.end_program_run_on_authority_refusal(&outcome);
             if let (Some(site), SelfDispatchOutcome::AgentVerb(answer)) = (read_site, &outcome) {
                 self.note_verb_read_worlds(site, answer, captured);
             }

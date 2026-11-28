@@ -34,6 +34,11 @@ pub struct ProgramRecipePin {
     pub executor: String,
     /// The arguments, as the JSON text armed.
     pub args: String,
+    /// The project the program's run is one run of, when it was armed for one: an occurrence's
+    /// run sends in it, and the run stops waking at its end. `None` for a program armed for no
+    /// project, whose occurrence runs send in none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<EntityId>,
 }
 
 impl ProgramRecipePin {
@@ -55,6 +60,11 @@ impl ProgramRecipePin {
             hasher.update(part);
         }
         hasher.update(&self.contract_digest);
+        // A pin armed for no project keeps the revision it always had.
+        if let Some(project) = &self.project {
+            hasher.update(b"project");
+            hasher.update(project.as_bytes());
+        }
         *hasher.finalize().as_bytes()
     }
 }
@@ -81,6 +91,25 @@ pub struct ArmTurnProgram {
     /// subscriptions moving (untangle slice 6.8).
     #[serde(default, skip_serializing_if = "ProgramTrigger::is_turn")]
     pub trigger: ProgramTrigger,
+    /// The exact SKILL revision the caller means to arm: arming refuses when the skill's current
+    /// revision is another. Absent, the current revision is armed, as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected: Option<ExpectedSkillRevision>,
+    /// The project this arming is one run of: the arming actor leads it, sits on its board or
+    /// holds a seat in it, and the SKILL is a shared one or a fork that project lists. Only a
+    /// trigger other than a turn names one. Its run sends in that project, and the program stops
+    /// waking at the run's end: an entry that returns no pending answer, a write the door
+    /// refused, or a call refused for authority.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<EntityId>,
+}
+
+/// The SKILL revision an arming expects: its version and its content hash (64 lowercase hex).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ExpectedSkillRevision {
+    pub version: String,
+    pub content_hash: String,
 }
 
 /// Which of the caller's own armed programs to disarm.

@@ -47,6 +47,7 @@ mod hold_index;
 mod index;
 mod lease;
 mod project;
+mod project_run;
 mod read;
 mod rebind;
 mod release;
@@ -84,6 +85,7 @@ pub(crate) use self::bodies::{
 };
 pub(crate) use self::hold_index::{index_program_hold_in_txn, unindex_program_hold_in_txn};
 pub(crate) use self::project::program_run_project_in_txn;
+pub(crate) use self::project_run::{answer_is_pending, end_project_run_in_txn};
 pub use self::read::{
     OwedWakeHoldView, ProgramAdmissionOutcomeView, ProgramCheckpointCallView,
     ProgramCheckpointConsentView, ProgramCheckpointHeadView, ProgramCheckpointRequest,
@@ -125,8 +127,8 @@ pub(crate) use self::trigger::{
     release_program_wakes,
 };
 pub use self::types::{
-    ArmTurnProgram, DisarmTurnProgram, LandedTurnRef, ProgramRecipePin, ProgramTrigger,
-    TurnProgramAdmissionOutcome, TurnProgramAdmissionReceipt, TurnProgramDrain,
+    ArmTurnProgram, DisarmTurnProgram, ExpectedSkillRevision, LandedTurnRef, ProgramRecipePin,
+    ProgramTrigger, TurnProgramAdmissionOutcome, TurnProgramAdmissionReceipt, TurnProgramDrain,
     TurnProgramRegistration,
 };
 pub(crate) use self::wake::{
