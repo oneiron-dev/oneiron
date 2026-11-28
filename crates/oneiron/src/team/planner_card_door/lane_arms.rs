@@ -17,7 +17,7 @@ use crate::experiment_arm::{
 };
 use crate::gpu_line::{
     Bucket, ClaimState, GpuLine, LineRefusal, PeriodRoom, RuleRef, Track, claims_at_rung_in_txn,
-    line_refusals_in_txn, period_view_in_txn,
+    line_in_txn, line_refusals_in_txn, period_view_in_txn,
 };
 use crate::{EntityId, Vault};
 
@@ -93,6 +93,43 @@ pub struct PlannerCardBucket {
     pub capacity: u64,
     pub used: u64,
     pub left: u64,
+}
+
+/// The line that seats `family` (section 5.1: family -> line). A family is a
+/// child project of its lane (`vault.gpu.lines.families.admit` refuses any
+/// other), so its line is one set on a project it descends from over the
+/// stored parents ([`Vault::project_lines_in_txn`], the structure a setting
+/// read walks: a line here only ever adds a check) that seats it: the one
+/// where its seat is live, else the one holding its newest seat by admission
+/// time. `None` when no such line ever seated it.
+///
+/// # Errors
+///
+/// A stored parent that is not an id; a store read failure.
+pub(super) fn family_line_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    family: EntityId,
+) -> Result<Option<GpuLine>> {
+    let mut newest: Option<(u64, GpuLine)> = None;
+    for project in vault.project_lines_in_txn(txn, family)? {
+        let Some(line) = line_in_txn(vault, txn, &project)? else {
+            continue;
+        };
+        if line.seat(&family).is_some() {
+            return Ok(Some(line));
+        }
+        let Some(at_ms) = line.last_seat(&family).map(|seat| seat.admitted_at_ms) else {
+            continue;
+        };
+        if newest
+            .as_ref()
+            .is_none_or(|(newest_ms, _)| at_ms > *newest_ms)
+        {
+            newest = Some((at_ms, line));
+        }
+    }
+    Ok(newest.map(|(_, line)| line))
 }
 
 /// The `lane_arms` part of `family` on `line` at `now_ms`, the page after

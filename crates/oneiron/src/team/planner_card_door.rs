@@ -39,7 +39,7 @@ use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::gpu_line::{GpuLine, LineRole, doors_caller, family_line_in_txn};
+use crate::gpu_line::{GpuLine, LineRole, doors_caller};
 use crate::learning::doors::{LearningCellKey, MeasuredLearningEstimate};
 use crate::memory::{Memory, MemoryResult};
 use crate::receipt::task_type_ref::TypeRef;
@@ -52,6 +52,7 @@ use super::payoff::{
 
 mod lane_arms;
 
+use lane_arms::family_line_in_txn;
 pub use lane_arms::{
     PLANNER_CARD_ARMS_PAGE, PlannerCardArm, PlannerCardBucket, PlannerCardLaneArms, PlannerCardRoom,
 };
@@ -321,7 +322,7 @@ pub fn planner_card_as_owner(
     let txn = vault.store.env.read_txn()?;
     owner.revalidate_in_txn(vault, &txn)?;
     let project = input.project()?;
-    let line = family_line_in_txn(vault, &txn, &project)?;
+    let line = family_line_in_txn(vault, &txn, project)?;
     Ok(planner_card_read_in_txn(vault, &txn, input, project, line.as_ref(), now_ms)?.0)
 }
 
@@ -349,7 +350,7 @@ pub fn planner_card_as(
     let txn = vault.store.env.read_txn().map_err(Error::from)?;
     memory.verb_grant_caller_admits_in_txn(&txn, owner, PLANNER_CARD_VERB)?;
     let project = input.project()?;
-    let line = family_line_in_txn(vault, &txn, &project)?;
+    let line = family_line_in_txn(vault, &txn, project)?;
     if let Some(line) = &line {
         doors_caller::admit_in_txn(memory, &txn, owner, PLANNER_CARD_VERB, line.project)?
             .require_role(line, &LINE_READ_ROLES, PLANNER_CARD_VERB)?;
