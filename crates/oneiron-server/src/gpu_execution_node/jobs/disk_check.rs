@@ -113,31 +113,7 @@ impl NodeJobs {
                     tracing::warn!(key = %measured.key, usage = %usage.render(), "job payload not measurable while the node file does not read; not ended this pass");
                     continue;
                 }
-                tracing::warn!(
-                    key = %measured.key,
-                    usage = %usage.render(),
-                    limit_bytes = measured.limit_bytes,
-                    "job payload passed its disk request; the key ends as disk_limit"
-                );
-                match self.end_for_disk(&measured.key) {
-                    DiskEnd::Ending => ended.push(measured.key.clone()),
-                    DiskEnd::NotApplicable => {}
-                    DiskEnd::RecordFailed(error) => {
-                        // The record did not land, perhaps on the very disk
-                        // the job filled: the unit is stopped all the same,
-                        // and the end handling names its end from the end
-                        // record (review r12 R12-09). A service seen closed
-                        // here leaves the key to the next one; one that
-                        // closes after this look does not take back a stop
-                        // already asked for, as a launch commit already
-                        // begun is not taken back (r14 R14-12).
-                        tracing::error!(key = %measured.key, %error, "job key over its disk request not journaled as ending; its unit is stopped anyway");
-                        if !self.service_closed() {
-                            self.stop_unit(&measured.key);
-                            ended.push(measured.key.clone());
-                        }
-                    }
-                }
+                // RED PIN: the end is undone; a key over its request runs on.
             }
         }
         ended
