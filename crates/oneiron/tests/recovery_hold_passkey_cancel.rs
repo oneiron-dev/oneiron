@@ -511,6 +511,7 @@ fn the_wire_takes_a_passkeys_cancel_and_refuses_its_it_is_me() {
             },
             cosigns: Vec::new(),
             ts: T0,
+            overlay_seed: None,
         };
         let transcript = authority_transcript(&entry).expect("a transcript");
         entry.signer.signature = passkey_assertion(&webauthn_challenge(&transcript));

@@ -838,6 +838,7 @@ impl CoOwner {
             },
             cosigns: Vec::new(),
             ts: T0,
+            overlay_seed: None,
         };
         let transcript = authority_transcript(&row).expect("the transcript");
         row.signer.signature = key.sign(&transcript).to_bytes().to_vec();
@@ -1661,6 +1662,7 @@ fn the_root_key_cannot_answer_its_own_hold() {
         },
         cosigns: Vec::new(),
         ts: T0,
+        overlay_seed: None,
     };
     let transcript = authority_transcript(&row).expect("the transcript");
     row.signer.signature = r_signing.sign(&transcript).to_bytes().to_vec();
@@ -1903,7 +1905,10 @@ fn an_agent_key_never_answers_a_hold() {
         },
         cosigns: Vec::new(),
         ts: T0,
+        overlay_seed: None,
     };
+    enroll.overlay_seed = oneiron_authority::authority::authority_overlay_seed_for(&enroll.op)
+        .expect("authority overlay seed");
     let transcript = authority_transcript(&enroll).expect("the transcript");
     enroll.signer.signature = keeper.sign(&transcript).to_bytes().to_vec();
     fixture
@@ -1932,6 +1937,7 @@ fn an_agent_key_never_answers_a_hold() {
         },
         cosigns: Vec::new(),
         ts: T0,
+        overlay_seed: None,
     };
     let transcript = authority_transcript(&row).expect("the transcript");
     row.signer.signature = agent.sign(&transcript).to_bytes().to_vec();
@@ -2347,6 +2353,7 @@ fn a_foreign_anchors_cancel_never_stops_a_hold() {
         },
         cosigns: Vec::new(),
         ts: T0,
+        overlay_seed: None,
     };
     let transcript = authority_transcript(&published).expect("the transcript");
     published.signer.signature = anchor.sign(&transcript).to_bytes().to_vec();
@@ -2376,6 +2383,7 @@ fn a_foreign_anchors_cancel_never_stops_a_hold() {
         },
         cosigns: Vec::new(),
         ts: T0,
+        overlay_seed: None,
     };
     let transcript = authority_transcript(&row).expect("the transcript");
     row.signer.signature = anchor.sign(&transcript).to_bytes().to_vec();
@@ -2419,6 +2427,7 @@ fn a_foreign_anchors_cancel_never_stops_a_hold() {
             signature: vec![0; 64],
         }],
         ts: T0,
+        overlay_seed: None,
     };
     let transcript = authority_transcript(&cosigned).expect("the transcript");
     cosigned.cosigns[0].signature = stranger.sign(&transcript).to_bytes().to_vec();
@@ -2500,6 +2509,7 @@ fn a_fresh_roots_anchor_beside_the_root_key_never_stops_a_hold() {
         },
         cosigns: Vec::new(),
         ts: T0,
+        overlay_seed: None,
     };
     let transcript = authority_transcript(&published).expect("the transcript");
     published.signer.signature = anchor.sign(&transcript).to_bytes().to_vec();
@@ -2541,6 +2551,7 @@ fn a_fresh_roots_anchor_beside_the_root_key_never_stops_a_hold() {
             signature: vec![0; 64],
         }],
         ts: T0,
+        overlay_seed: None,
     };
     let transcript = authority_transcript(&row).expect("the transcript");
     row.cosigns[0].signature = r_signing.sign(&transcript).to_bytes().to_vec();
@@ -3979,6 +3990,7 @@ fn hold_signed_by_hand(
         },
         cosigns: Vec::new(),
         ts: T0,
+        overlay_seed: None,
     };
     let transcript = authority_transcript(&row).expect("the transcript");
     row.signer.signature = r_signing.sign(&transcript).to_bytes().to_vec();
@@ -4074,7 +4086,10 @@ fn a_hold_never_revokes_a_lost_key_that_is_no_owner_key_of_its_owner() {
         },
         cosigns: Vec::new(),
         ts: T0,
+        overlay_seed: None,
     };
+    enroll.overlay_seed = oneiron_authority::authority::authority_overlay_seed_for(&enroll.op)
+        .expect("authority overlay seed");
     let transcript = authority_transcript(&enroll).expect("the transcript");
     enroll.signer.signature = keeper.sign(&transcript).to_bytes().to_vec();
     fixture

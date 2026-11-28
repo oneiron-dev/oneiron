@@ -277,6 +277,7 @@ impl Served {
             },
             cosigns: Vec::new(),
             ts: binding.ts,
+            overlay_seed: None,
         };
         let transcript = authority_transcript(&entry).expect("the revoke's transcript");
         entry.signer.signature = key.sign(&transcript).to_bytes().to_vec();

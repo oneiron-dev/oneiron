@@ -148,6 +148,7 @@ fn unsigned_recovery_hold_answer(
         },
         cosigns: Vec::new(),
         ts: now,
+        overlay_seed: None,
     })
 }
 
@@ -475,6 +476,7 @@ impl Vault {
             },
             cosigns: Vec::new(),
             ts: now,
+            overlay_seed: None,
         };
         entry.validate_shape().map_err(|_| invalid_authority())?;
         entry.signer.signature = sign(&authority_transcript(&entry)?)?;

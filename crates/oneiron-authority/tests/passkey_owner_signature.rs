@@ -177,6 +177,7 @@ fn revoke_signed_by(signature: Vec<u8>) -> AuthorityLogEntry {
         },
         cosigns: Vec::new(),
         ts: 0,
+        overlay_seed: None,
     }
 }
 

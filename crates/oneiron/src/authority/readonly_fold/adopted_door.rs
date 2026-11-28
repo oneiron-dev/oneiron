@@ -112,7 +112,7 @@ fn fold_past_built_image(
     let mut tail = Vec::new();
     let mut bodies = BTreeMap::new();
     for (_, body) in authority_log_rows_in_txn(store, &txn)? {
-        let entry = decode_stored_authority_log_body(&body)?;
+        let entry = decode_stored_authority_log_body(store, &txn, &body)?;
         let hash = authority_entry_hash(&entry)?;
         if !image.rows.contains_key(&hash) {
             tail.push((hash, entry.clone()));

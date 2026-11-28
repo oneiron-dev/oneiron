@@ -190,10 +190,14 @@ pub(super) fn rebuilt_door_view(
     rebuilt(store, txn, &Inputs::read(store, txn)?, Snapshot::Other)
 }
 
-fn decode_row(body: &[u8]) -> crate::error::Result<KeptRow> {
+/// One stored row, opened with its overlay record when it seals one (census
+/// L5-22).
+fn decode_row(store: &Store, txn: &heed::RoTxn<'_>, body: &[u8]) -> crate::error::Result<KeptRow> {
     #[cfg(oneiron_test_support)]
     DOOR_VIEW_ROWS_DECODED.with(|rows| rows.set(rows.get() + 1));
-    Ok(Arc::new(decode_authority_log_entry_body(body)?))
+    Ok(Arc::new(open_vault_authority_body_in_txn(
+        store, txn, body,
+    )?))
 }
 
 /// The counts of `entries`, the stored rows read whole, and of the rows
@@ -258,7 +262,7 @@ fn rebuilt(
             ids.insert(id, None);
             continue;
         }
-        let entry = decode_row(&body)?;
+        let entry = decode_row(store, txn, &body)?;
         ids.insert(id, Some(Arc::clone(&entry)));
         entries.push(entry);
     }
@@ -428,7 +432,7 @@ fn extended_view(
             rows.ids.insert(id, None);
             continue;
         }
-        let entry = decode_row(&authority_log_body_in_txn(store, txn, &id)?)?;
+        let entry = decode_row(store, txn, &authority_log_body_in_txn(store, txn, &id)?)?;
         projection.insert(authority_entry_hash(&entry)?, &entry.parent_hashes);
         rows.ids.insert(id, Some(Arc::clone(&entry)));
         entries.push(entry);

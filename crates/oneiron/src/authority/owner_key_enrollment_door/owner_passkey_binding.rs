@@ -156,6 +156,7 @@ impl Vault {
             },
             cosigns: Vec::new(),
             ts: self.instant_in_txn(&txn)?.secs(),
+            overlay_seed: None,
         };
         let challenge = webauthn_challenge(&authority_transcript(&entry)?);
         let body = encode_value(&entry_value(&entry, true))?;

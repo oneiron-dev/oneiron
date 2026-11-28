@@ -145,6 +145,7 @@ fn tail_entry(image: &AuthorityCheckpointV2, row: &AuthorityCheckpointRow) -> Au
         },
         cosigns: Vec::new(),
         ts: row.seq,
+        overlay_seed: None,
     }
 }
 

@@ -244,20 +244,33 @@ fn held_history_request_in_txn(
     let mut below = Vec::new();
     let mut vault_id = None;
     for (_, body) in super::readonly_fold::authority_log_rows_in_txn(store, txn)? {
-        let entry = decode_authority_log_entry_body(&body)?;
-        let hash = authority_entry_hash(&entry)?;
+        let read = read_authority_log_entry_body(&body)?;
+        let hash = match &read {
+            AuthorityEntryRead::Open(entry) => authority_entry_hash(entry)?,
+            AuthorityEntryRead::Sealed(scaffold) => scaffold.hash,
+        };
         held.insert(hash);
         match &believed {
-            None => named.extend(entry.parent_hashes.iter().copied()),
+            None => named.extend(read.parent_hashes().iter().copied()),
             Some(view) => {
-                if view.believes(&entry) {
+                // The door view counts each row opened with its record
+                // (`door_view`), so a sealed row is judged opened here too.
+                let opened;
+                let entry = match &read {
+                    AuthorityEntryRead::Open(entry) => entry,
+                    AuthorityEntryRead::Sealed(_) => {
+                        opened = open_vault_authority_body_in_txn(store, txn, &body)?;
+                        &opened
+                    }
+                };
+                if view.believes(entry) {
                     below.extend(entry.parent_hashes.iter().copied());
                 }
                 parents_of.insert(hash, entry.parent_hashes.clone());
             }
         }
         if vault_id.is_none() {
-            vault_id = entry.vault_id;
+            vault_id = read.vault_id();
         }
     }
     // A believed row rests on every row below it, whoever signed that row:
@@ -311,13 +324,16 @@ fn adopted_every_tail_gaps_in_txn(
     let mut tail = BTreeSet::new();
     let mut parents = BTreeSet::new();
     for (_, body) in super::readonly_fold::authority_log_rows_in_txn(store, txn)? {
-        let entry = decode_authority_log_entry_body(&body)?;
-        let hash = authority_entry_hash(&entry)?;
+        let read = read_authority_log_entry_body(&body)?;
+        let hash = match &read {
+            AuthorityEntryRead::Open(entry) => authority_entry_hash(entry)?,
+            AuthorityEntryRead::Sealed(scaffold) => scaffold.hash,
+        };
         if covered.contains(&hash) || image.rows.contains_key(&hash) {
             held_covered.insert(hash);
         } else {
             tail.insert(hash);
-            parents.extend(entry.parent_hashes.iter().copied());
+            parents.extend(read.parent_hashes().iter().copied());
         }
     }
     Ok(parents

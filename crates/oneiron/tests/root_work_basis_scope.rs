@@ -257,6 +257,7 @@ fn signed(
             .map(|cosigner| signature_slot(key_of(cosigner)))
             .collect(),
         ts: 1,
+        overlay_seed: None,
     };
     let transcript = authority_transcript(&row).expect("the transcript");
     row.signer.signature = signer.sign(&transcript).to_bytes().to_vec();

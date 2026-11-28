@@ -7,8 +7,8 @@ use heed::RoTxn;
 
 use crate::Vault;
 use crate::authority::{
-    AuthorityOp, authority_entry_hash, authority_log_entity_id, decode_authority_log_entry_body,
-    genesis_vault_id, validate_authority_log_entry_body_bytes,
+    AuthorityOp, authority_entry_hash, authority_log_entity_id, genesis_vault_id,
+    open_vault_authority_body_in_txn,
 };
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::entity_id::EntityId;
@@ -44,8 +44,7 @@ pub(super) fn admit_federated_authority_log(
     body: &[u8],
     beside: crate::authority::RowsBeside<'_>,
 ) -> Result<()> {
-    validate_authority_log_entry_body_bytes(body)?;
-    let entry = decode_authority_log_entry_body(body)?;
+    let entry = open_vault_authority_body_in_txn(&vault.store, txn, body)?;
     if authority_log_entity_id(&entry)? != *id {
         return Err(Error::Record(RecordError::AuthorityLogStoreKeyMismatch {
             id: *id,

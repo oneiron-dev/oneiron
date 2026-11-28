@@ -157,6 +157,7 @@ impl Vault {
             },
             cosigns: Vec::new(),
             ts: self.instant_in_txn(&txn)?.secs(),
+            overlay_seed: None,
         };
         let transcript = authority_transcript(&entry)?;
         let body = encode_value(&entry_value(&entry, true))?;

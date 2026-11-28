@@ -20,7 +20,7 @@ use std::collections::BTreeMap;
 use crate::authority::{
     AuthorityEntryHash, AuthorityKey, AuthorityOp, HostSlipIssuer, OwnerProofSigner,
     RESIDENCE_REASON_MAX, ResidenceAct, ResidenceDirective, ResidenceResult, ResidenceResultStatus,
-    authority_entry_hash, decode_authority_log_entry_body, invalid_authority, next_sequence,
+    authority_entry_hash, invalid_authority, next_sequence, open_vault_authority_body_in_txn,
     sign_side_entry_with_owner_proof, standing_rows,
 };
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
@@ -197,7 +197,7 @@ pub(crate) fn directive_states_in_txn(
         {
             continue;
         }
-        let entry = decode_authority_log_entry_body(body)?;
+        let entry = open_vault_authority_body_in_txn(&vault.store, txn, body)?;
         rows.insert(authority_entry_hash(&entry)?, entry);
     }
     // Carried rows the evidence cannot read leave the stored rows alone, as

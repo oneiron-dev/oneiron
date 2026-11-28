@@ -86,12 +86,14 @@ impl Vault {
             return Err(authority_refused(TOO_MANY_HEADS));
         }
         let now = self.instant_in_txn(txn)?.secs();
+        let overlay_seed = oneiron_authority::authority::authority_overlay_seed_for(&op)?;
         let mut entry = AuthorityLogEntry {
             schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
             vault_id: Some(vault_id),
             seq: next_sequence(&fold, key)?,
             parent_hashes: parents.into_iter().collect(),
             op,
+            overlay_seed,
             signer: AuthoritySignature {
                 suite: key.suite(),
                 public_key: key.clone(),

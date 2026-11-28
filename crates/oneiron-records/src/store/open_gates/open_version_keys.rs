@@ -3,6 +3,17 @@
 
 pub const MAX_DBS: u32 = 32;
 
+/// v46 (census L5-22, the authority overlay): an AUTHORITY_LOG row's op keeps
+/// its erasable leaves (a device's attestation evidence, a Grant's repo bounds
+/// and wallet ref, a residence refusal reason, an owner-work result's refs) in
+/// a sealed overlay record beside the row, and the stored body carries a
+/// keyed commitment in their place. A row written before it that holds such a
+/// leaf in plaintext no longer decodes. The authority fold also keeps the rows
+/// that fold as structure only (sealed, their overlay record not open here),
+/// so the authority fold schema moves with it: a stored checkpoint image
+/// written before it no longer decodes. No old-meaning reader or migration is
+/// provided (the lead's M-1 stored-change rule, path "loud").
+///
 /// v45 (FIX ACT-STANDS-RAW-HEAD-SKIPS-KEY-ROTATION, FIX
 /// MACHINE-CROSSING-REMOVALS-UNMAKE-CARRIED-OWNER-ACTS and FIX
 /// MACHINE-CROSSING-REMOVALS-UNMAKE-CARRIED-OWNER-CHOICES): stored
@@ -307,7 +318,7 @@ pub const MAX_DBS: u32 = 32;
 /// `RECEIPT_FAMILY_INDEX_VERSION` requires bumping this version too.
 /// v27 hashes full run/group identifiers in their v2 secondary-index keys.
 /// v26 is reserved for the separately landing attempt-record v4 format.
-pub const STORAGE_ABI_VERSION: u16 = 45;
+pub const STORAGE_ABI_VERSION: u16 = 46;
 
 pub const STORAGE_SCHEMA_VERSION: u16 = 1;
 

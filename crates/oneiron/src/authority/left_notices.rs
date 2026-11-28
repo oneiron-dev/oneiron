@@ -228,7 +228,8 @@ impl Vault {
         to: &AuthorityKey,
     ) -> Result<bool> {
         for row in self.leave_notice_handoff_in_txn(txn, fold, to, &BTreeSet::new())? {
-            if decode_authority_log_entry_body(&row)?.signer_key() == from {
+            let read = read_authority_log_entry_body(&row)?;
+            if &read.signer().public_key == from {
                 return Ok(true);
             }
         }

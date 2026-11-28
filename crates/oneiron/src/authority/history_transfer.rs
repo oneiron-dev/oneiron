@@ -59,7 +59,7 @@ pub(super) fn history_in_txn(
 ) -> Result<BTreeMap<AuthorityEntryHash, (Vec<u8>, AuthorityLogEntry)>> {
     let mut history = BTreeMap::new();
     for (id, bytes) in authority_log_rows_in_txn(&vault.store, txn)? {
-        let entry = decode_stored_authority_log_body(&bytes)?;
+        let entry = decode_stored_authority_log_body(&vault.store, txn, &bytes)?;
         let hash = authority_entry_hash(&entry)?;
         if authority_log_entity_id_from_hash(&hash)? != id {
             return Err(Error::CorruptedIndex("authority history key"));
@@ -665,12 +665,14 @@ impl Vault {
             .unwrap_or(0)
             .checked_add(1)
             .ok_or_else(invalid_authority)?;
+        let op = AuthorityOp::ReRoot { new_device };
+        let overlay_seed = authority_overlay_seed_for(&op)?;
         Ok(AuthorityLogEntry {
             schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
             vault_id: Some(vault_id),
             seq,
             parent_hashes: parents.into_iter().collect(),
-            op: AuthorityOp::ReRoot { new_device },
+            op,
             signer: AuthoritySignature {
                 suite: signer_key.suite(),
                 public_key: signer_key,
@@ -678,6 +680,7 @@ impl Vault {
             },
             cosigns: Vec::new(),
             ts: crate::unix_seconds_now(),
+            overlay_seed,
         })
     }
 

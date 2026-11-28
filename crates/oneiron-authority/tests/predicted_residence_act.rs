@@ -46,6 +46,7 @@ fn directive_entry(act: ResidenceAct) -> Vec<u8> {
         signer: signature(b"placeholder"),
         cosigns: Vec::new(),
         ts: 10,
+        overlay_seed: None,
     };
     entry.signer = signature(&authority_transcript(&entry).expect("a transcript"));
     encode_authority_log_entry_body(&entry).expect("an encoded entry")

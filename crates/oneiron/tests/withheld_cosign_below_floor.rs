@@ -238,12 +238,15 @@ fn row_signed_by(
 ) -> AuthorityLogEntry {
     let mut cosigners = cosigners.to_vec();
     cosigners.sort_by_key(|cosigner| key_of(cosigner));
+    let overlay_seed = oneiron_authority::authority::authority_overlay_seed_for(&op)
+        .expect("authority overlay seed");
     let mut entry = AuthorityLogEntry {
         schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
         vault_id: Some(rooted.vault_id),
         seq,
         parent_hashes: parents,
         op,
+        overlay_seed,
         signer: signature_slot(key_of(signer)),
         cosigns: cosigners
             .iter()
@@ -1181,7 +1184,10 @@ fn peer_genesis(host: &SigningKey) -> AuthorityLogEntry {
         signer: signature_slot(key_of(host)),
         cosigns: Vec::new(),
         ts: 1,
+        overlay_seed: None,
     };
+    entry.overlay_seed = oneiron_authority::authority::authority_overlay_seed_for(&entry.op)
+        .expect("authority overlay seed");
     let transcript = authority_transcript(&entry).expect("transcript");
     entry.signer.signature = host.sign(&transcript).to_bytes().to_vec();
     entry

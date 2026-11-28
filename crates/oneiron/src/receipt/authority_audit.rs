@@ -38,7 +38,9 @@
 
 use super::kernel::hex_lower;
 use crate::Vault;
-use crate::authority::{AuthorityFold, RestoredJoinEnrolment, adopted_evidence_in_txn};
+use crate::authority::{
+    AuthorityFold, RestoredJoinEnrolment, adopted_evidence_in_txn, open_vault_authority_body_in_txn,
+};
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -48,7 +50,7 @@ use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
 use crate::request_limits::page_limit_zero_as_one;
 use oneiron_authority::authority::{
     AuthorityKey, AuthorityLogEntry, AuthorityOp, FederationLifecycleKind, FullCopyMark,
-    OwnerWorkKind, authority_entry_hash, decode_authority_log_entry_body,
+    OwnerWorkKind, authority_entry_hash,
 };
 use oneiron_contracts::memory::MemoryResult;
 mod agent_grant_act;
@@ -178,7 +180,7 @@ impl Vault {
                         }
                         continue;
                     }
-                    let entry = decode_authority_log_entry_body(&record.body)?;
+                    let entry = open_vault_authority_body_in_txn(&self.store, &txn, &record.body)?;
                     let mut row = project_row(id, &record, &entry, &fold, &issues)?;
                     agent_grant_act::pair_marked_withdrawal(
                         self,

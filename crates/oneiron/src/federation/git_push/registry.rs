@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::Vault;
 use crate::authority::{
-    AgentGrantChange, AuthorityOp, authority_entry_hash, decode_authority_log_entry_body,
+    AgentGrantChange, AuthorityOp, authority_entry_hash, open_vault_authority_body_in_txn,
 };
 use crate::consent::{ConsentDomain, ConsentGrantStatus, ConsentRegistryRow, ConsentRevokeAction};
 use crate::entity_id::EntityId;
@@ -115,7 +115,7 @@ impl Vault {
             if row.entity_type != ENTITY_TYPE_AUTHORITY_LOG || row.body.is_empty() {
                 continue;
             }
-            let Ok(entry) = decode_authority_log_entry_body(&row.body) else {
+            let Ok(entry) = open_vault_authority_body_in_txn(&self.store, txn, &row.body) else {
                 continue;
             };
             // A membership change no host issuer signed, signed later by its

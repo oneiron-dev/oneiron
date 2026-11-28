@@ -18,7 +18,7 @@ use std::collections::BTreeMap;
 use crate::Vault;
 use crate::authority::{
     AgentGrantActRecord, AgentGrantChange, AuthorityEntryHash, AuthorityOp, authority_entry_hash,
-    decode_authority_log_entry_body,
+    open_vault_authority_body_in_txn,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
@@ -172,7 +172,7 @@ fn counted_matching_mint_in_txn(
         if row.entity_type != ENTITY_TYPE_AUTHORITY_LOG || row.body.is_empty() {
             continue;
         }
-        let Ok(entry) = decode_authority_log_entry_body(&row.body) else {
+        let Ok(entry) = open_vault_authority_body_in_txn(&vault.store, txn, &row.body) else {
             continue;
         };
         if names(&entry.op) {

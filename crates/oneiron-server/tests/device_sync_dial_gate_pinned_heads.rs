@@ -72,6 +72,7 @@ fn signed(
         },
         cosigns: Vec::new(),
         ts: 1,
+        overlay_seed: None,
     };
     let transcript = authority_transcript(&row).expect("the transcript");
     row.signer.signature = signer.sign(&transcript).to_bytes().to_vec();

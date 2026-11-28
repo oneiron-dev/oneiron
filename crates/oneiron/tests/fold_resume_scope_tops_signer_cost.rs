@@ -121,6 +121,7 @@ fn entry(row: &Row) -> AuthorityLogEntry {
         },
         cosigns: Vec::new(),
         ts: row.seq,
+        overlay_seed: None,
     }
 }
 

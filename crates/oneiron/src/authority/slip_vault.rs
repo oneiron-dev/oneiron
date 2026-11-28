@@ -116,6 +116,7 @@ impl HostSlipIssuer {
         op: AuthorityOp,
         now: u64,
     ) -> Result<AuthorityLogEntry> {
+        let overlay_seed = authority_overlay_seed_for(&op)?;
         let mut entry = AuthorityLogEntry {
             schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
             vault_id,
@@ -129,6 +130,7 @@ impl HostSlipIssuer {
             },
             cosigns: Vec::new(),
             ts: now,
+            overlay_seed,
         };
         self.resign_entry(&mut entry)?;
         Ok(entry)
@@ -1316,12 +1318,14 @@ impl Vault {
             .append_sequences
             .get(&public_key)
             .map_or(0, |seq| seq.saturating_add(1));
+        let overlay_seed = oneiron_authority::authority::authority_overlay_seed_for(&op)?;
         let mut entry = AuthorityLogEntry {
             schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
             vault_id: fold.vault_id,
             seq,
             parent_hashes: fold.append_heads.iter().copied().collect(),
             op,
+            overlay_seed,
             signer: AuthoritySignature {
                 suite: AuthoritySignatureSuite::Ed25519,
                 public_key,

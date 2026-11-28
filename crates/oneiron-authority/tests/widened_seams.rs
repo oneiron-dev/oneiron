@@ -62,6 +62,7 @@ fn signed_entry(cosigners: &[u8]) -> AuthorityLogEntry {
             .map(|seed| ed25519_signature(*seed, b"placeholder"))
             .collect(),
         ts: 10,
+        overlay_seed: None,
     };
     // The transcript names the signer and cosign keys but no signature bytes.
     let transcript = authority_transcript(&entry).expect("a transcript");

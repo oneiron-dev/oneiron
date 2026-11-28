@@ -41,6 +41,7 @@ use oneiron::authority::{
     authority_transcript, genesis_vault_id, machine_profile_proof_transcript,
 };
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
+use oneiron_authority::authority::authority_overlay_seed_for;
 
 const AT: TimeRange = TimeRange { start: 2, end: 2 };
 
@@ -69,6 +70,7 @@ fn signed(
     signer: &SigningKey,
 ) -> AuthorityLogEntry {
     let key = key_of(signer);
+    let overlay_seed = authority_overlay_seed_for(&op).expect("authority overlay seed");
     let mut entry = AuthorityLogEntry {
         schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
         vault_id,
@@ -84,6 +86,7 @@ fn signed(
         },
         cosigns: Vec::new(),
         ts: seq + 1,
+        overlay_seed,
     };
     let transcript = authority_transcript(&entry).expect("transcript");
     entry.signer.signature = signer.sign(&transcript).to_bytes().to_vec();

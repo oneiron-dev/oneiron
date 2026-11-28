@@ -143,6 +143,7 @@ mod oauth_server;
 mod observation_policy;
 mod op_apply;
 mod origin_cut;
+mod overlay_rows;
 mod owner_act;
 mod owner_choice;
 mod owner_delegate;
@@ -288,6 +289,8 @@ pub use recovery_hold::{
     PreparedRecoveryHoldCancel, RECOVERY_WAIT_DEFAULT, RecoveryBoxCancelProof, RecoveryHoldLanding,
     RecoveryHoldState, RecoveryHoldView,
 };
+// Census L5-22: this vault's reads of a sealed authority row.
+pub(crate) use overlay_rows::open_vault_authority_body_in_txn;
 // The export secret work body and its sealed result (FIX 4624(b)).
 pub use export_secret_work::{
     ExportSecretSupplement, HolderExportRequest, HolderExportState, HolderExportUnassigned,

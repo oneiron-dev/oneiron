@@ -492,6 +492,7 @@ fn unsigned_profile_row(
         },
         cosigns: Vec::new(),
         ts: T0,
+        overlay_seed: None,
     }
 }
 
