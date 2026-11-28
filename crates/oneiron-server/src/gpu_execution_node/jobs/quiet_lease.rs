@@ -231,6 +231,9 @@ impl NodeJobs {
         table: &KeyTable,
         event: &mut JournalEvent,
     ) -> Option<JobAnswer> {
+        if !matches!(event, JournalEvent::Reserved { .. }) {
+            return None;
+        }
         if holder(table).is_some() {
             return Some(busy());
         }
