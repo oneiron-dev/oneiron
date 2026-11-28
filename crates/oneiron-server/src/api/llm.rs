@@ -308,15 +308,29 @@ pub(crate) fn record_raw_response(
     binding: Option<&ModelCallBinding>,
     no_record: bool,
 ) {
-    record_reply_response(
-        vault, ladder, run, request, response, binding, no_record, None,
-    );
+    let recording = CallRecording {
+        no_record,
+        reply: None,
+        context: None,
+    };
+    record_reply_response(vault, ladder, run, request, response, binding, recording);
 }
 
-/// [`record_raw_response`] for a call whose answer streams into the MESSAGE
-/// `reply`, when it names one: the record is linked to it in the same write
-/// (TURN-MODEL-LINK), so a thread reads which call answered each reply.
-#[allow(clippy::too_many_arguments)]
+/// How [`record_reply_response`] keeps one call.
+pub(crate) struct CallRecording {
+    /// An off-record session or room keeps no record.
+    pub(crate) no_record: bool,
+    /// The MESSAGE the answer streams into, when it names one: the record is
+    /// linked to it in the same write (TURN-MODEL-LINK), so a thread reads
+    /// which call answered each reply.
+    pub(crate) reply: Option<oneiron::EntityId>,
+    /// What the request was assembled from, where its caller names it
+    /// (HANDOFF-CONTEXT); `None` is unknown.
+    pub(crate) context: Option<oneiron::code_run::model_call::ModelCallContext>,
+}
+
+/// [`record_raw_response`] for a call `recording` names a reply or a context
+/// form for.
 pub(crate) fn record_reply_response(
     vault: &oneiron::Vault,
     ladder: &OfferLadder,
@@ -324,10 +338,9 @@ pub(crate) fn record_reply_response(
     request: &LlmRequest,
     response: &LlmResponse,
     binding: Option<&ModelCallBinding>,
-    no_record: bool,
-    reply: Option<oneiron::EntityId>,
+    recording: CallRecording,
 ) {
-    if no_record {
+    if recording.no_record {
         tracing::debug!("model-call record skipped: off-record session or room");
         return;
     }
@@ -409,10 +422,12 @@ pub(crate) fn record_reply_response(
         read_world_epoch: None,
         read_worlds: None,
         read_world_unknown: vec![ReadWorldUnknown::Uncaptured],
+        context: recording.context,
         tools_present: !request.tools.is_empty(),
         summary_requested: false,
         erased: false,
     };
+    let reply = recording.reply;
     if let Err(error) = vault.with_write_txn_grouped(|txn| match reply {
         Some(reply) => oneiron::code_run::model_call::record_reply_model_call_in_txn(
             vault, txn, &record, reply,

@@ -20,8 +20,9 @@ mod signed_reasoning;
 use oneiron_records::code_run::model_call::invalid;
 #[doc(hidden)]
 pub use oneiron_records::code_run::model_call::{
-    MODEL_CALL_SCHEMA, ModelCallDigests, ModelCallInputPart, ModelCallKind, ModelCallPartRef,
-    NativeReadDigests, NativeReadFailure, NativeReadOutcome, NativeReadRunSource,
+    MODEL_CALL_SCHEMA, ModelCallBoard, ModelCallContext, ModelCallDigests, ModelCallHistory,
+    ModelCallInputPart, ModelCallKind, ModelCallPartRef, ModelCallTurnAction, NativeReadDigests,
+    NativeReadFailure, NativeReadOutcome, NativeReadRunSource,
 };
 
 const MODEL_CALLS: SideTable<(EntityId, u64, u64), ModelCallRecord, Named> =
@@ -333,6 +334,10 @@ pub struct ModelCallRecord {
     pub read_worlds: Option<Vec<EntityId>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub read_world_unknown: Vec<ReadWorldUnknown>,
+    /// What the request was assembled from, where its capture names it
+    /// (FIX HANDOFF-CONTEXT); `None` is unknown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<ModelCallContext>,
     pub tools_present: bool,
     pub summary_requested: bool,
     #[serde(default)]

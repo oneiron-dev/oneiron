@@ -38,6 +38,7 @@ use oneiron::attempt_queue::{
     FailAttempt, ManifestEntry,
 };
 use oneiron::claim::CallerLocality;
+use oneiron::code_run::model_call::{ModelCallContext, ModelCallTurnAction};
 use oneiron::conversation::{
     ChatBreakpointUserTurn, TURN_ACTION_ATTEMPT_KIND, TurnAction, TurnActionAttempt,
     TurnActionAuthority, turn_action_hook_parent, turn_action_resumed_from_hook,
@@ -509,6 +510,12 @@ async fn act(
             model_call_caller: actor,
             model_call_room: Some(room),
             model_call_no_record_at_arrival,
+            model_call_context: Some(ModelCallContext::TurnAction {
+                action: match action.action {
+                    TurnAction::Continue => ModelCallTurnAction::Continue,
+                    TurnAction::Retry => ModelCallTurnAction::Retry,
+                },
+            }),
             credential: TurnCredential::Action {
                 action: Box::new(action),
                 vault: Arc::clone(vault),

@@ -74,6 +74,7 @@ mod admission;
 mod answer;
 mod assertions;
 mod compaction;
+mod context_form;
 mod delivery;
 mod drafter_example;
 mod hook_ask;
@@ -685,6 +686,9 @@ pub(crate) struct Answer {
     /// The native room the request or queued action resolved before generation.
     pub(crate) model_call_room: Option<EntityId>,
     pub(crate) model_call_no_record_at_arrival: bool,
+    /// What `admitted`'s request was assembled from (HANDOFF-CONTEXT), kept
+    /// on its call record; `None` is unknown.
+    pub(crate) model_call_context: Option<oneiron::code_run::model_call::ModelCallContext>,
     pub(crate) keepalive: Duration,
     /// The newcomer barrier (OF-365 P5, FIX 1389): the container output mark
     /// the caller took before the first read its request was assembled from,

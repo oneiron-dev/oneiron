@@ -53,6 +53,7 @@ pub(crate) fn begin_sourced_answer_with_fallback(
         model_call_caller,
         model_call_room,
         model_call_no_record_at_arrival,
+        model_call_context,
         keepalive,
         mark,
         breakpoint,
@@ -146,6 +147,7 @@ pub(crate) fn begin_sourced_answer_with_fallback(
         model_call_caller,
         model_call_room,
         model_call_no_record_at_arrival,
+        model_call_context,
         clock,
     );
     let answered = model_call.answered();

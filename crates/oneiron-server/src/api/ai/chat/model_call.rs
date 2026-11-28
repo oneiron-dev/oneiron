@@ -9,6 +9,7 @@ use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use futures_util::StreamExt;
+use oneiron::code_run::model_call::ModelCallContext;
 use oneiron::llm::run_admission::RunAdmission;
 use oneiron::{
     ContentPart, EntityId, FinishReason, LlmError, LlmMessage, LlmMessageRole, LlmRequest,
@@ -113,6 +114,8 @@ pub(super) struct Capture {
     caller: EntityId,
     room: Option<EntityId>,
     no_record_at_arrival: bool,
+    /// What the answer's request was assembled from (HANDOFF-CONTEXT).
+    context: Option<ModelCallContext>,
     terminal: mpsc::Receiver<CompletedCall>,
     answered: AnsweredSlot,
     terminal_rung: TerminalRung,
@@ -173,6 +176,7 @@ pub(super) fn channel(
     caller: EntityId,
     room: Option<EntityId>,
     no_record_at_arrival: bool,
+    context: Option<ModelCallContext>,
     clock: CallerClock,
 ) -> (Recorder, Capture) {
     // Only the answering leg yields a terminal; failed prefix attempts send none.
@@ -186,6 +190,7 @@ pub(super) fn channel(
             caller,
             room,
             no_record_at_arrival,
+            context,
             terminal,
             answered: AnsweredSlot::default(),
             terminal_rung: TerminalRung::default(),
@@ -327,8 +332,11 @@ impl Capture {
                 &call.request,
                 &response,
                 binding.as_ref(),
-                false,
-                reply,
+                crate::api::llm::CallRecording {
+                    no_record: false,
+                    reply,
+                    context: self.context.clone(),
+                },
             );
         });
     }
