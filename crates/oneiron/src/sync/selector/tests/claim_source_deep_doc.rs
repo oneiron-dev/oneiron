@@ -38,6 +38,8 @@ fn deep_claim_body(chunk: EntityId, root: EntityId) -> ClaimBody {
         ClaimLifecycleStatus::Active,
     )
     .expect("CLAIM body");
+    // `v` takes one `&str` lifetime for every call, so the hex must outlive the last one.
+    let chunk_hex = chunk.to_hex();
     let candidate = Value::Map(vec![
         (v("kind"), v("imported_evidence")),
         (v("source_id"), v(crate::ingest::DOCS_EXPORT_SOURCE_ID)),
@@ -45,7 +47,7 @@ fn deep_claim_body(chunk: EntityId, root: EntityId) -> ClaimBody {
         (
             v("derivation"),
             Value::Map(vec![
-                (v("source_ref"), v(chunk.to_hex().as_str())),
+                (v("source_ref"), v(chunk_hex.as_str())),
                 (v("source_hash"), v("segment-hash")),
                 (v("producer"), v("fixture.ner.v1")),
                 (v("source"), v("imported")),
