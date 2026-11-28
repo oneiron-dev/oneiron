@@ -30780,6 +30780,16 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/deletion/erase/note_claim_dependency_backfill.rs",
+     "purpose": "One-time open backfill: NOTE dependencies for pre-N1 NOTE-review CLAIMs",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [],
@@ -70638,7 +70648,7 @@
      "path": "src/ports/integrity.rs",
      "purpose": "Source-prefix dependency index and deletion invalidation in the caller's transaction",
      "surface": {
-      "crate-vis": 32
+      "crate-vis": 33
      }
     },
     {
@@ -100548,7 +100558,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 413,
+      "mod": 414,
       "re-export": 3
      }
     },
@@ -100660,6 +100670,16 @@
      "purpose": "FIX 7789: lose one NOTE posting, then run the real deindex self-heal",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/note_claim_dependency_backfill.rs",
+     "purpose": "Doors for `tests/note_review_claim_dependency_backfill.rs` (N1b): strip a CLAIM's NOTE dependencies to the…",
+     "surface": {
+      "fn": 7
      }
     },
     {
@@ -118652,6 +118672,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/note_review_claim_dependency_backfill.rs",
+     "purpose": "N1-OLD-CLAIMS: a CLAIM the NOTE review learnt before N1 gets its NOTE dependency, or is withdrawn, by a…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/note_review_claim_depends_on_note.rs",
      "purpose": "PROMOTED-CLAIM-SOURCE-DEPENDENCY-GAPS, NOTE review path: the CLAIM learnt from a NOTE depends on it, and the…",
      "surface": {}
@@ -124416,7 +124444,7 @@
     },
     "deletion": {
      "entry": "crates/oneiron/src/deletion/mod.rs",
-     "files": 77,
+     "files": 78,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -126067,7 +126095,7 @@
     },
     "test_doors": {
      "entry": "crates/oneiron/src/test_doors/mod.rs",
-     "files": 426,
+     "files": 427,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -126334,8 +126362,8 @@
    },
    "over_bar": 276,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8673,
-   "test_files": 2372
+   "source_files": 8675,
+   "test_files": 2373
   },
   "oneiron-agent-runtime": {
    "files": [
