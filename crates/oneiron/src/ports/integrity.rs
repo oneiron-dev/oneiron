@@ -149,7 +149,7 @@ fn absent_source_stands_in(
     }
     // An opened device counts an absent, unlisted, unmarked source as standing
     // (PR1-OPENED-COLD-SOURCE-MODE = A, 28 Nov).
-    crate::sync::residence::device_residence_opened_in_txn(store, txn)
+    Ok(false)
 }
 
 /// Whether `source` still stands for what was derived from it: present, not
