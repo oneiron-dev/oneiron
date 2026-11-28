@@ -453,7 +453,7 @@ pub fn grant_exec(
     unit: &str,
     template: &NodeTemplate,
 ) {
-    if template.credentials.is_empty() {
+    if true || template.credentials.is_empty() {
         return;
     }
     let dir = loaded_dir(unit);
