@@ -24,9 +24,12 @@
 //! kept identity, the kept entries, and each part in any other shape, a
 //! failure naming the erase's cause beside a code of its own among them.
 //! The words go back into the copy the wall admitted, which must then read
-//! as a record with each part still in its erased form, and that copy lands
-//! past the wall ([`Erased::code_run_fenced`]). A record holding no part in
-//! an erased form goes through the wall whole.
+//! as a call with each part still in its erased form, and that copy lands
+//! past the wall. The parts sit in bridge calls alone, so the wall reads each
+//! call item so as the item is written ([`put_call_item`]): an append walls
+//! only the calls it writes, and its bytes stay flat in the run's length
+//! (FIX CODE-RUN-REPLAY-SPLIT-LAYOUT). The head and every other item go
+//! through the wall whole, as does a call holding no part in an erased form.
 //!
 //! An output preview is text the run wrote, and a live one can read as the
 //! erased preview's text, so the wall reads every preview: one whose text
@@ -42,11 +45,14 @@ use oneiron_contracts::msgpack;
 use rmpv::Value;
 
 use super::super::super::codec::{
-    decode_code_run_replay_unvalidated, replay_record_value, validate_code_run_replay_record,
+    decode_bridge_call, decode_code_run_replay_unvalidated, replay_record_value,
+    validate_bridge_call, validate_code_run_replay_record,
 };
 use super::super::super::replay::erased_identity_field;
 use super::super::super::spawn_replay::erased_ask_field;
-use super::REPLAY_RECORDS;
+use super::{
+    CallWall, HEADS, ReplayItemKey, encode_call_item, item_value, put_admitted_item, put_raw_item,
+};
 use crate::EntityId;
 use crate::code_run::payload::self_dispatch_outcome_value;
 use crate::code_run::{
@@ -54,26 +60,14 @@ use crate::code_run::{
     SelfDispatchOutcome, SelfEffect, SelfFailedResult,
 };
 use crate::error::{Error, Result};
-use crate::side_table::{Erased, SideTableDbs};
-
-/// A fenced record the side-row wall admitted, but for the erase's fixed
-/// words in each part it holds in its erased form, which are as the record
-/// held them: what [`Erased::code_run_fenced`] lands past the wall. Only
-/// [`put_fenced`] makes one.
-pub(crate) struct AdmittedFencedReplay(CodeRunReplayRecord);
-
-impl AdmittedFencedReplay {
-    /// The record that lands.
-    pub(crate) fn into_record(self) -> CodeRunReplayRecord {
-        self.0
-    }
-}
+use crate::side_table::{self, SideTableDbs};
 
 /// Persists `record`, a record a put fence passed or a stored row a writer
-/// read again, as its run's replay row: with the side-row wall reading all
-/// of it but the erase's fixed words in each part it holds in its erased
-/// form, which land as they are. A record holding no such part goes through
-/// the wall whole, as [`super::put`] puts it.
+/// read again, as its run's replay rows: with the side-row wall reading all
+/// of each call item but the erase's fixed words in each part it holds in
+/// its erased form, which land as they are. The head and every other item go
+/// through the wall whole, as [`super::put`] puts them. Every full key
+/// written or deleted.
 ///
 /// # Errors
 ///
@@ -84,21 +78,55 @@ pub(crate) fn put_fenced(
     dbs: &impl SideTableDbs,
     wtxn: &mut heed::RwTxn<'_>,
     record: &CodeRunReplayRecord,
-) -> Result<()> {
-    let Some(erased) = ErasedFormProjection::of(record)? else {
-        return super::put(dbs, wtxn, &record.run_id, record);
+) -> Result<Vec<Vec<u8>>> {
+    super::put_record(dbs, wtxn, &record.run_id, record, CallWall::Fenced)
+}
+
+/// Writes `call`, whose item bytes are `bytes`, at the call item `key`
+/// through its head's wall origin `head_key`, as `wall` reads it: under
+/// [`CallWall::Fenced`] the wall reads all of it but the erase's fixed words
+/// in each part it holds in its erased form, which land as they are; a call
+/// holding no such part, or any call under [`CallWall::Whole`], goes through
+/// the wall whole. The full key written.
+///
+/// # Errors
+///
+/// As [`put_fenced`]'s.
+pub(super) fn put_call_item(
+    dbs: &impl SideTableDbs,
+    wtxn: &mut heed::RwTxn<'_>,
+    head_key: &[u8],
+    key: &ReplayItemKey,
+    call: &CodeRunBridgeCall,
+    bytes: &[u8],
+    wall: CallWall,
+) -> Result<Vec<u8>> {
+    let parts = match wall {
+        CallWall::Whole => None,
+        CallWall::Fenced => Some(ErasedParts::of(std::slice::from_ref(call))?),
     };
-    let landed = erased
-        .admitted(dbs, wtxn, &record.run_id)?
-        .unwrap_or_else(|| record.clone());
-    #[cfg(oneiron_test_support)]
-    super::note_written(REPLAY_RECORDS.encode_value(&landed)?.len());
-    REPLAY_RECORDS.put_erased(
+    let Some(parts) = parts.filter(|parts| !parts.is_empty()) else {
+        return put_admitted_item(dbs, wtxn, head_key, key, bytes);
+    };
+    let mut projection = [call.clone()];
+    parts.take_out(&mut projection);
+    let [projection] = projection;
+    let projection = encode_call_item(&projection)?;
+    let admitted = crate::batch::secret_scan::admit_side_row(
         dbs,
         wtxn,
-        &record.run_id,
-        Erased::code_run_fenced(AdmittedFencedReplay(landed)),
-    )
+        &side_table::CODE_RUN_REPLAY,
+        head_key,
+        &projection,
+        |masked| parts.put_back_call(masked).is_ok(),
+    )?;
+    match admitted {
+        Some(masked) => {
+            let landed = encode_call_item(&parts.put_back_call(&masked)?)?;
+            put_raw_item(dbs, wtxn, key, &landed)
+        }
+        None => put_raw_item(dbs, wtxn, key, bytes),
+    }
 }
 
 /// Reads `record`, a stored row a writer derives a row or a body from, as
@@ -142,7 +170,7 @@ impl ErasedFormProjection {
     ///
     /// An erased outcome that does not encode.
     pub(crate) fn of(record: &CodeRunReplayRecord) -> Result<Option<Self>> {
-        let parts = ErasedParts::of(record)?;
+        let parts = ErasedParts::of(&record.bridge_calls)?;
         if parts.is_empty() {
             return Ok(None);
         }
@@ -176,7 +204,7 @@ impl ErasedFormProjection {
         wtxn: &mut heed::RwTxn<'_>,
         run: &EntityId,
     ) -> Result<Option<CodeRunReplayRecord>> {
-        REPLAY_RECORDS
+        HEADS
             .admit_projection(dbs, wtxn, run, &self.projection, |masked| {
                 self.parts.put_back(masked).is_ok()
             })?
@@ -274,9 +302,9 @@ struct ErasedOutcomePart {
     erasure: Vec<(Value, Value)>,
 }
 
-/// The erase's fixed words in a fenced record, by the place of each part
-/// that holds them: what the projection the wall reads takes out, and what
-/// goes back into the copy it admitted.
+/// The erase's fixed words in a fenced record's calls, or in one call, by
+/// the place of each part that holds them: what the projection the wall
+/// reads takes out, and what goes back into the copy it admitted.
 struct ErasedParts {
     calls: usize,
     requests: Vec<ErasedRequestPart>,
@@ -285,17 +313,17 @@ struct ErasedParts {
 }
 
 impl ErasedParts {
-    /// Each part of `record` in its erased form: a request or a rewrite
+    /// Each part of `calls` in its erased form: a request or a rewrite
     /// holding the erased form, a spawn's request or rewrite holding the
     /// erased ask, and an outcome led by what an erase writes.
-    fn of(record: &CodeRunReplayRecord) -> Result<Self> {
+    fn of(calls: &[CodeRunBridgeCall]) -> Result<Self> {
         let mut parts = Self {
-            calls: record.bridge_calls.len(),
+            calls: calls.len(),
             requests: Vec::new(),
             asks: Vec::new(),
             outcomes: Vec::new(),
         };
-        for (index, call) in record.bridge_calls.iter().enumerate() {
+        for (index, call) in calls.iter().enumerate() {
             for slot in [RequestSlot::Guest, RequestSlot::Rewrite] {
                 let Some(form) = slot.read(call) else {
                     continue;
@@ -335,21 +363,25 @@ impl ErasedParts {
     }
 
     /// `record` with the fixed words taken out, the projection the wall
-    /// reads: an erased request as the identity it keeps, a spawn's request
-    /// without its erased ask, an erased outcome as the entries past what
-    /// its erase wrote. It is no valid record.
+    /// reads. It is no valid record.
     fn taken_out_of(&self, record: &CodeRunReplayRecord) -> CodeRunReplayRecord {
         let mut projection = record.clone();
+        self.take_out(&mut projection.bridge_calls);
+        projection
+    }
+
+    /// Takes the fixed words out of `calls`, the calls the parts were read
+    /// from: an erased request as the identity it keeps, a spawn's request
+    /// without its erased ask, an erased outcome as the entries past what
+    /// its erase wrote.
+    fn take_out(&self, calls: &mut [CodeRunBridgeCall]) {
         for part in &self.requests {
-            if let (Some(call), Some(identity)) =
-                (projection.bridge_calls.get_mut(part.call), part.kept())
-            {
+            if let (Some(call), Some(identity)) = (calls.get_mut(part.call), part.kept()) {
                 part.slot.write(call, identity.clone());
             }
         }
         for part in &self.asks {
-            if let Some(fields) = projection
-                .bridge_calls
+            if let Some(fields) = calls
                 .get_mut(part.call)
                 .and_then(|call| part.slot.fields_mut(call))
                 && part.field < fields.len()
@@ -358,13 +390,12 @@ impl ErasedParts {
             }
         }
         for part in &self.outcomes {
-            if let Some(call) = projection.bridge_calls.get_mut(part.call)
+            if let Some(call) = calls.get_mut(part.call)
                 && let Value::Map(entries) = &mut call.outcome
             {
                 *entries = entries.split_off(part.erasure.len());
             }
         }
-        projection
     }
 
     /// The record the wall admitted, read from `masked`, the bytes of its
@@ -373,21 +404,38 @@ impl ErasedParts {
     /// record.
     fn put_back(&self, masked: &[u8]) -> Result<CodeRunReplayRecord> {
         let mut record = decode_code_run_replay_unvalidated(masked)?;
-        if record.bridge_calls.len() != self.calls {
+        self.put_back_into(&mut record.bridge_calls)?;
+        validate_code_run_replay_record(&record)?;
+        Ok(record)
+    }
+
+    /// The call the wall admitted, read from `masked`, the bytes of the
+    /// masked projection of the one call the parts were read from: the
+    /// fixed words back in each part, each request part still holding the
+    /// erased form, and the call then valid.
+    fn put_back_call(&self, masked: &[u8]) -> Result<CodeRunBridgeCall> {
+        let mut calls = [decode_bridge_call(&item_value(masked)?)?];
+        self.put_back_into(&mut calls)?;
+        let [call] = calls;
+        validate_bridge_call(&call)?;
+        Ok(call)
+    }
+
+    /// Puts the fixed words back into `calls`, the masked copies of the
+    /// calls the parts were read from; an error when a part moved or no
+    /// longer holds its erased form.
+    fn put_back_into(&self, calls: &mut [CodeRunBridgeCall]) -> Result<()> {
+        if calls.len() != self.calls {
             return Err(part_moved());
         }
         for part in &self.requests {
-            let call = record
-                .bridge_calls
-                .get_mut(part.call)
-                .ok_or_else(part_moved)?;
+            let call = calls.get_mut(part.call).ok_or_else(part_moved)?;
             let identity = part.slot.read(call).cloned().ok_or_else(part_moved)?;
             let form = part.with_identity(identity).ok_or_else(part_moved)?;
             part.slot.write(call, form);
         }
         for part in &self.asks {
-            let fields = record
-                .bridge_calls
+            let fields = calls
                 .get_mut(part.call)
                 .and_then(|call| part.slot.fields_mut(call))
                 .ok_or_else(part_moved)?;
@@ -397,10 +445,7 @@ impl ErasedParts {
             fields.insert(part.field, part.entry.clone());
         }
         for part in &self.outcomes {
-            let call = record
-                .bridge_calls
-                .get_mut(part.call)
-                .ok_or_else(part_moved)?;
+            let call = calls.get_mut(part.call).ok_or_else(part_moved)?;
             let Value::Map(kept) = &mut call.outcome else {
                 return Err(part_moved());
             };
@@ -408,8 +453,7 @@ impl ErasedParts {
             outcome.append(kept);
             *kept = outcome;
         }
-        validate_code_run_replay_record(&record)?;
-        Ok(record)
+        Ok(())
     }
 }
 

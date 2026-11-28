@@ -168,6 +168,15 @@ impl EngineNativeExecutor<'_> {
             None
         };
         let rows = record.bridge_calls.split_off(bridge_start);
+        // The parked step's rows run again, and its commit may put another
+        // call at each of their places (L8-23): each is a prefix call this
+        // mutation touched, which the commit's append compares with its
+        // stored item (FIX CODE-RUN-REPLAY-SPLIT-LAYOUT).
+        for index in bridge_start..bridge_start.saturating_add(rows.len()) {
+            let index = u64::try_from(index)
+                .map_err(|_| Error::ArithmeticOverflow("executor bridge position"))?;
+            record.note_changed_call(index);
+        }
         record.invalidate_verb_rows();
         let mut replay = DeadlineReplay::new(
             rows,

@@ -1,7 +1,7 @@
-//! The replay-rows seam is a pure pass-through (FIX CODE-RUN-REPLAY-SPLIT-LAYOUT PR1).
-//! Every raw access to the code-run replay table goes through the one door, so the
+//! The replay-rows seam joins head and items (FIX CODE-RUN-REPLAY-SPLIT-LAYOUT PR1 and PR2).
+//! Every raw access to the code-run replay tables goes through the one door, so the
 //! door's canonical bytes are the record's encoding as stored, and a guarded append
-//! counts exactly the bytes it writes.
+//! writes bytes flat in the run length.
 //!
 //! Fleet: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test replay_rows_seam`
 #![cfg(oneiron_test_support)]
@@ -106,7 +106,7 @@ fn canonical_bytes_are_the_encoded_record() {
 }
 
 #[test]
-fn a_guarded_append_counts_the_bytes_it_writes() {
+fn a_guarded_append_writes_bytes_flat_in_the_run_length() {
     let mut deltas = Vec::new();
     for seeded in [20_u64, 2_000_u64] {
         let directory = tempfile::tempdir().expect("temporary vault");
@@ -126,16 +126,17 @@ fn a_guarded_append_counts_the_bytes_it_writes() {
             .expect("guarded append");
         let after = replay_rows::written_bytes();
         let delta = after.saturating_sub(before);
-        let canonical_len = replay_rows::canonical_bytes(&vault, run_id)
-            .expect("door reads")
-            .expect("door finds the row")
-            .len() as u64;
-        assert_eq!(delta, canonical_len);
         deltas.push(delta);
     }
     let ratio = deltas[1] as f64 / deltas[0] as f64;
     println!(
         "replay append bytes: seeded20={} seeded2000={} ratio={ratio:.2}",
         deltas[0], deltas[1],
+    );
+    assert!(
+        deltas[1] <= deltas[0] * 2,
+        "append bytes grow with the run: {} vs {}",
+        deltas[1],
+        deltas[0],
     );
 }

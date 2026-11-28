@@ -60,7 +60,7 @@ pub(super) fn encode_step_checkpoint(checkpoint: &CodeRunStepCheckpoint) -> Valu
     Value::Map(entries)
 }
 
-pub(super) fn decode_step_checkpoint(value: &Value) -> Result<CodeRunStepCheckpoint> {
+pub(crate) fn decode_step_checkpoint(value: &Value) -> Result<CodeRunStepCheckpoint> {
     let fields = pinned_map(
         value,
         &CODE_RUN_STEP_CHECKPOINT_KEYS,

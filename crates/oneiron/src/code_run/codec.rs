@@ -29,12 +29,17 @@ use super::support::{
 mod checkpoint;
 mod held;
 mod pending_step;
+mod split;
 
 pub use self::checkpoint::CODE_RUN_STEP_CHECKPOINT_KEYS;
-use self::checkpoint::{decode_step_checkpoint, encode_step_checkpoint, validate_step_checkpoints};
-pub(crate) use self::held::{decode_code_run_replay_generation, decode_code_run_replay_held};
+pub(crate) use self::checkpoint::decode_step_checkpoint;
+use self::checkpoint::{encode_step_checkpoint, validate_step_checkpoints};
 pub(super) use self::pending_step::pending_step_digest;
 use self::pending_step::{decode_pending_step, encode_pending_step, validate_pending_step};
+pub(crate) use self::split::{
+    ReplayFamily, ReplayHead, encode_code_run_bridge_call_bytes, encode_code_run_replay_item,
+    join_canonical, split_canonical,
+};
 
 pub const CODE_RUN_REPLAY_RECORD_KEYS: [&str; 12] = [
     "schema_version",
@@ -183,6 +188,13 @@ pub fn encode_code_run_replay_record(record: &CodeRunReplayRecord) -> Result<Vec
 /// projection, its erased parts taken out, is no valid record (FIX
 /// FENCE-ERASED-FORM-THROUGH-WALL).
 pub(in crate::code_run) fn replay_record_value(record: &CodeRunReplayRecord) -> Value {
+    replay_record_value_with(record, split::family_values(record))
+}
+
+/// The record's 12-entry top-level map with its four family arrays given in
+/// [`ReplayFamily::ALL`] order: the whole encoding's, or a shell's empty ones.
+fn replay_record_value_with(record: &CodeRunReplayRecord, families: [Value; 4]) -> Value {
+    let [bridge_calls, step_checkpoints, outputs, bindings] = families;
     Value::Map(vec![
         (
             Value::from(KEY_SCHEMA_VERSION),
@@ -199,24 +211,9 @@ pub(in crate::code_run) fn replay_record_value(record: &CodeRunReplayRecord) -> 
                 .as_ref()
                 .map_or(Value::Nil, encode_determinism),
         ),
-        (
-            Value::from(KEY_BRIDGE_CALLS),
-            Value::Array(record.bridge_calls.iter().map(encode_bridge_call).collect()),
-        ),
-        (
-            Value::from(KEY_STEP_CHECKPOINTS),
-            Value::Array(
-                record
-                    .step_checkpoints
-                    .iter()
-                    .map(encode_step_checkpoint)
-                    .collect(),
-            ),
-        ),
-        (
-            Value::from(KEY_OUTPUTS),
-            Value::Array(record.outputs.iter().map(encode_raw_output).collect()),
-        ),
+        (Value::from(KEY_BRIDGE_CALLS), bridge_calls),
+        (Value::from(KEY_STEP_CHECKPOINTS), step_checkpoints),
+        (Value::from(KEY_OUTPUTS), outputs),
         (
             Value::from(KEY_ABI_LAYOUT_CHECKS),
             Value::Array(
@@ -227,10 +224,7 @@ pub(in crate::code_run) fn replay_record_value(record: &CodeRunReplayRecord) -> 
                     .collect(),
             ),
         ),
-        (
-            Value::from(KEY_BINDINGS),
-            Value::Array(record.bindings.iter().map(encode_binding).collect()),
-        ),
+        (Value::from(KEY_BINDINGS), bindings),
         (
             Value::from(KEY_LIVE_RUN),
             record.live_run.as_ref().map_or(Value::Nil, encode_live_run),
@@ -274,8 +268,11 @@ pub fn decode_code_run_replay_record(bytes: &[u8]) -> Result<CodeRunReplayRecord
     Ok(record)
 }
 
-/// [`decode_code_run_replay_record`] before its validation: a fenced put
-/// reads its projection so, puts its erased parts back, then validates.
+/// [`decode_code_run_replay_record`] before its validation, each field
+/// decoded and checked on its own: a fenced put reads its projection so,
+/// puts its erased parts back, then validates, and a replay head's shell is
+/// checked so. The checks across fields are
+/// [`validate_code_run_replay_record`]'s.
 pub(in crate::code_run) fn decode_code_run_replay_unvalidated(
     bytes: &[u8],
 ) -> Result<CodeRunReplayRecord> {
@@ -292,7 +289,7 @@ pub(in crate::code_run) fn decode_code_run_replay_unvalidated(
         ));
     }
 
-    let record = CodeRunReplayRecord {
+    Ok(CodeRunReplayRecord {
         run_id: entity_value(required(fields[1], "missing replay run_id")?)?,
         determinism: match required(fields[2], "missing replay determinism")? {
             Value::Nil => None,
@@ -327,8 +324,8 @@ pub(in crate::code_run) fn decode_code_run_replay_unvalidated(
         },
         pending_step: decode_pending_step(fields[11])?,
         verb_rows_cache: Default::default(),
-    };
-    Ok(record)
+        changed_calls: Default::default(),
+    })
 }
 
 fn encode_optional_entity_rows(rows: &Option<Vec<EntityId>>) -> Value {
@@ -404,7 +401,7 @@ fn encode_bridge_call(call: &CodeRunBridgeCall) -> Value {
     ])
 }
 
-fn decode_bridge_call(value: &Value) -> Result<CodeRunBridgeCall> {
+pub(crate) fn decode_bridge_call(value: &Value) -> Result<CodeRunBridgeCall> {
     let fields = pinned_map(value, &CODE_RUN_BRIDGE_CALL_KEYS, "code-run bridge call")?;
     Ok(CodeRunBridgeCall {
         seq: u64_value(required(fields[0], "missing bridge seq")?)?,
@@ -558,7 +555,7 @@ fn encode_binding(binding: &CodeRunResultBinding) -> Value {
     ])
 }
 
-fn decode_binding(value: &Value) -> Result<CodeRunResultBinding> {
+pub(crate) fn decode_binding(value: &Value) -> Result<CodeRunResultBinding> {
     let Value::Array(items) = value else {
         return Err(invalid_code_run_replay("result binding must be an array"));
     };
@@ -709,7 +706,7 @@ pub(in crate::code_run) fn validate_code_run_replay_record(
     Ok(())
 }
 
-fn validate_bridge_call(call: &CodeRunBridgeCall) -> Result<()> {
+pub(crate) fn validate_bridge_call(call: &CodeRunBridgeCall) -> Result<()> {
     if call.finished_at_ms < call.started_at_ms {
         return Err(invalid_code_run_replay(
             "bridge call finished before it started",

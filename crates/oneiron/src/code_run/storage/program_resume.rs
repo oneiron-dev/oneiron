@@ -268,12 +268,9 @@ fn put_resume_in_txn(
     // #9692): the commit read its calls off the rows before the wall, where
     // a passphrase custody holds is still written as given, and a row the
     // fence erased keeps its stand-in identity, never the live one.
-    let held = super::replay_rows::held(&vault.store, &*txn, &run)?;
-    let stored: BTreeMap<u64, &CodeRunBridgeCall> = held
-        .iter()
-        .flat_map(|held| &held.bridge_calls)
-        .map(|row| (row.seq, row))
-        .collect();
+    let held = super::replay_rows::stored_bridge_calls(&vault.store, &*txn, &run)?;
+    let stored: BTreeMap<u64, &CodeRunBridgeCall> =
+        held.iter().flatten().map(|row| (row.seq, row)).collect();
     for page in kept..pages {
         let start = usize::try_from(page * PROGRAM_RESUME_PAGE_CALLS)
             .map_err(|_| Error::ArithmeticOverflow("program resume page"))?;
