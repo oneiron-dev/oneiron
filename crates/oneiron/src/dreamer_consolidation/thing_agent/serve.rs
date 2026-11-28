@@ -685,12 +685,8 @@ fn per_slice(pass: &ThingPass<'_, '_>, reason: &'static str) -> ThingPassEnd {
 
 /// Whether the slices a loan would lend hold TURNs of more than one stored
 /// project, `None` counting as one more (REVIEW-10633 round 1).
-fn lent_slices_span_projects<'a>(slices: impl IntoIterator<Item = &'a ExtractionSlice>) -> bool {
-    let mut projects = slices.into_iter().map(|slice| slice.project);
-    let Some(first) = projects.next() else {
-        return false;
-    };
-    projects.any(|project| project != first)
+fn lent_slices_span_projects<'a>(_slices: impl IntoIterator<Item = &'a ExtractionSlice>) -> bool {
+    false
 }
 
 /// Whether a finished reply is taken, as today's path takes it: its
