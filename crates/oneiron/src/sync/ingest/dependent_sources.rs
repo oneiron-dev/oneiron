@@ -51,7 +51,7 @@ pub(super) fn held_learned_at_in_txn(
         .store
         .entities()
         .get(txn, id.as_bytes())?
-        .and_then(EntityMetadataHeader::parse)
+        .and_then(|raw| EntityMetadataHeader::parse(&raw))
         .map(|header| header.learned_at))
 }
 
@@ -201,7 +201,7 @@ fn register_profile_sources_in_txn(
         {
             withdrawn = true;
         } else if let Some(raw) = store.entities().get(txn, source.as_bytes())? {
-            let frontier = EntityMetadataHeader::parse(raw)
+            let frontier = EntityMetadataHeader::parse(&raw)
                 .map(|header| header.learned_at)
                 .ok_or(Error::CorruptedIndex("dependency source header"))?;
             resident.push(SourceSpan {
