@@ -231,6 +231,7 @@ pub use self::run_budget_ask::{
     run_budget_questions,
 };
 pub(crate) use self::run_budget_ask::{apply_run_budget_answer_in_txn, is_run_budget_ask};
+pub(crate) use self::task_type_tree::store_owner_team_type_tree;
 pub use self::task_type_tree::{
     SourcedTypeTree, TASK_TYPE_TREE_FILE, load_team_type_tree, load_team_type_tree_at,
     load_vault_type_tree_sourced, store_team_type_tree, team_shape_skill_in_force,
