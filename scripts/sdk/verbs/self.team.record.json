@@ -1,6 +1,6 @@
 {
   "name": "self.team.record",
-  "description": "Records one receipt after a team this run started finishes, using its actual members and counts and the caller's axis, decider, roles, and coverage.",
+  "description": "Records one receipt after a team this run started finishes, using its actual members and counts and the caller's axis, decider, roles, and coverage. A market's receipt names the referee its start recorded.",
   "input": "crate::team::TeamRecordInput",
   "output": "crate::team::TeamRunAnswer",
   "scope": "Write",

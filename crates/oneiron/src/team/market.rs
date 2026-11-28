@@ -107,6 +107,124 @@ fn update<T>(vault: &Vault, team_ref: &str, f: impl FnOnce(&mut Market) -> Resul
     })
 }
 
+impl Market {
+    /// A market as it opens: the run's `pool` minted, the bounty held back,
+    /// the rest granted as equal shares (islands assigned in turn) and the
+    /// referee recorded. Nothing is stored.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidClaimBody`] as [`open_market`] names them, but for an
+    /// existing market.
+    pub(crate) fn opening(
+        team_ref: &str,
+        mode: MarketMode,
+        referee: SignedReferee,
+        pool: u64,
+        bounty_share: f64,
+        agents: &[String],
+        protected: &[String],
+        now: u64,
+    ) -> Result<Self> {
+        bounded(team_ref, "a team reference is 1..=256 bytes without NUL")?;
+        bounded(
+            &referee.rule_ref,
+            "a referee rule is 1..=256 bytes without NUL",
+        )?;
+        bounded(
+            &referee.digest,
+            "a referee digest is 1..=256 bytes without NUL",
+        )?;
+        if referee.signed_at > now {
+            return Err(Error::InvalidClaimBody(
+                "a market's referee is signed before the work",
+            ));
+        }
+        if !(0.0..1.0).contains(&bounty_share) {
+            return Err(Error::InvalidClaimBody("a bounty share lies in [0, 1)"));
+        }
+        // A market has no agent cap (ARCH-0079: width has no count cap).
+        if agents.is_empty() {
+            return Err(Error::InvalidClaimBody("a market holds at least one agent"));
+        }
+        if let MarketMode::Islands { islands, .. } = mode
+            && islands == 0
+        {
+            return Err(Error::InvalidClaimBody("an island market has an island"));
+        }
+        let mut participants = BTreeMap::new();
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            clippy::cast_precision_loss
+        )]
+        let granted = ((pool as f64) * (1.0 - bounty_share)).floor() as u64;
+        let share = granted / agents.len() as u64;
+        for (i, agent) in agents.iter().enumerate() {
+            bounded(agent, "an agent reference is 1..=256 bytes without NUL")?;
+            let island = match mode {
+                #[allow(clippy::cast_possible_truncation)]
+                MarketMode::Islands { islands, .. } => Some((i as u32) % islands),
+                _ => None,
+            };
+            let fresh = Participant {
+                share,
+                spent: 0,
+                earned: 0,
+                island,
+                active: true,
+                protected: protected.contains(agent),
+            };
+            if participants.insert(agent.clone(), fresh).is_some() {
+                return Err(Error::InvalidClaimBody("an agent joins a market once"));
+            }
+        }
+        let mut market = Self {
+            team_ref: team_ref.to_owned(),
+            mode,
+            referee,
+            pool,
+            bounty: pool - share * agents.len() as u64,
+            participants,
+            submissions: Vec::new(),
+            ledger: Vec::new(),
+            round: 0,
+            opened_at: now,
+            result: None,
+        };
+        market.post(now, None, LedgerKind::Mint, pool);
+        for agent in agents {
+            market.post(now, Some(agent), LedgerKind::Grant, share);
+        }
+        Ok(market)
+    }
+
+    /// Whether `other` opened on the same terms: the same referee from the
+    /// same setter, the same mode and pool, and the same participants with
+    /// the same shares, islands and protection. Times and what happened
+    /// since the opening are not terms.
+    fn same_opening(&self, other: &Self) -> bool {
+        self.team_ref == other.team_ref
+            && self.mode == other.mode
+            && self.referee.kind == other.referee.kind
+            && self.referee.rule_ref == other.referee.rule_ref
+            && self.referee.digest == other.referee.digest
+            && self.referee.signed_by == other.referee.signed_by
+            && self.pool == other.pool
+            && self.participants.len() == other.participants.len()
+            && self
+                .participants
+                .iter()
+                .zip(&other.participants)
+                .all(|((a, p), (b, q))| {
+                    a == b
+                        && p.share == q.share
+                        && p.island == q.island
+                        && p.protected == q.protected
+                })
+    }
+}
+
 /// Opens a market: mints the run's `pool`, holds back the bounty, grants the
 /// rest as equal shares (islands assigned in turn) and records the referee.
 ///
@@ -127,76 +245,16 @@ pub fn open_market(
     protected: &[String],
     now: u64,
 ) -> Result<Market> {
-    bounded(team_ref, "a team reference is 1..=256 bytes without NUL")?;
-    bounded(
-        &referee.rule_ref,
-        "a referee rule is 1..=256 bytes without NUL",
-    )?;
-    bounded(
-        &referee.digest,
-        "a referee digest is 1..=256 bytes without NUL",
-    )?;
-    if referee.signed_at > now {
-        return Err(Error::InvalidClaimBody(
-            "a market's referee is signed before the work",
-        ));
-    }
-    if !(0.0..1.0).contains(&bounty_share) {
-        return Err(Error::InvalidClaimBody("a bounty share lies in [0, 1)"));
-    }
-    // A market has no agent cap (ARCH-0079: width has no count cap).
-    if agents.is_empty() {
-        return Err(Error::InvalidClaimBody("a market holds at least one agent"));
-    }
-    if let MarketMode::Islands { islands, .. } = mode
-        && islands == 0
-    {
-        return Err(Error::InvalidClaimBody("an island market has an island"));
-    }
-    let mut participants = BTreeMap::new();
-    #[allow(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        clippy::cast_precision_loss
-    )]
-    let granted = ((pool as f64) * (1.0 - bounty_share)).floor() as u64;
-    let share = granted / agents.len() as u64;
-    for (i, agent) in agents.iter().enumerate() {
-        bounded(agent, "an agent reference is 1..=256 bytes without NUL")?;
-        let island = match mode {
-            #[allow(clippy::cast_possible_truncation)]
-            MarketMode::Islands { islands, .. } => Some((i as u32) % islands),
-            _ => None,
-        };
-        let fresh = Participant {
-            share,
-            spent: 0,
-            earned: 0,
-            island,
-            active: true,
-            protected: protected.contains(agent),
-        };
-        if participants.insert(agent.clone(), fresh).is_some() {
-            return Err(Error::InvalidClaimBody("an agent joins a market once"));
-        }
-    }
-    let mut market = Market {
-        team_ref: team_ref.to_owned(),
+    let market = Market::opening(
+        team_ref,
         mode,
         referee,
         pool,
-        bounty: pool - share * agents.len() as u64,
-        participants,
-        submissions: Vec::new(),
-        ledger: Vec::new(),
-        round: 0,
-        opened_at: now,
-        result: None,
-    };
-    market.post(now, None, LedgerKind::Mint, pool);
-    for agent in agents {
-        market.post(now, Some(agent), LedgerKind::Grant, share);
-    }
+        bounty_share,
+        agents,
+        protected,
+        now,
+    )?;
     vault.with_write_txn_grouped(|wtxn| {
         if MARKET.contains(&vault.store, wtxn, &market.team_ref)? {
             return Err(Error::InvalidClaimBody("a run opens one market"));
@@ -205,6 +263,24 @@ pub fn open_market(
         Ok(())
     })?;
     Ok(market)
+}
+
+/// Records `opening`, the market a run's start opens before any of its work
+/// runs. A replay on the same terms keeps the market already recorded, with
+/// its first setter and time. `false` when the run already opened a market on
+/// other terms; that market stays as it was.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn bind_market(vault: &Vault, opening: &Market) -> Result<bool> {
+    vault.with_write_txn_grouped(|wtxn| {
+        if let Some(kept) = MARKET.get(&vault.store, wtxn, &opening.team_ref)? {
+            return Ok(kept.same_opening(opening));
+        }
+        MARKET.put(&vault.store, wtxn, &opening.team_ref, opening)?;
+        Ok(true)
+    })
 }
 
 /// Spends `units` from an agent's run-local share. The share is the limit.
