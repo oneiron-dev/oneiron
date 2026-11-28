@@ -46,7 +46,7 @@ pub(in crate::batch) fn apply_put(
     wtxn: &mut RwTxn<'_>,
     request: PutRequest<'_>,
 ) -> Result<AppliedPut> {
-    apply_put_beside(write, wtxn, request, None, None)
+    apply_put_beside(write, wtxn, request, None, None, None)
 }
 
 /// [`apply_put`] for a put whose batch carries other authority rows
@@ -60,8 +60,19 @@ pub(in crate::batch) fn apply_put_beside<'a>(
     request: PutRequest<'a>,
     authority_beside: Option<crate::store::authority_rows::RowsBeside<'a>>,
     own_device: Option<&'a VerifiedOwnDeviceLane>,
+    claim_source_replay: Option<
+        &'a crate::dreamer_consolidation::replicated_sources::ClaimSourceReplay,
+    >,
 ) -> Result<AppliedPut> {
-    prepare_put_beside(write, wtxn, request, authority_beside, own_device)?.apply(write, wtxn)
+    prepare_put_beside(
+        write,
+        wtxn,
+        request,
+        authority_beside,
+        own_device,
+        claim_source_replay,
+    )?
+    .apply(write, wtxn)
 }
 
 // This preparation runs the native P1-P4 writes and callbacks. Its result is
@@ -72,6 +83,9 @@ fn prepare_put_beside<'a>(
     request: PutRequest<'a>,
     authority_beside: Option<crate::store::authority_rows::RowsBeside<'a>>,
     own_device: Option<&'a VerifiedOwnDeviceLane>,
+    claim_source_replay: Option<
+        &'a crate::dreamer_consolidation::replicated_sources::ClaimSourceReplay,
+    >,
 ) -> Result<captured::CapturedPut<'a>> {
     let store = write.store;
     let original_data = request.row.data;
@@ -84,7 +98,14 @@ fn prepare_put_beside<'a>(
         incoming_claim_body,
         project_revisions,
         mut portable_agent_source,
-    } = admission::admit_put(store, wtxn, request, authority_beside, own_device)?;
+    } = admission::admit_put(
+        store,
+        wtxn,
+        request,
+        authority_beside,
+        own_device,
+        claim_source_replay,
+    )?;
     let data = owners.normalized_policy.as_deref().unwrap_or(data);
     let data = owners.project.as_deref().unwrap_or(data);
     let data = owners.kept_taint.as_deref().unwrap_or(data);

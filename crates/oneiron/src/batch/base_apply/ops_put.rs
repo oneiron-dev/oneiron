@@ -296,6 +296,7 @@ pub(super) fn apply_put_arm(
         },
         authority_beside,
         own_device,
+        gate_mode.claim_source_replay.as_ref(),
     )?;
     consume_preflight_decisions(store, wtxn, [preflight_decision_id])?;
     if rewritten {

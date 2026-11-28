@@ -270,12 +270,14 @@ pub(crate) async fn refresh_followed_tombstones(
 /// open asks the home again, and the index lists it no more, as the home's
 /// own index no longer does (review round 2 of #9924). No delete marker is
 /// written: a soft delete may be restored, and the next index fetch lists a
-/// restored item again. A copy fetched from another window stays, and so
+/// restored item again. The item's soft-drop marker (`ri:u:`) is written instead: its
+/// dependents hide until it is listed again, lands, or is erased. A copy fetched from
+/// another window stays, and so
 /// does another window's index row. A cooperative restriction on the item
 /// fails the drop with absence, and a cached pad whose world a restriction
 /// keeps stays, as a prune keeps it (OF-470, FIX 3061); no legal hold keeps
 /// either (LEGAL-HOLD-USE = B). Whether a copy or an index row was dropped.
-fn drop_soft_deleted_thin_copy(
+pub(crate) fn drop_soft_deleted_thin_copy(
     vault: &crate::Vault,
     window: &WindowKey,
     item: EntityId,
@@ -312,6 +314,9 @@ fn drop_soft_deleted_thin_copy(
                 &hex,
             )?;
         }
+        // A soft tombstone dropped the listing or the thin copy: the marker hides the item's
+        // dependents until it is listed again, lands, or is erased.
+        crate::sync::residence::put_soft_drop_marker_in_txn(&vault.store, txn, &hex)?;
         Ok(true)
     })
 }

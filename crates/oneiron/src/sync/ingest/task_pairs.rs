@@ -76,6 +76,22 @@ pub(super) fn put_or_stage(
         Some(header.row_version),
         data,
     );
+    if header.entity_type == crate::registry::ENTITY_TYPE_CLAIM
+        && !super::peer_import::peer_row_in_txn(ctx.vault, wtxn, ctx.window_key, &id, blob)?
+    {
+        let carrier_deleted = super::claim_source_tombstones::proven_carrier_deletions_in_txn(
+            ctx,
+            wtxn,
+            &blob[ENTITY_METADATA_HEADER_LEN..],
+        )?;
+        return put.apply_ingested_claim(
+            wtxn,
+            crate::dreamer_consolidation::replicated_sources::ClaimSourceReplay {
+                claim: id,
+                carrier_deleted,
+            },
+        );
+    }
     match &ctx.authority_beside {
         Some(authority) => {
             put.apply_ingested(wtxn, Some(&|| authority.rows()), own_device.as_ref())
@@ -231,7 +247,18 @@ pub(in crate::sync) fn ingest_rows_in_savepoint(
         }
     }
     rows.iter()
-        .map(|&(key, value)| ingest_entity_in_savepoint(ctx, parent, key, value))
+        .map(|&(key, value)| {
+            let mut step = ingest_entity_in_savepoint(ctx, parent, key, value)?;
+            // Keep the replay marker until a cited MESSAGE can be registered.
+            if let EntityStep::Quarantine(ref mut refusal) = step
+                && crate::dreamer_consolidation::replicated_sources::claim_source_pending(
+                    &refusal.err,
+                )
+            {
+                refusal.retry = super::entity::RefusalRetry::DependencyPending;
+            }
+            Ok(step)
+        })
         .collect()
 }
 

@@ -224,13 +224,53 @@ impl Vault {
         &self,
         configured: SyncResidenceMode,
     ) -> crate::Result<()> {
-        let mode = crate::sync::residence::resolve_residence_mode(self, configured)?;
+        // The slot keeps an attached connection's mode; the stored row is
+        // written only when the slot had no mode, so the row never records a
+        // resolved mode the slot then ignores.
+        {
+            let slot = self
+                .home_search
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            if slot.mode.is_some() {
+                return Ok(());
+            }
+        }
+        let mode = self.resolve_and_record_device_residence(configured)?;
         let mut slot = self
             .home_search
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
         slot.mode.get_or_insert(mode);
         Ok(())
+    }
+
+    /// Resolves the mode for one own-device connection from durable state and
+    /// records it as this machine's stored resolved mode, in the caller's
+    /// transaction. This is the one place the stored resolved-mode row
+    /// (`rs:resolved`) is written; every resolution that a connection applies
+    /// goes through it.
+    pub(crate) fn resolve_and_record_device_residence_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        configured: SyncResidenceMode,
+    ) -> crate::Result<SyncResidenceMode> {
+        let mode = self.resolve_residence_mode_in_txn(txn, configured)?;
+        crate::sync::residence::record_resolved_device_residence_in_txn(&self.store, txn, mode)?;
+        Ok(mode)
+    }
+
+    /// [`Self::resolve_and_record_device_residence_in_txn`] in its own write
+    /// transaction. This is the one place the stored resolved-mode row
+    /// (`rs:resolved`) is written; every resolution that a connection applies
+    /// goes through it.
+    pub(crate) fn resolve_and_record_device_residence(
+        &self,
+        configured: SyncResidenceMode,
+    ) -> crate::Result<SyncResidenceMode> {
+        self.with_write_txn_grouped(|txn| {
+            self.resolve_and_record_device_residence_in_txn(txn, configured)
+        })
     }
 
     /// This device's home search, while it syncs only what it opened and an

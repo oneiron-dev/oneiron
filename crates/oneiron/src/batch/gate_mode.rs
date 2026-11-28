@@ -81,6 +81,9 @@ pub(crate) struct ApplyOpsGateMode {
     /// keeps its signed bytes for read quarantine instead of the local
     /// write-window refusal.
     pub(super) replicated_puts: std::collections::BTreeSet<EntityId>,
+    /// The exact own-vault CLAIM put admitted by the entity ingest door.
+    pub(super) claim_source_replay:
+        Option<crate::dreamer_consolidation::replicated_sources::ClaimSourceReplay>,
     /// Each ASSET `BatchBuilder::put_marked_carrier` queued, by the BLAKE3
     /// of its bytes (FIX 9034): a batch of nothing else skips the door's
     /// scan, its detection being the carrier's mark.
@@ -118,6 +121,7 @@ impl ApplyOpsGateMode {
             asset_files: HashMap::new(),
             asset_file_bodies: HashMap::new(),
             replicated_puts: std::collections::BTreeSet::new(),
+            claim_source_replay: None,
             marked_carriers: std::collections::BTreeMap::new(),
             caller_envelopes: HashMap::new(),
             prepared_person_substrate: None,

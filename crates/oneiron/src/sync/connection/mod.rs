@@ -200,10 +200,9 @@ impl SyncConnection {
         let mode = if config.client_config.residence_mode_is_fixed() {
             config.client_config.residence_mode
         } else {
-            crate::sync::residence::resolve_residence_mode(
-                manager.vault(),
-                config.client_config.residence_mode,
-            )?
+            manager
+                .vault()
+                .resolve_and_record_device_residence(config.client_config.residence_mode)?
         };
         let left = crate::sync::shared_leave::has_left(manager.vault())?;
         // The topology moves residence reads to the elected home when the
@@ -674,7 +673,8 @@ impl SyncConnection {
                 crate::sync::residence::set_device_sync_preference_in_txn(
                     vault, txn, mode, predicted,
                 )?;
-                let effective = vault.resolve_residence_mode_in_txn(txn, configured)?;
+                let effective =
+                    vault.resolve_and_record_device_residence_in_txn(txn, configured)?;
                 let mut change = ResidenceModeChange {
                     mode: effective,
                     retained,

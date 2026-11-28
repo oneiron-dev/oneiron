@@ -80,6 +80,10 @@ pub(in crate::batch) fn stage_entity_body_row(
         Some((entity_type, data)),
     )?;
     store.port_stage_entity_row(wtxn, id, &payload.0)?;
+    #[cfg(feature = "sync")]
+    if !store.is_union() {
+        crate::sync::residence::delete_soft_drop_marker_in_txn(store, wtxn, &id.to_hex())?;
+    }
     crate::vault::entity_revision::index_name_phonetic(store, wtxn, id, entity_type, data)?;
     crate::conversation_dag::pin_typed_record(store, wtxn, id, entity_type, data)?;
     Ok(())
@@ -463,11 +467,18 @@ pub(super) fn stage_claim_projection(
     id: EntityId,
     body: Option<&crate::write_envelope::claim_body::ClaimBody>,
     replicated: bool,
+    claim_source_replay: Option<
+        &crate::dreamer_consolidation::replicated_sources::ClaimSourceReplay,
+    >,
 ) -> Result<()> {
     let store = write.store;
     if let Some(body) = body {
         if !replicated {
             crate::entity_doc::retain_fresh_claim_citations_in_txn(store, wtxn, &id, body)?;
+        }
+        if replicated && let Some(replay) = claim_source_replay.filter(|replay| replay.claim == id)
+        {
+            replay.register_in_txn(store, wtxn, body)?;
         }
         crate::store::claim_projection::maintain_claim_projection_index(write, wtxn, id, body)?;
         crate::claim::history_store::maintain_machine_history_index(store, wtxn, id, body)?;

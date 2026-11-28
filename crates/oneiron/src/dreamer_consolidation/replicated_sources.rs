@@ -1,0 +1,122 @@
+//! Rebuilds the local dependency registrations of an own-vault CLAIM put.
+
+use crate::EntityId;
+use crate::error::{Error, Result};
+use crate::store::{ManifestDbs, Store};
+use crate::write_envelope::claim_body::ClaimBody;
+use rmpv::Value;
+
+const CITED_SOURCE_PENDING: &str = "a CLAIM's cited source has not arrived";
+
+#[cfg(feature = "sync")]
+pub(crate) fn claim_source_pending(error: &Error) -> bool {
+    matches!(error, Error::InvalidClaimBody(CITED_SOURCE_PENDING))
+}
+
+/// Only promotion evidence with the verified locator field reaches this door.
+pub(crate) fn locator_evidence(body: &ClaimBody) -> Option<&Value> {
+    let value = map_entry(body.evidence.as_ref()?, "candidate_evidence")?;
+    map_entry(value, "locators")?;
+    Some(value)
+}
+
+fn map_entry<'a>(value: &'a Value, name: &str) -> Option<&'a Value> {
+    value
+        .as_map()?
+        .iter()
+        .find_map(|(key, value)| (key.as_str() == Some(name)).then_some(value))
+}
+
+/// The MESSAGE ids a CLAIM's verified locators cite; empty without locator evidence.
+pub(crate) fn cited_sources(body: &ClaimBody) -> Result<std::collections::BTreeSet<EntityId>> {
+    let Some(evidence) = locator_evidence(body) else {
+        return Ok(std::collections::BTreeSet::new());
+    };
+    let citations = super::decode_verified_citations(evidence)
+        .map_err(|_| Error::InvalidClaimBody("invalid verified consolidation locators"))?;
+    Ok(citations
+        .into_iter()
+        .flat_map(|(_, _, spans)| spans.into_iter().map(|span| span.message))
+        .collect())
+}
+
+/// The row's own-vault replay context, not carried by other replicated puts.
+#[derive(Debug)]
+pub(crate) struct ClaimSourceReplay {
+    pub(crate) claim: EntityId,
+    /// The cited sources whose carrier tombstone the window's tombstone pass replays
+    /// (`sync/ingest/claim_source_tombstones.rs`). A carrier tombstone the pass skips proves no
+    /// deletion, so it never marks the CLAIM stale (#10654 review r1).
+    #[cfg(feature = "sync")]
+    pub(crate) carrier_deleted: std::collections::BTreeSet<EntityId>,
+}
+
+impl ClaimSourceReplay {
+    pub(crate) fn register_in_txn(
+        &self,
+        store: &Store,
+        txn: &mut heed::RwTxn<'_>,
+        body: &ClaimBody,
+    ) -> Result<()> {
+        let sources = cited_sources(body)?;
+        if sources.is_empty() {
+            return Ok(());
+        }
+        #[cfg(feature = "sync")]
+        let opened = crate::sync::residence::device_residence_opened_in_txn(store, txn)?;
+        let mut withdrawn = false;
+        let mut pending = false;
+        for source in sources {
+            if source == self.claim {
+                return Err(Error::InvalidClaimBody(
+                    "a CLAIM cannot cite itself as a MESSAGE",
+                ));
+            }
+            #[cfg(feature = "sync")]
+            let crdt_deleted = self.carrier_deleted.contains(&source);
+            #[cfg(not(feature = "sync"))]
+            let crdt_deleted = false;
+            if crdt_deleted
+                || crate::ports::source_deleted_or_withdrawn_in_txn(store, txn, &source)?
+            {
+                withdrawn = true;
+                continue;
+            }
+            // As on the writer, a resident dependency is keyed by the MESSAGE
+            // header's learned-at, not the locator's optional CRDT frontier.
+            if store.entities().get(txn, source.as_bytes())?.is_some() {
+                crate::ports::record_derived_edge_in_txn(store, txn, &self.claim, &source)?;
+                continue;
+            }
+            #[cfg(feature = "sync")]
+            if crate::ports::record_index_listed_dependency_in_txn(
+                store,
+                txn,
+                &source,
+                &self.claim,
+            )? {
+                continue;
+            }
+            // On an opened device an absent, unlisted source lands the CLAIM with no registration
+            // row: a cold source has no frontier, and a hard erase of it never reaches an opened
+            // device (PR1-OPENED-COLD-SOURCE-MODE = A, 28 Nov). Its cold-citation row lets the read
+            // gate judge the source on local evidence: a soft-drop marker hides the CLAIM, at
+            // arrival or later, and a restore shows it again with no replay (#10654 review r1).
+            #[cfg(feature = "sync")]
+            if opened {
+                crate::sync::residence::put_cold_citation_in_txn(store, txn, &self.claim, &source)?;
+                continue;
+            }
+            pending = true;
+        }
+        if withdrawn {
+            if !crate::ports::stale_in_txn(store, txn, &self.claim)? {
+                let at = crate::ports::recorded_at_in_txn(store, txn)?;
+                crate::ports::stage_stale_mark_in_txn(store, txn, &self.claim, at)?;
+            }
+        } else if pending {
+            return Err(Error::InvalidClaimBody(CITED_SOURCE_PENDING));
+        }
+        Ok(())
+    }
+}
