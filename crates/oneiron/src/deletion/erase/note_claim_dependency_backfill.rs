@@ -373,9 +373,6 @@ impl Vault {
         }
         for note in &live_notes {
             crate::ports::record_derived_edge_in_txn(&self.store, wtxn, claim, note)?;
-            if let Some(birth) = birth {
-                crate::ports::record_derived_edge_in_txn(&self.store, wtxn, &birth, note)?;
-            }
             counts.linked += 1;
         }
         Ok(())
