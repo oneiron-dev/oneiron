@@ -188,6 +188,7 @@ impl MailProviderWire for PartsFake {
             changes: (0..self.relabeled)
                 .map(|index| MailHistoryChange::Relabeled {
                     provider_id: format!("m{index:04}"),
+                    history_id: (110 + index).to_string(),
                 })
                 .collect(),
             next_page: None,

@@ -32,9 +32,23 @@ A step that runs out stops there. What landed stays, and the step answers
 `quota_paused_until` with no error. A step that stops part-way through a
 change-feed page keeps how far it got; the next step reads the page again and
 goes on after the changes already applied, a message the copy setting skips
-included. `vault.mail.sources.sync_status` shows the
+included. A message whose labels changed again meanwhile (a later Gmail label
+record names it) makes the page read again differ from the one begun, and the
+step applies that page from its start. `vault.mail.sources.sync_status` shows the
 same time, and its `last_error` stays empty. Until that time the host's pass
 skips the source, and a step of it makes no Gmail call.
+
+## The copy's pace
+
+A step names when the host steps the mailbox again (`next_step_at` on its
+report). A step that ran out of the copy's 4,500 units names the end of its
+minute; one that ended on its budget names now. So a big mailbox copies at 75%
+of its per-user quota (L3-16-COPY-PACE = A, from RESEARCH-1393 #backfill), not
+one step per 300 s pass. A mailbox that owes nothing (its listing done, no body
+or opened attachment waiting, no change-feed read cut short) names no next
+step, and neither does a provider whose wire declares no quota: the 300 s pass
+steps those. One copying mailbox spends at most 6.48M units a day of its Google
+project's daily threshold.
 
 ## The copy's time
 
