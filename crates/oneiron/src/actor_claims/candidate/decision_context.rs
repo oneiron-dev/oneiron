@@ -35,5 +35,6 @@ pub(super) fn craft_review(
             .into_iter()
             .collect(),
         analysis: None,
+        restates: None,
     }
 }

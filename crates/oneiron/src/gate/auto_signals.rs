@@ -48,9 +48,13 @@ pub(super) fn auto_check_signals(
         .into_iter()
         .rev()
     {
+        // An engine restatement of a held write's open question names the
+        // writer it asks for, but the writer wrote nothing: it is neither a
+        // write nor a step of the streak.
         if record.actor_ref.as_deref() != Some(actor_ref)
             || record.content_kind != "claim"
             || record.created_at > now
+            || record.context.restates.is_some()
         {
             continue;
         }

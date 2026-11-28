@@ -39,6 +39,7 @@ pub(super) fn applied(
             .into_iter()
             .collect(),
         analysis: None,
+        restates: None,
     }
 }
 

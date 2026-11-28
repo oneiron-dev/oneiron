@@ -32,7 +32,8 @@ pub struct GateDecisionRecord {
     pub read_frontier_hash: [u8; 32],
     /// What the decision was made about, the loop it came from and the
     /// ruled analysis of its input, captured by its original writer before
-    /// its append (FIX 7499, 7500, 7801). Never consulted to decide a write.
+    /// its append (FIX 7499, 7500, 7801). Never consulted to decide a write;
+    /// the auto checker's signals read only its restatement mark.
     pub context: GateDecisionContext,
     /// Set when this row was redacted in place to its retention skeleton
     /// (version 1). Never set at append time; the erase coupling (ONE-1638)

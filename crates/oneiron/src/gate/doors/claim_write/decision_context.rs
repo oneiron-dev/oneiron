@@ -83,6 +83,7 @@ pub(super) fn claim_decision_context_store_in(
             .into_iter()
             .collect(),
         analysis: Some(claim_analysis(body)),
+        restates: None,
     }
 }
 

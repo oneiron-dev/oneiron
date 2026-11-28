@@ -1,8 +1,11 @@
 //! What a Gate decision was made about, the loop it came from and the ruled
-//! analysis of the input it judged (FIX 7499, 7500, 7801). The decision's
-//! original writer captures it before its one append; nothing writes it
-//! later, and no door reads it to decide a write. An empty part means the
-//! writer had nothing proven to put there.
+//! analysis of the input it judged (FIX 7499, 7500, 7801), and the decision
+//! it restates when it restates one. The decision's original writer captures
+//! it before its one append; nothing writes it later, and no door reads it to
+//! decide a write. The auto checker's signals read only
+//! [`GateDecisionContext::restates`], to leave a restated question out of its
+//! writer's writes. An empty part means the writer had nothing proven to put
+//! there.
 
 use crate::claim::ClaimRecordScope;
 use serde::{Deserialize, Serialize};
@@ -23,6 +26,13 @@ pub struct GateDecisionContext {
     /// The ruled risk analysis of the input the decision judged, when its
     /// writer judged one.
     pub analysis: Option<GateDecisionAnalysis>,
+    /// The decision this one restates: the engine changed a held claim and
+    /// asked the owner's open question again on the body the claim now
+    /// stores (`claim::held_question`). A restatement is the same question,
+    /// not a new write by the writer it names. `None` on every other
+    /// decision, and on every row written before this mark.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restates: Option<GateDecisionId>,
 }
 
 /// The read context of one record a decision is about: never a captured
@@ -219,7 +229,10 @@ impl GateDecisionContext {
     /// Whether the writer captured nothing.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.read.is_empty() && self.links.is_empty() && self.analysis.is_none()
+        self.read.is_empty()
+            && self.links.is_empty()
+            && self.analysis.is_none()
+            && self.restates.is_none()
     }
 
     /// The context of a loop decision its writer linked as `link`, about the
@@ -233,13 +246,15 @@ impl GateDecisionContext {
             read: read.into_iter().collect(),
             links: vec![link],
             analysis: None,
+            restates: None,
         }
     }
 
     /// The read context and links `original` carries, for a decision that
     /// answers it: each link names `original` as its basis, and as its origin
     /// where it was the admission itself. No analysis is carried, since this
-    /// decision judged no fresh input.
+    /// decision judged no fresh input, and no restatement mark: an answer
+    /// restates nothing.
     #[must_use]
     pub fn answering(original: &GateDecisionRecord) -> Self {
         Self {
@@ -251,6 +266,7 @@ impl GateDecisionContext {
                 .map(|link| link.answered_by(original.decision_id))
                 .collect(),
             analysis: None,
+            restates: None,
         }
     }
 
