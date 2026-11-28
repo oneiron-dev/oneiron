@@ -341,6 +341,10 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
         self.provider.task_runtime_available()
     }
 
+    fn seat_facet(&self) -> Option<String> {
+        self.provider.seat_facet().map(str::to_owned)
+    }
+
     fn engine_native(&self) -> Option<&McpEngineNativeCodeHost> {
         Some(self)
     }

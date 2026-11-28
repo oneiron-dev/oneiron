@@ -2,8 +2,9 @@
 //! promise at its door): `vault.models.manifest.read` and `.replace`,
 //! `.routes.read`, `.roles.read` and `.invoke`, `.oneironer.bind`,
 //! `.catalog.get`, `.diff` and `.refresh`, the six `.trials.*` doors, and
-//! `.bindings.propose`, `.get`, `.read`, `.accept` and `.deny`, each entered
-//! at its generated HTTP facade route, `POST /v1/core/facade/<verb>`.
+//! `.bindings.propose`, `.get`, `.read`, `.accept` and `.deny`, and
+//! `.descriptions.set` and `.read`, each entered at its generated HTTP facade
+//! route, `POST /v1/core/facade/<verb>`.
 //!
 //! The promises, one test each:
 //! - Where the vault's model calls run is the owner's rule (canon ARCH-0036
@@ -25,6 +26,15 @@
 //!   caller reads, accepts or denies it; the owner's acceptance binds the
 //!   candidate, and a later denial cannot undo it.
 //! - A denied proposal changes no binding, and no acceptance follows it.
+//! - A seat description row is its owner's word (FIX
+//!   SEAT-DESCRIPTION-ROW-NO-PUBLIC-DOOR; Engine ACCEPT
+//!   PLAN-SEAT-DESCRIPTION-DOOR, 28 Nov 13:13): the row decides which model a
+//!   run is born on (llm/seat.rs, a birth reads it), so the same callers are
+//!   refused at set and read, no refusal names a model and nothing is
+//!   stored. The owner's row is the one the seat pick reads; it needs a
+//!   registered model, a facet and a line; the read answers it, and the set
+//!   answers the row it replaced. A host with no code-mode seat pick reports
+//!   no facet (`api/tests/mcp_quickjs.rs` proves a host that binds one).
 //!
 //! Left out: `vault.models.routes.replace` (open #8977 and #8978 delete it),
 //! an agent's granted proposal (`model_binding_proposer_grant.rs` proves it
@@ -63,12 +73,13 @@ use oneiron::authority::{
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{Scope, ScopeAxis};
+use oneiron::llm::seat::{ModelDescription, SeatDescriptionsRead};
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
 use oneiron::test_doors::model_binding_proposer::{
     PROPOSE_ROLE, TrialFixture, ensure_completed_trial_offer,
 };
-use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
+use oneiron::{EntityId, ModelId, TimeRange, Vault, VaultConfig};
 use oneiron_keystore::MemoryKeystore;
 use oneiron_server::{build_app, config::SyncServerConfig, server::SyncServer};
 use serde_json::{Value, json};
@@ -94,6 +105,8 @@ const BINDINGS_GET: &str = "vault.models.bindings.get";
 const BINDINGS_READ: &str = "vault.models.bindings.read";
 const BINDINGS_ACCEPT: &str = "vault.models.bindings.accept";
 const BINDINGS_DENY: &str = "vault.models.bindings.deny";
+const DESCRIPTIONS_SET: &str = "vault.models.descriptions.set";
+const DESCRIPTIONS_READ: &str = "vault.models.descriptions.read";
 
 /// The prefix of every model the fixture names: no refusal may hold one.
 const FIXTURE_MODELS: &str = "test/bp-";
@@ -755,5 +768,215 @@ fn a_denied_binding_proposal_changes_no_binding() {
             denied,
             "the denial stands"
         );
+    });
+}
+
+/// The seat description row `model` gets under `facet`, with the owner's
+/// line alone.
+fn seat_row(model: &str, facet: &str) -> ModelDescription {
+    ModelDescription {
+        model: ModelId::new(model).expect("fixture model id"),
+        facet: facet.to_owned(),
+        owner: Some(format!("{facet} work, by the owner")),
+        measured: None,
+        benchmarks: None,
+        vendor: None,
+    }
+}
+
+/// The owner's row is the one a seat birth reads (`Vault::model_description`,
+/// llm/seat.rs: a birth seats only a model whose row names the task's
+/// facet). Before the owner's set the model has none; after it, exactly the
+/// row written. In-process, the answer names no host facet.
+#[test]
+fn an_owner_seat_description_is_the_row_the_seat_pick_reads() {
+    run_on_engine_stack("models-seat-description-birth-row", || async {
+        let host = host();
+        let trial = ensure_completed_trial_offer(&host.vault).expect("a completed trial offer");
+        let row = seat_row(&trial.incumbent, "code-task");
+        assert_eq!(
+            host.vault.model_description(&row.model).expect("read"),
+            None
+        );
+        let written = host
+            .vault
+            .set_model_description_as_owner(&host.owner_proof(), row.clone())
+            .expect("the owner's set");
+        assert_eq!(written.description, row);
+        assert_eq!(written.replaced, None);
+        assert_eq!(
+            (written.seat_facet, written.host_facet_matches),
+            (None, None)
+        );
+        assert_eq!(
+            host.vault.model_description(&row.model).expect("read"),
+            Some(row),
+            "the seat pick reads the owner's row"
+        );
+    });
+}
+
+/// A row needs a registered model, a facet and at least one line; a refused
+/// set stores nothing.
+#[test]
+fn a_seat_description_needs_a_registered_model_a_facet_and_a_line() {
+    run_on_engine_stack("models-seat-description-checks", || async {
+        let host = host();
+        let trial = ensure_completed_trial_offer(&host.vault).expect("a completed trial offer");
+        let owner = host.owner_proof();
+        let unregistered = seat_row("test/bp-unregistered@r1", "code-task");
+        let mut no_facet = seat_row(&trial.incumbent, "code-task");
+        no_facet.facet = " ".to_owned();
+        let mut no_line = seat_row(&trial.incumbent, "code-task");
+        no_line.owner = None;
+        for refused in [unregistered, no_facet, no_line] {
+            assert!(
+                host.vault
+                    .set_model_description_as_owner(&owner, refused.clone())
+                    .is_err(),
+                "{refused:?}"
+            );
+        }
+        let read = host
+            .vault
+            .model_descriptions_as_owner(&owner, SeatDescriptionsRead::default())
+            .expect("the owner's read");
+        assert_eq!(read.rows, Vec::new(), "a refused set stores nothing");
+    });
+}
+
+/// The read answers every row in key order, or one model's; a set over a
+/// described model answers the row it replaced.
+#[test]
+fn the_seat_description_read_answers_what_the_owner_wrote() {
+    run_on_engine_stack("models-seat-description-read", || async {
+        let host = host();
+        let trial = ensure_completed_trial_offer(&host.vault).expect("a completed trial offer");
+        let owner = host.owner_proof();
+        let incumbent = seat_row(&trial.incumbent, "code-task");
+        let candidate = seat_row(&trial.candidate, "code-task");
+        for row in [&incumbent, &candidate] {
+            host.vault
+                .set_model_description_as_owner(&owner, row.clone())
+                .expect("the owner's set");
+        }
+        let mut both = vec![incumbent.clone(), candidate.clone()];
+        both.sort_by(|a, b| a.model.as_str().cmp(b.model.as_str()));
+        let all = host
+            .vault
+            .model_descriptions_as_owner(&owner, SeatDescriptionsRead::default())
+            .expect("read every row");
+        assert_eq!(all.rows, both);
+        let one = host
+            .vault
+            .model_descriptions_as_owner(
+                &owner,
+                SeatDescriptionsRead {
+                    model: Some(candidate.model.clone()),
+                },
+            )
+            .expect("read one row");
+        assert_eq!(one.rows, vec![candidate]);
+        let review = seat_row(&trial.incumbent, "review-task");
+        let rewritten = host
+            .vault
+            .set_model_description_as_owner(&owner, review.clone())
+            .expect("the owner's second set");
+        assert_eq!(rewritten.replaced, Some(incumbent));
+        assert_eq!(
+            host.vault.model_description(&review.model).expect("read"),
+            Some(review)
+        );
+    });
+}
+
+/// The set answers the row as stored, not the row it was given: an owner's
+/// line that holds a provider token goes to custody on its way in (the
+/// side-row wall, ARCH-0038 #secret-scan-target), so the answer carries the
+/// handle the read answers and no token (review r1 of #10658).
+#[test]
+fn a_seat_description_set_answers_the_row_as_stored() {
+    run_on_engine_stack("models-seat-description-stored", || async {
+        let host = host();
+        let trial = ensure_completed_trial_offer(&host.vault).expect("a completed trial offer");
+        let owner = host.owner_proof();
+        let mut row = seat_row(&trial.incumbent, "code-task");
+        row.owner =
+            Some("code-task work; TOKEN=ghp_0123456789abcdefghijklmnopqrstuvwxyz".to_owned());
+        let written = host
+            .vault
+            .set_model_description_as_owner(&owner, row.clone())
+            .expect("the owner's set");
+        let read = host
+            .vault
+            .model_descriptions_as_owner(
+                &owner,
+                SeatDescriptionsRead {
+                    model: Some(row.model.clone()),
+                },
+            )
+            .expect("the owner's read");
+        assert_eq!(
+            read.rows,
+            vec![written.description.clone()],
+            "the set answers the row the read answers"
+        );
+        let line = written.description.owner.as_deref().unwrap_or_default();
+        assert!(
+            !line.contains("ghp_"),
+            "the answer carries no token: {line}"
+        );
+        assert_ne!(written.description, row, "the token went to custody");
+    });
+}
+
+/// A seat description is its owner's word: a person on their own slip, a
+/// full-access agent that holds no grant and another vault's owner are
+/// refused at the set and the read, no refusal names a model, and nothing is
+/// stored. The owner's set lands at its HTTP door and the read answers it;
+/// this host binds no code-mode seat pick, so both report no facet.
+#[test]
+fn a_seat_description_is_its_owners_word() {
+    run_on_engine_stack("models-seat-description-owner", || async {
+        let (host, other) = (host(), host());
+        let trial = ensure_completed_trial_offer(&host.vault).expect("a completed trial offer");
+        let person = host.person("Ines Varga", 0x61);
+        let agent = host.agent("descriptions-agent", 0x62);
+        let row = json!({"model": trial.incumbent, "facet": "code-task", "owner": "code-task work, by the owner"});
+        let doors = [
+            (DESCRIPTIONS_SET, row.clone()),
+            (DESCRIPTIONS_READ, json!({})),
+        ];
+        for (who, caller) in [
+            ("person", Caller::As(&person)),
+            ("agent", Caller::As(&agent)),
+            ("another vault's owner", Caller::Stranger(&other)),
+        ] {
+            for (verb, input) in &doors {
+                let call = format!("{who} at {verb}");
+                let reply = host.send(caller, verb, input.clone()).await;
+                reply.refused(&call, verb, caller);
+                reply.holds_none(&call, &[FIXTURE_MODELS, "code-task"]);
+            }
+        }
+        let model = ModelId::new(&trial.incumbent).expect("fixture model id");
+        assert_eq!(
+            host.vault.model_description(&model).expect("read"),
+            None,
+            "a refused set stores nothing"
+        );
+        let written = host.owner_call(DESCRIPTIONS_SET, row).await;
+        assert_eq!(
+            written["description"]["model"], trial.incumbent,
+            "{written}"
+        );
+        assert_eq!(written["description"]["facet"], "code-task", "{written}");
+        assert_eq!(written["replaced"], Value::Null, "{written}");
+        assert_eq!(written["seat_facet"], Value::Null, "{written}");
+        assert_eq!(written["host_facet_matches"], Value::Null, "{written}");
+        let read = host.owner_call(DESCRIPTIONS_READ, json!({})).await;
+        assert_eq!(read["rows"].as_array().map(Vec::len), Some(1), "{read}");
+        assert_eq!(read["rows"][0]["model"], trial.incumbent, "{read}");
+        assert_eq!(read["seat_facet"], Value::Null, "{read}");
     });
 }

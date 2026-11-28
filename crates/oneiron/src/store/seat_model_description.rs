@@ -8,9 +8,13 @@ use serde::{Deserialize, Serialize};
 use crate::side_table::LegacyJson;
 
 /// A description is keyed by the fully revisioned model ID. Absence is not a
-/// recommendation; the router cannot judge an undocumented model.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// recommendation; the router cannot judge an undocumented model. The owner
+/// writes it through `vault.models.descriptions.set`; its schema name is
+/// `SeatModelDescription`, apart from the description policy's row
+/// (`store::model_description_rows::ModelDescription`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(rename = "SeatModelDescription")]
 pub struct ModelDescription {
     pub model: ModelId,
     /// Capability profile, not a provider, tier or model-family name.

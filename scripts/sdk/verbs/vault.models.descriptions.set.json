@@ -1,0 +1,17 @@
+{
+  "name": "vault.models.descriptions.set",
+  "description": "Stores the owner's seat description row for one registered model, the facet and lines the seat pick reads, and answers the row it replaced and this host's seat facet.",
+  "input": "crate::llm::seat::ModelDescription",
+  "output": "crate::llm::seat::SeatDescriptionWrite",
+  "call": "memory.vault().set_model_description_as_owner(&memory.embedded_owner(\"vault.models.descriptions.set\")?, input).map_err(crate::memory::MemoryError::from)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "act_class": "reversible_work",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}
