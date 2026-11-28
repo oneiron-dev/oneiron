@@ -131,7 +131,6 @@ pub fn render_job_unit(inputs: &UnitInputs) -> String {
     let _ = writeln!(text, "ExecStart={binary} job-exec %i");
     // The job's credentials, as root's control handler staged them before
     // the start ([`super::credentials`]); the probe unit loads none.
-    let _ = writeln!(text, "{}", super::credentials::load_credential_line());
     let _ = writeln!(
         text,
         "ExecStartPost=+{binary} job-prepare --after-exec {root_args} %i"
