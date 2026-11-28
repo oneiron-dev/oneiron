@@ -40,9 +40,8 @@ pub(crate) fn program_run_project_in_txn(
         else {
             return Ok(None);
         };
-        return Ok(vault
-            .effective_project_in_txn(txn, project)?
-            .map(|_| project));
+        let _ = project;
+        return Ok(None);
     }
     let landed = admission.wake.turn;
     let room = match live_entity_row_in_txn(&vault.store, txn, &landed.turn)? {
