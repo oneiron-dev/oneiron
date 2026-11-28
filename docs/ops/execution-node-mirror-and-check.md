@@ -154,9 +154,15 @@ errors (at most 64 KiB). The job's exit code is the receipt's:
 | 2 | refused before cargo ran; `verdict.json` `refused` names why: `argument_unknown`, `argument_invalid`, `toolchain_channel_not_pinned`, `toolchain_missing <channel>`, `vendor_root_missing`, `vendor_incomplete <name>-<version>`, `source_unsupported <source>` |
 | other | the first failing step's cargo exit code (101 for a compile error) |
 
-Every check is cold: no target dir outlives a job (`node_settings.rs:599-604`, `write` must be empty). A lane check
-took a median of 1,180 s cold on nelly (FLEET-TOOL-PARITY.md section 1). [NODE-TEMPLATE-CACHE-DIR] adds a kept cache
-dir behind a setting.
+Every check is cold today: no target dir outlives a job (`node_settings.rs:599-604`, `write` must be empty). A lane
+check took a median of 1,180 s cold on nelly (FLEET-TOOL-PARITY.md section 1). [NODE-TEMPLATE-CACHE-DIR] adds a kept
+cache dir behind a setting, and `oneiron_check.sh` already uses it when the unit sets `ONEIRON_JOB_CACHE`.
+
+- Staging unpacks every file with the commit's time (the tar crate keeps each entry's mtime). So the script copies the
+  checkout into `<cache>/src` by content (`rsync -rlc --delete`, without `-t`): a changed file gets a fresh time, and an
+  unchanged one keeps its old time.
+- cargo builds there, with `CARGO_HOME` and both targets in the cache. A kept target never takes a changed file as
+  unchanged.
 
 ## Tests
 

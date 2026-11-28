@@ -7,6 +7,14 @@
 # every crate from the vendored directory source $ONEIRON_CHECK_VENDOR and runs the toolchain at
 # $ONEIRON_CHECK_TOOLCHAINS/rust-<channel of rust-toolchain.toml>, both read roots of the template. Nothing is fetched.
 #
+# Cold (no $ONEIRON_JOB_CACHE, the default): cargo builds the checkout in place, with CARGO_HOME and the targets in the
+# payload's tmp, and the job leaves nothing behind. Kept cache ($ONEIRON_JOB_CACHE, a dir the unit gives one run at a
+# time, FIX [NODE-TEMPLATE-CACHE-DIR], behind a setting): staging unpacks every file with the commit's time (the tar
+# crate keeps each entry's mtime), so a kept target would take a changed file that is older than its last build as
+# unchanged. The checkout is therefore copied by content (`rsync -rlc --delete`, no -t) into a fixed path in the cache,
+# and cargo builds there, with CARGO_HOME and the targets in the cache too (the Engine's RELAY
+# CHECK-SCRIPT-COPY-BY-CONTENT, 28 Nov 15:53).
+#
 # Arguments, each `name=value`, matched whole by the template's params:
 #   packages=<pkg>[,<pkg>...]   the crates `cargo check -p` checks (required)
 #   features=all|default        --all-features or the default features (default: all)
@@ -36,6 +44,7 @@ out=${ONEIRON_JOB_OUT:-}
 checkout=${ONEIRON_JOB_CHECKOUT:-}
 toolchains=${ONEIRON_CHECK_TOOLCHAINS:-}
 vendor=${ONEIRON_CHECK_VENDOR:-}
+cache=${ONEIRON_JOB_CACHE:-}
 packages='' features=all tests='' fmt=0
 channel='' rustc_version='' refused='' crate_rc=null testcheck_rc=null fmt_rc=null crate_minutes=null testcheck_minutes=null
 work=''
@@ -98,9 +107,22 @@ export PATH=$tc/bin:/usr/local/bin:/usr/bin:/bin
 unset RUSTUP_TOOLCHAIN RUSTUP_HOME RUSTC RUSTC_WRAPPER RUSTFLAGS CARGO_TARGET_DIR
 rustc_version=$(rustc --version 2>&1 | head -1)
 
-# Cargo's own home: fresh in the payload, holding only the source replacement. crates-io and every git source of
+# Where cargo builds: the checkout in place (cold), or its by-content copy in the kept cache (see the header).
+if [ -n "$cache" ]; then
+  [[ $cache =~ $SAFE_PATH_RE ]] && [ -d "$cache" ] && [ -w "$cache" ] || refuse cache_unusable "$cache"
+  command -v rsync > /dev/null || refuse cache_copy_tool_missing rsync
+  mkdir -p "$cache/src" "$cache/cargo-home" || refuse cache_unusable "$cache"
+  rsync -rlc --delete -- "$checkout/" "$cache/src/" || refuse cache_copy_failed
+  build_dir=$cache/src target_dir=$cache/target test_target_dir=$cache/target-test-support
+  export CARGO_HOME=$cache/cargo-home
+else
+  build_dir=$checkout target_dir=$HOME/target test_target_dir=$HOME/target-test-support
+  export CARGO_HOME=$HOME/.cargo CARGO_INCREMENTAL=0
+fi
+
+# Cargo's own home holds only the source replacement, written at each run. crates-io and every git source of
 # Cargo.lock read from the vendored directory source; a locked crate the vendor root lacks refuses here, before cargo.
-export CARGO_HOME=$HOME/.cargo CARGO_NET_OFFLINE=true CARGO_TERM_COLOR=never CARGO_INCREMENTAL=0
+export CARGO_NET_OFFLINE=true CARGO_TERM_COLOR=never
 export CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS:-4}
 work=$HOME/oneiron-check
 mkdir -p "$CARGO_HOME" "$work" || refuse payload_tmp_unwritable
@@ -147,14 +169,14 @@ done <<< "$locked"
 [ -z "$missing" ] || refuse vendor_incomplete "$missing"
 printf '\n[net]\noffline = true\n' >> "$CARGO_HOME/config.toml"
 
-echo "## ONEIRON-CHECK toolchain=$channel ($rustc_version) vendor=$vendor jobs=$CARGO_BUILD_JOBS packages=$packages features=$features tests=${tests:-none} fmt=$fmt"
-cd "$checkout" || refuse checkout_unreadable
+echo "## ONEIRON-CHECK toolchain=$channel ($rustc_version) vendor=$vendor cache=${cache:-none} jobs=$CARGO_BUILD_JOBS packages=$packages features=$features tests=${tests:-none} fmt=$fmt"
+cd "$build_dir" || refuse checkout_unreadable
 package_flags=(); for p in ${packages//,/ }; do package_flags+=(-p "$p"); done
 feature_flags=(); [ "$features" = all ] && feature_flags=(--all-features)
 
 t0=$(date +%s)
 echo "## COMMAND cargo check --locked --offline ${package_flags[*]} ${feature_flags[*]}"
-CARGO_TARGET_DIR=$HOME/target cargo check --locked --offline "${package_flags[@]}" "${feature_flags[@]}" > "$work/crate.out" 2>&1
+CARGO_TARGET_DIR=$target_dir cargo check --locked --offline "${package_flags[@]}" "${feature_flags[@]}" > "$work/crate.out" 2>&1
 crate_rc=$?
 errors_of "$work/crate.out" | head -240
 [ "$crate_rc" -ne 0 ] && tail -25 "$work/crate.out"
@@ -178,7 +200,7 @@ if [ -n "$tests" ]; then
     done
     extra=(); [ "$pk" = oneiron-server ] && extra=(--features "$SERVER_TEST_FEATURES")
     echo "## COMMAND RUSTFLAGS=\"--cfg oneiron_test_support\" cargo check --locked --offline --keep-going -p $pk --all-features ${extra[*]} ${targets[*]}"
-    RUSTFLAGS="--cfg oneiron_test_support" CARGO_TARGET_DIR=$HOME/target-test-support \
+    RUSTFLAGS="--cfg oneiron_test_support" CARGO_TARGET_DIR=$test_target_dir \
       cargo check --locked --offline --keep-going -p "$pk" --all-features "${extra[@]}" "${targets[@]}" > "$work/testcheck-$pk.out" 2>&1
     rc=$?
     errors_of "$work/testcheck-$pk.out" | head -200

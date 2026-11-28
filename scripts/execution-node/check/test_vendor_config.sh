@@ -54,9 +54,10 @@ LOCK
 setup() { # <channel>: a fresh job tree with the fixture lock, an empty vendor root and a stand-in toolchain
   rm -rf "$T/job"; mkdir -p "$T/job/src" "$T/job/out" "$T/job/home" "$T/job/vendor" "$T/job/toolchains/rust-1.100/bin"
   lock > "$T/job/src/Cargo.lock"
+  echo 'pub fn a() {}' > "$T/job/src/lib.rs"; echo 'gone' > "$T/job/src/stale.rs"
   printf '[toolchain]\nchannel = "%s"\n' "$1" > "$T/job/src/rust-toolchain.toml"
   local bin=$T/job/toolchains/rust-1.100/bin
-  printf '#!/bin/bash\necho "$*" >> "%s/cargo-calls"\nif [ "$1" = check ] && [ "${STAND_IN_CHECK_RC:-0}" -ne 0 ]; then echo "error[E0001]: stand-in error"; exit "$STAND_IN_CHECK_RC"; fi\nexit 0\n' "$T/job" > "$bin/cargo"
+  printf '#!/bin/bash\necho "$*" >> "%s/cargo-calls"\necho "$PWD" >> "%s/cargo-dirs"\nif [ "$1" = check ] && [ "${STAND_IN_CHECK_RC:-0}" -ne 0 ]; then echo "error[E0001]: stand-in error"; exit "$STAND_IN_CHECK_RC"; fi\nexit 0\n' "$T/job" "$T/job" > "$bin/cargo"
   printf '#!/bin/bash\necho "rustc 1.100.0 (stand-in)"\n' > "$bin/rustc"
   cp "$bin/rustc" "$bin/rustfmt"; cp "$bin/rustc" "$bin/cargo-fmt"
   chmod +x "$bin"/*
@@ -66,7 +67,7 @@ fill_vendor() { local d; for d in alpha-1.0.0 beta-0.2.1 beta-macros-0.2.1 gamma
 run_check() { # <args...>: as the job unit runs it, with a clean environment
   env -i PATH=/usr/bin:/bin HOME="$T/job/home" TMPDIR="$T/job/home" ONEIRON_JOB_OUT="$T/job/out" \
     ONEIRON_JOB_CHECKOUT="$T/job/src" ONEIRON_CHECK_TOOLCHAINS="$T/job/toolchains" ONEIRON_CHECK_VENDOR="$T/job/vendor" \
-    STAND_IN_CHECK_RC="${STAND_IN_CHECK_RC:-0}" bash "$check" "$@" > "$T/job/stdout" 2>&1
+    STAND_IN_CHECK_RC="${STAND_IN_CHECK_RC:-0}" ${CACHE:+ONEIRON_JOB_CACHE=$CACHE} bash "$check" "$@" > "$T/job/stdout" 2>&1
 }
 expect() { # <case> <wanted rc> <grep pattern in stdout or ''> <grep pattern in verdict.json or ''>
   local name=$1 want=$2 out_pattern=$3 verdict_pattern=$4
@@ -118,6 +119,25 @@ run_check packages=oneiron; rc=$?; expect "an unpinned channel is refused" 2 'to
 setup 1.100; fill_vendor
 sed -i 's|git+https://github.com/example/gamma|git+ssh://git@example.invalid/gamma|' "$T/job/src/Cargo.lock"
 run_check packages=oneiron; rc=$?; expect "a source it cannot replace is refused" 2 'source_unsupported git\+ssh' ''
+
+# The kept cache (FIX [NODE-TEMPLATE-CACHE-DIR], default off): cargo builds a by-content copy of the checkout there.
+setup 1.100; fill_vendor; mkdir -p "$T/cache"
+CACHE=$T/cache run_check packages=oneiron; rc=$?
+expect "a cache run builds in the cache's copy" 0 '^## CRATE rc=0 pkg=oneiron$' '"crate_rc":0'
+[ "$(tail -1 "$T/job/cargo-dirs")" = "$T/cache/src" ] && cmp -s "$T/job/src/Cargo.lock" "$T/cache/src/Cargo.lock" \
+  && grep -qx 'offline = true' "$T/cache/cargo-home/config.toml" && [ ! -e "$T/job/home/.cargo/config.toml" ] \
+  && ok "cargo runs in the copy, with its home in the cache" || bad "cargo runs in the copy, with its home in the cache"
+touch -d '2001-01-01 00:00:00' "$T/cache/src/lib.rs" "$T/cache/src/rust-toolchain.toml"
+echo 'pub fn b() {}' > "$T/job/src/lib.rs"; touch -d '2000-01-01 00:00:00' "$T/job/src/lib.rs"; rm "$T/job/src/stale.rs"
+CACHE=$T/cache run_check packages=oneiron; rc=$?
+grep -q 'pub fn b' "$T/cache/src/lib.rs" && [ "$(stat -c %Y "$T/cache/src/lib.rs")" -gt "$(date -d '2001-01-02' +%s)" ] \
+  && ok "a changed file is copied with a fresh time, though the checkout's time is older" \
+  || bad "a changed file is copied with a fresh time, though the checkout's time is older"
+[ "$(stat -c %Y "$T/cache/src/rust-toolchain.toml")" -eq "$(date -d '2001-01-01 00:00:00' +%s)" ] \
+  && ok "an unchanged file keeps its time in the copy" || bad "an unchanged file keeps its time in the copy"
+[ ! -e "$T/cache/src/stale.rs" ] && ok "a file the head removed leaves the copy" || bad "a file the head removed leaves the copy"
+CACHE=$T/no-such-cache run_check packages=oneiron; rc=$?
+expect "an unusable cache is refused" 2 'cache_unusable' ''
 
 echo "## TEST-VENDOR-CONFIG pass=$pass fail=$fail"
 [ "$fail" -eq 0 ]
