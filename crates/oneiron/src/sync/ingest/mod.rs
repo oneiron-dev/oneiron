@@ -9,6 +9,7 @@
 mod birth_watch;
 mod claim_source_tombstones;
 mod delivery;
+mod dependent_sources;
 mod dropped_carriers;
 mod entity;
 mod member_sender;

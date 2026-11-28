@@ -169,6 +169,21 @@ pub(crate) fn delete_cold_citation_by_source_in_txn(
     Ok(())
 }
 
+/// Deletes every cold-citation row of `dependent`, each with its by-source twin: a PSYCH_PROFILE
+/// version replaces the previous version's rows, as its writer replaces its registrations.
+pub(crate) fn delete_cold_citations_of_dependent_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    dependent: &crate::EntityId,
+) -> crate::Result<()> {
+    for source in cold_citation_sources_in_txn(store, txn, dependent)? {
+        let key = format!("{}:{}", dependent.to_hex(), source.to_hex());
+        COLD_CITATION.delete(store, txn, &key)?;
+        delete_cold_citation_by_source_in_txn(store, txn, &source, dependent)?;
+    }
+    Ok(())
+}
+
 /// The sources `claim` landed without on this device, in key order. A key that does not decode
 /// fails closed, as a registration row that does not decode does.
 pub(crate) fn cold_citation_sources_in_txn(

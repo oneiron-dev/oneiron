@@ -105,7 +105,7 @@ pub(crate) fn cites_sources(body: &ClaimBody) -> bool {
 }
 
 /// What a replicated put found for one cited source.
-enum SourceStanding {
+pub(crate) enum SourceStanding {
     /// Local or carrier deletion evidence: the CLAIM is marked stale.
     Deleted,
     /// Resident at its header, or index-listed at its listing: the dependency is recorded.
@@ -205,9 +205,8 @@ impl ClaimSourceReplay {
         Ok(())
     }
 
-    /// Judges one cited source on this device: deletion evidence first, then a resident row
-    /// (keyed by its header's learned-at, as on the writer, never a locator's optional CRDT
-    /// frontier), then an index listing. Records the dependency of a resolved source.
+    /// Judges one cited source on this device ([`resolve_dependent_source_in_txn`]), taking a
+    /// carrier tombstone the window's tombstone pass replays as deletion evidence.
     fn resolve_source_in_txn(
         &self,
         store: &Store,
@@ -218,18 +217,7 @@ impl ClaimSourceReplay {
         let crdt_deleted = self.carrier_deleted.contains(source);
         #[cfg(not(feature = "sync"))]
         let crdt_deleted = false;
-        if crdt_deleted || crate::ports::source_deleted_or_withdrawn_in_txn(store, txn, source)? {
-            return Ok(SourceStanding::Deleted);
-        }
-        if store.entities().get(txn, source.as_bytes())?.is_some() {
-            crate::ports::record_derived_edge_in_txn(store, txn, &self.claim, source)?;
-            return Ok(SourceStanding::Registered);
-        }
-        #[cfg(feature = "sync")]
-        if crate::ports::record_index_listed_dependency_in_txn(store, txn, source, &self.claim)? {
-            return Ok(SourceStanding::Registered);
-        }
-        Ok(SourceStanding::Unresolved)
+        resolve_dependent_source_in_txn(store, txn, &self.claim, source, crdt_deleted)
     }
 
     fn mark_withdrawn_in_txn(&self, store: &Store, txn: &mut heed::RwTxn<'_>) -> Result<()> {
@@ -241,12 +229,63 @@ impl ClaimSourceReplay {
     }
 }
 
-/// Judges `source`, which just landed on this device, for every CLAIM that landed without it, as
-/// the put judges a resident source: deletion evidence marks the CLAIM stale, else the dependency
-/// is recorded at the source's header. Each CLAIM is judged once: its by-source cold row is taken
-/// here. The cold-citation row itself stays, the record that the CLAIM landed without the source,
-/// and the read gate judges a resident source by it as it does by the dependency. A source that
-/// is not resident after its put (a staged or pending row) is left for its real landing.
+/// Judges one source `dependent` names on this device: deletion evidence first (`carrier_deleted`
+/// says the window's tombstone pass replays the source's carrier tombstone), then a resident row
+/// (keyed by its header's learned-at, as on the writer, never a locator's optional CRDT
+/// frontier), then an index listing. Records the dependency of a resolved source.
+pub(crate) fn resolve_dependent_source_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    dependent: &EntityId,
+    source: &EntityId,
+    carrier_deleted: bool,
+) -> Result<SourceStanding> {
+    if carrier_deleted || crate::ports::source_deleted_or_withdrawn_in_txn(store, txn, source)? {
+        return Ok(SourceStanding::Deleted);
+    }
+    if store.entities().get(txn, source.as_bytes())?.is_some() {
+        crate::ports::record_derived_edge_in_txn(store, txn, dependent, source)?;
+        return Ok(SourceStanding::Registered);
+    }
+    #[cfg(feature = "sync")]
+    if crate::ports::record_index_listed_dependency_in_txn(store, txn, source, dependent)? {
+        return Ok(SourceStanding::Registered);
+    }
+    Ok(SourceStanding::Unresolved)
+}
+
+/// Marks the resident `dependent` stale at its own revision, as a dependency walk marks it, unless
+/// it is marked already: only a newer version of it may complete a regeneration over the mark
+/// (`ports/regeneration.rs`).
+#[cfg(feature = "sync")]
+pub(crate) fn mark_dependent_stale_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    dependent: &EntityId,
+) -> Result<()> {
+    if crate::ports::stale_in_txn(store, txn, dependent)? {
+        return Ok(());
+    }
+    let revision = store
+        .entities()
+        .get(txn, dependent.as_bytes())?
+        .map(|raw| {
+            crate::batch::EntityMetadataHeader::parse(&raw)
+                .map(|header| header.learned_at)
+                .ok_or(Error::CorruptedIndex("stale dependent header"))
+        })
+        .transpose()?
+        .unwrap_or(0);
+    crate::ports::stage_stale_mark_in_txn(store, txn, dependent, revision)
+}
+
+/// Judges `source`, which just landed on this device, for every dependent that landed without it
+/// (a CLAIM, a scope SUMMARY, a PSYCH_PROFILE), as the put judges a resident source: deletion
+/// evidence marks the dependent stale, else the dependency is recorded at the source's header.
+/// Each dependent is judged once: its by-source cold row is taken here. The cold-citation row
+/// itself stays, the record that the dependent landed without the source, and the read gate judges
+/// a resident source by it as it does by the dependency. A source that is not resident after its
+/// put (a staged or pending row) is left for its real landing.
 #[cfg(feature = "sync")]
 pub(crate) fn register_arrived_source_in_txn(
     store: &Store,
@@ -257,17 +296,17 @@ pub(crate) fn register_arrived_source_in_txn(
     if citers.is_empty() || store.entities().get(txn, source.as_bytes())?.is_none() {
         return Ok(());
     }
-    for claim in citers {
-        crate::sync::residence::delete_cold_citation_by_source_in_txn(store, txn, source, &claim)?;
-        if store.entities().get(txn, claim.as_bytes())?.is_none() {
+    for dependent in citers {
+        crate::sync::residence::delete_cold_citation_by_source_in_txn(
+            store, txn, source, &dependent,
+        )?;
+        if store.entities().get(txn, dependent.as_bytes())?.is_none() {
             continue;
         }
-        let replay = ClaimSourceReplay {
-            claim,
-            carrier_deleted: BTreeSet::new(),
-        };
-        if let SourceStanding::Deleted = replay.resolve_source_in_txn(store, txn, source)? {
-            replay.mark_withdrawn_in_txn(store, txn)?;
+        if let SourceStanding::Deleted =
+            resolve_dependent_source_in_txn(store, txn, &dependent, source, false)?
+        {
+            mark_dependent_stale_in_txn(store, txn, &dependent)?;
         }
     }
     Ok(())

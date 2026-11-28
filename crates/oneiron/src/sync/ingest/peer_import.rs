@@ -126,6 +126,13 @@ fn judged(blob: &[u8]) -> bool {
                     .is_ok_and(|body| {
                         crate::dreamer_consolidation::replicated_sources::cites_sources(&body)
                     }))
+            // A scope SUMMARY and a PSYCH_PROFILE name their sources in their body, which an
+            // own-vault put registers (`dependent_sources`): a peer's copy keeps today's rule.
+            || header.entity_type == crate::registry::ENTITY_TYPE_PSYCH_PROFILE
+            || (header.entity_type == crate::registry::ENTITY_TYPE_SUMMARY
+                && oneiron_store::scope_summary::codec::is_scope_summary(
+                    &blob[ENTITY_METADATA_HEADER_LEN..],
+                ))
     })
 }
 
