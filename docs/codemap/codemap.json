@@ -30912,7 +30912,7 @@
      "path": "src/deletion/legal_hold/clone/legal_hold_store.rs",
      "purpose": "An owner's hold store: sealed copies outside the vault (ARCH-0038 #legal-hold, LEGAL-HOLD-USE = B as a…",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 20
      }
     },
     {
@@ -30975,7 +30975,7 @@
      "path": "src/deletion/legal_hold/mod.rs",
      "purpose": "Legal hold doors (OF-470, design B; owner ruling 2026-10-17: \"B, and that stuff is for cloud only + we…",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 13,
       "re-export": 1
      }
@@ -30987,7 +30987,7 @@
      "path": "src/deletion/legal_hold/prospective.rs",
      "purpose": "A HOST order's or an owner's hold's explicit prospective capture of new on-record messages (LEGAL-HOLD-USE =…",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 21
      }
     },
     {
@@ -31014,7 +31014,7 @@
      "path": "src/deletion/mod.rs",
      "purpose": "ARCH-0038 deletion/redaction contract types",
      "surface": {
-      "crate-vis": 54,
+      "crate-vis": 55,
       "re-export": 15
      }
     },
@@ -87394,7 +87394,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/store/legal_hold/archive.rs",
-     "purpose": "The owner restore lands customer hold rows before their history",
+     "purpose": "The owner restore lands customer hold rows before their history and sealed-record rows",
      "surface": {
       "crate-vis": 1
      }
@@ -87416,7 +87416,7 @@
      "path": "src/store/legal_hold/mod.rs",
      "purpose": "The one legal-hold store (OF-470, design B; ARCH-0038 #legal-hold)",
      "surface": {
-      "crate-vis": 26
+      "crate-vis": 27
      }
     },
     {
@@ -87437,6 +87437,16 @@
      "purpose": "The rows whose content is about a PERSON: the whole-vault export keeps each out with a PERSON it keeps out…",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/legal_hold/sealed_records.rs",
+     "purpose": "Which records a customer hold's sealed captures hold: one empty row per (hold, record, capture), for the…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -100234,7 +100244,7 @@
      "path": "src/test_doors/legal_hold.rs",
      "purpose": "Doors to an owner's hold store for the hold tests: a hold's directory, each of its sealed captures opened…",
      "surface": {
-      "fn": 4,
+      "fn": 6,
       "struct": 1
      }
     },
@@ -111993,7 +112003,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "tests/archive_import_owner_installs_legal_holds.rs",
@@ -114930,6 +114940,14 @@
      "notable": [],
      "path": "tests/erase_answer_counts_sealed_hold_copies.rs",
      "purpose": "The erase answer counts only sealed hold copies (H5R1 T10): a host order with no sealed capture counts no…",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/erase_answer_counts_sealed_members.rs",
+     "purpose": "The erase answer counts sealed prospective and inquiry copies: a future message in a flushed capture, one…",
      "surface": {}
     },
     {
@@ -119686,6 +119704,14 @@
      "notable": [],
      "path": "tests/project_mint_depth_budget.rs",
      "purpose": "A card mint derives the child's depth budget from its parent, as a spawn does, so a thread converts under a…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/promotion_depends_on_cited_source.rs",
+     "purpose": "PROMOTED-CLAIM-SOURCE-DEPENDENCY-GAPS paths 2 and 3: a CLAIM written from an inline-text TURN or from a…",
      "surface": {}
     },
     {
@@ -125903,7 +125929,7 @@
     },
     "store": {
      "entry": "crates/oneiron/src/store/mod.rs",
-     "files": 406,
+     "files": 407,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -126300,8 +126326,8 @@
    },
    "over_bar": 276,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8672,
-   "test_files": 2369
+   "source_files": 8673,
+   "test_files": 2371
   },
   "oneiron-agent-runtime": {
    "files": [

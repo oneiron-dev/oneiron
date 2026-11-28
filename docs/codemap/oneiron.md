@@ -2649,16 +2649,16 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/deletion/legal_hold/clone/auth.rs` | src | s | 3 struct · 6 fn · 2 crate-vis | HostLegalChannel, HostLegalConnection, HostLegalConnectionRole | The inherited manager-created listener is the native transport authority |
 | `src/deletion/legal_hold/clone/collector.rs` | src | s | 8 crate-vis | — | Streaming ciphertext and exact completion shared by native source families |
 | `src/deletion/legal_hold/clone/inquiries.rs` | src | s | 3 crate-vis | — | An owner's hold on inquiries it sent (ARCH-0038 #company-hold) |
-| `src/deletion/legal_hold/clone/legal_hold_store.rs` | src | L | 18 crate-vis | — | An owner's hold store: sealed copies outside the vault (ARCH-0038 #legal-hold, LEGAL-HOLD-USE = B as a… |
+| `src/deletion/legal_hold/clone/legal_hold_store.rs` | src | L | 20 crate-vis | — | An owner's hold store: sealed copies outside the vault (ARCH-0038 #legal-hold, LEGAL-HOLD-USE = B as a… |
 | `src/deletion/legal_hold/clone/live.rs` | src | m | 2 fn · 8 crate-vis | — | Exact HOST order standing for a live entry, independent of any one socket |
 | `src/deletion/legal_hold/clone/messages.rs` | src | m | 6 crate-vis | — | Exact stored on-record MESSAGE records for an order that names them (LEGAL-HOLD-USE = B as a clone, owner… |
 | `src/deletion/legal_hold/clone/mod.rs` | src | s | 1 fn · 1 re-export · 3 crate-vis | — | Native source half of an order-scoped legal clone |
 | `src/deletion/legal_hold/clone/outbox.rs` | src | m | 7 crate-vis | — | The connection half of a HOST order's prospective capture (FIX 13866): stands the order, then streams its… |
 | `src/deletion/legal_hold/held_scrubs.rs` | src | s | 2 crate-vis | — | What a cooperative restriction kept an erase from scrubbing, settled once it lifts (FIX 6386, 7993, 7994) |
-| `src/deletion/legal_hold/mod.rs` | src | L | 13 fn · 1 re-export · 9 crate-vis | — | Legal hold doors (OF-470, design B; owner ruling 2026-10-17: "B, and that stuff is for cloud only + we… |
-| `src/deletion/legal_hold/prospective.rs` | src | L | 19 crate-vis | — | A HOST order's or an owner's hold's explicit prospective capture of new on-record messages (LEGAL-HOLD-USE =… |
+| `src/deletion/legal_hold/mod.rs` | src | L | 13 fn · 1 re-export · 10 crate-vis | — | Legal hold doors (OF-470, design B; owner ruling 2026-10-17: "B, and that stuff is for cloud only + we… |
+| `src/deletion/legal_hold/prospective.rs` | src | L | 21 crate-vis | — | A HOST order's or an owner's hold's explicit prospective capture of new on-record messages (LEGAL-HOLD-USE =… |
 | `src/deletion/legal_hold/types.rs` | src | s | 4 struct · 1 const · 1 re-export | HostOrderHold, LegalHoldMaintenance, LegalHoldProduction, ProducedHoldCapture | The legal-hold vocabulary (OF-470, design B; ARCH-0038 #legal-hold, BIZ-LEGAL-0004 §12, owner ruling… |
-| `src/deletion/mod.rs` | src | s | 15 re-export · 54 crate-vis | — | ARCH-0038 deletion/redaction contract types |
+| `src/deletion/mod.rs` | src | s | 15 re-export · 55 crate-vis | — | ARCH-0038 deletion/redaction contract types |
 | `src/deletion/owed_window_compaction.rs` | src | s | 4 crate-vis | — | Window-compaction obligations written by an erase |
 | `src/deletion/publish.rs` | src | L | 4 crate-vis | — | — |
 | `src/deletion/receipt.rs` | src | m | 23 crate-vis | — | — |
@@ -7460,11 +7460,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/known_value_index/room.rs` | src | s | 2 crate-vis | — | The matcher a compare inside an off-record room reads (ROOM-LOCAL-CUSTODY): base custody's values, and… |
 | `src/store/known_value_index/run.rs` | src | s | 7 crate-vis | — | Run-local PERSON prints alongside the custody matcher (FIX 4974) |
 | `src/store/known_value_index/writer_index.rs` | src | s | 4 crate-vis | — | One known-value index per write (FIX 12210): the index a write the group commit runs loads is kept, on the… |
-| `src/store/legal_hold/archive.rs` | src | s | 1 crate-vis | — | The owner restore lands customer hold rows before their history |
+| `src/store/legal_hold/archive.rs` | src | s | 1 crate-vis | — | The owner restore lands customer hold rows before their history and sealed-record rows |
 | `src/store/legal_hold/events.rs` | src | s | 9 crate-vis | — | The two hold logs (C2, C3): customer holds' and the host-only one |
-| `src/store/legal_hold/mod.rs` | src | m | 26 crate-vis | — | The one legal-hold store (OF-470, design B; ARCH-0038 #legal-hold) |
+| `src/store/legal_hold/mod.rs` | src | m | 27 crate-vis | — | The one legal-hold store (OF-470, design B; ARCH-0038 #legal-hold) |
 | `src/store/legal_hold/notice.rs` | src | s | 1 crate-vis | — | What a cooperative restriction tells a reader: absence while it stands |
 | `src/store/legal_hold/person_content.rs` | src | s | 1 crate-vis | — | The rows whose content is about a PERSON: the whole-vault export keeps each out with a PERSON it keeps out… |
+| `src/store/legal_hold/sealed_records.rs` | src | s | 5 crate-vis | — | Which records a customer hold's sealed captures hold: one empty row per (hold, record, capture), for the… |
 | `src/store/legal_hold/use_limit.rs` | src | s | 10 crate-vis | — | Shared storage-only admission for a recipient's cooperative review restriction |
 | `src/store/linear_pull_cursor.rs` | src | s | 1 crate-vis | — | The lift sweep's typed acceptance for the tracker pull-page cursor row (`LINEAR_PULL_CURSOR`) |
 | `src/store/linear_task_revision.rs` | src | s | 7 crate-vis | — | The tracker mirror's revision rows for a typed TASK (`LINEAR_TASK_REVISION`, `LINEAR_TASK_DIRTY`… |
@@ -8603,7 +8604,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/lane_economy_archive.rs` | src | s | 2 fn · 1 const | — | Doors for `tests/archive_lane_economy_tables_retained.rs` (FIX LANE-ECONOMY-TABLES-ARCHIVE-CLASS): the lane… |
 | `src/test_doors/learning_claim_value.rs` | src | s | 5 fn | — | Doors for `tests/learning_claim_value.rs` (FIX LEARNING-CELL-POSITIONAL-DECODE): the learning claim value… |
 | `src/test_doors/learning_setting_sourced.rs` | src | s | 1 fn | — | A learning setting's sourced read, for the cap-order test: the value in force for the whole vault beside the… |
-| `src/test_doors/legal_hold.rs` | src | m | 1 struct · 4 fn | OpenedHoldComponent | Doors to an owner's hold store for the hold tests: a hold's directory, each of its sealed captures opened… |
+| `src/test_doors/legal_hold.rs` | src | m | 1 struct · 6 fn | OpenedHoldComponent | Doors to an owner's hold store for the hold tests: a hold's directory, each of its sealed captures opened… |
 | `src/test_doors/lib_rows_b_repeated_key.rs` | src | s | 3 fn | — | Doors for tests/msgpack_lib_rows_b.rs (PLAN-UC-08 PR 5b) |
 | `src/test_doors/lifted_text.rs` | src | s | 1 fn | — | Doors for `tests/primitive_a_evidence_spans.rs` (FIX-LIST EVIDENCE-SPANS-MASKED-COORDINATES): a lifted key… |
 | `src/test_doors/linkedin_seat_settings.rs` | src | s | 2 fn | — | Doors for `tests/pack_keys_linkedin.rs` (owner ruling PACK-SETTINGS-ALL = B; RULING… |
@@ -9606,7 +9607,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/archive_export_withholds_retained_rows_of_withheld_records.rs` | test | m | — | — | The whole-vault export withholds a retained side row about a record it keeps out (FIX… |
 | `tests/archive_import_deleted_agent_id.rs` | test | s | — | — | A deleted agent stays deleted across a whole-vault archive import (FIX AGENT-DEF-ARCHIVE-IMPORT-DELETED-ID… |
 | `tests/archive_import_maintenance_kinds.rs` | test | m | — | — | Whole-vault archive restore of a vault that holds a maintenance row no import door restores (L10-23, OF-222) |
-| `tests/archive_import_owner_installs_legal_holds.rs` | test | m | — | — | Owner archive restores install legal hold rows and their ordered history, never in-place protection… |
+| `tests/archive_import_owner_installs_legal_holds.rs` | test | L | — | — | Owner archive restores install legal hold rows and their ordered history, never in-place protection… |
 | `tests/archive_import_owner_installs_room_membership.rs` | test | XL | — | — | The owner's restore installs the room membership ledger live |
 | `tests/archive_import_owner_installs_setting_rows.rs` | test | L | — | — | The owner's archive restore brings back Setting rows (ARCHIVE-SETTING-CATALOGUE-KEYS-NOT-CARRIED) |
 | `tests/archive_import_owner_installs_side_effects.rs` | test | m | — | — | The owner's restore installs the held egress, protection and scheduled-effect side tables live (SIDE-4a) |
@@ -9971,6 +9972,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/entity_revision_text_diff_budget.rs` | test | s | — | — | A row edit diffs each revision text field within a budget |
 | `tests/epoch_lineage_pointer_form_summary.rs` | test | s | — | — | The lineage census reads a pointer-form epoch SUMMARY by the keyframe keys it keeps beside its pointer… |
 | `tests/erase_answer_counts_sealed_hold_copies.rs` | test | s | — | — | The erase answer counts only sealed hold copies (H5R1 T10): a host order with no sealed capture counts no… |
+| `tests/erase_answer_counts_sealed_members.rs` | test | L | — | — | The erase answer counts sealed prospective and inquiry copies: a future message in a flushed capture, one… |
 | `tests/erase_answer_lists_copies_out_of_reach.rs` | test | L | — | — | What a delete and an erase cannot reach, told in the answer (H5): T1 the hard delete lists old backups; T2… |
 | `tests/erase_world_backup_notice.rs` | test | s | — | — | The owner's erase of a world says, in plain words, what its old backups keep (ARCH-0038… |
 | `tests/erased_form_step_start.rs` | test | s | — | — | FIX ERASED-FORM-UNFENCED-REPLAY-PUTS: a step's capture reads the run's stored row again before it keeps the… |
@@ -10551,6 +10553,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/project_leader_home_room_reply.rs` | test | m | — | — | A project's current leader may answer a person's turn that names no agent in the project's home room and… |
 | `tests/project_leader_home_room_reply/claim_and_answer.rs` | test | s | — | — | Review round 2 (REVIEW-9956): a turn's claim and its answer stay one holder's |
 | `tests/project_mint_depth_budget.rs` | test | s | — | — | A card mint derives the child's depth budget from its parent, as a spawn does, so a thread converts under a… |
+| `tests/promotion_depends_on_cited_source.rs` | test | s | — | — | PROMOTED-CLAIM-SOURCE-DEPENDENCY-GAPS paths 2 and 3: a CLAIM written from an inline-text TURN or from a… |
 | `tests/protected_ref_rewrite.rs` | test | L | — | — | L8-51: over the vault-as-origin push, anyone but the vault's owner may neither delete nor rewrite the… |
 | `tests/provider_event_archive_machine.rs` | test | s | — | — | FIX [PROVIDER-EVENT-ARCHIVE-MACHINE-UNSIGNED] (OF-519 custody): a served host archives each verified… |
 | `tests/provisional_confirm_source_label.rs` | test | m | — | — | A provisional entity named only in a relationship-scoped MESSAGE, once confirmed, stays inside that… |
