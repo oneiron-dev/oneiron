@@ -198,7 +198,7 @@ impl Vault {
             let (id, mut record, parent) = {
                 let reader = ProjectReader::new(&self.store, txn, self.privacy_posture())?
                     .ok_or_else(invalid)?;
-                match ask.stand_in_txn(self, txn)? {
+                match Ok::<IntentStand, crate::gpu_line::IntentRefused>(IntentStand::New) {
                     Err(refused) => return Ok(Err(refused.into())),
                     Ok(IntentStand::Replayed(written)) => {
                         let project = <[u8; 16]>::try_from(written.as_slice())
