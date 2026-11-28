@@ -297,6 +297,7 @@ impl Blocker {
             | Self::NotTheIssuer { .. } => Clearing::Standing,
             Self::MachineMissing
             | Self::NoMachine
+            | Self::LineRefuses { .. }
             | Self::NoScope { .. }
             | Self::ScopeNotAllowed { .. }
             | Self::NoDevice { .. }
@@ -304,8 +305,7 @@ impl Blocker {
             | Self::TemplateNotOffered
             | Self::TemplateChanged
             | Self::WorldNotResident
-            | Self::MachineRefuses { .. }
-            | Self::LineRefuses { .. } => Clearing::Capability,
+            | Self::MachineRefuses { .. } => Clearing::Capability,
             Self::DeviceBusy { .. }
             | Self::MemoryBusy { .. }
             | Self::ThreadsBusy { .. }
