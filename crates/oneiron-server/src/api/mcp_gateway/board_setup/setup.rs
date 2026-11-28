@@ -108,12 +108,6 @@ pub(crate) async fn execute_mcp_setup(
                 brief.resident_people().clone()
             });
         let board = mcp_current_board_with_roster(server, actor, &resident).await?;
-        // The GRAMMAR rows this page partitions are complete, but the health
-        // this result states is the BOARD's, and the board has two omission
-        // axes plus its own exhaustion bit. Deriving it from scope omission
-        // alone reported a keyframe the render window had truncated — or one
-        // whose TASK scan stopped at its cap — as healthy (ONE-1704 repair).
-        let health = board.omissions().health();
         let header = oneiron::context_board::BoardBlockHeader {
             epoch: board.epoch,
             scope: board.scope_label,
@@ -129,6 +123,13 @@ pub(crate) async fn execute_mcp_setup(
         let (mut payload, board_shed) =
             crate::mcp::mcp_setup_payload_reserving(&header, &board.laid_out, budget, reserved_tok)
                 .map_err(mcp_setup_payload_error)?;
+        // The GRAMMAR rows this page partitions are complete, but the health
+        // this result states is the BOARD's, and the board has two omission
+        // axes plus its own exhaustion bit. Deriving it from scope omission
+        // alone reported a keyframe the render window had truncated — or one
+        // whose TASK scan stopped at its cap — as healthy (ONE-1704 repair).
+        // The final cut truncates on the window axis too.
+        let health = board.omissions().with_cut(board_shed.cut_rows).health();
         // The keyframe shows the connector actor's layout batch: once this
         // page resolves, the batch it shows becomes live (BOARD-LAYOUT).
         layout_candidate = board.layout_candidate.clone();

@@ -37,8 +37,6 @@ const ADMITTED_SYSTEM_LABEL: &str = "chat-admitted-system:";
 /// The receipt's input ref names the role-admitted request it hashes, never
 /// the bytes a fallback rung was sent (Engine CALL B).
 const ADMITTED_REQUEST_LABEL: &str = "chat-admitted-request:";
-/// The board section a MEMORIES row of one world renders in.
-const MEMORIES_SECTION_PREFIX: &str = "MEMORIES world=";
 /// The TURN body key its door stamps the author byline under.
 const TURN_AUTHOR_KEY: &str = "actor";
 
@@ -149,8 +147,7 @@ fn settled_memories(memories: &MemoriesSection, render: &BoardRender) -> Option<
                 .rows
                 .iter()
                 .filter(|row| {
-                    section.name.strip_prefix(MEMORIES_SECTION_PREFIX)
-                        == Some(row.world.as_deref().unwrap_or("unscoped"))
+                    section.name == oneiron::context_board::memories_row_section_name(memories, row)
                 })
                 .collect();
             let Some(first) = rows.first() else {
@@ -586,6 +583,27 @@ fn keep_chat_history(
             Err("the board history write was refused or failed")
         }
     }
+}
+
+/// The `named` ids and pack hits a cut frame still shows: those its
+/// settled `shown_ids` still contain. Ids no section places stay out.
+pub(super) fn cut_shown_ids(
+    render: &BoardRender,
+    named: &[EntityId],
+    hits: impl IntoIterator<Item = EntityId>,
+) -> Vec<EntityId> {
+    let shown: BTreeSet<EntityId> = render
+        .shed
+        .sections
+        .iter()
+        .flat_map(|section| section.shown_ids.iter().flatten().copied())
+        .collect();
+    named
+        .iter()
+        .copied()
+        .chain(hits)
+        .filter(|id| shown.contains(id))
+        .collect()
 }
 
 /// The one author byline a TURN body names, if it names one. The history

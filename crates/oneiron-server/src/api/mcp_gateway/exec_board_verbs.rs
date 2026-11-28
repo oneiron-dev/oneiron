@@ -226,6 +226,12 @@ pub(super) async fn execute_mcp_board_verb(
     // None are new CLAIM/SKILL/AGENT_DEF body observations. An expansion has no
     // typed entity mapping, so its renderer strings are never parsed for ids.
     let value = mcp_board_verb_output_value(&output)?;
+    // A refresh renders the whole board through the cut: its window axis
+    // carries the cut. An expansion shows its section in full.
+    let omissions = match &output {
+        oneiron::board_verb::BoardVerbOutput::Frame(_) => omissions.with_cut(source.shed.cut_rows),
+        _ => omissions,
+    };
     let page_source = mcp_board_verb_page_source(&output, omissions);
     // A verb that just minted a fresh keyframe returns it as the RESULT; the
     // central chokepoint supersedes and drains the queue behind it, so it is

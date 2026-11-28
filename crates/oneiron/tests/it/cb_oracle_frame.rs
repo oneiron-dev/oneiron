@@ -448,4 +448,72 @@ mod keyframe_cut {
         assert!(render.metadata.rendered_tok > CAP);
         assert!(render.metadata.floor_exceeds_cap && render.shed.floor_exceeds_cap);
     }
+
+    /// P1-1 non-monotone cut: cutting only C fits, but cutting B next adds
+    /// B's long name twice to the mark and goes over cap. The binary search
+    /// probes step 2 first and would return the still-larger step 3. Red
+    /// when `CutBudget::trim` in
+    /// `crates/oneiron/src/context_board/keyframe_cut.rs` skips the earlier
+    /// fitting cut (undo its linear scan).
+    #[test]
+    fn c9_earlier_fitting_cut_wins_over_later_over_cap_probe() {
+        const CAP9: usize = 2000;
+        let zeros = |count: usize| vec!["0"; count].join(" ");
+        let a_name = format!("A {}", zeros(350));
+        let b_name = format!("B {}", zeros(350));
+        let sections = [
+            BoardSection::new(
+                a_name,
+                Vec::new(),
+                vec!["a".to_owned()],
+                Vec::new(),
+                UNRANKED,
+            )
+            .unwrap(),
+            BoardSection::new(
+                b_name,
+                Vec::new(),
+                vec!["b".to_owned()],
+                Vec::new(),
+                UNRANKED,
+            )
+            .unwrap(),
+            BoardSection::new("C", Vec::new(), vec![zeros(500)], Vec::new(), UNRANKED).unwrap(),
+        ];
+        let request = BoardBudgetRequest {
+            harness_default_tok: CAP9,
+            caller_limit_tok: None,
+            explicit_override_tok: None,
+        };
+        let render = render_board_block(&frame(&header(), &sections), request).unwrap();
+
+        assert_eq!(
+            render.metadata.rendered_tok,
+            count_context_pack_tokens(&render.text)
+        );
+        assert!(
+            render.metadata.rendered_tok <= CAP9,
+            "the earlier cut fits: {} <= {CAP9}: {}",
+            render.metadata.rendered_tok,
+            render.text
+        );
+        assert!(
+            !render.metadata.floor_exceeds_cap && !render.shed.floor_exceeds_cap,
+            "the pinned floor fits: {}",
+            render.text
+        );
+        assert_eq!(render.metadata.cut_rows, 1, "{}", render.text);
+        assert_eq!(render.shed.cut_rows, 1, "{}", render.text);
+        assert_eq!(render.shed.sections[0].rows, ["a"]);
+        assert_eq!(render.shed.sections[1].rows, ["b"]);
+        assert!(render.shed.sections[2].rows.is_empty());
+        let mark = format!(
+            "cut for size: 1 rows of C (budget_tok {CAP9}); describe({{ key: \"C\" }}) shows a section in full"
+        );
+        assert!(
+            render.text.ends_with(&format!("\nC\n{mark}\n</memory>")),
+            "the mark names only C: {}",
+            render.text
+        );
+    }
 }

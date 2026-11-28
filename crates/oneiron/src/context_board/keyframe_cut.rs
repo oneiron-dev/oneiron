@@ -29,9 +29,10 @@ impl CutBudget {
     /// half shown. Only rows below each section's pinned floor are cut: a
     /// pinned row is never budget-shed (ARCH-0067:48), so a board whose
     /// pinned rows alone are over the cap renders them in full and stays
-    /// over it. The count falls with each step (a step removes at least one
-    /// line; the mark grows by a digit or a section name), so a binary
-    /// search over the steps finds the fewest that fit in O(log n) renders.
+    /// over it. A binary search over the steps assumes the count falls with
+    /// each step and finds the fewest that fit in O(log n) renders; when it
+    /// still stands over the cap, a linear scan covers the case where a
+    /// section name outweighs its row.
     pub(super) fn trim(
         self,
         sections: &[BoardSection],
@@ -83,7 +84,24 @@ impl CutBudget {
             }
         }
         // The last probe is the settled render: its text is the one kept.
-        let (cut_rows, tok) = probe(&mut *views, low);
+        let (mut cut_rows, mut tok) = probe(&mut *views, low);
+        // The render is not monotone in the step count: a step that first
+        // cuts a section adds that section's name to the mark, which can cost
+        // more than the row it removed. When the search lands over the cap,
+        // scan in order for the first count that fits; none fits takes every
+        // step. The chosen count is probed last, so its text is kept.
+        if self.over_cap(tok) {
+            let mut chosen = None;
+            for taken in 1..=steps.len() {
+                let (_, probe_tok) = probe(&mut *views, taken);
+                if !self.over_cap(probe_tok) {
+                    chosen = Some(taken);
+                    break;
+                }
+            }
+            let taken = chosen.unwrap_or(steps.len());
+            (cut_rows, tok) = probe(&mut *views, taken);
+        }
         *rendered_tok = tok;
         for ((section, view), rows) in sections.iter().zip(views).zip(&settled) {
             if view.rows.len() < rows.len() || !section.pinned_row_ids.is_empty() {

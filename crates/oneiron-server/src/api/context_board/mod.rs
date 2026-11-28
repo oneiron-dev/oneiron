@@ -845,6 +845,16 @@ async fn hydrate_inner(
     if !cut {
         delivered.extend(hits_of(response.pack.as_ref()));
         delivered.extend(parts.named.iter().copied());
+    } else {
+        // A cut never takes a pinned floor: the room and its rules still
+        // show. Any other named id or pack hit shows when its section's
+        // settled shown_ids still contain it.
+        delivered.extend(parts.pinned_named.iter().copied());
+        delivered.extend(chat_emit::cut_shown_ids(
+            presented_render,
+            &parts.named,
+            hits_of(response.pack.as_ref()),
+        ));
     }
     let mut rider_key = None;
     if let Some(mut reads) = session_read_set(&server, caller, session_id.as_deref()).await? {

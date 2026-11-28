@@ -1335,3 +1335,129 @@ async fn mcp_rooms_messages_page_two_follows_the_continuation() {
     assert_eq!(second["meta"]["end"], "Complete", "{second}");
     assert_eq!(second["meta"]["retrieval_health"], "healthy", "{second}");
 }
+
+/// P1-5 cut health: a vault-wide setup with no TASKS omissions and an
+/// installed pack, cut to override 0, removes even the PACKS count. Its
+/// health must carry the cut on the window axis (partial), not stay
+/// healthy. Red when `execute_mcp_setup` in
+/// `crates/oneiron-server/src/api/mcp_gateway/board_setup/setup.rs` derives
+/// health before the cut (undo its `with_cut`).
+#[tokio::test]
+async fn mcp_setup_cut_reports_window_health_not_healthy() {
+    let (_dir, server) = auth_test_server();
+    let actor = seeded_test_entity_id(0x1704_00f1);
+    register_mcp_actor(
+        &server,
+        "p1-5-cut-health",
+        actor,
+        oneiron::EdgeActorClass::Human,
+    )
+    .await;
+    super::board_host_events::install_board_pack(&server, "p1_5.health");
+    let (status, body) = route_json(
+        server.clone(),
+        mcp_endpoint_call_request(
+            "/mcp",
+            "p1-5-cut-health",
+            "p1-5-1",
+            "setup_oneiron",
+            mcp_merge_args(
+                mcp_endpoint_envelope(actor, "read_board"),
+                json!({"board_budget_override_tok": 0}),
+            ),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body:#}");
+    assert!(body.get("error").is_none(), "{body:#}");
+    let structured = &body["result"]["structuredContent"];
+    let cut_rows = structured["board"]["render"]["cut_rows"]
+        .as_u64()
+        .expect("setup states cut_rows");
+    assert!(cut_rows > 0, "the cut runs: {structured:#}");
+    assert_eq!(
+        structured["meta"]["retrieval_health"],
+        Value::from("partial"),
+        "a cut keyframe is window-truncated, not healthy: {structured:#}"
+    );
+}
+
+/// P1-2 cut hook spend: a live one-delivery hook pin on a readable memory
+/// survives a cut keyframe in its pinned MEMORIES row, and the setup spends
+/// its delivery. Red when `McpBoardHooks::shown_by_render` in
+/// `crates/oneiron-server/src/api/mcp_gateway/board_setup.rs` clears
+/// MEMORIES shares on a cut (undo its keep).
+#[cfg(oneiron_test_support)]
+#[tokio::test]
+async fn mcp_setup_cut_spends_shown_hook_pinned_memory() {
+    let (_dir, server) = auth_test_server();
+    let actor = seeded_test_entity_id(0x1704_00f2);
+    register_mcp_actor(
+        &server,
+        "p1-2-hook-spend",
+        actor,
+        oneiron::EdgeActorClass::Human,
+    )
+    .await;
+    let memory = seeded_test_entity_id(0x1704_00f3);
+    seed_active_claim(&server, memory, actor, "hook pinned memory", 1);
+    let block = seeded_test_entity_id(0x1704_00f4);
+    let binding = seeded_test_entity_id(0x1704_00f5);
+    server
+        .vault
+        .put_hook_block_for_test(
+            block,
+            oneiron::runtime_hooks::HookBlock {
+                binding,
+                hook: "p1_2.hookpin/pin-memory".to_owned(),
+                run_key: "p1-2-test".to_owned(),
+                refs: vec![memory],
+                session: None,
+                branch: None,
+                lifetime: oneiron::runtime_hooks::HookBlockLifetime::Deliveries(1),
+                token_cap: 4096,
+                activation: 0,
+                activation_turn: None,
+                deliveries_used: 0,
+                expired_at: None,
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        server.vault.board_hook_pins("", None).unwrap().len(),
+        1,
+        "the one-delivery pin is live"
+    );
+    let (status, body) = route_json(
+        server.clone(),
+        mcp_endpoint_call_request(
+            "/mcp",
+            "p1-2-hook-spend",
+            "p1-2-1",
+            "setup_oneiron",
+            mcp_merge_args(
+                mcp_endpoint_envelope(actor, "read_board"),
+                json!({"board_budget_override_tok": 0}),
+            ),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body:#}");
+    assert!(body.get("error").is_none(), "{body:#}");
+    let structured = &body["result"]["structuredContent"];
+    let cut_rows = structured["board"]["render"]["cut_rows"]
+        .as_u64()
+        .expect("setup states cut_rows");
+    assert!(cut_rows > 0, "the cut runs: {structured:#}");
+    let keyframe = structured["board"]["keyframe"]
+        .as_str()
+        .expect("setup states a keyframe");
+    assert!(
+        keyframe.contains("p1_2.hookpin/pin-memory"),
+        "the pinned hook row shows: {keyframe}"
+    );
+    assert!(
+        server.vault.board_hook_pins("", None).unwrap().is_empty(),
+        "the shown one-delivery hook is spent"
+    );
+}

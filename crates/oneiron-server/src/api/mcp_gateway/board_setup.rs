@@ -141,6 +141,16 @@ impl McpBoardOmissions {
         )
         .health()
     }
+
+    /// These omission facts with the final cut folded into the window axis: a
+    /// keyframe the cut truncated withheld those rows on the window, as a
+    /// render-cap truncation does.
+    pub(crate) fn with_cut(self, cut_rows: usize) -> Self {
+        Self {
+            window_truncated: self.window_truncated.saturating_add(cut_rows),
+            ..self
+        }
+    }
 }
 
 /// The hook blocks one rendered board carries (ARCH-0080 §11, OF-579): the
@@ -182,8 +192,11 @@ impl McpBoardHooks {
         }
     }
 
-    /// A cut invalidates the pre-render hook-block lists. Keep only the
-    /// standing disclosure receipt for MEMORIES rows the keyframe still shows.
+    /// A cut never takes a pinned row, so every MEMORIES hook share shows
+    /// as it would with no cut: its pinned rows and the blocks naming them
+    /// are kept. TASKS blocks are cleared: without the pins the cut cannot
+    /// tell which TASKS row a block names. The standing disclosure receipt is
+    /// kept to the MEMORIES rows the keyframe still shows.
     pub(super) fn shown_by_render(mut self, shed: &oneiron::context_board::ShedOutcome) -> Self {
         if shed.cut_rows > 0 {
             let shown = shed
@@ -194,7 +207,6 @@ impl McpBoardHooks {
                 .collect();
             self.receipt = self.receipt.take().map(|receipt| receipt.only(&shown));
             self.blocks.clear();
-            self.memories.clear();
         }
         self
     }

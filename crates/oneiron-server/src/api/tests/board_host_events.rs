@@ -664,7 +664,7 @@ impl PackFitPolicy for Fit {
 
 /// Installs a one-section board pack named `name` from a verified hub, as
 /// the owner, and returns its receipt's content hash.
-fn install_board_pack(server: &SyncServer, name: &str) -> String {
+pub(super) fn install_board_pack(server: &SyncServer, name: &str) -> String {
     install_board_pack_version(server, name, 1)
 }
 
@@ -1730,5 +1730,197 @@ async fn a_keyed_board_replays_no_count_of_a_row_its_reader_no_longer_reads() {
     assert!(
         refused.to_string().contains("board_document_unreadable"),
         "{refused:#}"
+    );
+}
+
+/// P1-3 fiction cut: an owned TURN pins a claim in an admitted fiction
+/// world and hydrates with `board_budget_tok=0`. The pin survives in its
+/// `MEMORIES world=<id> FICTION` section, and the recorded turn history
+/// keeps it. Red when `settled_memories` in
+/// `crates/oneiron-server/src/api/context_board/chat_emit.rs` compares bare
+/// world ids (undo its canonical world-key match).
+#[tokio::test]
+async fn a_cut_preserves_shown_fiction_pinned_memories_in_turn_history() {
+    use oneiron::registry::ENTITY_TYPE_PERSON;
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".to_owned()),
+        ..Default::default()
+    });
+    let principal = seeded_test_entity_id(0x2477_0f01);
+    let person = seeded_test_entity_id(0x2477_0f02);
+    let fiction_world = seeded_test_entity_id(0x2477_0f03);
+    let claim = seeded_test_entity_id(0x2477_0f04);
+    super::context_board_history::cleared_reader(
+        &server,
+        principal,
+        seeded_test_entity_id(0x2477_0f05),
+    );
+    server
+        .vault
+        .put_entity(
+            &person,
+            ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"reader person",
+        )
+        .unwrap();
+    server
+        .vault
+        .put_edge(&principal, oneiron::EdgeKind::About, &person, 1.0)
+        .unwrap();
+    let world_body =
+        rmp_serde::to_vec_named(&json!({"kind": "fiction", "label": "p1-3 fiction"})).unwrap();
+    server
+        .vault
+        .put_entity(
+            &fiction_world,
+            oneiron::registry::ENTITY_TYPE_WORLD,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            &world_body,
+        )
+        .unwrap();
+    let mut body = oneiron::ClaimBody::new(
+        "profile.route_test",
+        oneiron::ClaimSubject::Entity(person),
+        rmpv::Value::from("fiction pinned memory"),
+        0.9,
+        oneiron::ClaimApprovalStatus::Auto,
+        oneiron::ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    body.world = Some(fiction_world);
+    body.scope_facet = server.vault.default_facet().expect("default facet");
+    body.scope = Some(rmpv::Value::Map(vec![(
+        rmpv::Value::from("sensitivity"),
+        rmpv::Value::from("public"),
+    )]));
+    server
+        .vault
+        .put_claim(&claim, &body, oneiron::TimeRange { start: 10, end: 10 }, 10)
+        .unwrap();
+    let pin = oneiron::retrieval_depth::short_ref_or_hex(&server.vault, &claim).unwrap();
+    let turn = put_authored_turn(&server, principal);
+    let (status, board) = route_json(
+        server.clone(),
+        core_request_with_principal_ref(
+            "POST",
+            "/v1/core/context-board",
+            "core:read,core:write",
+            &principal.to_hex(),
+            Some(&json!({
+                "retrieval": {"query": "unrelated empty query", "limit": 1},
+                "memories": {"shared_total": 0, "pinned_refs": [pin]},
+                "session": {"session_id": principal.to_hex()},
+                "turn": {"id": turn.to_hex()},
+                "board_budget_tok": 0
+            })),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{board:#}");
+    let cut_rows = board["board_budget"]["cut_rows"]
+        .as_u64()
+        .expect("board states cut_rows");
+    assert!(cut_rows > 0, "the cut runs: {board:#}");
+    let (status, past) = route_json(
+        server.clone(),
+        core_request_with_principal_ref(
+            "GET",
+            &format!("/v1/core/context-board/turns/{}", turn.to_hex()),
+            "core:read",
+            &principal.to_hex(),
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{past:#}");
+    let pinned = past["selection"]["pinned"]
+        .as_array()
+        .expect("turn keeps a pinned selection");
+    assert!(
+        pinned
+            .iter()
+            .any(|id| id.as_str() == Some(claim.to_hex().as_str())),
+        "the shown fiction pin records: {past:#}"
+    );
+}
+
+/// P1-4 cut observe: a fresh session hydrates in a room with a readable
+/// active rule and `board_budget_tok=0`. ROOM keeps the rule in its pinned
+/// floor, the session observes it, and retracting it then names it on the
+/// next hydration's changed line. Red when `hydrate_inner` in
+/// `crates/oneiron-server/src/api/context_board/mod.rs` drops pinned ROOM
+/// ids on a cut (undo its `pinned_named` hunk).
+#[tokio::test]
+async fn a_cut_still_observes_shown_pinned_room_rules_for_changed() {
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".to_owned()),
+        ..Default::default()
+    });
+    let owner = server.vault.ensure_embedded_owner_actor().unwrap();
+    let room = seeded_test_entity_id(0x2477_0f11);
+    server
+        .vault
+        .create_conversation(
+            room,
+            &oneiron::conversation::ConversationBody {
+                kind: oneiron::conversation::ConversationKind::Channel,
+                member_ids: vec![owner],
+                ..oneiron::conversation::ConversationBody::default()
+            },
+            oneiron::WriteActor::new(owner, oneiron::EdgeActorClass::Human),
+            1,
+        )
+        .unwrap();
+    let rule = seeded_test_entity_id(0x2477_0f12);
+    let mut body = oneiron::ClaimBody::new(
+        "room.posture.mode",
+        oneiron::ClaimSubject::Entity(room),
+        rmpv::Value::from("silent"),
+        1.0,
+        oneiron::ClaimApprovalStatus::Approved,
+        oneiron::ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    body.source = Some(oneiron::ClaimSource::UserStated);
+    server
+        .vault
+        .put_claim(&rule, &body, oneiron::TimeRange { start: 2, end: 2 }, 2)
+        .unwrap();
+    server
+        .vault
+        .put_edge(&rule, oneiron::EdgeKind::ClaimOf, &room, 1.0)
+        .unwrap();
+    let session = "p1-4-room-observe";
+    let hydrate = || {
+        core_request_with_authz(
+            "POST",
+            "/v1/core/context-board",
+            test_bearer(&format!(
+                "scope=core:read;principal_ref={};actor_class=human",
+                owner.to_hex()
+            )),
+            Some(&json!({
+                "room": {"conversation_id": room.to_hex()},
+                "session": {"session_id": session},
+                "board_budget_tok": 0
+            })),
+        )
+    };
+    let (status, first) = route_json(server.clone(), hydrate()).await;
+    assert_eq!(status, StatusCode::OK, "{first:#}");
+    let cut_rows = first["board_budget"]["cut_rows"]
+        .as_u64()
+        .expect("board states cut_rows");
+    assert!(cut_rows > 0, "the cut runs: {first:#}");
+    server.vault.retract_claim(&rule, 10).unwrap();
+    let (status, second) = route_json(server.clone(), hydrate()).await;
+    assert_eq!(status, StatusCode::OK, "{second:#}");
+    let changed = second["changed"].to_string();
+    assert!(
+        changed.contains(&rule.to_hex()) && changed.contains("retracted"),
+        "retracting an observed rule names it: {second:#}"
     );
 }

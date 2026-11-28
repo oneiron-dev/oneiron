@@ -83,6 +83,7 @@ pub use hook_pins::{HookPin, HookShare};
 mod notifications;
 pub use memories::MemoryTier;
 pub use memories_frame::assemble_memories_sections;
+pub use memories_frame::memories_row_section_name;
 mod paging;
 mod plugin;
 #[cfg(oneiron_test_support)]
