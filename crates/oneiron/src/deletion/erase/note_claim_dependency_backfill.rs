@@ -418,7 +418,7 @@ impl Vault {
         }
         if !crate::ports::removed_in_txn(&self.store, txn, id)? {
             counts.missing_without_marker += 1;
-            return Ok(NoteRef::Other);
+            return Ok(NoteRef::RemovedNote);
         }
         if self.removed_ref_is_note_in_txn(txn, id)? {
             return Ok(NoteRef::RemovedNote);
