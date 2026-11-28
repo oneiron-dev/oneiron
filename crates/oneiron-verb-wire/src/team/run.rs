@@ -23,6 +23,73 @@ pub struct TeamStartInput {
     /// under. Set, the members are its authors, in its market; the pattern
     /// must be `market`.
     pub tournament: Option<String>,
+    /// A `market` start's referee and ledger terms, recorded before any
+    /// member spawns (ARCH-0079 #market). Required on a market start that is
+    /// not a tournament's, and refused on any other start.
+    #[serde(default)]
+    pub market: Option<TeamMarketInput>,
+}
+
+/// A market start's terms. The host records them with the leader as the
+/// referee's setter and the vault's time, before any member spawns.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct TeamMarketInput {
+    /// The scoring rule that decides the market, set before the work.
+    pub referee: TeamRefereeInput,
+    /// How the market runs.
+    pub mode: TeamMarketModeInput,
+    /// The run's lease entering the market, in units.
+    pub pool: u64,
+    /// The share of the pool held back as the bounty, in [0, 1). Absent,
+    /// one fifth.
+    #[serde(default)]
+    pub bounty_share: Option<f64>,
+    /// Members, by their `intentKey`, that a halving round keeps first as
+    /// its wildcard (protected exploration).
+    #[serde(default)]
+    pub protected: Vec<String>,
+}
+
+/// The referee a market start records.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+pub struct TeamRefereeInput {
+    pub kind: TeamRefereeKindInput,
+    /// The suite, holdout or judge revision the rule names, 1..=256 bytes.
+    pub rule: String,
+    /// The rule's digest, 1..=256 bytes. Every score must carry it.
+    pub digest: String,
+}
+
+/// What kind of rule referees a market.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TeamRefereeKindInput {
+    TestSuite,
+    Holdout,
+    PinnedJudge,
+}
+
+/// How a market runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TeamMarketModeInput {
+    /// One bounty to the first submission that passes the rule.
+    Bounty,
+    /// Each round keeps the top half, plus `wildcardSlots` kept for
+    /// exploration (at least one).
+    HalvingWildcard {
+        #[serde(rename = "wildcardSlots")]
+        wildcard_slots: u32,
+    },
+    /// Members work in `islands` and may pay `peekPrice` to read another
+    /// island's submissions.
+    Islands {
+        islands: u32,
+        #[serde(rename = "peekPrice")]
+        peek_price: u64,
+    },
 }
 
 /// One member a start spawns.
@@ -51,7 +118,8 @@ pub struct TeamRecordInput {
     /// planned team's receipt takes the axis its pattern froze instead.
     pub axis: TeamAxis,
     /// Who decided the team's result. The pattern fixes its kind. A market's
-    /// signed referee replaces the rule named here.
+    /// receipt names the referee its start recorded; the rule named here is
+    /// not used for a market.
     pub decided_by: TeamDecisionInput,
     /// Role name to head count, summing to the leader plus its members.
     /// Absent, the leader leads and the rest are members.

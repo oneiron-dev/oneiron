@@ -8,20 +8,28 @@
 //! existed and keeps the stamp it has. A team's reference is the leader's
 //! attempt and the start's key, so the same start opens the same team. An
 //! autoreason tournament's authors start the tournament's own market instead,
-//! under the reference its finalizer records. A planned team's leader
-//! (DOOR-111) asking for the team its plan launched gets that team back, and
-//! no member spawns twice.
+//! under the reference its finalizer records.
+//!
+//! Any other market binds before the work (ARCH-0079 #market): its start
+//! names the referee and the ledger's terms, and the host records them, with
+//! the leader as the referee's setter and the vault's time, before the first
+//! member spawns (`bind_market_start`). A market team whose start recorded
+//! no referee writes no receipt; a receipt never takes a rule named after the
+//! work.
+//!
+//! A planned team's leader (DOOR-111) asking for the team its plan launched
+//! gets that team back, and no member spawns twice.
 //!
 //! `self.team.record` writes the team's one receipt once its work is done.
 //! The host fills every identity: the type and project the leader was placed
 //! with, the members its start spawned ([`super::run_binding`]), the models
 //! the leader and each member's newest try ran on, the pattern skill the
-//! leader loaded, the leader as the deciding actor, a market's signed
-//! referee. It counts the members' confessions, calls and spend itself
+//! leader loaded, the leader as the deciding actor, a market's referee. It
+//! counts the members' confessions, calls and spend itself
 //! ([`super::observations`]), and leaves unknown what it cannot count. The
 //! guest names what the host cannot observe: the axis (a planned team's
-//! is the one its pattern froze), an unsigned referee's rule, the roles and
-//! coverage. Explicit `self.team.vote` choices supply a complete current-try
+//! is the one its pattern froze), the roles and coverage. Explicit
+//! `self.team.vote` choices supply a complete current-try
 //! tally; otherwise the guest's declared tally remains available. A team below
 //! its pattern's floor records
 //! what ran, and its receipt says so. A tournament's receipt is its
@@ -40,12 +48,14 @@ use crate::attempt_queue::{AttemptId, AttemptRecord, ManifestKind};
 use crate::autoreason_campaign::authoring::tournament_team_stamp;
 use crate::dreamer_runner::DreamerRunnerStore;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::receipt::task_type_ref::TypeRef;
 use crate::team::team_shape::CoordinationPattern;
 use crate::team::team_shape::team_pattern;
 
-use super::market::market;
+use super::market::{
+    DEFAULT_BOUNTY_SHARE, Market, MarketMode, RefereeKind, SignedReferee, bind_market, market,
+};
 use super::observations::team_run_observations;
 use super::pattern::{TeamPattern, pattern_skills};
 use super::receipt::{
@@ -59,8 +69,8 @@ const MAX_KEY_BYTES: usize = 64;
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::team::run::{
-    TeamCoverageInput, TeamDecisionInput, TeamMemberInput, TeamRecordInput, TeamStartInput,
-    TeamVoteInput,
+    TeamCoverageInput, TeamDecisionInput, TeamMarketInput, TeamMarketModeInput, TeamMemberInput,
+    TeamRecordInput, TeamRefereeInput, TeamRefereeKindInput, TeamStartInput, TeamVoteInput,
 };
 
 #[doc(hidden)]
@@ -85,11 +95,105 @@ pub(crate) fn start_stamp(
     {
         return Err("team_start_invalid_input");
     }
+    // A market other than a tournament's names its referee before the work;
+    // a tournament keeps its campaign's own, and no other pattern has one.
+    match (&input.market, pattern, &input.tournament) {
+        (None, TeamPattern::Market, None) => return Err("team_start_market_needs_referee"),
+        (Some(_), TeamPattern::Market, None) | (None, _, _) => {}
+        (Some(_), _, _) => return Err("team_start_referee_outside_market"),
+    }
     match &input.tournament {
         Some(_) if pattern != TeamPattern::Market => Err("team_start_tournament_not_market"),
         Some(run) => tournament_team_stamp(run).map_err(|_| "team_start_invalid_tournament"),
         None => TeamRunStamp::new(led_team_ref(leader, &input.intent_key), pattern)
             .map_err(|_| "team_start_invalid_input"),
+    }
+}
+
+/// Records the referee and ledger of a market `leader` starts under
+/// `team_ref`, before any member spawns (ARCH-0079 #market: "a market binds
+/// before it"). The referee's setter is the leader's AGENT_DEF, read from its
+/// dispatch row, and its time is the vault's; the participants are the
+/// members' keys. A replay on the same terms keeps the first record; other
+/// terms, or terms no ledger opens on, are the guest's typed failure, and
+/// nothing is recorded. A start with no market terms records nothing.
+///
+/// # Errors
+///
+/// Storage errors and a malformed dispatch payload.
+pub(crate) fn bind_market_start(
+    vault: &Vault,
+    leader: AttemptId,
+    team_ref: &str,
+    input: &TeamStartInput,
+) -> Result<std::result::Result<(), &'static str>> {
+    let Some(terms) = &input.market else {
+        return Ok(Ok(()));
+    };
+    let Some(lead) = DreamerRunnerStore::new(vault).status(leader)? else {
+        return Ok(Err("team_unbound"));
+    };
+    let setter = decode_agent_dispatch_input(&lead.payload.input)?
+        .target
+        .agent_definition_ref()?;
+    let agents: Vec<String> = input
+        .members
+        .iter()
+        .map(|member| member.intent_key.clone())
+        .collect();
+    if !terms.protected.iter().all(|key| agents.contains(key)) {
+        return Ok(Err("team_start_market_invalid"));
+    }
+    let now = vault.now_recorded_at();
+    let referee = SignedReferee {
+        kind: referee_kind(terms.referee.kind),
+        rule_ref: terms.referee.rule.clone(),
+        digest: terms.referee.digest.clone(),
+        signed_by: setter,
+        signed_at: now,
+    };
+    let opening = match Market::opening(
+        team_ref,
+        market_mode(terms.mode),
+        referee,
+        terms.pool,
+        terms.bounty_share.unwrap_or(DEFAULT_BOUNTY_SHARE),
+        &agents,
+        &terms.protected,
+        now,
+    ) {
+        Ok(opening) => opening,
+        Err(Error::InvalidClaimBody(_)) => return Ok(Err("team_start_market_invalid")),
+        Err(error) => return Err(error),
+    };
+    Ok(if bind_market(vault, &opening)? {
+        Ok(())
+    } else {
+        Err("team_start_market_moved")
+    })
+}
+
+const fn referee_kind(kind: TeamRefereeKindInput) -> RefereeKind {
+    match kind {
+        TeamRefereeKindInput::TestSuite => RefereeKind::TestSuite,
+        TeamRefereeKindInput::Holdout => RefereeKind::Holdout,
+        TeamRefereeKindInput::PinnedJudge => RefereeKind::PinnedJudge,
+    }
+}
+
+const fn market_mode(mode: TeamMarketModeInput) -> MarketMode {
+    match mode {
+        TeamMarketModeInput::Bounty => MarketMode::Bounty,
+        TeamMarketModeInput::HalvingWildcard { wildcard_slots } => {
+            MarketMode::HalvingWildcard { wildcard_slots }
+        }
+        TeamMarketModeInput::Islands {
+            islands,
+            peek_price,
+        } => MarketMode::Islands {
+            islands,
+            peek_price,
+        },
     }
 }
 
@@ -224,15 +328,18 @@ pub(crate) fn record_led_team(
         None => BTreeMap::from([("lead".to_owned(), 1), ("member".to_owned(), width - 1)]),
     };
     let actor = lead_input.target.agent_definition_ref()?;
+    // A market's receipt names the referee its start recorded before the
+    // work, never a rule named after it (ARCH-0079 #market).
+    let ledger = market(vault, &input.team_ref)?;
     let mut decided_by = match &input.decided_by {
         TeamDecisionInput::Leader => DecidedBy::Leader { actor },
         TeamDecisionInput::Chair => DecidedBy::Chair { actor },
         TeamDecisionInput::Vote { tally } => DecidedBy::Vote {
             tally: tally.clone(),
         },
-        TeamDecisionInput::Referee { rule, signed_at } => match market(vault, &input.team_ref)? {
+        TeamDecisionInput::Referee { rule, signed_at } => match &ledger {
             Some(market) => DecidedBy::Referee {
-                rule: market.referee.rule_ref,
+                rule: market.referee.rule_ref.clone(),
                 signed_at: market.referee.signed_at,
             },
             None => DecidedBy::Referee {
@@ -246,6 +353,9 @@ pub(crate) fn record_led_team(
     }
     if let Some(existing) = team_receipt(vault, &input.team_ref)? {
         return Ok(Ok(recorded(&existing, true)));
+    }
+    if pattern == TeamPattern::Market && ledger.is_none() {
+        return Ok(Err("team_record_market_unbound"));
     }
     if let DecidedBy::Vote { tally } = &mut decided_by
         && let Some(observed) =
