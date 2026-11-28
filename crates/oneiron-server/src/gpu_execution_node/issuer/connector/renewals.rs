@@ -240,9 +240,15 @@ impl VaultMachineConnector {
             .filter(|terminal| terminal.end == GpuJobEnd::Continued))
     }
 
-    /// The latest cutoff a session's run can reach (row W1): its first key's `not_after` plus
-    /// the maximum of every chunk of the run, the open next one included; `None` for a job that
-    /// does not renew, whose chunk's own submit bounds it.
+    /// The latest cutoff a session's run can reach (row W1); `None` for a job that does not
+    /// renew, whose chunk's own submit bounds it. The run launched by its latest launch time,
+    /// and ends by then plus the maximum of every chunk of the run, the open next one included.
+    /// Its latest launch is the later of two bounds. The first key's `not_after`: the node
+    /// accepts the submit by then, and the write-off wait covers its staging, as for a job. And
+    /// the first renewal's `not_after`, which the node enforces on its own: it takes a renewal
+    /// only for a run it launched, and only by the renewal's `not_after`, so a run that staged
+    /// past its first key's window and renewed is still bounded. The cutoff is never before any
+    /// key's own `not_after` plus its maximum, a job's bound for that key.
     pub(super) fn session_run_cutoff_ms(
         &self,
         job: &GpuJob,
@@ -250,17 +256,38 @@ impl VaultMachineConnector {
         if !job.renews() {
             return Ok(None);
         }
-        let Some(first) = job.chunks.first() else {
+        let mut launch_by_ms = None::<u64>;
+        let mut key_cutoff_ms = 0_u64;
+        for (index, chunk) in job.chunks.iter().chain(job.renewal.as_ref()).enumerate() {
+            let Some(row) = self
+                .vault()
+                .job_dispatch(&chunk.idempotency_key)
+                .map_err(store)?
+            else {
+                // The run's first key unknown: no bound of the run (FIX W1-WRITE-OFF-RUN-UNKNOWN).
+                // A next chunk with no row was never sent, so no node took it; its maximum still
+                // counts below.
+                if index == 0 {
+                    return Ok(None);
+                }
+                continue;
+            };
+            let submit = decode::<SignedJobSubmit>(&row.submit)?.submit;
+            // Index 0 is the first key, index 1 the run's first renewal.
+            if index <= 1 {
+                launch_by_ms = Some(launch_by_ms.map_or(submit.not_after_ms, |launch_by_ms| {
+                    launch_by_ms.max(submit.not_after_ms)
+                }));
+            }
+            key_cutoff_ms = key_cutoff_ms.max(
+                submit
+                    .not_after_ms
+                    .saturating_add(submit.maximum_secs.saturating_mul(1_000)),
+            );
+        }
+        let Some(launch_by_ms) = launch_by_ms else {
             return Ok(None);
         };
-        let Some(row) = self
-            .vault()
-            .job_dispatch(&first.idempotency_key)
-            .map_err(store)?
-        else {
-            return Ok(None);
-        };
-        let not_after_ms = decode::<SignedJobSubmit>(&row.submit)?.submit.not_after_ms;
         let maximum_secs = job
             .chunks
             .iter()
@@ -269,7 +296,9 @@ impl VaultMachineConnector {
                 total.saturating_add(chunk.quote.maximum_secs)
             });
         Ok(Some(
-            not_after_ms.saturating_add(maximum_secs.saturating_mul(1_000)),
+            launch_by_ms
+                .saturating_add(maximum_secs.saturating_mul(1_000))
+                .max(key_cutoff_ms),
         ))
     }
 
@@ -294,7 +323,10 @@ impl VaultMachineConnector {
         let Some(next_key) = next_key else {
             return Ok(());
         };
+        // The run's cutoff is read again under the next chunk's lock: a send of it that came
+        // after the first read is bounded by its own window too.
         match self.keys.with(next_key, || {
+            let run_cutoff_ms = self.session_run_cutoff_ms(job)?;
             self.write_off_key(next_key, run_cutoff_ms, now_ms)
         }) {
             // Never sent: with the current chunk written off, its send refuses, so it never is.

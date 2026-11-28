@@ -594,8 +594,10 @@ impl GpuJobConnector for VaultMachineConnector {
     /// key's lock. Refused for a key whose terminal receipt the issuer holds (its step settles
     /// it), and before the node's latest cutoff (the submit's `not_after` plus its maximum) and
     /// `jobs.write_off.wait_secs` have passed, so any launch from this dispatch has met its
-    /// cutoff. A session's run (row W1) is bounded by its first key's `not_after` plus every
-    /// chunk's maximum, the open next one's too, and that next chunk's dispatch closes with it:
+    /// cutoff. A session's run (row W1) is bounded by its latest launch (its first key's
+    /// `not_after`, or its first renewal's, whichever is later) plus every chunk's maximum, the
+    /// open next one's too, and never before any key's own bound; that next chunk's dispatch
+    /// closes with it:
     /// one never dispatched stays so (its send refuses once the current chunk is written off),
     /// and one whose end the issuer holds refuses the door before anything closes, so the step
     /// settles it. A repeat answers `Ok`.
