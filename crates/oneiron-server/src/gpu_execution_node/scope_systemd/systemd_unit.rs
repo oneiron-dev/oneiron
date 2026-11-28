@@ -15,6 +15,10 @@ use super::super::jobs::{
 use super::super::wire::ScopeFacts;
 use super::capabilities;
 use super::control::{self, ControlVerb};
+use super::network_unit::{
+    HOST_NETWORK_UNIT_TEMPLATE_PREFIX, host_network_unit_installed, installed_unit_names,
+    key_status, listed_job_units,
+};
 use super::records::{PreparedRecord, ScopeCapabilities, ScopeRecord, scope_facts};
 use super::step::RECORD_MAX_BYTES;
 use super::{PREPARED_FILE_NAME, SCOPE_FILE_NAME};
@@ -304,16 +308,24 @@ impl JobUnit for SystemdJobUnit {
         control::request(verb, unit).map_err(|reason| Self::error(unit, reason))
     }
 
+    /// The key's status from its unit under each installed template (row
+    /// NODE-NETWORK-HOST-UNIT): the one that is not inactive.
     fn status(&self, unit: &JobKeyId) -> Result<JobUnitStatus, JobUnitError> {
-        let found = show(&unit.unit_name(), &["ActiveState", "ControlGroup"])
-            .map_err(|reason| Self::error(unit, reason))?;
-        Self::status_from(unit, &found)
+        let mut statuses = Vec::new();
+        for name in installed_unit_names(unit.as_str(), host_network_unit_installed()) {
+            let found = show(&name, &["ActiveState", "ControlGroup"])
+                .map_err(|reason| Self::error(unit, reason))?;
+            statuses.push(Self::status_from(unit, &found)?);
+        }
+        Ok(key_status(&statuses))
     }
 
-    /// Every job unit the service manager lists, with one `systemctl show`
-    /// for all of them (FIX EXEC-UNIT-LIVE-UNITS-ONE-SHOW-PER-UNIT: one per
-    /// unit held the admission lock that much longer).
+    /// Every job unit the service manager lists, under either template (row
+    /// NODE-NETWORK-HOST-UNIT), with one `systemctl show` for all of them
+    /// (FIX EXEC-UNIT-LIVE-UNITS-ONE-SHOW-PER-UNIT: one per unit held the
+    /// admission lock that much longer). A key is listed once.
     fn live_units(&self) -> Result<Vec<(JobKeyId, JobUnitStatus)>, JobUnitError> {
+        let host_pattern = format!("{HOST_NETWORK_UNIT_TEMPLATE_PREFIX}*.service");
         let listing = run_tool(
             "systemctl",
             &[
@@ -323,6 +335,7 @@ impl JobUnit for SystemdJobUnit {
                 "--no-legend",
                 "--full",
                 "oneiron-job@*.service",
+                host_pattern.as_str(),
             ],
             SYSTEMCTL_TIMEOUT,
         )
@@ -330,21 +343,14 @@ impl JobUnit for SystemdJobUnit {
             unit: "oneiron-job@*.service".to_owned(),
             reason,
         })?;
-        let ids: Vec<JobKeyId> = listing
-            .lines()
-            .filter_map(|line| line.split_whitespace().next())
-            .filter_map(|name| {
-                name.strip_prefix(super::super::jobs::job_unit::JOB_UNIT_TEMPLATE_PREFIX)
-                    .and_then(|rest| {
-                        rest.strip_suffix(super::super::jobs::job_unit::JOB_UNIT_SUFFIX)
-                    })
-                    .and_then(JobKeyId::parse)
-            })
-            .collect();
-        if ids.is_empty() {
+        let listed = listed_job_units(&listing);
+        if listed.is_empty() {
             return Ok(Vec::new());
         }
-        let names: Vec<String> = ids.iter().map(JobKeyId::unit_name).collect();
+        let names: Vec<String> = listed
+            .iter()
+            .map(|(id, network)| network.unit_name(id.as_str()))
+            .collect();
         let mut args = vec![
             "show",
             "--property=Id",
@@ -358,8 +364,8 @@ impl JobUnit for SystemdJobUnit {
                 reason,
             })?;
         let units = parse_show_units(&answer);
-        let mut live = Vec::new();
-        for (id, name) in ids.into_iter().zip(&names) {
+        let mut keys: Vec<(JobKeyId, Vec<JobUnitStatus>)> = Vec::new();
+        for ((id, _), name) in listed.into_iter().zip(&names) {
             let Some(found) = units
                 .iter()
                 .find(|found| found.get("Id").is_some_and(|unit| unit == name))
@@ -370,11 +376,16 @@ impl JobUnit for SystemdJobUnit {
                 ));
             };
             let status = Self::status_from(&id, found)?;
-            if !status.is_gone() {
-                live.push((id, status));
+            match keys.iter_mut().find(|(known, _)| *known == id) {
+                Some((_, statuses)) => statuses.push(status),
+                None => keys.push((id, vec![status])),
             }
         }
-        Ok(live)
+        Ok(keys
+            .into_iter()
+            .map(|(id, statuses)| (id, key_status(&statuses)))
+            .filter(|(_, status)| !status.is_gone())
+            .collect())
     }
 }
 

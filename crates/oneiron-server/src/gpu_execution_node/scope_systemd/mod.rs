@@ -6,9 +6,10 @@
 //!
 //! The parts, by who runs them:
 //! - `oneiron execution-node install` ([`install`], root, once): the job
-//!   account, the unit template ([`unit_file`]) and the job control socket
-//!   ([`control`]), through which the engine's account starts and stops
-//!   instances of that template and nothing else.
+//!   account, the unit template ([`unit_file`]) and its host network twin
+//!   ([`network_unit`]), and the job control socket ([`control`]), through
+//!   which the engine's account starts and stops instances of those
+//!   templates and nothing else.
 //! - `oneiron job-control` ([`control`], root, one per connection to the
 //!   control socket): checks the caller and the instance name, then starts
 //!   or stops that one job unit.
@@ -74,6 +75,7 @@ pub mod exec;
 pub mod gate;
 pub mod install;
 pub mod log_writer;
+pub mod network_unit;
 pub mod prepare;
 pub mod probe_unit;
 pub mod records;

@@ -28,6 +28,11 @@
 //! (pass 34, 2.5; row W1): the handler, given the node file, moves that
 //! unit's cutoff forward by root's timer handoff ([`super::renew`]).
 //!
+//! A key runs in one of two job units (row NODE-NETWORK-HOST-UNIT,
+//! [`super::network_unit`]): `start` starts the host network unit only for a
+//! pin that asks `host`, `stop` stops the key's unit under each installed
+//! template, and `signal` goes to the one that is active.
+//!
 //! The fifth, `device-query <word>`, is the engine's GPU probe after the
 //! device hand-over: the handler, given the node file, runs that one query of
 //! a closed list as the job account and answers its output, one query on the
@@ -40,12 +45,14 @@ use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use super::super::jobs::JobKeyId;
+use super::super::jobs::{JobKeyId, JobUnitPhase};
 use super::super::node_settings::CHECKPOINT_SIGNALS;
 use super::device_query;
 use super::exec::connect_by_deadline;
+use super::network_unit::{self, UnitNetwork};
 use super::safe_fs::account;
-use super::systemd_unit::{SYSTEMCTL_TIMEOUT, run_tool, show};
+use super::step::{StepArgs, StepContext};
+use super::systemd_unit::{SYSTEMCTL_TIMEOUT, phase_of, run_tool, show};
 use super::unit_file::plain_account;
 
 /// The socket the engine's account connects to.
@@ -423,19 +430,102 @@ fn serve(args: &[String], stream: &mut UnixStream) -> Result<Option<Vec<u8>>, St
         )?;
         return super::renew::renew_cutoff(node_file, engine, &id, cutoff_boot_ns).map(|()| None);
     }
-    let unit = id.unit_name();
-    if matches!(verb, ControlVerb::Signal(_)) {
-        let found = show(&unit, &["ActiveState"])?;
-        let state = found.get("ActiveState").map_or("", String::as_str);
-        if state != SIGNAL_ACTIVE_STATE {
-            return Err(format!("workload_not_running: the unit is {state:?}"));
+    let host_installed = network_unit::host_network_unit_installed();
+    let units = match verb {
+        ControlVerb::Start => vec![start_unit(engine, node_file, &id, host_installed)?],
+        ControlVerb::Signal(_) => vec![active_unit(&id, host_installed)?],
+        ControlVerb::Stop | ControlVerb::Renew { .. } => {
+            network_unit::installed_unit_names(id.as_str(), host_installed)
+        }
+    };
+    // A stop asks for the key's unit under each template, each asked even
+    // when another refused; the first refusal answers.
+    let mut answer = Ok(None);
+    for unit in &units {
+        let args = verb
+            .systemctl_args(unit)
+            .ok_or("verb_not_a_systemctl_request")?;
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        if let Err(why) = run_tool("systemctl", &args, SYSTEMCTL_TIMEOUT)
+            && answer.is_ok()
+        {
+            answer = Err(why);
         }
     }
-    let args = verb
-        .systemctl_args(&unit)
-        .ok_or("verb_not_a_systemctl_request")?;
-    let args: Vec<&str> = args.iter().map(String::as_str).collect();
-    run_tool("systemctl", &args, SYSTEMCTL_TIMEOUT).map(|_| None)
+    answer
+}
+
+/// The unit a `start` of `id` starts: the host network unit for a pin of
+/// `launch.json` that asks `host`, where that template is installed, and
+/// otherwise the private one. A `launch.json` that does not read, or a
+/// handler with no node file, starts the private unit, whose prepare step
+/// then refuses the key with its reason, as before this row.
+///
+/// # Errors
+///
+/// `unit_of_other_network_live` while the key's unit under the other
+/// template is not inactive: one key never runs in both. A service manager
+/// that does not answer.
+fn start_unit(
+    engine: &str,
+    node_file: Option<&Path>,
+    id: &JobKeyId,
+    host_installed: bool,
+) -> Result<String, String> {
+    let pin_network = node_file.and_then(|node_file| {
+        let context = StepContext::open(StepArgs {
+            node_file: node_file.to_owned(),
+            engine_account: engine.to_owned(),
+            instance: id.as_str().to_owned(),
+            after_exec: false,
+            host_network: false,
+            host_namespace_error: None,
+            stop_at_boot_ns: None,
+        })
+        .ok()?;
+        let launch = context.read_launch().ok()?;
+        (JobKeyId::for_key(&launch.key) == *id).then_some(launch.pin.network)
+    });
+    let network = pin_network.map_or(UnitNetwork::Private, |pin| {
+        network_unit::start_unit_network(pin, host_installed)
+    });
+    for other in network_unit::installed_networks(host_installed) {
+        if other == network {
+            continue;
+        }
+        let other_unit = other.unit_name(id.as_str());
+        let found = show(&other_unit, &["ActiveState"])?;
+        let state = found.get("ActiveState").map_or("", String::as_str);
+        if phase_of(state) != JobUnitPhase::Inactive {
+            return Err(format!(
+                "unit_of_other_network_live: {other_unit} is {state:?}"
+            ));
+        }
+    }
+    Ok(network.unit_name(id.as_str()))
+}
+
+/// The key's unit that is active, under either installed template: the one
+/// a checkpoint notice goes to.
+///
+/// # Errors
+///
+/// `workload_not_running` with the private unit's state when none is
+/// active, or the service manager's error.
+fn active_unit(id: &JobKeyId, host_installed: bool) -> Result<String, String> {
+    let mut first_state = None;
+    for unit in network_unit::installed_unit_names(id.as_str(), host_installed) {
+        let found = show(&unit, &["ActiveState"])?;
+        let state = found.get("ActiveState").cloned().unwrap_or_default();
+        if state == SIGNAL_ACTIVE_STATE {
+            return Ok(unit);
+        }
+        first_state.get_or_insert(state);
+    }
+    Err(format!(
+        "workload_not_running: the unit is {:?}",
+        first_state.unwrap_or_default()
+    ))
 }
 
 /// The uid of the process at the other end of `stream`, from the kernel
