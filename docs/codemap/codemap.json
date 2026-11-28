@@ -33267,7 +33267,7 @@
      "path": "src/dreamer_consolidation/mod.rs",
      "purpose": "Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A)",
      "surface": {
-      "crate-vis": 54,
+      "crate-vis": 56,
       "mod": 6,
       "re-export": 27
      }
@@ -33410,7 +33410,7 @@
      "path": "src/dreamer_consolidation/note_review.rs",
      "purpose": "ARCH-0032 stage 2 (OF-073): the Dreamer reviews NOTEs",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 4
      }
     },
     {
@@ -35154,7 +35154,7 @@
      "path": "src/dreamer_promotion/writer.rs",
      "purpose": "The one-candidate promotion writer and its landed re-read",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 10
      }
     },
     {
@@ -100538,7 +100538,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 412,
+      "mod": 413,
       "re-export": 3
      }
     },
@@ -100660,6 +100660,17 @@
      "purpose": "Door for `tests/found_key_note_fork_upload.rs` (REVIEW-7904 second commit F2): whether the NOTE's authority…",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/note_review_pass.rs",
+     "purpose": "Runs one NOTE review for `tests/note_review_claim_depends_on_note.rs`",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 5
      }
     },
     {
@@ -118612,6 +118623,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/note_review_claim_depends_on_note.rs",
+     "purpose": "PROMOTED-CLAIM-SOURCE-DEPENDENCY-GAPS, NOTE review path: the CLAIM learnt from a NOTE depends on it, and the…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -124457,7 +124476,7 @@
     "dreamer_promotion": {
      "entry": "crates/oneiron/src/dreamer_promotion.rs",
      "files": 10,
-     "impl_vault": false,
+     "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)",
@@ -126006,7 +126025,7 @@
     },
     "test_doors": {
      "entry": "crates/oneiron/src/test_doors/mod.rs",
-     "files": 425,
+     "files": 426,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -126273,8 +126292,8 @@
    },
    "over_bar": 276,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8671,
-   "test_files": 2367
+   "source_files": 8672,
+   "test_files": 2368
   },
   "oneiron-agent-runtime": {
    "files": [
