@@ -98,6 +98,22 @@ pub enum OwnerKeyRest {
     },
 }
 
+/// This install's owner signing key under the device PIN, as
+/// [`Vault::pin_bound_owner_key_for_enrollment`] finds it for an enrollment
+/// or a vouch request.
+pub(in crate::world_keys) enum PinBoundOwnerKey {
+    /// The roster lists the key live: its enrollment's receipt. This handle
+    /// holds the key as the PIN-bound signer.
+    Live(OwnerKeyEnrollmentReceipt),
+    /// The roster does not list the key: its seed rests under the PIN and
+    /// this handle names it. `proof` is its proof of possession over the
+    /// enrollment challenge for the caller's machine.
+    Unenrolled {
+        public_key: [u8; 32],
+        proof: Vec<u8>,
+    },
+}
+
 /// An owner seed opened from under the device PIN key, with the public half
 /// of the key it is the seed of.
 struct OpenedOwnerSeed {
@@ -412,12 +428,9 @@ impl Vault {
     }
 
     /// [`Vault::enrol_device_owner_signing_key`] on a device whose PIN is
-    /// set: the key is made in memory and rests only under the PIN, so the
-    /// enrollment needs the window. A seed that still rests in the slot goes
-    /// under the PIN first, and is the key enrolled. A sealed key that no
-    /// longer opens was sealed under a PIN key this device forgot: a fresh
-    /// key takes its place. The caller's step covers the whole of it, so two
-    /// enrollments never make two keys for one home.
+    /// set: the key [`Self::pin_bound_owner_key_for_enrollment`] answers, so
+    /// the enrollment needs the window. The caller's step covers the whole
+    /// of it, so two enrollments never make two keys for one home.
     ///
     /// # Errors
     /// [`crate::error::DevicePinRefusal::Required`] outside a window; the enrollment's own
@@ -436,6 +449,48 @@ impl Vault {
         slot: KeystoreSlot,
         asked: &OwnerPresenceWitness,
     ) -> Result<OwnerKeyEnrollmentReceipt> {
+        let (public_key, proof) =
+            match self.pin_bound_owner_key_for_enrollment(step, pin, authority, machine, slot)? {
+                PinBoundOwnerKey::Live(receipt) => return Ok(receipt),
+                PinBoundOwnerKey::Unenrolled { public_key, proof } => (public_key, proof),
+            };
+        let input = OwnerKeyEnrollment {
+            machine,
+            public_key,
+            proof,
+        };
+        let receipt =
+            self.enrol_owner_signing_key_as_host_witnessed(authority, asked, input, issuer)?;
+        self.hold_opened_pin_bound_owner_key(pin, slot, public_key);
+        Ok(receipt)
+    }
+
+    /// This install's owner signing key on a device whose PIN is set, as an
+    /// enrollment or a vouch request by `authority`'s owner finds it: the
+    /// key is made in memory and rests only under the PIN, so it needs the
+    /// window. A seed that still rests in the slot goes under the PIN first,
+    /// and is the key. A sealed key that no longer opens was sealed under a
+    /// PIN key this device forgot: a fresh key takes its place, and so does
+    /// a key the roster revoked, which is never enrolled again. A key the
+    /// roster lists live is held as the PIN-bound signer and answers its
+    /// enrollment's receipt. Any other key is sealed and read back before
+    /// the caller writes or hands out anything that names it, so a key the
+    /// roster names always rests here; its proof of possession over the
+    /// enrollment challenge for `machine` is signed inside the window, and
+    /// the seed is dropped. The caller holds `step` until it is done with the
+    /// answer (row OWNER-KEY-VOUCH-REQUEST-ON-PIN-DEVICE).
+    ///
+    /// # Errors
+    /// [`crate::error::DevicePinRefusal::Required`] outside a window; the
+    /// challenge's and the keystore's refusals.
+    pub(in crate::world_keys) fn pin_bound_owner_key_for_enrollment(
+        &self,
+        step: &DevicePinStep<'_>,
+        pin: &Arc<DevicePin>,
+        authority: &ActAuthority,
+        machine: EntityId,
+        slot: KeystoreSlot,
+    ) -> Result<PinBoundOwnerKey> {
         pin.require_window()?;
         let keystore = self.device_keystore()?;
         self.bind_slot_owner_seed(step, pin, keystore.as_ref(), &slot)?;
@@ -450,11 +505,11 @@ impl Vault {
         match self.listed_owner_key(&signer.public_key())? {
             Some(listed) if listed.live => {
                 self.hold_opened_pin_bound_owner_key(pin, slot, listed.public_key);
-                return Ok(OwnerKeyEnrollmentReceipt {
+                return Ok(PinBoundOwnerKey::Live(OwnerKeyEnrollmentReceipt {
                     entry: listed.entry,
                     machine: listed.machine,
                     public_key: listed.public_key,
-                });
+                }));
             }
             // A revoked key is never enrolled again: a fresh seed takes its place.
             Some(_) => {
@@ -471,23 +526,19 @@ impl Vault {
         }
         let public_key = signer.public_key();
         if !rests {
-            // Sealed and read back before the enrollment is written, so a
-            // key the roster names always rests here.
+            // Sealed and read back before an enrollment is written or a
+            // request handed out, so a key the roster names always rests
+            // here.
             self.replace_sealed_owner_seed(pin, &slot, &seed)?;
         }
-        // This seed is what rests under the PIN now, whether or not the
-        // enrollment below is counted: the handle names it. It is held for
+        // This seed is what rests under the PIN now, whether or not an
+        // enrollment of it is counted: the handle names it. It is held for
         // signing only once the roster lists it.
         self.note_pin_bound_owner_key(Some((public_key, pin.key_generation())));
-        let input = OwnerKeyEnrollment {
-            machine,
+        Ok(PinBoundOwnerKey::Unenrolled {
             public_key,
             proof: signer.sign_possession(&challenge),
-        };
-        let receipt =
-            self.enrol_owner_signing_key_as_host_witnessed(authority, asked, input, issuer)?;
-        self.hold_opened_pin_bound_owner_key(pin, slot, public_key);
-        Ok(receipt)
+        })
     }
 
     /// Seals `seed` under the device PIN for `slot` in place of what rested

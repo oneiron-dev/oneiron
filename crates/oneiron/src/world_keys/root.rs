@@ -5,8 +5,9 @@
 //!   the kit opens them with the secret half;
 //! - the owner anchor (Ed25519). It signs the root record and an Owned mark at kit
 //!   issue or restore (E2).
-//! A separate vault-bound authority signer can also be derived, but has no standing
-//! until the owner explicitly enrols its distinct key before loss.
+//! A separate vault-bound authority signer is derived too. It has standing only once
+//! its distinct key is enrolled: the kit's activation enrols it in the same write
+//! (pass 27 R4), and a kit gains none by existing or being restored.
 //!
 //! The engine never stores the seed. How the kit's pieces carry the 32 bytes is the
 //! kit's business; this module takes back only the kit's whole restore, never bare

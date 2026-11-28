@@ -59,11 +59,10 @@ use super::device_pin::{
 use super::{DevicePin, OwnerActImportance, owner_presence_reasons};
 use crate::authority::{
     ACTOR_CLASS_HUMAN, ActAuthority, AuthorityEntryHash, AuthorityFold, AuthorityKey,
-    AuthorityLogEntry, AuthorityOp, AuthorityVaultId, CheckpointRootSigner, DeviceOwnerKeyVouch,
-    EnrolledOwnerKey, HostSlipIssuer, OwnerKeyEnrollment, OwnerKeyEnrollmentReceipt,
-    OwnerKeyVouchRequest, OwnerProofGround, RecoveryRootId, authority_refused,
-    authority_transcript, checkpoint_statement_domain, invalid_authority, label_is_valid,
-    label_not_valid, root_appointment_challenge,
+    AuthorityLogEntry, AuthorityOp, AuthorityVaultId, CheckpointRootSigner, EnrolledOwnerKey,
+    HostSlipIssuer, OwnerKeyEnrollment, OwnerKeyEnrollmentReceipt, OwnerProofGround,
+    RecoveryRootId, authority_refused, authority_transcript, checkpoint_statement_domain,
+    invalid_authority, root_appointment_challenge,
 };
 use crate::entity_id::EntityId;
 use crate::error::{DevicePinRefusal, Error, RecordError, Result};
@@ -71,6 +70,7 @@ use crate::vault::Vault;
 
 mod box_cancel_signature;
 mod slot;
+mod vouch_request;
 
 pub(crate) use self::slot::{FreshOwnerKey, OwnerSigningSlot, SlotRenewal};
 
@@ -460,93 +460,6 @@ impl Vault {
             };
         self.hold_checkpoint_root_signer(Arc::new(signer));
         Ok(receipt)
-    }
-
-    /// The new device's half of an owner key vouching for its key (pass 27
-    /// R2): this install's owner signing key, made in its keystore slot on
-    /// first use, signs its challenge for this install's machine and the
-    /// owner `authority` proves, this install's own key signs the request,
-    /// and the request to hand an owner device comes back
-    /// ([`Vault::enrol_vouched_owner_signing_key`] runs there). It writes no
-    /// authority row and needs no owner key of its own; it makes the key's
-    /// seed, and readying this install's signing identity may run work
-    /// already waiting for it. `label` names this device for the owner to
-    /// recognise. Once a vouch put the key on the roster and this vault took
-    /// that row (sync), it answers the enrollment's receipt and this handle
-    /// holds the key. A key the roster revoked gives its slot to a fresh
-    /// key, whose request comes back.
-    ///
-    /// The request is made with the key that rests in the slot, so a device
-    /// with a PIN set, or one that forgot a PIN, asks for no vouch here: its
-    /// key rests under the PIN, and the slot's rule refuses
-    /// (`slot_owner_signer`). The request made from under the PIN is row
-    /// OWNER-KEY-VOUCH-REQUEST-ON-PIN-DEVICE.
-    ///
-    /// # Errors
-    /// [`crate::error::RecordError::InvalidAuthorityLogBody`] for a label over
-    /// [`crate::authority::OWNER_KEY_VOUCH_LABEL_MAX`] bytes or with a control
-    /// or invisible format character; `KeystoreUnavailable` while the host
-    /// installed no keystore; an agent's act refused, before anything is
-    /// readied; an owner refusal when the proof is no longer the vault's live
-    /// owner. Refused on a device with a PIN set, and
-    /// [`DevicePinRefusal::NotSet`] on a device whose PIN was forgotten and
-    /// that has none now, as [`Vault::device_owner_signing_key`] answers.
-    pub fn device_owner_key_vouch_request(
-        &self,
-        authority: &ActAuthority,
-        label: &str,
-    ) -> Result<DeviceOwnerKeyVouch> {
-        if !label_is_valid(label) {
-            return Err(label_not_valid());
-        }
-        // The caller is checked first, before this install readies anything.
-        self.owner_key_act_owner(authority)?;
-        let keystore = self.device_keystore()?;
-        let machine = self.prepare_install_signing()?;
-        let slot = self.owner_signing_slot(machine);
-        // The slot's seed is made here, so this is one step with a first
-        // PIN's set, as [`Vault::device_owner_signing_key`] is.
-        let pin = self.device_pin();
-        let _step = pin.as_deref().map(DevicePin::step);
-        match self.device_owner_key_for_enrollment(authority, machine, &keystore, slot)? {
-            DeviceOwnerKey::Live { signer, receipt } => {
-                self.hold_checkpoint_root_signer(Arc::new(signer));
-                Ok(DeviceOwnerKeyVouch::Enrolled(receipt))
-            }
-            DeviceOwnerKey::Unenrolled {
-                signer,
-                machine,
-                challenge,
-            } => {
-                let mut request = OwnerKeyVouchRequest {
-                    vault_id: self.authority_vault_id()?.ok_or_else(invalid_authority)?,
-                    machine,
-                    public_key: signer.public_key(),
-                    proof: signer.sign_possession(&challenge),
-                    machine_proof: Vec::new(),
-                    label: label.to_owned(),
-                };
-                request.machine_proof =
-                    self.install_key_signature(machine, &request.machine_transcript()?)?;
-                Ok(DeviceOwnerKeyVouch::Request(request))
-            }
-        }
-    }
-
-    /// The signature of this install's own key, the install key of
-    /// `machine`, over `transcript`.
-    ///
-    /// # Errors
-    /// [`crate::authority::invalid_authority`] when this install's machine
-    /// is no longer `machine` or holds no install key; the store's own.
-    fn install_key_signature(&self, machine: EntityId, transcript: &[u8]) -> Result<Vec<u8>> {
-        let txn = self.store.env.read_txn()?;
-        if crate::identity::read_machine_id_in_txn(self, &txn)? != Some(machine) {
-            return Err(invalid_authority());
-        }
-        let key = crate::identity::read_machine_signing_key_in_txn(self, &txn)?
-            .ok_or_else(invalid_authority)?;
-        Ok(key.sign(transcript).to_bytes().to_vec())
     }
 
     /// This install's owner signing key as an enrollment by `authority`'s

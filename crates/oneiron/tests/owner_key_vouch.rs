@@ -38,6 +38,13 @@
 //! refuses a request whose label breaks its rules as the label's. Red at
 //! main 3c75f527c38 (the key enrols; the machine proof's refusal answers),
 //! green at the head.
+//!
+//! Row OWNER-KEY-VOUCH-REQUEST-ON-PIN-DEVICE: a new device with a PIN set
+//! asks with the key under its PIN inside the window, and once the vouch
+//! reached it by sync it holds that key, which signs only inside a window.
+//! Red at main 8418b839a4ad (the request is refused as the slot's), green at
+//! the head. A vouching key under a device PIN vouches only inside the window
+//! a right PIN opened: new coverage of what main already does, green at both.
 #![cfg(oneiron_test_support)]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -52,8 +59,9 @@ use oneiron::authority::{
     OwnerProofGround, ROLE_OWNER, authority_entry_hash, decode_authority_log_entry_body,
 };
 use oneiron::consent::AuthenticatedOwner;
-use oneiron::error::RecordError;
+use oneiron::error::{DevicePinRefusal, RecordError, SecretError};
 use oneiron::federation::{FederationGrantRole, InitialSharedMember, Scope, ScopeAxis};
+use oneiron::recovery::PassphraseCost;
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
 use oneiron::test_doors::label_writers::embedded_owner;
@@ -61,16 +69,19 @@ use oneiron::test_doors::owner_key_vouch_between::enrol_vouched_owner_signing_ke
 use oneiron::test_doors::owner_key_vouch_holding_machine::require_holding_machine_beside_anchor_chain;
 use oneiron::test_doors::passkey_vouch_limits::revoke_owner_key_signed_by;
 use oneiron::verbs::{AgentGrantMintRequest, mint_agent_grant_as};
-use oneiron::world_keys::OwnerActImportance;
+use oneiron::world_keys::{DevicePin, OwnerActImportance};
 use oneiron::{EntityId, Error, HostingPrivacyPosture, TimeRange, Vault, VaultConfig};
 use oneiron_keystore::{
     AuthBoundSecretStore, DeviceKeystore, KeystoreAssurance, KeystoreLocality, KeystoreSlot,
-    MemoryKeystore, SealedBytesStore,
+    ManualPresenceClock, MemoryKeystore, SealedBytesStore,
 };
 use zeroize::Zeroizing;
 
 /// The co-Owner fixture's shared vault id.
 const SHARED: u64 = 27;
+
+/// The device PIN the PIN tests set.
+const PIN: &[u8] = b"271828";
 
 /// What an owner signing key answers when the roster it is asked on does not
 /// list it live (`KEY_NOT_LIVE` of `world_keys::owner_signing`).
@@ -130,9 +141,15 @@ struct OwnerDevice {
 }
 
 fn owner_device(with_key: bool) -> OwnerDevice {
+    owner_device_on(with_key, Arc::new(MemoryKeystore::default()))
+}
+
+/// [`owner_device`], the owner device's install keeping its slots in
+/// `keystore`.
+fn owner_device_on(with_key: bool, keystore: Arc<dyn DeviceKeystore>) -> OwnerDevice {
     let dir = tempfile::tempdir().expect("vault directory");
     let vault = Vault::open(dir.path(), hosted_config()).expect("the owner device's install");
-    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    vault.install_device_keystore(keystore);
     let issuer = Arc::new(oneiron::test_support::provision_engine_machines(&vault));
     vault
         .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
@@ -1037,5 +1054,153 @@ fn a_machine_with_a_removed_chain_is_refused_beside_a_live_owned_chain() {
             Error::Record(RecordError::InvalidAuthorityLogBody(_))
         ),
         "no live chain of a machine with a removed chain verifies its proof: {refused:?}"
+    );
+}
+
+/// A keystore whose hardware counts wrong PINs.
+fn counted_keystore() -> Arc<dyn DeviceKeystore> {
+    Arc::new(MemoryKeystore::with_counted_auth_bound(32, 1000))
+}
+
+/// A device PIN over `keystore`, which `vault` keeps its slots in, on a
+/// manual clock that never moves: a window a PIN's set or a right PIN opens
+/// lasts until the test ends it. `vault` takes the PIN.
+fn install_device_pin(vault: &Vault, keystore: &Arc<dyn DeviceKeystore>) -> Arc<DevicePin> {
+    let pin = DevicePin::with_clock_and_cost(
+        Arc::clone(keystore),
+        ManualPresenceClock::new(1_000_000, 1_000_000),
+        PassphraseCost::FLOOR,
+    )
+    .expect("the device PIN over the device's keystore");
+    vault
+        .install_device_pin(Arc::clone(&pin))
+        .expect("the device PIN goes on the handle");
+    pin
+}
+
+/// Whether `vault`'s checkpoint pass gets a signer for `key` now.
+fn signs_now(vault: &Vault, key: [u8; 32]) -> bool {
+    vault
+        .checkpoint_root_signers()
+        .iter()
+        .any(|signer| signer.root() == AuthorityKey::Ed25519(key))
+}
+
+/// A new device with a PIN set asks for a vouch with the key under its PIN,
+/// inside the window a right PIN opened (row
+/// OWNER-KEY-VOUCH-REQUEST-ON-PIN-DEVICE). The owner device vouches for it,
+/// and once the new device took the vouch it answers the enrollment's
+/// receipt, inside a window only, and holds the key, which signs only inside
+/// a window.
+#[test]
+fn a_new_device_with_a_pin_set_asks_under_its_pin_and_holds_the_vouched_key_there() {
+    let owner = owner_device(true);
+    let keystore = counted_keystore();
+    let mut device = new_device_on(
+        &owner,
+        MachineRole::Owned(MachineOwnership::Yours),
+        Arc::clone(&keystore),
+    );
+    let pin = install_device_pin(&device.vault, &keystore);
+    device
+        .vault
+        .set_device_pin_as(&owner_act(&device.proof()), PIN, false)
+        .expect("the owner sets the new device's PIN");
+    let request = device.request();
+    assert_eq!(
+        request.machine, device.machine,
+        "the new device holds the key"
+    );
+    assert!(
+        !signs_now(&device.vault, request.public_key),
+        "the key signs nothing before the roster lists it"
+    );
+
+    let receipt = owner
+        .vouch(&request)
+        .expect("the owner device vouches for the key under the new device's PIN");
+    device.take(&owner);
+    pin.end_window();
+    let refused = device
+        .vouch_request("Laptop")
+        .expect_err("outside the window the key under the PIN answers nothing");
+    assert!(
+        matches!(
+            refused,
+            Error::Secret(SecretError::DevicePin(DevicePinRefusal::Required))
+        ),
+        "the door asks for the PIN: {refused:?}"
+    );
+
+    device
+        .vault
+        .confirm_device_pin(PIN)
+        .expect("the right PIN confirms");
+    match device
+        .vouch_request("Laptop")
+        .expect("the new device asks again inside the window")
+    {
+        DeviceOwnerKeyVouch::Enrolled(found) => assert_eq!(found, receipt),
+        DeviceOwnerKeyVouch::Request(again) => {
+            panic!("the new device's key is enrolled now: {again:?}")
+        }
+    }
+    assert!(
+        signs_now(&device.vault, request.public_key),
+        "inside the window the new device's handle holds its vouched key"
+    );
+    pin.end_window();
+    assert!(
+        !signs_now(&device.vault, request.public_key),
+        "outside the window the key under the PIN signs nothing"
+    );
+}
+
+/// The owner device's key rests under its device PIN: it vouches only inside
+/// the window a right PIN opened. Outside it the door finds no key the vault
+/// trusts as the owner's and writes nothing; inside it the key under the PIN
+/// is the enrollment's predecessor.
+#[test]
+fn a_vouching_key_under_a_device_pin_vouches_only_inside_its_window() {
+    let keystore = counted_keystore();
+    let owner = owner_device_on(true, Arc::clone(&keystore));
+    let vouching = owner.key.expect("the owner device's key");
+    let pin = install_device_pin(&owner.vault, &keystore);
+    owner
+        .vault
+        .set_device_pin_as(&owner_act(&owner.proof), PIN, false)
+        .expect("the owner adds a PIN to the owner device; its key goes under the PIN");
+    // The new device is answered "yours" inside the window, where the owner
+    // key under the PIN proves the act.
+    let device = new_device(&owner);
+    let request = device.request();
+
+    pin.end_window();
+    let rows = owner.history().len();
+    let refused = owner
+        .vouch(&request)
+        .expect_err("outside the window the key under the PIN vouches for nothing");
+    assert!(
+        matches!(refused, Error::Record(RecordError::OwnerKeyRequired)),
+        "the refusal asks for an owner key: {refused:?}"
+    );
+    assert!(
+        !owner.roster_lists(request.public_key),
+        "the key is not enrolled"
+    );
+    assert_eq!(owner.history().len(), rows, "nothing was written");
+
+    owner
+        .vault
+        .confirm_device_pin(PIN)
+        .expect("the right PIN confirms");
+    let receipt = owner
+        .vouch(&request)
+        .expect("inside the window the key under the PIN vouches");
+    assert_eq!(receipt.public_key, request.public_key);
+    assert_eq!(
+        owner.entry(receipt.entry).signer.public_key,
+        AuthorityKey::Ed25519(vouching),
+        "the key under the PIN is the enrollment's predecessor"
     );
 }
