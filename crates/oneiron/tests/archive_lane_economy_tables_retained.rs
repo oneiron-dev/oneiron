@@ -161,14 +161,15 @@ impl Fixture {
         self.project_under(self.vault.root_project().expect("root project"), 2)
     }
 
-    /// The owner sets `lane`'s line with `rules` at `now_ms`.
+    /// The owner sets `lane`'s line with `rules` at `now_ms`, under an intent key of that lane:
+    /// an intent key names one ask of its asker and verb, whatever the project.
     fn set_line(&self, lane: EntityId, rules: Vec<RuleRef>, now_ms: u64) {
         self.vault
             .memory(self.owner, EdgeActorClass::Human)
             .set_gpu_line(
                 Some(&self.owner_proof),
                 &GpuLineSetRequest {
-                    intent_key: "set".to_owned(),
+                    intent_key: format!("set-{}", lane.to_hex()),
                     project: lane,
                     policy: policy(rules),
                 },
