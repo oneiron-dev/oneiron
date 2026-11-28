@@ -128,7 +128,9 @@ impl Vault {
     /// withdrawn (by the doors' own rule, `raw_readable_in_txn`), withheld or
     /// unresolved sources refuse the row, so a copy cannot disclose words its
     /// source would not. The sync member gate applies the same rule (FIX
-    /// SELECTOR-SCOPE-SUMMARY-WORDS).
+    /// SELECTOR-SCOPE-SUMMARY-WORDS). An epoch summary is a root too: its
+    /// `DerivedFrom` targets, walked transitively through each target's own
+    /// word sources. The epoch fence stays a separate conjunct.
     pub(super) fn word_source_fence_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -140,16 +142,6 @@ impl Vault {
     ) -> Result<bool> {
         use crate::ports::EntityStoreRead;
         use crate::scope_summary::WordSources;
-
-        let header =
-            EntityMetadataHeader::parse(raw).ok_or(Error::CorruptedIndex("record header"))?;
-        let body = &raw[ENTITY_METADATA_HEADER_LEN..];
-        if header.entity_type == crate::registry::ENTITY_TYPE_SUMMARY
-            && crate::compaction::stored_epoch_in(&self.store, txn, &id, body)?
-                != crate::compaction::StoredEpoch::No
-        {
-            return Ok(true);
-        }
 
         // The roots this fence judges: every row whose words came from others.
         let mut pending = match crate::scope_summary::word_sources_in(self, txn, &id, raw) {

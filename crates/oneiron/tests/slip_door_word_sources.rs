@@ -1,7 +1,7 @@
 //! FIX SLIP-DOOR-DERIVED-SUMMARY-FENCE: a row carrying other rows' words
 //! reads and exports only while the same slip door admits every word source.
 //! The narrow slip refuses a live other-world claim but admits each base-world
-//! twin; the top slip admits all eight derived roots.
+//! twin; the top slip admits all nine derived roots.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test slip_door_word_sources`
 #![cfg(oneiron_test_support)]
@@ -28,7 +28,9 @@ use oneiron::store::revision_ref::RevisionRef;
 use oneiron::test_doors::compaction_step_read::file_compaction_step;
 use oneiron::test_doors::disclosure_word_sources::register_editor_source;
 use oneiron::test_doors::scope_summary::mint_scope_summary;
-use oneiron::test_doors::slip_door_word_sources::{file_compaction_intent, file_finding_notice};
+use oneiron::test_doors::slip_door_word_sources::{
+    file_compaction_intent, file_epoch_summary_from, file_finding_notice,
+};
 use oneiron::test_support::{bind_host_owner, provision_engine_machines};
 use oneiron::verbs::{
     AgentDefinitionCreateRequest, AgentDefinitionSpec, create_agent_definition_as,
@@ -270,6 +272,14 @@ impl Fixture {
         Ok(file_compaction_intent(&self.vault, self.owner, claim)?)
     }
 
+    fn epoch_from(&self, source: EntityId) -> TestResult<EntityId> {
+        Ok(file_epoch_summary_from(
+            &self.vault,
+            self.owner,
+            vec![source],
+        )?)
+    }
+
     fn assert_narrowed(&self, label: &str, withheld: EntityId, twin: EntityId) -> TestResult {
         assert_slip_doors(
             &self.vault,
@@ -406,6 +416,16 @@ fn a_compaction_intent_note_leaves_with_its_sources() -> TestResult {
 }
 
 #[test]
+fn an_epoch_summary_leaves_with_its_sources_words() -> TestResult {
+    let f = open()?;
+    let withheld_turn = f.land_summary(Some(f.w_claim), true)?;
+    let withheld = f.epoch_from(withheld_turn)?;
+    let twin_turn = f.land_summary(None, true)?;
+    let twin = f.epoch_from(twin_turn)?;
+    f.assert_narrowed("the W-sourced epoch summary", withheld, twin)
+}
+
+#[test]
 fn a_top_slip_reads_every_derived_row() -> TestResult {
     let f = open()?;
     let (summary, _) = f.scope_summary(Some(f.w_claim))?;
@@ -415,6 +435,7 @@ fn a_top_slip_reads_every_derived_row() -> TestResult {
     let (step, response) = f.file_step_from(f.compactor()?, f.w_claim)?;
     let finding = f.finding_from(f.w_claim)?;
     let intent = f.intent_from(f.w_claim)?;
+    let epoch = f.epoch_from(reply)?;
     assert_slip_doors(
         &f.vault,
         &narrow_slip(),
@@ -435,6 +456,7 @@ fn a_top_slip_reads_every_derived_row() -> TestResult {
             ("the W-sourced compaction response", response),
             ("the W-sourced finding notice", finding),
             ("the W-sourced compaction intent note", intent),
+            ("the W-sourced epoch summary", epoch),
         ],
     )
 }

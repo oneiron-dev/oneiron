@@ -37,6 +37,30 @@ pub fn file_compaction_intent(
     owner: EntityId,
     source: EntityId,
 ) -> Result<EntityId> {
+    let summary = file_epoch_summary_from(vault, owner, vec![source])?;
+    vault
+        .edges_in(&summary)?
+        .into_iter()
+        .find(|edge| edge.kind == EdgeKind::About)
+        .map(|edge| edge.target)
+        .ok_or(Error::InvariantViolation(
+            "the epoch mint left no intent NOTE",
+        ))
+}
+
+/// Mints a base epoch from the call's live `sources` through the production
+/// compaction driver, gate and epoch mint, and returns the epoch SUMMARY
+/// (stored epoch Yes). The mint's `DerivedFrom` edges start with the sealed
+/// request's sources (`summary_dependencies`), so a TURN passed here is a
+/// source the epoch's word-source fence walks.
+///
+/// # Errors
+/// The compaction driver, gate or writer refused the fixture.
+pub fn file_epoch_summary_from(
+    vault: &Vault,
+    owner: EntityId,
+    sources: Vec<EntityId>,
+) -> Result<EntityId> {
     let mut backends = CompactionBackendRegistry::new();
     let backend = Arc::new(IntentBackend);
     let profile = MemoryProfile::new(
@@ -67,7 +91,7 @@ pub fn file_compaction_intent(
             tokens: crate::count_context_pack_tokens(content) as u64,
         }],
         vec!["quiet".into()],
-        vec![source],
+        sources,
         None,
         1,
         None,
@@ -93,14 +117,7 @@ pub fn file_compaction_intent(
         gated,
         &[],
     )?;
-    vault
-        .edges_in(&plan.summary_id)?
-        .into_iter()
-        .find(|edge| edge.kind == EdgeKind::About)
-        .map(|edge| edge.target)
-        .ok_or(Error::InvariantViolation(
-            "the epoch mint left no intent NOTE",
-        ))
+    Ok(plan.summary_id)
 }
 
 struct IntentBackend;
