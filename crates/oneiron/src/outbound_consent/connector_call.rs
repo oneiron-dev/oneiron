@@ -152,6 +152,12 @@ pub(super) struct PendingConnectorCall {
     /// own gate settle the call then.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) code_consent_wait: Option<EntityId>,
+    /// Whether the code run that made the call was served a vault row that
+    /// can carry a person's words when the call was first held (FIX
+    /// CONNECTOR-CALL-VAULT-TEXT-UNCLASSED): its payload class is then at
+    /// least Personal on every pass. Absent on older rows: those read as before.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(super) run_served_person_rows: bool,
     /// The rows the call's passes picked themselves (FIX 5455), unioned over
     /// every pass: the catalog route key, each standing grant read, the
     /// governing key, each slate read, and the custody record or secret

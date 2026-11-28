@@ -366,6 +366,32 @@ pub(crate) fn mcp_scoped_read<'a>(
     vault: &'a oneiron::Vault,
     actor: &McpResolvedActor,
 ) -> Result<oneiron::claim::ScopedRead<'a>, McpGatewayError> {
+    let read = credential_scoped_read(vault, actor)?;
+    // An attached session's read that names no project reads its folder's project
+    // (RECALL-SESSION-PROJECT), on either lane; a storage failure binds the unbound default,
+    // never a wider read.
+    Ok(
+        match actor
+            .auth
+            .as_ref()
+            .and_then(crate::auth::CoreAuth::session_read_workspace)
+        {
+            Some(folder_digests) => read.within_session_projects(
+                vault
+                    .session_projects(folder_digests)
+                    .unwrap_or(oneiron::session_project::SessionProjects::Unbound),
+            ),
+            None => read,
+        },
+    )
+}
+
+/// The read lane `actor`'s credential selects: a managed vault's attested owner's own key, else
+/// the verified slip's.
+fn credential_scoped_read<'a>(
+    vault: &'a oneiron::Vault,
+    actor: &McpResolvedActor,
+) -> Result<oneiron::claim::ScopedRead<'a>, McpGatewayError> {
     // A managed vault's attested owner carries no slip: he reads with his
     // own key, held to this request's owner proof (WILL-PLAN L14 row 01).
     if let Some(auth) = actor
@@ -740,11 +766,30 @@ pub(crate) fn mcp_error_response(id: Value, error: McpGatewayError) -> Value {
 }
 
 /// The code-mode run one call is made in (`execute_code`): the host origin
-/// its writes are made under, and the run itself, the creating run of the
-/// live lens cards the call renders (OF-181, FIX 2612 (a)).
+/// its writes are made under, the run itself, the creating run of the
+/// live lens cards the call renders (OF-181, FIX 2612 (a)), and who wrote
+/// the program that makes the call.
 pub(crate) struct McpCodeRun {
     pub(crate) origin: oneiron::memory::HostWriteOrigin,
     pub(crate) run_id: oneiron::EntityId,
+    pub(crate) author: RunAuthor,
+}
+
+/// Who wrote a code-mode run's program (FIX EXECUTE-CALLER-CODE). A caller's
+/// own code (the MCP `execute` tool) gets the caller's own per-verb gates and
+/// nothing the run would lend: no code-mode line, no reader child or summary
+/// job, no browser or desktop guest, no MESSAGE under a Read grant, and no
+/// row whose answer is a credential or a secret value. A program the
+/// engine's model wrote from the caller's task keeps the run's services.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RunAuthor {
+    /// The caller wrote the code the run executes, or the door's program is
+    /// stored code such as a callable skill's: every door but a task run's
+    /// (FIX CODE-MODE-LENDING-W8).
+    Caller,
+    /// The engine's model wrote each step's program from the caller's task.
+    /// Only a task run's door is built with it.
+    EngineModel,
 }
 
 /// What one MCP row's credential surface is built from beside its call

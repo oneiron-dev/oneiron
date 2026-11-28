@@ -17,6 +17,8 @@ use crate::error::Result;
 
 mod member_context;
 mod model_context;
+#[cfg(oneiron_test_support)]
+pub(crate) use model_context::context_rows_for_test;
 pub(crate) mod tool_wait;
 mod workflow_task;
 

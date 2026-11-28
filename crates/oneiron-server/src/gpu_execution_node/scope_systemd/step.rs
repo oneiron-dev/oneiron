@@ -11,7 +11,7 @@ use super::safe_fs::{self, account, borrow, facts, open_dir_beneath, open_dir_pa
 use super::{EXCHANGE_ROOT, is_job_instance};
 
 /// The arguments the unit template gives every root step:
-/// `--node-file <path> --engine-account <name> [--after-exec] <instance>`.
+/// `--node-file <path> --engine-account <name> [--after-exec] [--stop-at <boot ns>] <instance>`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StepArgs {
     pub node_file: PathBuf,
@@ -23,6 +23,11 @@ pub struct StepArgs {
     /// ([`enter_host_mount_namespace`]); `None` when it works on the
     /// machine's own tree.
     pub host_namespace_error: Option<String>,
+    /// `job-cutoff --stop-at <boot ns>`: the stop time the firing cutoff
+    /// timer was armed for, so a timer a session's renewal superseded stops
+    /// nothing (row W1). `None` from a timer armed before sessions: it
+    /// stops the unit.
+    pub stop_at_boot_ns: Option<u64>,
 }
 
 impl StepArgs {
@@ -36,12 +41,20 @@ impl StepArgs {
         let mut engine_account = None;
         let mut instance = None;
         let mut after_exec = false;
+        let mut stop_at_boot_ns = None;
         let mut rest = args.iter();
         while let Some(arg) = rest.next() {
             match arg.as_str() {
                 "--node-file" => node_file = rest.next().map(PathBuf::from),
                 "--engine-account" => engine_account = rest.next().cloned(),
                 "--after-exec" => after_exec = true,
+                "--stop-at" => {
+                    let value = rest.next().ok_or("--stop-at needs a boot-clock time")?;
+                    stop_at_boot_ns =
+                        Some(value.parse().map_err(|_| {
+                            format!("--stop-at {value:?} is not a boot-clock time")
+                        })?);
+                }
                 other if other.starts_with('-') => return Err(format!("unknown argument {other}")),
                 other if instance.is_none() => instance = Some(other.to_owned()),
                 other => return Err(format!("a second instance {other}")),
@@ -53,6 +66,7 @@ impl StepArgs {
             instance: instance.ok_or("the unit's instance is required")?,
             after_exec,
             host_namespace_error: None,
+            stop_at_boot_ns,
         })
     }
 }

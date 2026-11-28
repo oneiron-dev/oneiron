@@ -32,6 +32,7 @@ use std::fs;
 
 use oneiron_crypto::HybridPublicKey;
 
+pub(crate) use clone::legal_hold_store::holds_capture;
 pub(in crate::deletion) use held_scrubs::held_scrubs_owed_in_txn;
 pub use types::*;
 
@@ -140,7 +141,7 @@ impl Vault {
             ));
         }
         let placed = (|| -> Result<LegalHold> {
-            let captures =
+            let sealed =
                 clone::legal_hold_store::write_hold_clone_in_txn(self, txn, hold_id, &targets)?;
             if let Some(future) = future_messages {
                 let selector = match future.selector {
@@ -179,7 +180,7 @@ impl Vault {
                 lifted_at: None,
                 owner_told: true,
                 requires_non_use: false,
-                clone_captures: captures,
+                clone_captures: sealed.captures,
                 future_messages,
             };
             let first = hold
@@ -189,6 +190,15 @@ impl Vault {
                     "a legal hold wrote no sealed capture",
                 ))?;
             hold_store::put_hold_in_txn(&self.store, txn, &hold)?;
+            if let Some((capture, records)) = &sealed.records {
+                hold_store::sealed_records::put_in_txn(
+                    &self.store,
+                    txn,
+                    hold_id.as_bytes(),
+                    capture.as_bytes(),
+                    records,
+                )?;
+            }
             let row = LegalHoldEvent {
                 clone_fingerprint: Some(first.fingerprint),
                 ..hold_store::events::event_row(
@@ -253,6 +263,7 @@ impl Vault {
                     // What an earlier release of this hold left goes first.
                     clone::legal_hold_store::destroy_hold_copy(self, &hold_id)?;
                     clone::legal_hold_store::write_hold_clone_in_txn(self, txn, hold_id, &[target])
+                        .map(|sealed| sealed.captures)
                 },
             )
         });
@@ -305,16 +316,29 @@ impl Vault {
                 return Ok(hold);
             }
             self.refuse_erased_targets_in_txn(txn, &added)?;
-            let captures =
+            let sealed =
                 clone::legal_hold_store::write_hold_clone_in_txn(self, txn, hold_id, &added)?;
-            written.extend(captures.iter().copied());
+            written.extend(sealed.captures.iter().copied());
             let widened = (|| -> Result<LegalHold> {
-                let fingerprint = captures.first().map(|capture| capture.fingerprint).ok_or(
-                    Error::InvariantViolation("a legal hold widening wrote no sealed capture"),
-                )?;
-                hold.clone_captures.extend(captures.iter().copied());
+                let fingerprint = sealed
+                    .captures
+                    .first()
+                    .map(|capture| capture.fingerprint)
+                    .ok_or(Error::InvariantViolation(
+                        "a legal hold widening wrote no sealed capture",
+                    ))?;
+                hold.clone_captures.extend(sealed.captures.iter().copied());
                 hold.targets.extend(added.iter().copied());
                 hold_store::put_hold_in_txn(&self.store, txn, &hold)?;
+                if let Some((capture, records)) = &sealed.records {
+                    hold_store::sealed_records::put_in_txn(
+                        &self.store,
+                        txn,
+                        hold_id.as_bytes(),
+                        capture.as_bytes(),
+                        records,
+                    )?;
+                }
                 let row = LegalHoldEvent {
                     clone_fingerprint: Some(fingerprint),
                     ..hold_store::events::event_row(
@@ -331,7 +355,11 @@ impl Vault {
                 Ok(hold)
             })();
             if widened.is_err() {
-                clone::legal_hold_store::remove_captures_best_effort(self, &hold_id, &captures);
+                clone::legal_hold_store::remove_captures_best_effort(
+                    self,
+                    &hold_id,
+                    &sealed.captures,
+                );
             }
             widened
         });
@@ -413,6 +441,7 @@ impl Vault {
                 else {
                     return Err(Error::EntityNotFound);
                 };
+                hold_store::sealed_records::drop_hold_in_txn(&self.store, txn, hold_id.as_bytes())?;
                 if hold_store::events::logged_in_txn(
                     &self.store,
                     txn,

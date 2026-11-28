@@ -17,7 +17,9 @@ pub(crate) const MCP_INVOCATION_META: &str = "oneiron/invocation";
 pub(crate) const MCP_HOOK_ASK_META: &str = "hook_ask";
 
 impl McpToolCallParams {
-    /// The invocation the call names in `_meta`, if any.
+    /// The invocation the call names in `_meta`, if any. A value that is no
+    /// invocation is refused naming `_meta` in reason codes too (FIX
+    /// CODE-MODE-DENIAL-REASONS), as the ask handle below is.
     pub(super) fn invocation(&self) -> Result<Option<InvocationId>, McpGatewayError> {
         let Some(named) = self.named(MCP_INVOCATION_META) else {
             return Ok(None);
@@ -32,6 +34,7 @@ impl McpToolCallParams {
                     "tool_args_invalid",
                     "_meta.oneiron/invocation is 32 lowercase hex digits",
                 )
+                .with_invalid_field_reason("_meta")
                 .with_field("_meta")
             })
     }
@@ -52,6 +55,7 @@ impl McpToolCallParams {
                     "tool_args_invalid",
                     "_meta.hook_ask is the 32-hex ask handle a hook's Pending gave",
                 )
+                .with_invalid_field_reason("_meta")
                 .with_field("_meta")
             })
     }

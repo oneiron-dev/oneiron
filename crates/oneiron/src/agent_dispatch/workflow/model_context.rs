@@ -14,8 +14,12 @@
 //! for the owner, verified in the snapshot, any other actor's under its
 //! access grants); a run no one bound reads on its step's own agent's lane.
 //! A row renders only when every lane reads it, policy and body in one
-//! snapshot, at the grant clock persisted just before it. Claim values and
-//! turn texts become plain text; no MessagePack reaches a prompt.
+//! snapshot, at the grant clock persisted just before it. Claim values, note
+//! markdown and turn words pass through the board's `xml_text_token` leaf
+//! fence (one physical line, markup escaped) inside a `step_context` element
+//! owned by this renderer (FIX WORKFLOW-CONTEXT-ROWS-UNFENCED). Each claim
+//! row names its source and each note row says note; no MessagePack reaches
+//! a prompt.
 //!
 //! A sibling task's result (`context_from`) is read the same way, on every
 //! lane, and, since no selector cut it, past each binder's private-thread
@@ -35,6 +39,7 @@ use crate::agent_dispatch::codec::record_dispatch_input;
 use crate::agent_dispatch::workflow_record::is_wrapper;
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, ManifestEntry, ManifestKind};
 use crate::claim::{ScopedRead, ScopedReadActorKey, decode_claim_body};
+use crate::context_board::xml_text_token;
 use crate::context_projection::ResolvedContextProjection;
 use crate::dreamer_runner::{DreamerTurnRole, decode_dreamer_attempt_payload, dreamer_turn_role};
 use crate::edge::{EdgeActorClass, EdgeKind};
@@ -103,6 +108,7 @@ impl RenderedWorkflowStepContext {
     pub fn memory_text(&self) -> Option<String> {
         section_text(
             "Memory selected for this step's context, newest first:",
+            "memory",
             &self.memory,
         )
     }
@@ -113,6 +119,7 @@ impl RenderedWorkflowStepContext {
     pub fn chat_text(&self) -> Option<String> {
         section_text(
             "Chat selected for this step's context, newest first:",
+            "chat",
             &self.chat,
         )
     }
@@ -123,6 +130,7 @@ impl RenderedWorkflowStepContext {
     pub fn sibling_results_text(&self) -> Option<String> {
         section_text(
             "Results of the sibling tasks this step reads, in the order it names them:",
+            "sibling_results",
             &self.sibling_results,
         )
     }
@@ -274,7 +282,9 @@ impl RenderedWorkflowStepContext {
             .map(|(_, _, text, _)| text.as_str())
             .collect::<Vec<_>>()
             .join("\n");
-        self.chat.push(format!("- {speaker}: {text}"));
+        let speaker = xml_text_token(speaker);
+        let text = xml_text_token(&text);
+        self.chat.push(format!("- [turn] {speaker}: {text}"));
         self.capture_row(id, body);
         for (_, child, _, bytes) in visible {
             self.capture_row(child, &bytes);
@@ -299,9 +309,7 @@ impl RenderedWorkflowStepContext {
         let line = match entity_type {
             ENTITY_TYPE_NOTE => crate::note::decode_note_body_in_txn(&vault.store, txn, body)
                 .ok()
-                .map(|note| note.markdown)
-                .filter(|text| !text.trim().is_empty())
-                .map(|text| format!("- {text}")),
+                .and_then(|note| note_line(&note.markdown)),
             ENTITY_TYPE_CLAIM => claim_line(entity_type, body),
             ENTITY_TYPE_TURN => {
                 let mut turn = Self::default();
@@ -324,12 +332,16 @@ impl RenderedWorkflowStepContext {
     }
 }
 
-/// `heading`, then one line per row; `None` without rows.
-fn section_text(heading: &str, lines: &[String]) -> Option<String> {
+/// `heading`, then one line per row inside `<step_context section="…">`.
+/// The section name is engine text; no rows means `None`.
+fn section_text(heading: &str, section: &str, lines: &[String]) -> Option<String> {
     if lines.is_empty() {
         return None;
     }
-    Some(format!("{heading}\n{}", lines.join("\n")))
+    Some(format!(
+        "{heading}\n<step_context section=\"{section}\">\n{}\n</step_context>",
+        lines.join("\n")
+    ))
 }
 
 /// Whose lanes read a step's selected rows: the member whose bound run it
@@ -603,9 +615,8 @@ fn chat_row(section: &str) -> Option<EntityId> {
     EntityId::from_hex(section.strip_prefix("tn_")?).ok()
 }
 
-/// A claim's line: its predicate and its value, a string as it is, any
-/// other value as text. `None` for another kind or a body that does not
-/// decode.
+/// A claim's line: `- {predicate} [{source}]: {value}`, with the predicate
+/// and the value's text fenced. `None` for another kind or an undecodable body.
 fn claim_line(entity_type: u8, body: &[u8]) -> Option<String> {
     if entity_type != ENTITY_TYPE_CLAIM {
         return None;
@@ -615,18 +626,33 @@ fn claim_line(entity_type: u8, body: &[u8]) -> Option<String> {
         .value
         .as_str()
         .map_or_else(|| claim.value.to_string(), str::to_owned);
-    Some(format!("- {}: {value}", claim.predicate))
+    let predicate = xml_text_token(&claim.predicate);
+    let value = xml_text_token(&value);
+    let source = claim
+        .source
+        .map_or("source unknown", |source| source.as_str());
+    Some(format!("- {predicate} [{source}]: {value}"))
 }
 
-/// A turn's line: its speaker and its own text. `None` for another kind, a
-/// body that is not a map, or one with no text of its own (a witnessed
-/// conversation's container keeps its words in its messages).
+fn note_line(markdown: &str) -> Option<String> {
+    if markdown.trim().is_empty() {
+        return None;
+    }
+    Some(format!("- [note] {}", xml_text_token(markdown)))
+}
+
+/// A turn's line: `- [turn] {speaker}: {text}` or `- [turn] {text}`, with
+/// both fields fenced. The `[turn]` marker is engine text ahead of every
+/// stored field, so a speaker such as `[note] x` never reads as a note row
+/// (REVIEW-10627 round 1). `None` for another kind, a body that is not a
+/// map, or one with no text of its own (a witnessed turn keeps its words in
+/// its messages).
 fn turn_line(entity_type: u8, body: &[u8]) -> Option<String> {
     let entries = turn_fields(entity_type, body)?;
-    let text = turn_field(&entries, TURN_TEXT_KEYS)?;
+    let text = xml_text_token(turn_field(&entries, TURN_TEXT_KEYS)?);
     Some(match turn_field(&entries, TURN_SPEAKER_KEYS) {
-        Some(speaker) => format!("- {speaker}: {text}"),
-        None => format!("- {text}"),
+        Some(speaker) => format!("- [turn] {}: {text}", xml_text_token(speaker)),
+        None => format!("- [turn] {text}"),
     })
 }
 
@@ -649,6 +675,38 @@ fn turn_field<'a>(entries: &'a [(rmpv::Value, rmpv::Value)], keys: &[&str]) -> O
             .and_then(|(_, value)| value.as_str())
             .filter(|value| !value.trim().is_empty())
     })
+}
+
+#[cfg(oneiron_test_support)]
+pub(crate) mod context_rows_for_test {
+    use super::{
+        ENTITY_TYPE_CLAIM, ENTITY_TYPE_TURN, RenderedWorkflowStepContext, claim_line, note_line,
+        turn_line,
+    };
+
+    pub(crate) fn memory_section(body: &[u8]) -> Option<String> {
+        RenderedWorkflowStepContext {
+            memory: vec![claim_line(ENTITY_TYPE_CLAIM, body)?],
+            ..Default::default()
+        }
+        .memory_text()
+    }
+
+    pub(crate) fn chat_section(body: &[u8]) -> Option<String> {
+        RenderedWorkflowStepContext {
+            chat: vec![turn_line(ENTITY_TYPE_TURN, body)?],
+            ..Default::default()
+        }
+        .chat_text()
+    }
+
+    pub(crate) fn sibling_section(markdown: &str) -> Option<String> {
+        RenderedWorkflowStepContext {
+            sibling_results: vec![note_line(markdown)?],
+            ..Default::default()
+        }
+        .sibling_results_text()
+    }
 }
 
 struct MessageText {

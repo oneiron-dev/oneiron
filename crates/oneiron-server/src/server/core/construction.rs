@@ -33,6 +33,22 @@ impl SyncServer {
         Self::boot(vault, config, Boot::Host)
     }
 
+    /// [`Self::new`] for a store this install enrolled with its home that
+    /// has not synced yet (`commands::joined_store_awaits_home`). It is the
+    /// host's boot, except that it bootstraps no host issuer, in any
+    /// posture. Such a store's authority log stays empty until its first
+    /// sync adopts the home's pinned checkpoint, so an issuer bootstrapped
+    /// here would mint a Genesis of the device's own, which the home never
+    /// signed (R6 1.5, REVIEW-10532 round 2). The secret and authentication
+    /// stay as configured. The next start, on a log that holds the home's
+    /// authority, boots as [`Self::new`].
+    pub(crate) fn new_joined_before_first_sync(
+        vault: Arc<oneiron::Vault>,
+        config: SyncServerConfig,
+    ) -> Result<Self, oneiron::Error> {
+        Self::boot(vault, config, Boot::JoinedHost)
+    }
+
     /// The macOS app's device-mode server over its already-open vault, which
     /// syncs as a device of another home and serves the vault's other
     /// machines as a peer (L7-47). Its boot is [`Self::new`]'s without the
@@ -62,7 +78,9 @@ impl SyncServer {
         // not a customer auth-secret step. Other postures retain their existing
         // secret-based rooting and rootless warning behavior.
         let hosted = vault.privacy_posture() == oneiron::HostingPrivacyPosture::Hosted;
-        let issuer = if host && (hosted || host_root_secret(&vault, &config).is_some()) {
+        let issuer = if boot.bootstraps_issuer()
+            && (hosted || host_root_secret(&vault, &config).is_some())
+        {
             match vault.bootstrap_host_slip_issuer() {
                 Ok(issuer) => {
                     vault.ensure_host_root_slip(&issuer)?;
@@ -103,6 +121,12 @@ impl SyncServer {
                 }
             }
         } else {
+            if matches!(boot, Boot::JoinedHost) {
+                tracing::info!(
+                    "this store joined its home and has not synced yet, so this start bootstraps no \
+                     host issuer and roots nothing; its home's authority arrives by sync"
+                );
+            }
             None
         };
         // This install's own machine profile, before any request is admitted,
@@ -508,6 +532,10 @@ enum Boot {
     /// A host's: it may root the vault, provisions its machine writers and
     /// install profile, and ends what the host's last run left.
     Host,
+    /// A host's over a store it joined to its home before the first sync
+    /// ([`SyncServer::new_joined_before_first_sync`]): the same, except that
+    /// it bootstraps no host issuer, so it roots nothing.
+    JoinedHost,
     /// The macOS app's device link ([`SyncServer::new_device_link`]).
     #[cfg(feature = "mesh")]
     DeviceLink,
@@ -515,6 +543,12 @@ enum Boot {
 
 impl Boot {
     fn is_host(self) -> bool {
+        matches!(self, Self::Host | Self::JoinedHost)
+    }
+
+    /// Whether this boot may bootstrap the vault's host issuer, and with it
+    /// a Genesis on an empty log.
+    fn bootstraps_issuer(self) -> bool {
         matches!(self, Self::Host)
     }
 }

@@ -126,6 +126,13 @@ impl VerbAskCredential {
         Self { reference, witness }
     }
 
+    /// Keeps the session folder's digests with a paused MCP call.
+    #[must_use]
+    pub fn with_session_workspace(mut self, folder_digests: &[String]) -> Self {
+        self.reference.session_workspace = Some(folder_digests.to_vec());
+        self
+    }
+
     #[must_use]
     pub const fn reference(&self) -> &VerbAskCredentialRef {
         &self.reference

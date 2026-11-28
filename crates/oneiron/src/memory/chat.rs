@@ -423,6 +423,7 @@ impl Memory<'_> {
         Ok((
             MemoryPack {
                 items,
+                held: Vec::new(),
                 scope_honesty: ScopeHonesty::default(),
                 retrieval_meta: RetrievalMeta {
                     sparse: None,
@@ -438,6 +439,7 @@ impl Memory<'_> {
                 retrieval_run_id: None,
                 // The documents named, not a recall answer.
                 residence: None,
+                bar: None,
             },
             gaps,
         ))
@@ -599,6 +601,8 @@ fn document_item(vault: &crate::Vault, view: &EntityView) -> MemoryItem {
         cited_messages: Vec::new(),
         conversation_id: None,
         record: Some(crate::lens::RecordRef::from_view(view)),
+        similarity: None,
+        line_provenance: None,
     }
 }
 

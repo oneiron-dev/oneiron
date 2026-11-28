@@ -1,5 +1,6 @@
 {
   "name": "vault.search",
+  "description": "Searches the vault's text index and returns scored hits the caller can read.",
   "input": "crate::code_run::MemorySearchInput",
   "output": "crate::code_run::MemorySearchOutput",
   "scope": "Read",

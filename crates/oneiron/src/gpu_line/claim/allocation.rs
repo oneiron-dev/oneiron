@@ -350,6 +350,59 @@ pub fn claim_hold_in_txn(
     }))
 }
 
+/// One machine's answer for one allocation generation that lists jobs it ran against that
+/// generation which no row of this vault names (EM-15), as [`unattributed_in_txn`] reads it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnattributedRecord {
+    pub allocation: AllocationRef,
+    pub machine: EntityId,
+    /// The vault's clock at the machine's newest answer.
+    pub answered_at_ms: u64,
+    pub jobs: Vec<UnattributedJob>,
+}
+
+impl UnattributedRecord {
+    /// The GPU line and the period this generation is, when the allocation is a line's: its id
+    /// is [`gpu_line_allocation_id`] of the line's lane project, and its generation is the
+    /// period index plus one (`mint_period`). `None` for any other allocation, and for
+    /// generation 0, which no period has.
+    #[must_use]
+    pub fn line_period(&self) -> Option<(EntityId, u32)> {
+        let (_, hex) = self.allocation.id.rsplit_once(':')?;
+        let line = EntityId::from_hex(hex).ok()?;
+        if gpu_line_allocation_id(&line) != self.allocation.id {
+            return None;
+        }
+        let index = self.allocation.generation.checked_sub(1)?;
+        let period = u32::try_from(index).ok()?;
+        Some((line, period))
+    }
+}
+
+/// Every machine's answer, of every allocation generation, that lists an unattributed job, in
+/// `txn`: for a read that joins them to other rows of one snapshot (`vault.jobs.history`).
+///
+/// # Errors
+///
+/// A store failure.
+pub fn unattributed_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> crate::Result<Vec<UnattributedRecord>> {
+    let records = NODES
+        .scan(&vault.store, txn)?
+        .into_iter()
+        .filter(|(_, row)| !row.unattributed.is_empty())
+        .map(|(_, row)| UnattributedRecord {
+            allocation: row.allocation,
+            machine: row.machine,
+            answered_at_ms: row.answered_at_ms,
+            jobs: row.unattributed,
+        })
+        .collect();
+    Ok(records)
+}
+
 /// Records that `machine` answered for `allocation`'s generation since this start of the
 /// vault, with `unattributed`, the jobs it ran against that generation that no row of this
 /// vault names. A node key counts once: a repeat keeps the larger seconds, since a live job's
@@ -413,29 +466,6 @@ pub(crate) fn allocation_node_key_records(key: &[u8]) -> Option<Vec<EntityId>> {
         .and_then(|hex| EntityId::from_hex(hex).ok())
         .filter(|lane| gpu_line_allocation_id(lane) == allocation);
     Some(std::iter::once(machine).chain(lane).collect())
-}
-
-/// Marks the open claim under `key` started, as the start gate writes it when it inserts the
-/// claim's job row (row M2-C). The test door's seam until that gate lands.
-#[cfg(oneiron_test_support)]
-pub(crate) fn start_claim_in_txn(
-    vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
-    key: &ClaimKey,
-) -> crate::Result<()> {
-    let Some(mut claim) = CLAIMS.get(&vault.store, txn, key)? else {
-        return Err(Error::InvalidConfig(
-            "no unit claim under this key".to_owned(),
-        ));
-    };
-    if claim.state != ClaimState::Claimed {
-        return Err(Error::InvalidConfig(
-            "only a claimed unit starts".to_owned(),
-        ));
-    }
-    claim.state = ClaimState::Started;
-    claim.revision += 1;
-    CLAIMS.put(&vault.store, txn, key, &claim)
 }
 
 /// The acquisition of this process's writer lease on the vault: one per start.

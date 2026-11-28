@@ -23,11 +23,32 @@ const HOOK_VIEW: &str =
     "a settled call's guest read a verb hook's view, which its row does not keep";
 const UNCONSUMED: &str = "the pinned source ended before every call an earlier entry settled";
 
+/// A hold in a caller source's words: its run has no pinned entry (FIX
+/// EXECUTE-CALLER-CODE). The caller reads it as the run's error.
+fn caller_source_words(why: &'static str) -> &'static str {
+    match why {
+        DIVERGED => "the caller source made another call where an earlier entry settled one",
+        NESTED_CALLABLE => {
+            "a callable the caller source calls returned past its wait, halted or stored outputs: it cannot resume inside it"
+        }
+        CALLABLE_PARKED => "a callable the caller source calls parked before its body ran",
+        REOPEN_REDIRECTED => {
+            "a hook redirected a callable the caller source runs again: its earlier calls belong to another body"
+        }
+        FRAME_UNCONSUMED => {
+            "a callable the caller source resumed returned before every call it settled earlier"
+        }
+        UNCONSUMED => "the caller source ended before every call an earlier entry settled",
+        other => other,
+    }
+}
+
 /// The calls one pinned entry answers instead of issuing them, in the order
 /// the pinned source makes them.
 pub(in crate::engine_executor) struct ProgramInjection {
     /// Whether the entry's own pinned call went by: it is always issued.
     pub(super) entered: bool,
+    strict: bool,
     pub(super) calls: VecDeque<SettledCall>,
     /// Every call of the entry so far, in the order the pinned source made
     /// them: answered from an earlier row, or issued at a row of its own
@@ -47,12 +68,43 @@ impl ProgramInjection {
     pub(super) fn new(calls: VecDeque<SettledCall>) -> Self {
         Self {
             entered: false,
+            strict: false,
             calls,
             log: Vec::new(),
             held: None,
             reopening: false,
             reopened: Vec::new(),
         }
+    }
+
+    /// Caller source has no outer pinned call and cannot refire a call that
+    /// differs from its recorded prefix (FIX EXECUTE-CALLER-CODE).
+    pub(in crate::engine_executor) fn for_caller_source(calls: VecDeque<SettledCall>) -> Self {
+        Self {
+            entered: true,
+            strict: true,
+            ..Self::new(calls)
+        }
+    }
+
+    pub(in crate::engine_executor) fn awaiting_caller_source_prefix(&self) -> bool {
+        self.strict && self.held.is_none() && !self.calls.is_empty()
+    }
+
+    pub(in crate::engine_executor) fn is_caller_source(&self) -> bool {
+        self.strict
+    }
+
+    pub(in crate::engine_executor) fn replaying_caller_source(&self) -> bool {
+        self.strict && !matches!(self.log.last(), Some(ProgramLogEntry::Issued(_)))
+    }
+
+    pub(in crate::engine_executor) fn hold_caller_source_output(&mut self, why: &'static str) {
+        self.held = Some(why);
+    }
+
+    pub(in crate::engine_executor) fn caller_source_held(&self) -> bool {
+        self.strict && self.held.is_some()
     }
 }
 
@@ -67,10 +119,10 @@ pub(in crate::engine_executor) enum ProgramLogEntry {
 
 /// One call an earlier entry settled: its row, as listed, and the delivered
 /// reply that answers it when it parked on a wait.
-pub(super) struct SettledCall {
-    pub(super) row: CodeRunBridgeCall,
-    pub(super) listed: ProgramResumeCall,
-    pub(super) reply: Option<serde_json::Value>,
+pub(in crate::engine_executor) struct SettledCall {
+    pub(in crate::engine_executor) row: CodeRunBridgeCall,
+    pub(in crate::engine_executor) listed: ProgramResumeCall,
+    pub(in crate::engine_executor) reply: Option<serde_json::Value>,
 }
 
 /// One callable a pinned entry's calls ran inside its pinned call (FIX
@@ -95,6 +147,7 @@ pub(in crate::engine_executor) enum InjectedAnswer {
         seq: u64,
         outcome: Box<SelfDispatchOutcome>,
         view: Option<serde_json::Value>,
+        served_rows: Option<Vec<crate::EntityId>>,
     },
     /// Refuse it, as every call after it: the entry holds.
     Hold,
@@ -128,7 +181,7 @@ impl ProgramInjection {
         let Some(settled) = self.calls.pop_front() else {
             return InjectedAnswer::Live;
         };
-        if matches!(call, SelfCall::SkillsCall(_)) && settled.reply.is_some() {
+        if matches!(call, SelfCall::SkillsCall(_)) && settled.listed.reply.is_some() {
             return self.hold(CALLABLE_PARKED);
         }
         match settled.listed.kind {
@@ -136,6 +189,7 @@ impl ProgramInjection {
             ProgramResumeKind::HeldCallable => return self.hold(NESTED_CALLABLE),
             // The same call runs its body again: its row's answer is the
             // body's unwinding, never its result.
+            ProgramResumeKind::OpenCallable if self.strict => return self.hold(NESTED_CALLABLE),
             ProgramResumeKind::OpenCallable => {
                 // A body a hook redirected before ran another callable: its
                 // calls are not this one's to answer.
@@ -166,6 +220,7 @@ impl ProgramInjection {
             // ordinary gates, and so does every call after it, which may read
             // what it answers now. The rows they settled stay in the record;
             // the entry lists the calls it made in their place.
+            Ok(ProgramRowAnswer::Missed) if self.strict => return self.hold(DIVERGED),
             Ok(ProgramRowAnswer::Missed) => {
                 self.calls.clear();
                 return InjectedAnswer::Live;
@@ -174,12 +229,29 @@ impl ProgramInjection {
             Err(_) => return self.hold(UNREADABLE),
         };
         self.log.push(ProgramLogEntry::Answered(settled.listed));
+        let served_rows = if self.strict {
+            crate::code_run::agent_verb_rows_of(std::slice::from_ref(&settled.row)).map(
+                |mut rows| {
+                    match &*outcome {
+                        SelfDispatchOutcome::MemorySearch(search) => {
+                            rows.extend(search.results.iter().map(|hit| hit.id));
+                        }
+                        SelfDispatchOutcome::Fold(answer) => rows.extend(answer.word_sources()),
+                        _ => {}
+                    }
+                    rows
+                },
+            )
+        } else {
+            None
+        };
         let seq = settled.row.seq;
         let Some(reply) = settled.reply else {
             return InjectedAnswer::Settled {
                 seq,
                 outcome,
                 view: None,
+                served_rows,
             };
         };
         // The call parked on a wait whose reply is delivered: the reply is
@@ -190,6 +262,7 @@ impl ProgramInjection {
             outcome: Box::new(SelfDispatchOutcome::AgentVerb(AgentVerbAnswer::new(
                 reply, None,
             ))),
+            served_rows,
         }
     }
 
@@ -238,7 +311,18 @@ impl ProgramInjection {
     /// Every call of the entry, in its source's order, once it ended: a
     /// held entry, one whose source ended before every settled call, or
     /// one a callable it ran again did not return from, holds instead.
-    pub(super) fn settle(self) -> Result<Vec<ProgramLogEntry>, &'static str> {
+    pub(in crate::engine_executor) fn settle(self) -> Result<Vec<ProgramLogEntry>, &'static str> {
+        let strict = self.strict;
+        self.settled_log().map_err(|why| {
+            if strict {
+                caller_source_words(why)
+            } else {
+                why
+            }
+        })
+    }
+
+    fn settled_log(self) -> Result<Vec<ProgramLogEntry>, &'static str> {
         if let Some(held) = self.held {
             return Err(held);
         }

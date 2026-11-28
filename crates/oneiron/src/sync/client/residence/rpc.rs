@@ -9,9 +9,10 @@ use std::time::Duration;
 use futures_util::{Sink, SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+use tokio_tungstenite::tungstenite::error::ProtocolError;
 use tokio_tungstenite::tungstenite::http::header::AUTHORIZATION;
+use tokio_tungstenite::tungstenite::{Error as WsError, Message};
 
 use super::super::endpoint::ResidenceEndpoint;
 use super::super::types::SyncClientConfig;
@@ -95,6 +96,132 @@ impl std::io::Read for RpcChunks {
 pub(super) struct HomeRefused {
     /// The code the home gave.
     pub(super) code: Option<String>,
+}
+
+impl HomeRefused {
+    fn request_error(&self) -> TransportError {
+        if self.code.as_deref() == Some("INDEX_REVISION_CHANGED") {
+            TransportError::IndexRevisionChanged
+        } else {
+            TransportError::InvalidPayload("home refused residence RPC")
+        }
+    }
+}
+
+/// What [`ResidenceRpc::call_inner`] read back for a sent request.
+enum CallReply {
+    /// The home's answer or its refusal.
+    Answer(Result<Value, HomeRefused>),
+    /// The home's refusal after part of its answer had come: its one frame,
+    /// numbered 0 and last, in place of a later chunk and the rest of the
+    /// answer (the live-query lane's refusal, SELECTOR-RELEASE-POINT = B).
+    Replaced(HomeRefused),
+    /// The socket ended after the request was sent and before the whole
+    /// answer came. A deadline that ran out is not this.
+    Interrupted,
+}
+
+impl CallReply {
+    /// The reply as every caller but a touch reads it: an ended socket, and
+    /// an answer the home replaced part-way, are the home's fault, as before
+    /// (FIX 22179).
+    fn into_call(self) -> Result<Result<Value, HomeRefused>, RpcFault> {
+        match self {
+            Self::Answer(answer) => Ok(answer),
+            Self::Replaced(_) | Self::Interrupted => Err(RpcFault::remote()),
+        }
+    }
+
+    /// The reply as a touch reads it: a RESULT_CHANGED refusal, in place of
+    /// the answer or of its rest, and an ended socket are an answer the home
+    /// withdrew. Any other refusal of the rest fails as every caller reads it.
+    fn into_touch(self) -> Result<Value, TouchFault> {
+        match self {
+            Self::Answer(Ok(reply)) => Ok(reply),
+            Self::Answer(Err(refusal)) | Self::Replaced(refusal)
+                if refusal.code.as_deref() == Some("RESULT_CHANGED") =>
+            {
+                Err(TouchFault::Withdrawn)
+            }
+            Self::Answer(Err(refusal)) => Err(TouchFault::Other(refusal.request_error())),
+            Self::Replaced(_) => Err(TouchFault::Other(refused())),
+            Self::Interrupted => Err(TouchFault::Withdrawn),
+        }
+    }
+}
+
+/// What one reply frame says of call `id`, read where its chunk `seq` is due.
+enum ReplyFrame {
+    /// The answer's chunk `seq`; `last` when the answer ends with it.
+    Chunk { bytes: Vec<u8>, last: bool },
+    /// The home's refusal in place of the answer.
+    Refused(HomeRefused),
+    /// The home's refusal in place of the rest of an answer it had begun
+    /// ([`CallReply::Replaced`]).
+    Replaced(HomeRefused),
+}
+
+/// Reads one reply frame of call `id` where its chunk `seq` is due. Every
+/// frame must be chunk `seq` of call `id`, but for the home's refusal of the
+/// rest of an answer: the live-query lane numbers each refusal 0 and last,
+/// in place of whichever chunk was due.
+fn reply_frame(frame: &[u8], id: u64, seq: u64) -> Result<ReplyFrame, RpcFault> {
+    if frame.first() != Some(&TAG_RPC) {
+        return Err(RpcFault::remote());
+    }
+    let reply: ReplyEnvelope =
+        rmp_serde::from_slice(&frame[1..]).map_err(|_| RpcFault::remote())?;
+    if reply.id != id {
+        return Err(RpcFault::remote());
+    }
+    let replaced = seq > 0 && reply.seq == 0 && reply.last && reply.kind == "rpc.err";
+    if reply.seq != seq && !replaced {
+        return Err(RpcFault::remote());
+    }
+    if reply.kind == "rpc.err" {
+        let code = reply.payload.as_map().and_then(|fields| {
+            fields
+                .iter()
+                .find(|(key, _)| key.as_str() == Some("code"))
+                .and_then(|(_, value)| value.as_str())
+        });
+        let refusal = HomeRefused {
+            code: code.map(str::to_owned),
+        };
+        return Ok(if replaced {
+            ReplyFrame::Replaced(refusal)
+        } else {
+            ReplyFrame::Refused(refusal)
+        });
+    }
+    if reply.kind != "rpc.res" {
+        return Err(RpcFault::remote());
+    }
+    let bytes = match reply.payload {
+        rmpv::Value::Binary(bytes) => bytes,
+        rmpv::Value::String(text) => text.into_bytes(),
+        _ => return Err(RpcFault::remote()),
+    };
+    Ok(ReplyFrame::Chunk {
+        bytes,
+        last: reply.last,
+    })
+}
+
+/// Why a touch read failed. [`Self::Withdrawn`]: the home withdrew its
+/// answer, as a RESULT_CHANGED refusal (in place of the answer or of its
+/// rest) or, judged at a later frame, by closing the socket before the answer
+/// completed (SELECTOR-RELEASE-POINT = B). [`Self::Other`]: every other
+/// failure, with the error [`ResidenceRpc::request`] gives for it.
+pub(super) enum TouchFault {
+    Withdrawn,
+    Other(TransportError),
+}
+
+impl From<TransportError> for TouchFault {
+    fn from(error: TransportError) -> Self {
+        Self::Other(error)
+    }
 }
 
 /// Why a residence RPC failed, by the side the fault is on (FIX 22179),
@@ -413,15 +540,21 @@ impl ResidenceRpc {
     ) -> Result<Value, RpcFault> {
         self.call_inner(method, params, None)
             .await?
-            .map_err(|refusal| {
-                RpcFault::Remote(
-                    if refusal.code.as_deref() == Some("INDEX_REVISION_CHANGED") {
-                        TransportError::IndexRevisionChanged
-                    } else {
-                        TransportError::InvalidPayload("home refused residence RPC")
-                    },
-                )
-            })
+            .into_call()?
+            .map_err(|refusal| RpcFault::Remote(refusal.request_error()))
+    }
+
+    /// [`Self::request`], with an answer the home withdrew told apart
+    /// ([`TouchFault::Withdrawn`]), so the touch can ask again.
+    pub(super) async fn request_touch(
+        &mut self,
+        method: &str,
+        params: Value,
+    ) -> Result<Value, TouchFault> {
+        self.call_inner(method, params, None)
+            .await
+            .map_err(RpcFault::into_error)?
+            .into_touch()
     }
 
     /// [`Self::request`], with the home's refusal kept apart from a call that
@@ -433,6 +566,7 @@ impl ResidenceRpc {
     ) -> Result<Result<Value, HomeRefused>, TransportError> {
         self.call_inner(method, params, None)
             .await
+            .and_then(CallReply::into_call)
             .map_err(RpcFault::into_error)
     }
 
@@ -447,6 +581,7 @@ impl ResidenceRpc {
     ) -> Result<Value, TransportError> {
         self.call_inner(method, params, Some((vault, machine)))
             .await
+            .and_then(CallReply::into_call)
             .map_err(RpcFault::into_error)?
             .map_err(|_| TransportError::InvalidPayload("admitting machine refused bearer RPC"))
     }
@@ -459,7 +594,7 @@ impl ResidenceRpc {
         method: &str,
         params: Value,
         machine: Option<(&crate::Vault, crate::EntityId)>,
-    ) -> Result<Result<Value, HomeRefused>, RpcFault> {
+    ) -> Result<CallReply, RpcFault> {
         let id = self.next_id;
         self.next_id = self
             .next_id
@@ -522,13 +657,16 @@ impl ResidenceRpc {
                 if tokio::time::Instant::now() >= deadline {
                     return Err(RpcFault::remote());
                 }
-                let msg = tokio::time::timeout_at(deadline, self.socket.next())
+                let frame = match tokio::time::timeout_at(deadline, self.socket.next())
                     .await
                     .map_err(|_| RpcFault::remote())?
-                    .ok_or_else(RpcFault::remote)?
-                    .map_err(|_| RpcFault::remote())?;
-                let Message::Binary(frame) = msg else {
-                    return Err(RpcFault::remote());
+                {
+                    Some(Ok(Message::Binary(frame))) => frame,
+                    None | Some(Ok(Message::Close(_))) => return Ok(CallReply::Interrupted),
+                    Some(Err(error)) if socket_ended(&error) => {
+                        return Ok(CallReply::Interrupted);
+                    }
+                    Some(Ok(_) | Err(_)) => return Err(RpcFault::remote()),
                 };
                 // FIX 6458: an unbound lane passes over the sync frames the
                 // home opens each socket with; a bound lane takes none.
@@ -542,41 +680,19 @@ impl ResidenceRpc {
                     break frame;
                 }
             };
-            if frame.first() != Some(&TAG_RPC) {
-                return Err(RpcFault::remote());
-            }
-            let reply: ReplyEnvelope =
-                rmp_serde::from_slice(&frame[1..]).map_err(|_| RpcFault::remote())?;
-            if reply.id != id || reply.seq != seq {
-                return Err(RpcFault::remote());
-            }
-            if reply.kind == "rpc.err" {
-                let code = reply.payload.as_map().and_then(|fields| {
-                    fields
-                        .iter()
-                        .find(|(key, _)| key.as_str() == Some("code"))
-                        .and_then(|(_, value)| value.as_str())
-                });
-                return Ok(Err(HomeRefused {
-                    code: code.map(str::to_owned),
-                }));
-            }
-            if reply.kind != "rpc.res" {
-                return Err(RpcFault::remote());
-            }
-            let chunk = match reply.payload {
-                rmpv::Value::Binary(bytes) => bytes,
-                rmpv::Value::String(text) => text.into_bytes(),
-                _ => return Err(RpcFault::remote()),
+            let (chunk, last) = match reply_frame(&frame, id, seq)? {
+                ReplyFrame::Chunk { bytes, last } => (bytes, last),
+                ReplyFrame::Refused(refusal) => return Ok(CallReply::Answer(Err(refusal))),
+                ReplyFrame::Replaced(refusal) => return Ok(CallReply::Replaced(refusal)),
             };
             if received.saturating_add(chunk.len()) > MAX_RPC_REPLY_BYTES {
                 return Err(RpcFault::remote());
             }
             received += chunk.len();
             chunks.push(chunk);
-            if reply.last {
+            if last {
                 return rmp_serde::from_read(RpcChunks::new(chunks))
-                    .map(Ok)
+                    .map(|reply| CallReply::Answer(Ok(reply)))
                     .map_err(|_| RpcFault::remote());
             }
         }
@@ -586,4 +702,84 @@ impl ResidenceRpc {
 
 pub(super) fn refused() -> TransportError {
     TransportError::InvalidPayload("opened-item RPC unavailable")
+}
+
+/// Whether a read error is the socket ending: a closed connection, a reset
+/// without the closing handshake, or a cut stream. A frame the home sent
+/// that does not decode (a codec frame comes back as `Io(InvalidData)`, one
+/// over the cap as `Capacity`), a protocol fault and a read that timed out
+/// are not, so they are never read as a withdrawn answer.
+fn socket_ended(error: &WsError) -> bool {
+    match error {
+        WsError::ConnectionClosed
+        | WsError::AlreadyClosed
+        | WsError::Protocol(ProtocolError::ResetWithoutClosingHandshake) => true,
+        WsError::Io(error) => matches!(
+            error.kind(),
+            std::io::ErrorKind::UnexpectedEof
+                | std::io::ErrorKind::ConnectionReset
+                | std::io::ErrorKind::ConnectionAborted
+                | std::io::ErrorKind::BrokenPipe
+                | std::io::ErrorKind::NotConnected
+        ),
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod reply_frame_tests;
+
+#[cfg(test)]
+mod socket_end_tests {
+    use futures_util::{FutureExt, StreamExt};
+    use tokio_tungstenite::tungstenite::error::{CapacityError, ProtocolError};
+    use tokio_tungstenite::tungstenite::{Error as WsError, Message};
+
+    use super::socket_ended;
+    use crate::sync::transport::{TAG_CODEC, WireSocket};
+
+    /// A codec frame under an id this side does not know fails the read while
+    /// the socket stays open: the home's malformed reply, not an ended socket.
+    #[test]
+    fn an_undecodable_codec_frame_is_not_a_socket_end() {
+        let frame = Message::Binary(vec![TAG_CODEC, 0xEE, 1, 2, 3].into());
+        let mut socket =
+            WireSocket::to_our_server(futures_util::stream::iter([Ok::<_, WsError>(frame)]), 1024);
+        let error = socket
+            .next()
+            .now_or_never()
+            .flatten()
+            .expect("the frame is read at once")
+            .expect_err("an unknown codec fails the read");
+        assert!(
+            matches!(&error, WsError::Io(io) if io.kind() == std::io::ErrorKind::InvalidData),
+            "{error:?}"
+        );
+        assert!(!socket_ended(&error), "{error:?}");
+    }
+
+    #[test]
+    fn only_a_closed_or_cut_connection_is_a_socket_end() {
+        for ended in [
+            WsError::ConnectionClosed,
+            WsError::AlreadyClosed,
+            WsError::Protocol(ProtocolError::ResetWithoutClosingHandshake),
+            WsError::Io(std::io::ErrorKind::ConnectionReset.into()),
+            WsError::Io(std::io::ErrorKind::UnexpectedEof.into()),
+        ] {
+            assert!(socket_ended(&ended), "{ended:?}");
+        }
+        for open in [
+            WsError::Io(std::io::ErrorKind::InvalidData.into()),
+            WsError::Io(std::io::ErrorKind::TimedOut.into()),
+            WsError::Capacity(CapacityError::MessageTooLong {
+                size: 2,
+                max_size: 1,
+            }),
+            WsError::Protocol(ProtocolError::NonZeroReservedBits),
+            WsError::Utf8,
+        ] {
+            assert!(!socket_ended(&open), "{open:?}");
+        }
+    }
 }

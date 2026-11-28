@@ -658,6 +658,19 @@ pub(crate) fn revoke_side_row_custody_with_context_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     origin: &EntityId,
 ) -> Result<()> {
+    revoke_unreferenced_side_row_custody_in_txn(write, wtxn, origin, &[])
+}
+
+/// Keeps custody from `origin` whose handles still occur in the rewritten JSON row, and
+/// revokes the other records minted there. Empty `kept` retires all custody from the row.
+pub(crate) fn revoke_unreferenced_side_row_custody_in_txn(
+    write: &CustodyWrite<'_>,
+    wtxn: &mut heed::RwTxn<'_>,
+    origin: &EntityId,
+    kept: &[u8],
+) -> Result<()> {
+    use crate::ports::ShortIdStoreRead;
+
     let at = crate::ports::recorded_at_in_txn(write.store, wtxn)?;
     for id in super::found_keys::found_key_custody_in_txn(write.store, wtxn, origin)? {
         let minted = crate::batch::secret_scan::mask_origin_in_txn(write.store, wtxn, &id)?
@@ -668,6 +681,20 @@ pub(crate) fn revoke_side_row_custody_with_context_in_txn(
         let Some(record) = super::read_secret_custody_meta_in_txn(write.store, wtxn, &id)? else {
             continue;
         };
+        if !kept.is_empty()
+            && let Some((handle, _)) = write.store.port_short_id_reference(wtxn, &id)?
+            && [
+                format!("{}{handle}]", super::HANDLE_TEXT_OPEN),
+                format!("\"{handle}\""),
+            ]
+            .iter()
+            .any(|text| {
+                kept.windows(text.len())
+                    .any(|window| window == text.as_bytes())
+            })
+        {
+            continue;
+        }
         let cause = crate::secret_rotation::RevokeCause::Revoked;
         if record.status == SecretCustodyStatus::Revoked {
             crate::secret_rotation::revoke_custody_with_context_in_txn(

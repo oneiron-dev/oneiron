@@ -194,6 +194,9 @@ pub struct CommitReceipt {
     /// Final approval as stored: `auto`/`proposed`. A retract answers
     /// `pending` when it is parked for the holder's consent.
     pub approval: String,
+    /// Gate and tray reasons when the committed claim is held for consent.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reason_codes: Vec<String>,
     /// Short-id ref of the claim this write superseded, if any.
     pub superseded_short_id: Option<String>,
     /// Gate decision ref (`gate:<decision-hex>`) resolvable via
@@ -294,6 +297,14 @@ impl RecordRefusal {
 pub use crate::deletion::SafeDeleteReason;
 
 #[doc(hidden)]
+pub use oneiron_records::memory::claims::REMAINING_HISTORY_SWEEP;
+#[doc(hidden)]
+pub use oneiron_records::memory::claims::REMAINING_HISTORY_SWEEP_TEXT;
+#[doc(hidden)]
+pub use oneiron_records::memory::claims::RemainingNotice;
+#[doc(hidden)]
+pub use oneiron_records::memory::claims::remaining_after_delete;
+#[doc(hidden)]
 pub use oneiron_records::memory::claims::{
     DELETE_RECEIPT_VERSION_RELEASE, DeleteReceipt, DeleteRequestState, PendingWrite,
 };
@@ -348,6 +359,8 @@ pub(super) fn parse_claim_source(value: &str) -> MemoryResult<ClaimSource> {
 
 mod commit;
 mod lifecycle;
+
+pub(super) use self::commit::claim_envelope_actor;
 
 pub(in crate::memory) use self::commit::{BatchClaim, BatchRefusal};
 mod prompted;

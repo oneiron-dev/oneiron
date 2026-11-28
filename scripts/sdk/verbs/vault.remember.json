@@ -1,6 +1,7 @@
 {
   "name": "vault.remember",
   "description": "Commits one claim through the gate, the same as vault.claims.upsert.",
+  "example": "if (\"actor_ref\" in me) await vault.remember({ subject_ref: me.person_ref ?? me.actor_ref, predicate: \"experiment.run_result.d1a\", value: { run: \"1127-0912-d1a\", verdict: \"pass\" }, confidence: 0.9, source: \"observed\" });",
   "refs": [
     "/subject_ref",
     "/world_ref",

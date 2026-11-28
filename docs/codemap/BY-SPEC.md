@@ -241,7 +241,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | ARCH-0027 | `crates/oneiron-mail-pack/src/mail_pack/mod.rs` | s |
 | ARCH-0027 | `crates/oneiron-mesh-transport/src/files_search.rs` | s |
 | ARCH-0027 | `crates/oneiron-server/src/api/facade/files_doors/ask.rs` | s |
-| ARCH-0027 | `crates/oneiron-server/src/api/facade/hosted_import_doors.rs` | s |
+| ARCH-0027 | `crates/oneiron-server/src/api/facade/hosted_import_doors.rs` | m |
 | ARCH-0027 | `crates/oneiron-server/src/api/owner_routes/hosted_import_routes.rs` | m |
 | ARCH-0027 | `crates/oneiron-server/src/commands/history_import.rs` | L |
 | ARCH-0027 | `crates/oneiron-server/src/commands/history_import/hosted_import.rs` | L |
@@ -432,6 +432,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | ARCH-0040 | `crates/oneiron/src/workspace_roster/project/read/mod.rs` | m |
 | ARCH-0040 | `crates/oneiron/src/workspace_roster/rooms/peer_settings.rs` | s |
 | ARCH-0040 | `crates/oneiron/src/workspace_roster/rooms/thread_delete.rs` | s |
+| ARCH-0040 | `crates/oneiron-server/src/handler/mesh/sync_grant.rs` | s |
 | ARCH-0040 | `crates/oneiron-server/src/selector_release.rs` | s |
 | ARCH-0040 | `crates/oneiron-testkit/src/model/mod.rs` | m |
 | ARCH-0042 | `crates/oneiron/src/dreamer_runner/maintenance/calibration_asks.rs` | s |
@@ -460,6 +461,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | ARCH-0043 | `crates/oneiron/src/deletion/coop_delivery/leave.rs` | s |
 | ARCH-0043 | `crates/oneiron/src/deletion/coop_delivery/reply_setting.rs` | s |
 | ARCH-0043 | `crates/oneiron/src/deletion/coop_delivery/setting_answer.rs` | m |
+| ARCH-0043 | `crates/oneiron/src/dreamer_consolidation/turn_text/writers.rs` | s |
 | ARCH-0043 | `crates/oneiron/src/federation/connect_grant.rs` | m |
 | ARCH-0043 | `crates/oneiron/src/federation/delete_authority.rs` | L |
 | ARCH-0043 | `crates/oneiron/src/federation/foreign_world.rs` | s |
@@ -523,10 +525,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | ARCH-0046 | `crates/oneiron/src/compaction.rs` | m |
 | ARCH-0046 | `crates/oneiron/src/edit_distance/publisher/delivery_outcome.rs` | s |
 | ARCH-0046 | `crates/oneiron/src/gate/bundle/agent_settle.rs` | m |
+| ARCH-0046 | `crates/oneiron/src/gpu_job/result_landing.rs` | m |
 | ARCH-0046 | `crates/oneiron-driver/src/lib.rs` | s |
 | ARCH-0046 | `crates/oneiron-driver/src/tick/mod.rs` | s |
 | ARCH-0046 | `crates/oneiron-server/src/calendar_host.rs` | m |
 | ARCH-0046 | `crates/oneiron-server/src/calendar_host/ics.rs` | s |
+| ARCH-0046 | `crates/oneiron-server/src/gpu_execution_node/issuer/returns.rs` | m |
 | ARCH-0048 | `crates/oneiron/src/genui/shape_plan.rs` | s |
 | ARCH-0048 | `crates/oneiron-lens-wire/src/lens/generated_ui/genui_app_catalog.rs` | m |
 | ARCH-0048 | `crates/oneiron-lens-wire/src/lens/generated_ui/genui_expr.rs` | m |
@@ -1075,6 +1079,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | ARCH-0075 | `crates/oneiron/src/edit_settle/carry.rs` | L |
 | ARCH-0075 | `crates/oneiron/src/edit_settle/mod.rs` | s |
 | ARCH-0075 | `crates/oneiron/src/entity_doc/office.rs` | s |
+| ARCH-0075 | `crates/oneiron/src/gpu_job/result_landing.rs` | m |
 | ARCH-0075 | `crates/oneiron/src/office_body/consent.rs` | L |
 | ARCH-0075 | `crates/oneiron/src/office_body/mod.rs` | s |
 | ARCH-0075 | `crates/oneiron/src/office_body/precision.rs` | s |
@@ -1095,6 +1100,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | ARCH-0075 | `crates/oneiron-organ-host/src/seal/evidence.rs` | L |
 | ARCH-0075 | `crates/oneiron-organ-protocol/src/lib.rs` | s |
 | ARCH-0075 | `crates/oneiron-seal/src/organ.rs` | L |
+| ARCH-0075 | `crates/oneiron-server/src/gpu_execution_node/issuer/returns.rs` | m |
 | ARCH-0075 | `crates/oneiron-server/src/server/organs.rs` | m |
 | ARCH-0075 | `crates/oneiron-server/src/xlsx_recalc.rs` | m |
 | ARCH-0075 | `crates/oneiron-store/src/blob_artifact/esign/sealer.rs` | s |
@@ -1415,7 +1421,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | CROSS-ARCH-0013 | `crates/oneiron-store/src/batch/phonetic_codes/ipa/mandarin.rs` | s |
 | CROSS-ARCH-0013 | `crates/oneiron-store/src/batch/phonetic_codes/npd.rs` | s |
 | CROSS-ARCH-0019 | `crates/oneiron/src/agent_dispatch/run_handover.rs` | m |
-| CROSS-ARCH-0019 | `crates/oneiron/src/agent_dispatch/run_placement.rs` | s |
+| CROSS-ARCH-0019 | `crates/oneiron/src/agent_dispatch/run_placement.rs` | m |
 | CROSS-ARCH-0019 | `crates/oneiron/src/agent_dispatch/run_task.rs` | XL |
 | CROSS-ARCH-0019 | `crates/oneiron/src/secret_custody/payment_credential.rs` | s |
 | CROSS-ARCH-0019 | `crates/oneiron/src/sync/mesh_path.rs` | s |

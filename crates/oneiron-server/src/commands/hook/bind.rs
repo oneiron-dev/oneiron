@@ -564,6 +564,19 @@ fn held_by_another(vault: &Path, child: u32) -> bool {
             .is_some_and(|pid| pid != child && local_servers::alive(pid))
 }
 
+/// Whether `url` names this machine: a `localhost` or loopback-address host.
+pub(super) fn loopback_origin(url: &str) -> bool {
+    reqwest::Url::parse(url).is_ok_and(|base| {
+        base.host_str().is_some_and(|host| {
+            host == "localhost"
+                || host
+                    .trim_matches(['[', ']'])
+                    .parse::<IpAddr>()
+                    .is_ok_and(|ip| ip.is_loopback())
+        })
+    })
+}
+
 /// Whether an Oneiron server answers at `url`: `GET /.well-known/oneiron`
 /// returns its pairing descriptor. The route needs no credential, so a
 /// probe sends none.
@@ -580,13 +593,7 @@ fn answers(url: &str, deadline: Instant) -> bool {
     let Ok(probe) = base.join("/.well-known/oneiron") else {
         return false;
     };
-    let loopback = base.host_str().is_some_and(|host| {
-        host == "localhost"
-            || host
-                .trim_matches(['[', ']'])
-                .parse::<IpAddr>()
-                .is_ok_and(|ip| ip.is_loopback())
-    });
+    let loopback = loopback_origin(url);
     let mut client = reqwest::blocking::Client::builder()
         .timeout(timeout)
         .redirect(reqwest::redirect::Policy::none());

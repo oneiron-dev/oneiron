@@ -102,21 +102,28 @@ pub struct VerbAskCredentialRef {
     pub door: VerbAskDoor,
     /// Whether the caller sat on this device (DEC-0005).
     pub on_device: bool,
+    /// The MCP session's folder digests, in lookup order. They select a project and grant nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_workspace: Option<Vec<String>>,
 }
 
 impl VerbAskCredentialRef {
     /// Whether a call presenting `call` is the caller this reference was
-    /// saved for: the very same reference, or for the attested owner the
+    /// saved for: the same instrument, door and locality, or for the attested owner the
     /// same person in the same vault, by whichever door and from wherever
-    /// his retry comes (FIX 11063), as any retry of his call was before his
-    /// calls saved a reference.
+    /// his retry comes (FIX 11063). The folder is saved placement, not part of
+    /// the caller's identity.
     pub fn same_caller(&self, call: &Self) -> bool {
         match (&self.instrument.source, &call.instrument.source) {
             (
                 VerbAskCredentialSource::AttestedOwner { holder: saved },
                 VerbAskCredentialSource::AttestedOwner { holder },
             ) => saved == holder && self.instrument.vault == call.instrument.vault,
-            _ => self == call,
+            _ => {
+                self.instrument == call.instrument
+                    && self.door == call.door
+                    && self.on_device == call.on_device
+            }
         }
     }
 }

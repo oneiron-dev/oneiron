@@ -285,12 +285,24 @@ fn append_binding_op(
     )
 }
 
+/// One issuer change waiting on the owner.
+pub(super) struct OpenIssuerRevision {
+    /// The binding's catalog connector.
+    pub(super) connector: String,
+    /// Its drafted revision, if any.
+    pub(super) drafted: Option<EntityId>,
+    pub(super) cause: SlateRevisionCause,
+    /// The keys its cause's dependent rows were read from: the catalog key
+    /// and each dependent key.
+    pub(super) keys: BTreeSet<EntityId>,
+}
+
 /// Every issuer change waiting on the owner: its connector, its drafted
-/// revision if any, and its cause.
+/// revision if any, its cause, and the keys it read.
 pub(super) fn open_issuer_revisions_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
-) -> Result<Vec<(String, Option<EntityId>, SlateRevisionCause)>> {
+) -> Result<Vec<OpenIssuerRevision>> {
     let mut open = Vec::new();
     for (_, binding) in BINDINGS.scan(store, txn)? {
         let Some(transition) = binding.transition.as_ref().filter(|open| open.halts()) else {
@@ -304,11 +316,20 @@ pub(super) fn open_issuer_revisions_in_txn(
             ConnectorIssuerTransitionState::Drafted { slate_ref } => Some(slate_ref),
             _ => None,
         };
-        open.push((
-            binding.connector.clone(),
+        let keys = std::iter::once(binding.catalog_key)
+            .chain(
+                transition
+                    .dependents
+                    .iter()
+                    .map(|dependent| dependent.key_ref),
+            )
+            .collect();
+        open.push(OpenIssuerRevision {
+            connector: binding.connector.clone(),
             drafted,
-            issuer_cause(&binding, transition, rows),
-        ));
+            cause: issuer_cause(&binding, transition, rows),
+            keys,
+        });
     }
     Ok(open)
 }

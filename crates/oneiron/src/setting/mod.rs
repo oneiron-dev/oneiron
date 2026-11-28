@@ -342,6 +342,15 @@ pub struct SettingSpec {
     /// (stage 7c-2; DESIGN 1.6, `born`): the door that creates the thing writes it, and a thing
     /// with no row reads the strictest value, never the wider one.
     pub born: Option<Born>,
+    /// An owner's write of the value the owner's own row already holds still records a change
+    /// and runs on_change: on this key the owner's write is itself the act (the answer-schema
+    /// re-arm).
+    pub records_equal_owner_write: bool,
+    /// Whether the owner's standing approval ([`widen_line`] and its scope lines) covers the
+    /// key, so an agent's widening lands without asking ([`Setter::Standing`]). `false` on a
+    /// key whose every agent change waits on the owner's answer to that change: one whose
+    /// value is the owner's own act, never an agent's (`workspace.project`).
+    pub standing_approval: bool,
 }
 
 /// Where a `born` key's things take their first row from (DESIGN 1.6, "The project-depth
@@ -376,6 +385,8 @@ impl SettingSpec {
         after_commit: None,
         write_turn: None,
         born: None,
+        records_equal_owner_write: false,
+        standing_approval: true,
     };
 
     /// Whether a row may sit at `kind`.

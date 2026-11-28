@@ -14,5 +14,6 @@
   "host_door": true,
   "host_door_lists": true,
   "openapi": true,
-  "host_door_proof": "view_editor"
+  "host_door_proof": "view_editor",
+  "caller_code": "refused"
 }

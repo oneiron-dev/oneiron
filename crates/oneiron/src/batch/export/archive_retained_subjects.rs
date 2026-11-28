@@ -75,7 +75,11 @@ pub(crate) const RETAINED_SUBJECT_RULES: &[(&str, RetainedSubjectRule)] = &[
     ("CONSENT_APPROVE_ONCE_MARKER", NoRecord),
     ("CONSENT_STANDING_GRANT", NoRecord),
     ("CONSENT_WIDEN_PROPOSAL", NoRecord),
-    ("CONVERSATION_MEMBERSHIP_ROW", ID_AND_U64),
+    // The room, then the PERSON, actor and handoff entities its value names.
+    (
+        "CONVERSATION_MEMBERSHIP_ROW",
+        KeyAndValue(membership_row_records),
+    ),
     ("CONVERSATION_MEMBERSHIP_SEQ", ONE_ID),
     // The room, then the grantee PERSON.
     (
@@ -146,6 +150,7 @@ pub(crate) const RETAINED_SUBJECT_RULES: &[(&str, RetainedSubjectRule)] = &[
     ("LEARNING_SETTING", ParsedKey(learning_setting_key_records)),
     ("LEGAL_HOLD_EVENT", Evidence),
     ("LEGAL_HOLD_ROW", Evidence),
+    ("LEGAL_HOLD_SEALED_RECORD", Evidence),
     ("MAIL_PACK_COMPLIANCE_SETTING", NoRecord),
     ("MESSAGE_STREAM_POLICY", NoRecord),
     ("MESSAGE_STREAM_RECEIPT", ONE_ID),
@@ -256,6 +261,36 @@ pub(crate) fn retained_subject_rule(name: &str) -> Option<RetainedSubjectRule> {
         .map(|(_, rule)| *rule)
 }
 
+/// The records an export judges a retained row by: every record `records` names, except that a live
+/// membership ledger row is judged by its room alone, as before. Inert copies are also judged by
+/// the people they name, so a former member's delete never withholds a live room's ledger
+/// (REVIEW-10618 round 2 P1-2).
+pub(super) fn judged_records<'a>(
+    table: &str,
+    inert: bool,
+    records: &'a [EntityId],
+) -> &'a [EntityId] {
+    if !inert && table == crate::side_table::CONVERSATION_MEMBERSHIP_ROW.name {
+        return records.get(..1).unwrap_or(records);
+    }
+    records
+}
+
+/// Whether record `id` was hard-deleted here (its dt: marker stands), so an export keeps an
+/// inert copy about it out (FIX HARD-DELETE-RETAINED-ARCHIVE-ROW-OUTLIVES-RECORD).
+pub(super) fn hard_deleted(
+    vault: &crate::Vault,
+    rtxn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> crate::error::Result<bool> {
+    crate::ports::TombstoneStoreRead::port_deletion_marked(
+        &vault.store,
+        rtxn,
+        crate::ports::DeletionMarker::HardDelete,
+        id,
+    )
+}
+
 /// The 16 id bytes at `at`, unchecked for the reserved patterns: no stored record bears one,
 /// so the lookup of such an id finds nothing to keep out.
 fn raw_id_at(key: &[u8], at: usize) -> Option<EntityId> {
@@ -336,6 +371,18 @@ fn lane_intent_records(value: &[u8]) -> Option<Vec<EntityId>> {
 /// The voice subject a stored render decision is about.
 fn render_consent_records(value: &[u8]) -> Option<Vec<EntityId>> {
     crate::voice_identity::ref_bank::render_consent_subject(value).map(|subject| vec![subject])
+}
+
+/// The room a membership ledger row's key names, then the entities its value names
+/// (`conversation::membership_row_named_entities`); `None` for a key that is not a room and
+/// ordinal, or a value that does not read as a row (REVIEW-10618 P1-2).
+fn membership_row_records(key: &[u8], value: &[u8]) -> Option<Vec<EntityId>> {
+    if key.len() != 24 {
+        return None;
+    }
+    let mut records = vec![raw_id_at(key, 0)?];
+    records.extend(crate::conversation::membership_row_named_entities(value)?);
+    Some(records)
 }
 
 /// Whether `left` and `right` are the same name, for the compile-time check.

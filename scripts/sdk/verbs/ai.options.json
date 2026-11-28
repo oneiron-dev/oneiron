@@ -12,5 +12,6 @@
   "admission": {
     "unrestricted_record_scope": true
   },
-  "section": false
+  "section": false,
+  "caller_code": "refused"
 }

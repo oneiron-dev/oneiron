@@ -55,6 +55,13 @@ pub struct WorkOrder {
     /// The caller's idempotency key: the same key with the same input answers this order.
     #[serde(default)]
     pub intent_key: Option<String>,
+    /// The order this one waits on (row Q5): looked at only once that order is at an end.
+    #[serde(default)]
+    pub after: Option<AfterCondition>,
+    /// The array this order is a member of (row Q5): the group's row caps its running
+    /// members.
+    #[serde(default)]
+    pub group: Option<GroupMember>,
     pub ordered_at_ms: u64,
     pub updated_at_ms: u64,
     /// Every write compares and bumps it.
@@ -129,6 +136,40 @@ pub struct OrderLimits {
     /// The device ids allowed; empty means any.
     #[serde(default)]
     pub device_ids: Vec<String>,
+    /// The named running caps the order counts against (row Q5): while a cap's setting
+    /// `jobs.caps.<name>` is set, no more orders that name it have a live attempt at once.
+    #[serde(default)]
+    pub caps: Vec<String>,
+}
+
+/// An order that runs only after another (pass 34, 1.1): `on` is the end it waits for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AfterCondition {
+    pub order: EntityId,
+    #[serde(default)]
+    pub on: AfterOn,
+}
+
+/// The end of the order an [`AfterCondition`] names that releases the waiting order. Any
+/// other end gives the waiting order up.
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum AfterOn {
+    /// The order is `Done`: its last attempt succeeded.
+    #[default]
+    Success,
+}
+
+/// An order's place in an array (pass 34, 1.1): the group's `WORK_ORDER_GROUP` row holds its
+/// cap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GroupMember {
+    pub group: EntityId,
+    pub index: u32,
 }
 
 /// Where the order would rather run: soft wishes the PLACE rule reads.
@@ -224,6 +265,8 @@ pub enum GiveUpWhy {
     WaitEnded { blocked: Vec<BlockedOn> },
     /// The owner wrote the last attempt off: nothing starts again unless somebody orders again.
     WrittenOff,
+    /// The order this one waited on ended without the end it waited for (row Q5).
+    Upstream { order: EntityId },
 }
 
 /// A cancel that reached a running order.
@@ -450,6 +493,13 @@ impl WorkOrder {
     #[must_use]
     pub fn last_attempt(&self) -> Option<&OrderAttempt> {
         self.attempts.last()
+    }
+
+    /// Whether the order has an attempt that was made and has no end: it runs, or may still
+    /// run on a machine that has not answered (I3). A running cap counts these.
+    #[must_use]
+    pub fn holds_live_attempt(&self) -> bool {
+        self.last_attempt().is_some_and(|last| last.end.is_none())
     }
 
     /// The number the next attempt takes.

@@ -76,7 +76,7 @@ pub(crate) async fn handle_mcp_request(
                     .and_then(|params| params.get("protocolVersion"))
                     .and_then(Value::as_str),
             );
-            let result = json!({
+            let mut result = json!({
                 "protocolVersion": protocol_version,
                 "serverInfo": {
                     "name": crate::mcp::MCP_SERVER_NAME,
@@ -86,10 +86,18 @@ pub(crate) async fn handle_mcp_request(
                 "surfaceMode": mode.as_str(),
                 "executeCodeAdmitted": matches!(mode, McpSurfaceMode::Primary)
                     && super::admission::mcp_execute_code_admitted(server, &actor),
-                "instructions": "Oneiron MCP exposes foreign-client tools over the same read and write Gate as the REST core surface. Use tools/list for the tools THIS endpoint registered and tools/call to call one. A call runs as this credential's actor; it need not name one, and an actor block that names anyone else is refused.",
+                "instructions": "Oneiron MCP exposes foreign-client tools over the same read and write Gate as the REST core surface. Use tools/list for the tools this endpoint advertises and tools/call to call one. When execute and resume are available, they take no actor argument and run as this credential's actor.",
                 "actor": mcp_actor_result(&actor),
                 "vault_id": vault_id,
             });
+            // Whether a project is bound to the folder the bridge names (RECALL-SESSION-PROJECT,
+            // Q2 = A): the start hook's vault line gives the bind command when none is.
+            if let (Some(meta), Some(fields)) = (
+                super::session_workspace::initialize_meta(server, request.params.as_ref()),
+                result.as_object_mut(),
+            ) {
+                fields.insert("_meta".to_owned(), meta);
+            }
             super::device_release::mcp_release_result(server, &actor, &[], false, result, false)
         }
         // Actor-free, but a caller is still REQUIRED, as for every method but
@@ -212,10 +220,14 @@ pub(crate) async fn handle_mcp_request(
             let (called, attempt): (Result<Value, McpGatewayError>, _) =
                 crate::api::call_receipt::attempt_witnessed(async {
                     let params: McpToolCallParams = mcp_params(request.params, "params")?;
+                    // What the arguments name, read before they are consumed: a read that
+                    // names its projects takes no session default (RECALL-SESSION-PROJECT).
+                    let arguments = params.arguments.clone();
                     let actor = McpCallContext {
                         invocation: params.invocation()?,
                         hook_ask: params.hook_ask()?,
                         client_surface: params.client_surface(),
+                        session_workspace: params.session_workspace(),
                         signing_request_transport: Some(
                             oneiron::memory::SigningRequestTransport::new(
                                 connection
@@ -233,6 +245,15 @@ pub(crate) async fn handle_mcp_request(
                     };
                     let mut args =
                         mcp_validated_call_args(server, mode, params, raw_arguments, &actor)?;
+                    // A generated verb row that writes nothing reads the session folder's
+                    // project unless its arguments name projects; one that writes places a
+                    // claim that names no project there (RECALL-SESSION-PROJECT).
+                    let actor = match &args {
+                        crate::mcp::McpValidatedToolArgs::Verb(call) => {
+                            actor.for_verb_row(call.tool.writes(), &arguments)
+                        }
+                        _ => actor.for_non_verb_row(),
+                    };
                     // The held content rides the call of the tool it arrived
                     // for, with that call's page argument digest (FIX 22074).
                     if let (Some(held), crate::mcp::McpValidatedToolArgs::Verb(call)) =

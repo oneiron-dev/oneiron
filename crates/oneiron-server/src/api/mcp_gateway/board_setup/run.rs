@@ -641,35 +641,19 @@ pub(super) fn run_pack_sections(
             .pack_section_claim_ids(&entry.pack_name, &entry.section.section_id)
             .map_err(|error| mcp_engine_error("pack section claim inventory failed", error))?
         {
-            let Some((kind, _, body)) = read
-                .get_entity_parts_with_receipt(&id, None)
+            // The agent's lane reads the cells as it reads the claim anywhere else: released,
+            // and each lifted key as its handle (FOCUS-REFRESH-UNMASKED-PIN-AND-PACK-TEXT).
+            let Some((predicate, value)) = read
+                .read_pack_section_claim(&id)
                 .map_err(|error| mcp_engine_error("pack section claim read failed", error))?
                 .value
             else {
                 continue;
             };
-            if kind != oneiron::registry::ENTITY_TYPE_CLAIM {
-                continue;
-            }
-            let claim = oneiron::claim::decode_claim_body(&body, false)
-                .map_err(|error| mcp_engine_error("pack section claim decode failed", error))?;
-            if claim.lifecycle != oneiron::claim::ClaimLifecycleStatus::Active
-                || !matches!(
-                    claim.approval,
-                    oneiron::claim::ClaimApprovalStatus::Approved
-                        | oneiron::claim::ClaimApprovalStatus::Auto
-                )
-                || claim.stale
-            {
-                continue;
-            }
             served.push(id);
             rows.push(PluginSectionRow {
                 row_id: id.to_hex(),
-                cells: vec![
-                    claim.predicate,
-                    format!("{:?}", claim.value).chars().take(256).collect(),
-                ],
+                cells: vec![predicate, value.to_string().chars().take(256).collect()],
             });
         }
         snapshots.push(PluginSectionSnapshot {

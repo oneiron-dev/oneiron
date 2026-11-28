@@ -158,13 +158,20 @@ pub(super) fn import_history(source: HistorySource, args: ImportSourceArgs) -> a
     };
     let mut totals = Totals::default();
     let mut reports = Vec::with_capacity(conversations.len());
+    let mut folders = session_folder::SessionFolders::default();
     for (done, conversation) in conversations.iter().enumerate() {
         let report = match &mut target {
             Target::Plan(snapshot, state) => snapshot.plan(source, conversation, state)?,
             Target::Land(landing) => {
                 let (vault, owner, imported_at) = &**landing;
                 vault
-                    .import_history(owner, source, conversation, *imported_at)
+                    .import_history_in_session_folder(
+                        owner,
+                        source,
+                        conversation,
+                        *imported_at,
+                        &folders.digests_of(conversation),
+                    )
                     .map_err(|error| anyhow::anyhow!("import stopped: {error}"))?
             }
         };
@@ -541,6 +548,7 @@ use crate::files_intake::confined::{self, open_in, walk_logs};
 pub(crate) mod hosted_import;
 #[cfg(unix)]
 pub(super) mod queue;
+pub(in crate::commands) mod session_folder;
 
 /// A queued session as read: its conversations, whether a log ended
 /// mid-line, what it holds decoded, and the stamp of the logs it read.

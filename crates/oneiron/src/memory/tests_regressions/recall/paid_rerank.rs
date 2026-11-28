@@ -26,10 +26,7 @@ impl crate::memory::RecallRerankHost for ScriptedReranker<'_> {
         _answer_at: Option<std::time::Instant>,
         _cancel: Option<crate::llm::WorkCancel>,
     ) -> MemoryResult<crate::memory::RerankScores> {
-        let call = self
-            .calls
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
-            + 1;
+        let call = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
         (self.during)(call);
         self.seen
             .lock()
@@ -144,6 +141,7 @@ fn a_turn_edited_while_it_is_scored_takes_none_of_the_stale_scores() {
             telemetry: None,
             filter: None,
             operation_id: None,
+            bar: None,
         },
         |_| None,
         &crate::task_verb::sdk::RecallDoor {
@@ -244,6 +242,7 @@ fn a_note_edited_after_its_scores_are_taken_renders_the_scored_words() {
                 telemetry: None,
                 filter: None,
                 operation_id: None,
+                bar: None,
             },
             |_| None,
             &crate::task_verb::sdk::RecallDoor {
@@ -298,7 +297,10 @@ fn a_reranked_pack_withholds_a_row_the_write_door_refuses() {
         .collect();
     refused.push(("password".into(), phrase.into()));
     let kept = vec![("title".into(), "a brass lantern hook".into())];
-    let (withheld, shown) = (crate::test_util::entity(0x51), crate::test_util::entity(0x52));
+    let (withheld, shown) = (
+        crate::test_util::entity(0x51),
+        crate::test_util::entity(0x52),
+    );
     for (asset, fields) in [(withheld, refused), (shown, kept)] {
         let mut body = Vec::new();
         rmpv::encode::write_value(&mut body, &rmpv::Value::Map(fields)).unwrap();
@@ -347,6 +349,7 @@ fn a_reranked_pack_withholds_a_row_the_write_door_refuses() {
             telemetry: None,
             filter: None,
             operation_id: None,
+            bar: None,
         },
         |_| None,
         &crate::task_verb::sdk::RecallDoor {
@@ -359,7 +362,10 @@ fn a_reranked_pack_withholds_a_row_the_write_door_refuses() {
     .expect("recall");
     let seen = host.seen.lock().unwrap();
     assert!(seen.contains(&shown), "{seen:?}");
-    assert!(!seen.contains(&withheld), "the reranker was sent a refused row");
+    assert!(
+        !seen.contains(&withheld),
+        "the reranker was sent a refused row"
+    );
     assert!(matches!(
         pack.retrieval_meta.rerank,
         Some(crate::memory::RerankReport::Applied { .. })
@@ -418,7 +424,10 @@ fn a_message_moved_to_its_document_by_a_sync_process_is_not_reranked() {
     rmpv::encode::write_value(&mut pointer, &rmpv::Value::Map(fields)).expect("encode");
     vault
         .with_write_txn(|wtxn| {
-            vault.store.entities.put(wtxn, message.as_bytes(), &pointer)?;
+            vault
+                .store
+                .entities
+                .put(wtxn, message.as_bytes(), &pointer)?;
             DOCUMENT_HEADS.put(&vault.store, wtxn, &HexId(message), &rmpv::Value::Nil)
         })
         .expect("move the message's text out of its row, as a sync process does");
@@ -465,6 +474,7 @@ fn a_message_moved_to_its_document_by_a_sync_process_is_not_reranked() {
             telemetry: None,
             filter: None,
             operation_id: None,
+            bar: None,
         },
         |_| None,
         &crate::task_verb::sdk::RecallDoor {

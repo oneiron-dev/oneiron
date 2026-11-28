@@ -78,17 +78,38 @@ every quote refuses and no worker starts.
   (open claims and open holds are not history). An occupancy is shown only
   where a machine measured it or a provider reported a chunk's final run time
   (its exit); a stop, a cancel and a lost machine or resource show it as
-  unknown, never as zero. A chunk the provider refused before anything ran
+  unknown, never as zero. A chunk one of the vault's machines ran shows what
+  the issuer holds of its key (`JOB_OBSERVATION`): the machine that answered
+  and its device, and from the end the issuer confirmed, the machine's end
+  cause, when the issuer received it, the seconds the machine measured (a
+  stop's and a cancel's too), a lost key's last seen run time as lost, and
+  the meter (`agreed` when the machine's seconds lay inside the issuer's own
+  bracket, `bracketed` when the bracket was billed, `unknown` for a lost
+  machine). A chunk the provider refused before anything ran
   charged nothing and returned its whole quote. A chunk the owner wrote off
   (door 10) shows `written_off`: its occupancy is unknown, and it settled
   zero. A stopped job that the customer cancels keeps its last chunk's end at
-  its maximum. The reply is never kept for a same-id retry, which reads
-  again.
+  its maximum. An attempt a
+  work order made names its order and its number there, who ordered, how
+  long the order waited for it (from the order, or from the end of the
+  attempt before), when the machine was first seen running it, and what the
+  RANK, PLACE and AFTER rules decided, all as the order's row keeps them; the
+  totals sum those waits, and `order` narrows the list to one order. Jobs a
+  machine ran for the vault that no row of it names (after the issuer was
+  restored from an older backup) show as unattributed seconds, as the
+  allocation records them against the generation their submit named: their
+  own sum fields (`unattributed_secs`, and `unattributed_running` for those
+  still running), by machine and, for a line's generation, by line and
+  period, never by family and never inside the other seconds. Only the owner
+  sees them, and a family or `order` filter shows none. The reply is never
+  kept for a same-id retry, which reads again.
 
 Quote, status and list admit the owner, or an agent whose own Grant names the
 verb. History admits the same callers, judged in the snapshot it reads; an
 agent sees only the line units it reserved and the first chunk of each job it
-started (a resumed chunk's starter is not stored), and totals over those.
+started (a resumed chunk's starter is not stored), and totals over those; of
+a RANK decision it sees only its own order among the options, as
+`vault.jobs.orders.get` shows it.
 Start and cancel admit the owner, or an agent whose own Grant names the
 verb (RULING L10-31-STARTER = B), judged again in the act's own write:
 
@@ -166,7 +187,9 @@ at_maximum = "stop"           # required for this backend
   it and any other offer with it.
 - A job is billed the occupied time of the attempt's leases, as the node
   measured it, and never more than the issuer's own bracket or the quote's
-  maximum. A key that never started bills zero.
+  maximum. A key that never started settles zero, including overhead; the job
+  reads `ended` / `never_started` (or `cancelled` for a cancel), and the node
+  part names the machine's end.
 
 ## Pinned workloads (the vault's own machines)
 

@@ -16,6 +16,10 @@ pub struct DeleteEntityOutcome {
     /// version it records (ASTRA-R2-002): the claim went with its version and, unless another
     /// holder keeps them, with its bytes. No receipt entity is written for it.
     pub version_release: bool,
+    /// The digests of the FILE bodies the deleted record held, read in the writer that released its
+    /// descriptors (H5): what the delete answer counts as still in use after the collect pass.
+    /// Empty when no writer released any.
+    pub released_file_digests: Vec<[u8; 32]>,
 }
 
 impl DeleteEntityOutcome {
@@ -27,6 +31,7 @@ impl DeleteEntityOutcome {
             sweep_key: None,
             turn_program_details: Vec::new(),
             version_release: false,
+            released_file_digests: Vec::new(),
         }
     }
 }

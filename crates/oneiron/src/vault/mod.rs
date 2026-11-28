@@ -34,7 +34,7 @@ mod runtime_handle;
 mod search_retrieval;
 mod tagging_arm;
 mod transactions;
-mod vector_evidence;
+pub(crate) mod vector_evidence;
 
 use crate::analyzer::MultilingualAnalyzer;
 use crate::config::{VaultConfig, VaultPrivacyConfig};
@@ -162,6 +162,10 @@ pub struct Vault {
     /// sets others ([`Vault::set_vector_evidence`]), and any it set for one
     /// kind of item in one embedding space ([`Vault::set_vector_evidence_for`]).
     vector_evidence: std::sync::RwLock<vector_evidence::NoMatchFloors>,
+    /// The relevance bar the host measured for recall lines keyed on a session's work in this
+    /// vault's embedding space, a raw cosine; `None` until a host on the measured profile sets
+    /// it ([`Vault::set_measured_recall_bar`], RECALL-CARRIER-THRESHOLD).
+    measured_recall_bar: std::sync::RwLock<Option<f32>>,
     pub(crate) analyzer: MultilingualAnalyzer,
     /// Which vault this handle belongs to, resolved once at open.
     vault_id: VaultId,

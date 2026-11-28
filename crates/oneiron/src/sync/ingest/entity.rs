@@ -3,7 +3,7 @@
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
 use crate::error::{Error, ErrorKind, RegistryError, Result, SyncError};
-use crate::ports::{DeletionMarker, EntityStoreRead, TombstoneStoreRead};
+use crate::ports::{DeletionMarker, EntityStoreRead, TombstoneStoreRead, claim_order};
 use crate::registry::ENTITY_TYPE_EMBEDDING_SETUP;
 use crate::registry::{
     ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_ASSET, ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_DIAGNOSTIC,
@@ -168,6 +168,7 @@ impl RefusalRetry {
             || matches!(
                 err.kind(),
                 ErrorKind::ProjectDependencyPending
+                    | ErrorKind::ProjectBirthPending
                     | ErrorKind::ResidentOwnerDependencyPending
                     | ErrorKind::RemoteMachineHistoryPending
                     | ErrorKind::AskDependencyPending
@@ -399,8 +400,9 @@ pub(in crate::sync) fn ingest_entity_in_txn(
     // Decode the REMOTE envelope first, before the key and before any local read, so a later
     // `CorruptedIndex` from the engine's own rows is never conflated with a bad remote blob,
     // and so a concurrent protected engine record (notably type-76) cannot hide behind a
-    // hostile tombstone or a pre-fix `dt:` poison marker.
-    let Some(header) = EntityMetadataHeader::parse(blob) else {
+    // hostile tombstone or a pre-fix `dt:` poison marker. A CLAIM header past the carried
+    // row-version ceiling is malformed too (FIX SYNC-CLAIM-ROW-VERSION-FLOOR-POISON).
+    let Some(header) = EntityMetadataHeader::parse(blob).filter(claim_order::fits_ceiling) else {
         return Ok(refuse(
             EntityId::from_hex(key).ok(),
             Error::CorruptedIndex("entity metadata"),

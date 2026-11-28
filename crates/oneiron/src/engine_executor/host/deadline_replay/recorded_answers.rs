@@ -6,6 +6,7 @@
 use std::borrow::Cow;
 
 use super::*;
+use crate::code_run::RecordedProducer;
 
 impl RecordingJsHost<'_, '_> {
     /// Lends a resumed pending step's recorded calls to this host (FIX
@@ -30,10 +31,9 @@ impl RecordingJsHost<'_, '_> {
     /// frontier.
     ///
     /// A recorded answer reaches the guest only as the bound door rules
-    /// now (FIX 7703). The door admits the read, as at a write's kept
-    /// answer. The rows the answer was served from must not stay on this
-    /// device for the door's caller. A refusal of either holds the step in
-    /// the same way.
+    /// now (FIX 7703). The door admits the read and its producer, as at a
+    /// write's kept answer. The rows the answer was served from must not
+    /// stay on this device for the door's caller. A refusal holds the step.
     pub(in crate::engine_executor::host) fn answer_from_pending_prefix(
         &mut self,
         call: &SelfCall,
@@ -64,6 +64,10 @@ impl RecordingJsHost<'_, '_> {
             PreflightTake::Row(recorded)
                 if !self.gated_write.releases_recorded_answer(
                     recorded.served_rows(&self.callable_rows).as_deref(),
+                    RecordedProducer::of_row(
+                        &recorded.row,
+                        self.admitted_skill_seq == Some(recorded.row.seq),
+                    ),
                 ) =>
             {
                 if let Some(replay) = self.deadline_replay.as_mut() {

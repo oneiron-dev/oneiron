@@ -2,7 +2,7 @@
 //! kept with the wait, and the parked runs a host may enter again for that
 //! caller after a restart (FIX 4606).
 //!
-//! A served MCP `execute_code` run that parks on a code consent wait has no
+//! A served MCP `execute` run that parks on a code consent wait has no
 //! parked attempt for a trap to wake. Its host kept what a re-entry needs in
 //! memory only, so a restart lost it. Now the host binds the admitted
 //! caller's origin on the run, and the held call's mint stamps it into the
@@ -16,9 +16,9 @@
 //! again: a wait with an admitted origin, sealed and not consumed, whose
 //! reply was delivered, and a run record still parked on that exact wait at
 //! the generation its seal names. Nothing is picked by a prompt, a label or
-//! an answer. The task is the run's own caller-task body, which its first
-//! entry kept from the admitted request: an MCP run captures no step
-//! capsule. A body that is erased or missing authorizes nothing.
+//! an answer. The run keeps its admitted caller input in its own held body,
+//! whether it was caller source or a task. A body that is erased or missing
+//! authorizes nothing.
 //!
 //! An automatic re-entry its host refused for good keeps that refusal on the
 //! wait, written once ([`Vault::refuse_code_consent_run_resume`]), so no
@@ -30,11 +30,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::authority::InvocationSlipBinding;
-use crate::code_run::{
-    CodeRunReplayGeneration, CodeRunReplayRecord, ExecutorStorage, WaitDeliveries, WaitKey,
-};
+use crate::code_run::{CodeRunReplayGeneration, ExecutorStorage, WaitDeliveries, WaitKey};
 use crate::edge::EdgeActorClass;
-use crate::engine_executor::{EngineExecutorError, caller_task_in_txn, parked_wait_now};
+use crate::engine_executor::{EngineExecutorError, caller_run_input_in_txn, parked_wait_now};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::runtime_hooks::verb::{VerbAskCredentialSource, VerbAskDoor, VerbAskRefusal};
@@ -114,6 +112,13 @@ pub(super) fn code_consent_run_origin_digest(
     field(&optional(code_consent_run_origin.session));
     field(&optional(code_consent_run_origin.room_turn));
     field(&[u8::from(code_consent_run_origin.forwarded_caller)]);
+    // Older origins have no workspace and keep their original sealed digest.
+    if let Some(folder_digests) = &code_consent_run_origin.credential.session_workspace {
+        field(b"session_workspace");
+        for folder_digest in folder_digests {
+            field(folder_digest.as_bytes());
+        }
+    }
     digest.finish()
 }
 
@@ -179,9 +184,6 @@ pub struct CodeConsentParkedRun {
     /// The run's actor and class, as the wait's binding keeps them.
     pub actor: EntityId,
     pub actor_class: EdgeActorClass,
-    /// The task the run carries out, as the run's own caller-task body
-    /// keeps it.
-    pub task: String,
 }
 
 impl Vault {
@@ -190,13 +192,11 @@ impl Vault {
     /// admitted origin that names the caller its binding keeps, is sealed,
     /// not consumed and carries no refusal of an automatic re-entry, and a
     /// reply was delivered to it. The run's record is parked on that exact
-    /// wait, at the generation the seal names, and the seal verifies. The
-    /// task is the one the run's first entry kept as its own caller-task
-    /// body, from the admitted request's task its host declared the
-    /// caller's own; it is read through the run's own held occurrence, so a
-    /// run whose body is erased, withheld or missing is not listed. On entry
-    /// that task must still be the config marker's, and the host's executor
-    /// config and interpreter checks still run: readiness is not authority.
+    /// wait, at the generation the seal names, and the seal verifies. Its
+    /// caller input must still read through the run's own held occurrence.
+    /// An erased, withheld or missing body does not list the run. The
+    /// executor checks the config marker and interpreter again on entry:
+    /// readiness is not authority.
     /// A row or record that does not read lists nothing.
     ///
     /// # Errors
@@ -308,9 +308,12 @@ fn parked_run(vault: &Vault, row: CodeConsentWaitRow) -> Result<Option<CodeConse
     if WaitDeliveries::canonical(vault).delivery(&key)?.is_none() {
         return Ok(None);
     }
-    let Some(task) = parked_run_task(vault, &record)? else {
+    // Both the caller-source body and the caller-task body are held by the run.
+    let _custody = vault.store.gate_custody_read_guard()?;
+    let txn = vault.store.env.read_txn()?;
+    if caller_run_input_in_txn(vault, &txn, &record)?.is_none() {
         return Ok(None);
-    };
+    }
     Ok(Some(CodeConsentParkedRun {
         key,
         generation,
@@ -321,18 +324,7 @@ fn parked_run(vault: &Vault, row: CodeConsentWaitRow) -> Result<Option<CodeConse
             .map(|credential| credential.witness),
         actor: binding.original.actor_ref,
         actor_class,
-        task,
     }))
-}
-
-/// The task `record`'s run carries out, as the run's own caller-task body
-/// keeps it (FIX 4606), read in a snapshot of its own under the custody
-/// guard. `None` when the run keeps none, or the body is erased, withheld,
-/// drifted or does not decode.
-fn parked_run_task(vault: &Vault, record: &CodeRunReplayRecord) -> Result<Option<String>> {
-    let _custody = vault.store.gate_custody_read_guard()?;
-    let txn = vault.store.env.read_txn()?;
-    caller_task_in_txn(vault, &txn, record)
 }
 
 /// An executor read's error as the engine's own.

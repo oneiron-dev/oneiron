@@ -583,7 +583,7 @@ pub(in crate::sync) fn settle_child_of(
         )?;
     }
     if !super::parent_retry::has_pending_source_in_txn(vault, txn, window, src)? {
-        crate::sync::quarantine::clear_replay_remat_marker_in_txn(vault, txn, window, src)?;
+        crate::sync::quarantine::clear_edge_wait_remat_marker_in_txn(vault, txn, window, src)?;
     }
     Ok(())
 }

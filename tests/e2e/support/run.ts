@@ -425,11 +425,11 @@ export function caseRegistry(file: string, declaration: FileDeclaration, env: Re
       }, deadlineMs + LIMITS.stopMs + 1000);
     },
     /** Owner-deferred missing doors are registered but do not fail a run. */
-    skip(test: Reporter["test"], id: string, reason: `waits on ${string}`): void {
+    skip(test: Reporter["test"], id: string, reason: `waits on ${string}` | `FIX ${string}`, body: () => void | Promise<void> = () => {}): void {
       if (selected.size && !selected.has(id)) return;
       register(id);
       results.set(id, {id,outcome:"SKIPPED",durationMs:0,reason});
-      test.skip(`${id} ${reason}`, () => {});
+      test.skip(`${id} ${reason}`, body);
     },
     /** A case whose door is missing (Engine CORE-FOUR-SKIPS = A, the pending-door filter). It stays
      * registered and in the 242-ID plan, is never run, and reports SKIPPED with its missing door, its

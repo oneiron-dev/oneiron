@@ -19,8 +19,9 @@
 //! family, the machine, the run's start and the text) names the run. The
 //! latest check, why and results ride in the ask's state.
 //!
-//! The first caller is the issuer's first scheduled read of a node's facts
-//! (row Q1's loop, or row Q2's status read); until then no ask is raised.
+//! The caller is the issuer's scheduled read of a node's facts: the job
+//! worker's work-order pass reads the `Node` answer (`oneiron-server`'s
+//! `gpu_execution_node::issuer::guard::ReadinessReads`).
 
 pub(crate) mod setting_keys;
 

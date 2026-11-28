@@ -15,7 +15,9 @@ card_resolve() {
   # nvidia-smi prints an 8-digit PCI domain, the driver's and sysfs's directories a 4-digit one.
   CARD_BUS=$(awk -F', *' '{ print tolower($2) }' <<< "$row"); CARD_BUS=${CARD_BUS: -12}
   CARD_DRIVER=$(awk -F', *' '{ print $3 }' <<< "$row")
-  CARD_MINOR=$(awk -F': *' '/^Device Minor/ { print $2 }' "$NVIDIA_PROC/gpus/$CARD_BUS/information" 2> /dev/null)
+  # Driver 615.78.08 writes "Device Minor: <TAB> 0": every blank after the colon goes (FIX CARD-SH-MINOR-TAB-PARSE).
+  CARD_MINOR=$(awk -F':[[:space:]]*' '/^Device Minor/ { gsub(/[[:space:]]/, "", $2); print $2 }' \
+    "$NVIDIA_PROC/gpus/$CARD_BUS/information" 2> /dev/null)
   [ -n "$CARD_MINOR" ] || return 1
   CARD=("$NVIDIA_DEV/nvidia$CARD_MINOR" "$NVIDIA_DEV/nvidiactl")
   for node in /sys/bus/pci/devices/"$CARD_BUS"/drm/card* /sys/bus/pci/devices/"$CARD_BUS"/drm/renderD*; do

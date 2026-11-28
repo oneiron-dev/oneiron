@@ -10,6 +10,8 @@ use super::read_lane::fold_receipt;
 use super::support::*;
 use super::*;
 
+use std::collections::HashSet;
+
 use crate::claim::{
     ClaimDemotionAction, ClaimDemotionRung, ClaimLifecycleStatus, ClaimReadStatus, PointRead,
     ScopedReadResult,
@@ -156,7 +158,10 @@ impl Memory<'_> {
     /// stale claims. Non-empty `project_refs` keep only the claims stamped
     /// with one of those projects or a project below one, as recall's
     /// scope does; that only narrows. The receipt states requested,
-    /// ceiling and applied.
+    /// ceiling and applied. After them, the caller's own held claims under
+    /// the same selectors fill any slots left, each marked `held` and
+    /// admitted by the caller's Recorded lane; the receipt does not count
+    /// them (AGENT-TRIAL-OWN-HELD-WRITES-HIDDEN).
     pub fn claim_list_filtered(
         &self,
         request: &ClaimFilteredListRequest,
@@ -221,6 +226,32 @@ impl Memory<'_> {
             Some(receipt) => receipt,
             None => lane.read_receipt(filter.as_ref(), 0)?,
         };
+        if views.len() < request.limit {
+            let subject_claims = request
+                .subject_ref
+                .as_ref()
+                .map(|_| ids.iter().copied().collect::<HashSet<_>>());
+            let seen: HashSet<_> = views.iter().map(|view| view.claim_ref.as_str()).collect();
+            // The stale selector the read applied, under the actor ceiling.
+            let include_stale = receipt.applied.include_stale;
+            let held = self
+                .with_read_filter(request.filter.as_ref())
+                .own_held_claims(
+                    |id, body| {
+                        (include_stale || !body.stale)
+                            && request
+                                .predicate
+                                .as_ref()
+                                .is_none_or(|p| body.predicate == *p)
+                            && lifecycle.is_none_or(|lifecycle| body.lifecycle == lifecycle)
+                            && subject_claims.as_ref().is_none_or(|ids| ids.contains(id))
+                            && projects.matches(body.scope_project)
+                            && !seen.contains(id.to_hex().as_str())
+                    },
+                    request.limit - views.len(),
+                )?;
+            views.extend(held);
+        }
         Ok(ScopedReadResult {
             value: views,
             receipt,
@@ -230,7 +261,10 @@ impl Memory<'_> {
     /// Reads one claim as retrieval would surface it, under the caller's
     /// retrieval filter met with the actor ceiling. `None` when absent,
     /// withheld, or stamped outside non-empty `project_refs` (and every
-    /// project below them); the receipt says which axes narrowed.
+    /// project below them); the receipt says which axes narrowed. A claim
+    /// the lane withholds that is the caller's own held claim is served
+    /// marked `held`, admitted by the caller's Recorded lane, and when stale
+    /// only if the applied filter includes stale claims.
     pub fn claim_read_filtered(
         &self,
         request: &ClaimFilteredReadRequest,
@@ -256,6 +290,21 @@ impl Memory<'_> {
                 None => None,
             },
             None => None,
+        };
+        let view = match view {
+            Some(view) => Some(view),
+            None => self
+                .with_read_filter(request.filter.as_ref())
+                .own_held_claims(
+                    |claim, body| {
+                        *claim == id
+                            && (receipt.applied.include_stale || !body.stale)
+                            && projects.matches(body.scope_project)
+                    },
+                    1,
+                )?
+                .into_iter()
+                .next(),
         };
         Ok(ScopedReadResult {
             value: view,

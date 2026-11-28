@@ -7,6 +7,7 @@ use super::*;
 use crate::ports::EntityStoreRead;
 
 mod admission;
+pub(crate) mod bar;
 mod call_mode;
 mod conversation;
 mod home;
@@ -79,7 +80,9 @@ pub(super) const RECALL_TOKEN_BUDGET: usize = 4000;
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::memory::recall::{
-    Effort, MemoryProvenance, RecallRequest, RecallScope, RetrievalMeta, ScopeHonesty,
+    Effort, LineProvenance, MemoryProvenance, PUSH_LINES, RecallBarAsk, RecallBarOutcome,
+    RecallBarRule, RecallRequest, RecallScope, RecallSource, RetrievalMeta, ScopeHonesty,
+    is_harness_name,
 };
 
 /// Kinds that hold no text of their own: conversations and sessions, and the
@@ -129,6 +132,21 @@ pub(crate) fn check_recall_request(
     }
     format.map(parse_pack_format).transpose()?;
     recall_kinds(scope)?;
+    if let Some(harness) = execution.bar.and_then(|bar| bar.harness.as_deref())
+        && !is_harness_name(harness)
+    {
+        return Err(MemoryError::bad_request(
+            "bar.harness must be 1 to 40 of a-z 0-9 -, starting with a letter",
+        ));
+    }
+    if let Some(session) = execution.bar.and_then(|bar| bar.session.as_deref())
+        && (!(1..=200).contains(&session.len())
+            || !session.bytes().all(|byte| byte.is_ascii_graphic()))
+    {
+        return Err(MemoryError::bad_request(
+            "bar.session must be 1 to 200 printable non-space ASCII characters",
+        ));
+    }
     Ok(())
 }
 
@@ -225,6 +243,14 @@ pub struct MemoryItem {
     /// revision pin: [`Self::reference`] still names the revision read.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub record: Option<crate::lens::RecordRef>,
+    /// The raw cosine of this item's vector and the query's in the vault's embedding space,
+    /// as the owner's relevance bar judged it ([`RecallRequest::bar`]): only on a recall
+    /// whose bar compares cosines. Never a rank, a blend or a confidence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub similarity: Option<f32>,
+    /// Extra provenance for a recall that asked for the owner's relevance bar.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_provenance: Option<LineProvenance>,
 }
 
 /// A MESSAGE a TURN item quotes: the words a query matched, as they were said.
@@ -257,6 +283,9 @@ impl MemoryItem {
 pub struct MemoryPack {
     /// Ranked items.
     pub items: Vec<MemoryItem>,
+    /// The caller's matching claims held for consent, separate from ranked items.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub held: Vec<ClaimView>,
     /// What the scope excluded.
     pub scope_honesty: ScopeHonesty,
     /// Retrieval accounting.
@@ -278,6 +307,11 @@ pub struct MemoryPack {
     /// window it may read, or runs no sync.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub residence: Option<RecallResidence>,
+    /// What the owner's relevance bar did, on a recall that asked one
+    /// ([`RecallRequest::bar`]): the rule it applied, and whether the owner asks a harness
+    /// to say so when no line passed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bar: Option<RecallBarOutcome>,
 }
 
 /// The pack a recall answers with when its door stops waiting at the
@@ -288,6 +322,7 @@ fn cut_pack(vault: &crate::Vault, receipt: &ScopedReadReceipt) -> MemoryPack {
     let quality = RetrievalQuality::Passthrough;
     let mut pack = MemoryPack {
         items: Vec::new(),
+        held: Vec::new(),
         scope_honesty: ScopeHonesty {
             out_of_scope_worlds: Vec::new(),
             census_capped: true,
@@ -304,6 +339,7 @@ fn cut_pack(vault: &crate::Vault, receipt: &ScopedReadReceipt) -> MemoryPack {
         narrowing: Box::new(receipt.clone()),
         retrieval_run_id: None,
         residence: None,
+        bar: None,
     };
     pack.stamp_residence(home::local_residence(vault, None));
     pack
@@ -331,6 +367,13 @@ impl Memory<'_> {
         execution: &RecallExecution<'_>,
         pin: Option<&RecallPin>,
     ) -> MemoryResult<MemoryPack> {
+        // A push answers at most PUSH_LINES lines, whatever its limit, on every path through
+        // the shared body (RECALL-CARRIER-THRESHOLD; REVIEW-10566 round 2): the SDK door
+        // clamps before its preflight check too, and keeps doing so.
+        let limit = match execution.bar {
+            Some(bar) if bar.source.pushes() => limit.min(PUSH_LINES),
+            _ => limit,
+        };
         check_recall_request(effort, scope, limit, format, lease, execution)?;
         if let Some(session) = session {
             // A session handle names a room in ONE store, and this facade's
@@ -468,6 +511,7 @@ impl Memory<'_> {
         if receipt.applied.deny_all {
             let mut pack = MemoryPack {
                 items: Vec::new(),
+                held: Vec::new(),
                 scope_honesty: ScopeHonesty::default(),
                 retrieval_meta: RetrievalMeta {
                     sparse: Some(true),
@@ -479,6 +523,7 @@ impl Memory<'_> {
                 narrowing: Box::new(receipt),
                 retrieval_run_id: None,
                 residence: None,
+                bar: None,
             };
             pack.stamp_residence(home::local_residence(self.vault, None));
             return Ok(pack);
@@ -606,6 +651,21 @@ impl Memory<'_> {
             Vec::new()
         };
 
+        // The owner's relevance bar, resolved once for this pass (RECALL-CARRIER-THRESHOLD).
+        // The bar judges the comparison vector the door carried for it, which never feeds a
+        // retrieval channel; a door that carried none judges the query's own vector, as before
+        // (REVIEW-10567 round 2).
+        let bar = execution
+            .bar
+            .map(|ask| {
+                self.resolve_recall_bar(
+                    ask,
+                    query,
+                    scope,
+                    execution.bar_query_vector.or(execution.embedding),
+                )
+            })
+            .transpose()?;
         let (
             items,
             total_candidates,
@@ -647,6 +707,24 @@ impl Memory<'_> {
                 .filter_candidates(&admitted)
                 .gate_candidates(&conversation_gate)
                 .statistics_read(&lane);
+            if let Some(judge) = bar.as_ref().and_then(|bar| bar.judge.clone()) {
+                builder = builder.recall_bar(judge);
+            }
+            // Push stays CLAIM-only despite NOTE, TURN and MESSAGE placements (REVIEW-10566 round 1).
+            // Engine Q7 PUSH-KINDS = a: the bar measured CLAIMs; only the owner can reopen other kinds.
+            // This applies whatever `scope.kinds` asks. `pull` is unchanged.
+            if bar.as_ref().is_some_and(|bar| bar.outcome.source.pushes()) {
+                builder = builder.recall_bar_claims_only();
+            }
+            // A bar quiet for no query vector carries no vector into the pipeline: the
+            // query's, if any, is the wrong width for the vault, and attaching it would
+            // error before the bar quiets the recall (REVIEW-10566 round 1).
+            let attaches_vector = !bar.as_ref().is_some_and(|bar| {
+                matches!(
+                    &bar.outcome.rule,
+                    RecallBarRule::Quiet { reason } if reason.as_str() == "no_query_vector"
+                )
+            });
             // A facet narrows strictly inside this same builder (FIX 9961):
             // the pack it admits and pins is the one its items and its
             // rendering are read from, and it walks no edges, so nothing
@@ -676,7 +754,9 @@ impl Memory<'_> {
             if let Some(deadline) = execution.deadline {
                 builder = builder.deadline(deadline);
             }
-            if let Some(vector) = execution.embedding {
+            if let Some(vector) = execution.embedding
+                && attaches_vector
+            {
                 builder = builder.search_vector(vector, limit);
             }
             if effective.requires_rerank()
@@ -746,7 +826,15 @@ impl Memory<'_> {
             // Each reaction claim a line counts is a producer of the pack.
             self.produced_from(counted);
 
-            let rendered = pack_format.map(|fmt| {
+            // A barred recall renders from its admitted items only: no L2 prefix built
+            // before retrieval and no edge neighbours, either of which would bypass the
+            // bar (REVIEW-10566 round 1). The no-bar path is untouched.
+            if bar.is_some() {
+                pack.l2_base = None;
+                pack.neighbors.clear();
+            }
+            let rendered = if let Some(fmt) = pack_format {
+                self.project_recall_render(&lane, &mut pack)?;
                 let config = SerializeConfig {
                     format: fmt,
                     profile: match effective {
@@ -762,8 +850,10 @@ impl Memory<'_> {
                     max_field_chars: DEFAULT_MAX_FIELD_CHARS,
                     max_item_tokens: 0,
                 };
-                String::from_utf8_lossy(&serialize_pack(&pack, &config)).into_owned()
-            });
+                Some(String::from_utf8_lossy(&serialize_pack(&pack, &config)).into_owned())
+            } else {
+                None
+            };
             let mut items = Vec::new();
             for entity in pack.results.iter().take(limit) {
                 if let Some(fallback) = door_answered() {
@@ -778,12 +868,12 @@ impl Memory<'_> {
                     .cited_messages
                     .get(&entity.id)
                     .map_or(&[][..], Vec::as_slice);
-                if let Some(mut item) = self.memory_item_for(
+                if let Some(mut item) = self.recall_item_for(
                     &lane,
                     &entity.id,
                     selection.facet,
                     mode,
-                    cited,
+                    (cited, execution.bar.is_some()),
                     &mut receipt,
                 )? {
                     item.embedding_matches = status
@@ -791,6 +881,7 @@ impl Memory<'_> {
                         .get(&entity.id)
                         .cloned()
                         .unwrap_or_default();
+                    item.similarity = status.bar_similarity.get(&entity.id).copied();
                     items.push(item);
                 }
             }
@@ -809,6 +900,7 @@ impl Memory<'_> {
 
         let claims_returned = items.iter().filter(|item| item.kind == "CLAIM").count() as u64;
         let mut pack = MemoryPack {
+            held: Vec::new(),
             scope_honesty: ScopeHonesty::default(),
             retrieval_meta: RetrievalMeta {
                 quality: retrieval_quality.quality,
@@ -831,6 +923,7 @@ impl Memory<'_> {
             narrowing: Box::new(receipt),
             retrieval_run_id,
             residence: None,
+            bar: bar.map(|bar| bar.outcome),
         };
         // An opened device's answer is its own items alone (FIX 2905); the
         // stamp keeps what this recall narrowed by, for its home.
@@ -853,7 +946,7 @@ impl Memory<'_> {
     /// The worlds one recall reads (ARCH-0022). A named world reads with base
     /// reality; no name reads the actor's default, base plus its active world.
     /// A handle bound to a room turn meets either with the room's Scope.
-    fn recall_worlds(
+    pub(in crate::memory) fn recall_worlds(
         &self,
         scope: &RecallScope,
     ) -> MemoryResult<Option<crate::claim::world_access::WorldAuthoritySet>> {

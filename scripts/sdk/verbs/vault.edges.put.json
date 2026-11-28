@@ -1,5 +1,6 @@
 {
   "name": "vault.edges.put",
+  "description": "Links two stored entities with one typed edge through the run's gates.",
   "input": "crate::code_run::MemoryEdgeInput",
   "output": "crate::code_run::MemoryEdgeOutput",
   "scope": "Write",

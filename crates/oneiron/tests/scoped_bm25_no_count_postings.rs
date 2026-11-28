@@ -938,6 +938,7 @@ impl oneiron::code_run::AgentVerbDoor for RoomRecordsReader {
             _ => Err(oneiron::code_run::AgentVerbRefusal {
                 code: "room_fixture_search_only".to_owned(),
                 hook_notice: None,
+                reason_codes: Vec::new(),
             }),
         }
     }

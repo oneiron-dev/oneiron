@@ -1,0 +1,14 @@
+{
+  "name": "vault.arms.units.cancel",
+  "description": "Withdraws a unit of an experiment arm before its job starts, returning its seconds to the pools it drew, or cancels its started job. The owner calls it, or an agent whose Grant names it and that reserved the unit.",
+  "input": "crate::experiment_arm::UnitCancelRequest",
+  "output": "crate::experiment_arm::UnitView",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.arms.units.cancel\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "act_class": "reversible_work",
+  "admission": { "unrestricted_record_scope": true },
+  "section": false,
+  "host_door_proof": "verb_grant_caller"
+}

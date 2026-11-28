@@ -135,6 +135,7 @@ fn executor_config(run_id: EntityId, task: &str) -> EngineExecutorConfig {
     EngineExecutorConfig {
         run_id,
         task: task.to_owned(),
+        caller_source_digest: None,
         prompt_package_root: workspace_test_prompt_package_root()
             .expect("workspace test prompt package"),
         model: ModelId::new("test/executor@v1").expect("model id"),

@@ -62,6 +62,7 @@ use self::query::{
     compute_avgdl, lexical_query_hint_scope_id, posting_scores_for_hidden_row,
     scores_for_use_limited, scores_for_withdrawn,
 };
+pub(crate) use self::scoring::{row_holds_term, term_rows_at_most};
 #[cfg(test)]
 use crate::analyzer::AnalyzerChannel;
 use crate::analyzer::{AnalyzerContext, MultilingualAnalyzer};

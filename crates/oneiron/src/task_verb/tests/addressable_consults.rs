@@ -55,3 +55,31 @@ fn child_consult_answers_abstains_and_refuses_dangling_actor() {
     );
     assert_eq!(task_entity_census(&vault), before);
 }
+
+/// A consult addressed to a running child is its inbox input, which no
+/// attempt leases: the child's own run lands it whatever TASK that run
+/// leased. Any other run lands a consult only on the TASK it leased.
+#[test]
+fn child_consult_lands_from_the_child_run_and_elsewhere_only_from_its_lease() {
+    let (_dir, vault) = open_consult_vault();
+    let owner = own_agent(&vault);
+    let child = consult_peer(&vault, 0xE2);
+    let question = consult_turn(&vault, 0x7A);
+    let spec = consult_spec(question, child, CONSULT_DEADLINE)
+        .with_assignee(TaskAssignee::Child { actor_ref: child });
+    let task = vault
+        .memory(owner, EdgeActorClass::Agent)
+        .tasks_create(&spec)
+        .unwrap()
+        .task_ref
+        .unwrap();
+    let lands = |leased: Option<EntityId>, actor: EntityId| {
+        crate::task_verb::run_rows::consult_result::lands_from_run(&vault, task, leased, actor)
+            .unwrap()
+    };
+    let other_task = EntityId::now();
+    assert!(lands(Some(other_task), child));
+    assert!(!lands(Some(other_task), owner));
+    assert!(!lands(None, owner));
+    assert!(lands(Some(task), owner));
+}
