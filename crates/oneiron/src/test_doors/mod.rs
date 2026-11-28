@@ -131,6 +131,7 @@ pub mod dreamer_partition_window;
 pub mod dreamer_promotion_seconds;
 pub mod dreamer_signed_claim_recall;
 pub mod dreamer_stage_line;
+pub mod egress_redirects;
 pub mod enum_name_rows;
 pub mod epoch_lineage_pointer;
 pub mod erase_preview_rows;

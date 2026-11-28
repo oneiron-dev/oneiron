@@ -231,6 +231,7 @@ async fn cross(row: LimitRow) -> Crossing {
             | EngineLimit::OrganMeshObjectBytes
             | EngineLimit::OrganMeshStagedBytes
             | EngineLimit::SandboxEgressResponseBytes
+            | EngineLimit::SandboxEgressRedirects
             | EngineLimit::DeadlineJobsPerCaller
             | EngineLimit::BackupHandoffPendingBackups
             | EngineLimit::BackupHandoffPendingBytes
