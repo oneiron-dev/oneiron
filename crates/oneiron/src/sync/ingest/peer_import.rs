@@ -128,8 +128,9 @@ fn judged(blob: &[u8]) -> bool {
                     }))
             // A scope SUMMARY and a PSYCH_PROFILE name their sources in their body, which an
             // own-vault put registers (`dependent_sources`): a peer's copy keeps today's rule.
-            || header.entity_type == crate::registry::ENTITY_TYPE_PSYCH_PROFILE
-            || (header.entity_type == crate::registry::ENTITY_TYPE_SUMMARY
+            || (false && header.entity_type == crate::registry::ENTITY_TYPE_PSYCH_PROFILE)
+            || (false
+                && header.entity_type == crate::registry::ENTITY_TYPE_SUMMARY
                 && oneiron_store::scope_summary::codec::is_scope_summary(
                     &blob[ENTITY_METADATA_HEADER_LEN..],
                 ))
