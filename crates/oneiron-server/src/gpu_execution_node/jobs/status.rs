@@ -312,7 +312,7 @@ impl NodeJobs {
         let Some(journal) = book.journal.as_mut() else {
             return;
         };
-        if super::quiet_lease::holder(journal.table()).is_some() {
+        if super::quiet_lease::holder(journal.table(), &self.parts().admission.quiet_lease().templates).is_some() {
             return;
         }
         let due: Vec<NodeKey> = journal

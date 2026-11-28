@@ -86,8 +86,13 @@ impl QuietLease {
 /// The key that holds the lease now, if one does: a key that took it at its
 /// reserve (its `Reserved` record), whatever its template says now.
 #[must_use]
-pub(super) fn holder(table: &KeyTable) -> Option<&NodeKey> {
-    table.iter().find(|key| key.quiet && holds_lease(key))
+pub(super) fn holder<'t>(table: &'t KeyTable, templates: &BTreeSet<String>) -> Option<&'t NodeKey> {
+    table.iter().find(|key| {
+        key.reserve
+            .as_ref()
+            .is_some_and(|reserve| templates.contains(&reserve.pin.template))
+            && holds_lease(key)
+    })
 }
 
 /// Whether `key` is done with the host: ended, its release check not leaving
@@ -231,10 +236,10 @@ impl NodeJobs {
         table: &KeyTable,
         event: &mut JournalEvent,
     ) -> Option<JobAnswer> {
-        if holder(table).is_some() {
+        let lease = self.parts().admission.quiet_lease();
+        if holder(table, &lease.templates).is_some() {
             return Some(busy());
         }
-        let lease = self.parts().admission.quiet_lease();
         let machine = self.parts().machine.to_ulid();
         let found = lease.tag.as_deref().map(read_tag);
         if let Some(Ok(Some(text))) = &found
@@ -296,7 +301,7 @@ impl NodeJobs {
         let line = book
             .journal
             .as_ref()
-            .and_then(|journal| holder(journal.table()))
+            .and_then(|journal| holder(journal.table(), &lease.templates))
             .and_then(|key| {
                 let template = &key.reserve.as_ref()?.pin.template;
                 Some(tag_line(&machine, template, &key.id))
