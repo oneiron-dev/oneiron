@@ -264,9 +264,13 @@ impl ActionRegistry {
     /// run row registered below. A custody row whose input carries a
     /// secret's value or its sealed input (`CUSTODY_VALUE_ROWS`, FIX 4993)
     /// is not offered: an action keeps its whole input in its replay record.
+    /// A row served by its HTTP facade door only (`"mcp": "facade"`) is not
+    /// offered either: an action would be a second door to it (FIX
+    /// EXECUTE-CALLER-CODE).
     pub fn register_sdk_verbs(&mut self) -> Result<()> {
         for verb in AgentVerb::ALL.iter().copied().filter(|verb| {
             verb.is_facade()
+                && verb.is_code_mode()
                 && !super::live_run::is_live_run_verb(verb.as_str())
                 && !RunVerb::from_name(verb.as_str())
                     .is_some_and(|run| RunVerb::MEMORY_RUN.contains(&run))

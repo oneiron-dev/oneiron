@@ -329,6 +329,7 @@ fn config(task: &str) -> EngineExecutorConfig {
     EngineExecutorConfig {
         run_id: id(0x11),
         task: task.to_owned(),
+        caller_source_digest: None,
         prompt_package_root: PathBuf::from("/prompt-package"),
         model: ModelId::new("local/test-model@v1").expect("a valid model id"),
         model_locality: ModelLocality::OnDevice,

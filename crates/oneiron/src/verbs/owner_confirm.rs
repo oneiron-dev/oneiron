@@ -435,7 +435,7 @@ pub fn preview_owner_confirm(
         }
         "vault.records.erase_confirm" => {
             let (typed, bare) = confirm_free_input::<RecordEraseConfirmRequest>(request.input)?;
-            let (_, view) = record_erase_view(memory, &typed.record)?;
+            let (_, view) = record_erase_view(memory, caller, &typed.record)?;
             let shown = serde_json::to_value(&view)
                 .map_err(|_| MemoryError::bad_request("the erase preview does not encode"))?;
             (bare, shown, true)

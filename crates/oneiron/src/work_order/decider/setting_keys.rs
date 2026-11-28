@@ -1,9 +1,10 @@
 //! The slot deciders' Setting keys (pass 34, 1.2 and 6.3; row P1): per slot (the item: `rank`,
 //! `place` or `after`), the Grant the owner named to decide it, how long the loop waits for its
 //! answer, and how often an hour it may be asked; for PLACE alone, how long an order its
-//! decider holds waits before it is placed again. Each is the owner's, read in one place
-//! ([`slot_policy_in_txn`], [`place_wait_reask_ms_in_txn`]), at the vault or at one line's
-//! project.
+//! decider holds waits before it is placed again, and how long the home leaves an agent run
+//! placed on another machine (row P4). Each is the owner's, read in one place
+//! ([`slot_policy_in_txn`], [`place_wait_reask_ms_in_txn`], [`place_grace_secs_in_txn`]), at the
+//! vault or at one project's.
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -26,6 +27,12 @@ pub const SLOT_MAX_ASKS_PER_HOUR_DEFAULT: u32 = 120;
 pub const PLACE_WAIT_REASK_MS_DEFAULT: u64 = 60_000;
 /// The longest such wait: one hour, the span of a slot's ask ceiling.
 pub const PLACE_WAIT_REASK_MS_MAX: u64 = 3_600_000;
+/// How long, by default, the vault's home leaves an agent run placed on another machine before
+/// it takes the run itself, in milliseconds (row P4): the two minutes the cloud placement grace
+/// held before it became this setting.
+pub const PLACE_GRACE_MS_DEFAULT: u64 = 120_000;
+/// The longest such grace: one hour.
+pub const PLACE_GRACE_MS_MAX: u64 = 3_600_000;
 
 /// The Grant the owner named to decide a slot: its id, as the setting stores it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -74,6 +81,10 @@ fn place_wait_reask_ms() -> u64 {
     PLACE_WAIT_REASK_MS_DEFAULT
 }
 
+fn place_grace_ms() -> u64 {
+    PLACE_GRACE_MS_DEFAULT
+}
+
 crate::setting::setting_keys! {
     /// The Grant that decides the slot (item: rank, place or after) among the options the
     /// engine lists, in place of the slot's rule. Null is none: the rule decides. The Grant must
@@ -103,6 +114,14 @@ crate::setting::setting_keys! {
     /// at most 3600000. Longer is tighter: fewer asks.
     pub(crate) SLOT_WAIT_REASK_MS: u64 = "policy.slots.wait_reask_ms" {
         kind: Kind::new(place_wait_reask_ms).higher(),
+        scopes: &[ScopeKind::Vault, ScopeKind::Project],
+        item: Some(PLACE_SLOT),
+    };
+    /// How long the vault's home leaves an agent run placed on another machine (item: place)
+    /// before it takes the run itself, in milliseconds; other machines wait the handover grace.
+    /// Default 120000; at most 3600000. Longer is tighter: the placement holds longer.
+    pub(crate) SLOT_PLACE_GRACE_MS: u64 = "policy.slots.place_grace_ms" {
+        kind: Kind::new(place_grace_ms).higher(),
         scopes: &[ScopeKind::Vault, ScopeKind::Project],
         item: Some(PLACE_SLOT),
     };
@@ -163,4 +182,23 @@ pub(crate) fn place_wait_reask_ms_in_txn(
         .read_in_txn(vault, txn, &known, Some(slot_item(SlotName::Place)))?
         .value;
     Ok(reask_ms.min(PLACE_WAIT_REASK_MS_MAX))
+}
+
+/// How long the vault's home leaves an agent run placed on another machine, in `txn`, in whole
+/// seconds (the lease's unit), rounded up: at `project`'s scope when given (the run's), else at
+/// the vault's. At most [`PLACE_GRACE_MS_MAX`].
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn place_grace_secs_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    project: Option<EntityId>,
+) -> Result<u64> {
+    let known: Vec<SettingScope> = project.map(SettingScope::Project).into_iter().collect();
+    let grace_ms = SLOT_PLACE_GRACE_MS
+        .read_in_txn(vault, txn, &known, Some(slot_item(SlotName::Place)))?
+        .value;
+    Ok(grace_ms.min(PLACE_GRACE_MS_MAX).div_ceil(1_000))
 }

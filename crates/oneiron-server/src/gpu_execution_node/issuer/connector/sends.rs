@@ -122,6 +122,25 @@ impl VaultMachineConnector {
         })
     }
 
+    /// The node's receipt of the key when it says the key has ended, asked before a revoke
+    /// closes the key, so an end that came before the revoke is not taken for the revoke's.
+    /// `None` when the node still runs it, does not hold it, did not answer, or its receipt
+    /// does not check: the revoke then closes the key and stops it.
+    pub(super) fn ended_at_node(&self, row: &JobDispatch) -> Option<JobReceipt> {
+        let answer = self.parts.client.job_status(
+            row.machine,
+            &JobStatusRequest::Status {
+                key: row.key.clone(),
+            },
+        );
+        let Ok(JobStatusAnswer::Known(signed)) = answer else {
+            return None;
+        };
+        self.admit(row, signed)
+            .ok()
+            .filter(|receipt| receipt.state == JobState::Ended)
+    }
+
     /// One stop of the key: the node's receipt when it answered with one. An absent key the
     /// node journaled, and a lost history, are marked.
     pub(super) fn stop(&self, row: &JobDispatch) -> Result<Option<JobReceipt>, GpuConnectorError> {

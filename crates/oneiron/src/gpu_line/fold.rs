@@ -275,6 +275,10 @@ pub struct BudgetPolicy {
     pub review_check_secs: u64,
     /// A first-allowance hold no claim ever drew lapses after this long.
     pub hold_ttl_secs: u64,
+    /// A unit claim whose job has not started this long after its
+    /// reservation is released (design 5.2, custody): the next attempt or a
+    /// late start finds it so, by a compare-and-set on its revision.
+    pub claim_custody_secs: u64,
     /// Attempts of one family that may run at once; 0 is no cap (pass 34,
     /// 4.5). The reserve door reads it.
     pub max_running_per_family: u32,
@@ -321,6 +325,7 @@ impl Default for BudgetPolicy {
             new_idea_periods: defaults::NEW_IDEA_PERIODS,
             review_check_secs: defaults::REVIEW_CHECK_SECS,
             hold_ttl_secs: defaults::HOLD_TTL_SECS,
+            claim_custody_secs: defaults::CLAIM_CUSTODY_SECS,
             max_running_per_family: defaults::MAX_RUNNING_PER_FAMILY,
             forecast_required: defaults::FORECAST_REQUIRED,
             forecast_score_after: defaults::FORECAST_SCORE_AFTER,

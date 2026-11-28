@@ -72,12 +72,12 @@ act class:
 
 | tool | annotations |
 |---|---|
-| a read verb, `setup_oneiron`, `read_result` | `readOnlyHint: true` |
+| a read verb, `setup_oneiron` | `readOnlyHint: true` |
 | a write an undo restores (`reversible_work`) | `readOnlyHint: false`, `destructiveHint: false` |
 | a delete (of items or the whole vault), an erase, a member removal | `readOnlyHint: false`, `destructiveHint: true` |
 | a send under a delegated identity, a legal send | `readOnlyHint: false`, `openWorldHint: true` |
 | any other act class | `readOnlyHint: false` |
-| an `unstated` verb, `execute_code`, `invoke_action` | none |
+| an `unstated` verb, `execute`, `resume`, `invoke_action` | none |
 
 ChatGPT treats a tool without `readOnlyHint` as a write action and asks you
 to confirm each call, so a read verb runs without asking and every other

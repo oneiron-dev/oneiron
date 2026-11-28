@@ -244,6 +244,22 @@ impl Listing {
         }
     }
 
+    /// The relevance bar measured in the space this listing serves
+    /// ([`evidence::measured_recall_bar`]): only for a server that names the
+    /// shipped model and its measured profile; `None` for any other, such as
+    /// one that names no profile.
+    pub(crate) fn recall_bar(&self, config: &EmbedderConfig) -> Option<f32> {
+        let profile = self
+            .profile
+            .clone()
+            .and_then(|profile| serde_json::from_value::<RunProfile>(profile).ok())?;
+        evidence::measured_recall_bar(
+            self.model_id.as_deref()?,
+            &profile,
+            evidence::endpoint_queries_unprompted(config),
+        )
+    }
+
     /// Whether an answer names what this listing did: `embedder serve` names
     /// the model it loaded, its transform and its profile in every answer,
     /// and any other server none of them.

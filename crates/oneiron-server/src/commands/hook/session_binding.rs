@@ -36,20 +36,24 @@
 //! folder (its start ran before this record, or could write none) queues
 //! locally, as every hand-over did before.
 //!
-//! Files are only added. Each is written under a staging name no other
-//! writer uses and renamed into place, so starts of one session running at
+//! The board mark and shown recall keys live beside the bindings but are
+//! not binding records: they expire with the folder they sit in
+//! (REVIEW-10587 P1 4).
+//!
+//! Binding records are only added. Each is written under a staging name no
+//! other writer uses and renamed into place, so starts of one session running at
 //! once never replace or remove each other's file, and a writer that fails
 //! removes only its own staging file. A file anyone else could write is
 //! never read. No record other than `local` is ever removed, so a session
 //! that bound a hosted vault, or more than one vault, hands over by its
 //! whole record however long it waited (REVIEW-9914). The folders of
-//! sessions whose every file is a `local` record or a staging file, all
-//! older than [`KEEP_FOR`], are removed when another session records: such
-//! a session queues locally with its record or without it. That removal
-//! may list a folder just before a start of its session adds a file, and
-//! remove the `local` record after, so a start adding another binding
-//! beside a `local` record first records `unknown`, which is never removed:
-//! the log stays mixed when the `local` record goes (FIX
+//! sessions whose every file is a `local` record, a staging file or hook
+//! state, all older than [`KEEP_FOR`], are removed when another session
+//! records: such a session queues locally with its record or without it.
+//! That removal may list a folder just before a start of its session adds a
+//! file, and remove the `local` record after, so a start adding another
+//! binding beside a `local` record first records `unknown`, which is never
+//! removed: the log stays mixed when the `local` record goes (FIX
 //! HOOK-SESSION-LOCAL-RECORD-EXPIRY-RACE).
 
 use std::ffi::{OsStr, OsString};
@@ -69,6 +73,8 @@ use crate::commands::{credential_file, local_servers};
 const LOCAL: &str = "local";
 /// The file of a session whose earlier turns' vault is not known.
 const UNKNOWN: &str = "unknown";
+pub(super) const BOARD_KEYFRAME: &str = "board-keyframe";
+pub(super) const CARRIER_LINES: &str = "carrier-lines";
 /// The start of a hosted vault's file name.
 const HOSTED_PREFIX: &str = "hosted-";
 /// The longest hosted vault file read; one is a few hundred bytes.
@@ -226,7 +232,7 @@ pub(super) fn bound(host: HookHost, session: &str) -> Option<SessionBinding> {
         .ok()?
         .filter_map(Result::ok)
         .map(|entry| entry.file_name())
-        .filter(|name| !staging(name));
+        .filter(|name| binding_record(name));
     let first = files.next()?;
     if files.next().is_some() {
         return Some(SessionBinding::Mixed);
@@ -258,7 +264,7 @@ pub(super) fn bound(host: HookHost, session: &str) -> Option<SessionBinding> {
 /// The folder of `host`'s session `session`, when its id is a plain name:
 /// ASCII letters, digits, dashes and underscores, as hosts name sessions, so
 /// it names no folder outside the run folder's.
-fn session_folder(host: HookHost, session: &str) -> Option<PathBuf> {
+pub(super) fn session_folder(host: HookHost, session: &str) -> Option<PathBuf> {
     let plain = !session.is_empty()
         && session.len() <= MAX_SESSION_ID_BYTES
         && session
@@ -271,8 +277,8 @@ fn session_folder(host: HookHost, session: &str) -> Option<PathBuf> {
 }
 
 /// The names of the records the starts of the session whose folder is
-/// `folder` made: every file but the staging files; none when there is no
-/// folder.
+/// `folder` made: every file but staging files and the board and recall
+/// hook state; none when there is no folder.
 fn records(folder: &Path) -> Vec<OsString> {
     let Ok(entries) = fs::read_dir(folder) else {
         return Vec::new();
@@ -280,8 +286,12 @@ fn records(folder: &Path) -> Vec<OsString> {
     entries
         .filter_map(Result::ok)
         .map(|entry| entry.file_name())
-        .filter(|name| !staging(name))
+        .filter(|name| binding_record(name))
         .collect()
+}
+
+fn binding_record(name: &OsStr) -> bool {
+    !staging(name) && name != OsStr::new(BOARD_KEYFRAME) && name != OsStr::new(CARRIER_LINES)
 }
 
 /// Whether `name` is a writer's staging file, not yet a record.
@@ -294,18 +304,8 @@ fn staging(name: &OsStr) -> bool {
 /// writer's alone, then renamed into place, where a file of that name is
 /// replaced by the same bytes. A writer that fails removes its staging file
 /// alone.
-fn add(folder: &Path, name: &str, body: &[u8]) -> anyhow::Result<()> {
-    local_servers::ensure_run_dir()?;
-    let sessions = folder
-        .parent()
-        .ok_or_else(|| anyhow::anyhow!("{} is in no folder", folder.display()))?;
-    for dir in [sessions, folder] {
-        match fs::DirBuilder::new().mode(0o700).create(dir) {
-            Ok(()) => {}
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-            Err(error) => anyhow::bail!("create {}: {error}", dir.display()),
-        }
-    }
+pub(super) fn add(folder: &Path, name: &str, body: &[u8]) -> anyhow::Result<()> {
+    ensure_session_folder(folder)?;
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
@@ -317,6 +317,21 @@ fn add(folder: &Path, name: &str, body: &[u8]) -> anyhow::Result<()> {
     if let Err(error) = written {
         let _ = fs::remove_file(&staged);
         anyhow::bail!("write {}: {error}", folder.join(name).display());
+    }
+    Ok(())
+}
+
+pub(super) fn ensure_session_folder(folder: &Path) -> anyhow::Result<()> {
+    local_servers::ensure_run_dir()?;
+    let sessions = folder
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("{} is in no folder", folder.display()))?;
+    for dir in [sessions, folder] {
+        match fs::DirBuilder::new().mode(0o700).create(dir) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => anyhow::bail!("create {}: {error}", dir.display()),
+        }
     }
     Ok(())
 }
@@ -339,8 +354,8 @@ fn add_hosted(folder: &Path, binding: &HostedBinding) -> anyhow::Result<()> {
 }
 
 /// Removes the folders of sessions other than the one at `own` whose files
-/// are all `local` records or staging files, written more than [`KEEP_FOR`]
-/// ago. A folder holding any other record stays: removing it, or any part
+/// are all `local` records, staging files or hook state ([`BOARD_KEYFRAME`],
+/// [`CARRIER_LINES`]), written more than [`KEEP_FOR`] ago. A folder holding any other record stays: removing it, or any part
 /// of it, could leave a session that may still hand over with no record, or
 /// with one of the vaults it bound alone (REVIEW-9914). A start that adds a
 /// file after this listed the folder recorded `unknown` first
@@ -363,7 +378,7 @@ fn remove_old(own: &Path) {
     };
     let held = |path: &Path| {
         path.file_name()
-            .is_some_and(|name| !staging(name) && name != OsStr::new(LOCAL))
+            .is_some_and(|name| binding_record(name) && name != OsStr::new(LOCAL))
     };
     for entry in entries.filter_map(Result::ok) {
         let folder = entry.path();

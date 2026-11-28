@@ -303,18 +303,15 @@ impl Rollout {
         self.forked_from = str_field(payload, "forked_from_id").map(str::to_owned);
         self.own_history_from = ordinal;
         self.started_at_ms = time_field(payload, "timestamp").or(at);
+        // FIX SESSION-PROJECT-NOTE-MESSAGE-PLACEMENT PR D review round 2: the file's own meta
+        // names the session's folder in both forms, a `session_meta` line and a legacy
+        // unwrapped first line.
+        self.cwd = str_field(payload, "cwd").map(str::to_owned);
     }
 
     fn line(&mut self, kind: &str, payload: &Value, line: usize, at: Option<u64>) {
         match kind {
-            "session_meta" => {
-                // The file's own meta comes first; a copied history's metas
-                // are its parent's.
-                if self.session.is_none() {
-                    self.cwd = str_field(payload, "cwd").map(str::to_owned);
-                }
-                self.meta(payload, line, at);
-            }
+            "session_meta" => self.meta(payload, line, at),
             "response_item" => self.response_item(payload, line, at),
             "event_msg" => self.event(payload, line, at),
             // Turn context, compaction (its replacement history is a copy),

@@ -1,9 +1,11 @@
 //! Read-only extraction children attenuated from one prepared branch.
 use super::*;
+use crate::context_board::one_line_token;
 use crate::dreamer_consolidation::branch::QueuedBranch;
 use crate::dreamer_consolidation::call_labels::{CallLabelMap, LabelKind};
 use crate::dreamer_consolidation::extraction_step::render_host_material;
 use crate::dreamer_consolidation::sieve_ports::SliceCall;
+use crate::dreamer_consolidation::turn_text::writers::{TurnSpeakers, speaker_labels};
 
 pub(in crate::dreamer_consolidation) struct ExtractionSlice {
     pub(in crate::dreamer_consolidation) turns: Vec<EntityId>,
@@ -153,6 +155,25 @@ impl BranchResources<'_> {
             );
             groups.entry(key).or_default().push((*id, facts));
         }
+        let speakers: BTreeMap<EntityId, Vec<EntityId>> = {
+            let vault = self.read.vault();
+            let txn = vault.store.env.read_txn()?;
+            let rule = TurnSpeakers::read_in(vault, &txn)?;
+            let mut speakers = BTreeMap::new();
+            for (id, facts) in groups.values().flatten() {
+                let people = rule.people_in(
+                    vault,
+                    &txn,
+                    facts.speaker.as_deref(),
+                    facts.imported,
+                    self.texts.get(id),
+                )?;
+                if !people.is_empty() {
+                    speakers.insert(*id, people);
+                }
+            }
+            speakers
+        };
         // The material the wake's admitted `host.wake` hooks added leads
         // every slice's input (FIX 10665): context for the call, never a
         // turn, so no label names it and nothing cites it. The material does
@@ -244,21 +265,25 @@ impl BranchResources<'_> {
                             }
                         }
                         let turn = labels.assign(LabelKind::Turn, *id);
-                        // The PERSON an imported turn's source names as its
-                        // speaker shows by its label beside the role (FIX
-                        // 15412); the role, the words and their offsets
-                        // stay as they are, and a turn that names no one
-                        // reads as before.
-                        let speaker = match self.texts.get(id).and_then(TurnText::source_speaker) {
-                            Some(person) => {
-                                format!(" {}", labels.assign(LabelKind::Entity, person))
-                            }
-                            None => String::new(),
-                        };
+                        // Label the PERSON an imported turn's source names
+                        // (FIX 15412), or the writers of a native person turn:
+                        // every such turn in a shared vault, each one its owner
+                        // did not write alone in a personal vault (FIX
+                        // DREAMER-NATIVE-PERSON-TURN-UNATTRIBUTED).
+                        // Fence the role and words to one physical line, as the
+                        // context board fences its rows (FIX
+                        // DREAMER-TRANSCRIPT-TURN-TEXT-UNFENCED): each control
+                        // character and U+2028/U+2029 shows as a space. A quote
+                        // binds against these fenced words and maps back to the
+                        // stored bytes (`SourceShown::one_line_fenced`).
+                        let speaker = speaker_labels(
+                            &mut labels,
+                            speakers.get(id).map_or(&[][..], Vec::as_slice),
+                        );
                         transcript.push_str(&format!(
                             "[{turn} {}{speaker}] {}\n",
-                            facts.speaker.as_deref().unwrap_or("unknown"),
-                            facts.text.as_deref().unwrap_or_default(),
+                            one_line_token(facts.speaker.as_deref().unwrap_or("unknown")),
+                            one_line_token(facts.text.as_deref().unwrap_or_default()),
                         ));
                     }
                     // A slice is low-trust by what it reads: its own TURNs,
@@ -349,10 +374,12 @@ impl BranchResources<'_> {
 
 /// What a turn's line adds to a call's transcript beside its words and its
 /// speaker, at most: its label and brackets, the label of the person an
-/// imported turn names, and the header of a conversation it opens.
+/// imported turn names or of a native person turn's writer, and the header
+/// of a conversation it opens.
 const TURN_LINE_FRAME_BYTES: usize = 48;
 
 /// The bytes a turn's line may add to a call's transcript.
+/// Raw lengths are an upper bound because the one-line fence never lengthens text.
 fn turn_line_bytes(facts: &TurnBodyFacts) -> usize {
     facts.text.as_deref().map_or(0, str::len)
         + facts.speaker.as_deref().unwrap_or("unknown").len()
@@ -496,6 +523,49 @@ pub(crate) fn native_slice_calls_in_room_for_test(
     material: &[String],
     room: Option<usize>,
 ) -> crate::memory::MemoryResult<Vec<(String, bool)>> {
+    Ok(
+        native_slices_in_room_for_test(vault, attempt, turns, material, room)?
+            .into_iter()
+            .map(|slice| (slice.transcript, slice.page_past_room.is_some()))
+            .collect(),
+    )
+}
+
+/// The native extraction slices over `turns` of `attempt`, as
+/// [`native_slice_calls_in_room_for_test`] builds them with no host material
+/// and no room bound, each as its transcript and whether every row it was
+/// read from still stands now, as the model run's source fence asks before
+/// it sends (REVIEW-10620 round 1).
+///
+/// # Errors
+///
+/// As [`native_slice_calls_in_room_for_test`].
+#[cfg(oneiron_test_support)]
+pub(crate) fn native_slice_sources_standing_for_test(
+    vault: &Vault,
+    attempt: AttemptId,
+    turns: &[EntityId],
+) -> crate::memory::MemoryResult<Vec<(String, bool)>> {
+    Ok(
+        native_slices_in_room_for_test(vault, attempt, turns, &[], None)?
+            .into_iter()
+            .map(|slice| {
+                let stands = !crate::code_run::source_rows_withdrawn(vault, &slice.sources);
+                (slice.transcript, stands)
+            })
+            .collect(),
+    )
+}
+
+/// The slices both test reads above take.
+#[cfg(oneiron_test_support)]
+fn native_slices_in_room_for_test(
+    vault: &Vault,
+    attempt: AttemptId,
+    turns: &[EntityId],
+    material: &[String],
+    room: Option<usize>,
+) -> crate::memory::MemoryResult<Vec<ExtractionSlice>> {
     use crate::dreamer_consolidation::wake_plan::AttemptPreparation;
     use crate::memory::MemoryError;
     let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
@@ -522,10 +592,7 @@ pub(crate) fn native_slice_calls_in_room_for_test(
     let (slices, _) = resources
         .extraction_slices(turns, bound)
         .map_err(MemoryError::from)?;
-    Ok(slices
-        .into_iter()
-        .map(|slice| (slice.transcript, slice.page_past_room.is_some()))
-        .collect())
+    Ok(slices)
 }
 
 /// The calls [`fit_chunks`] keeps for items of `lines` bytes cut by

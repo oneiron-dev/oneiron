@@ -101,26 +101,31 @@ pub(super) async fn handle_window_sync(
         let setup = key == WindowKey::from_timestamp(oneiron::embed::EMBEDDING_SETUP_LEARNED_AT);
         let refusal_keeps_socket = sub_tag == window_sub_tags::FOLLOW_REQUEST
             || (conn_state.selector_lane.member().is_some() && !setup);
-        if (setup || refusal_keeps_socket)
-            && protocol::is_residence_version(conn_state.protocol_version)
-            && !read_window_list(&server.root_doc).contains(&key)
-        {
-            if refusal_keeps_socket {
-                refuse_follow(window_key, direct_tx)?;
-            }
-            return Ok(ControlFlow::Continue(()));
-        }
+        // A malformed request closes the socket before the root's window list is read, so a
+        // listed and an unlisted key get the same answer to it. A member lane gets no root; when
+        // the list came first, a garbage selector told it which windows the home lists
+        // (FOLLOW-REQUEST-WINDOW-LIST-ORACLE).
         if !protocol::is_residence_version(conn_state.protocol_version)
             || payload.len() > server.config.max_update_payload
-            || !read_window_list(&server.root_doc).contains(&key)
         {
             return Err(ProtocolError::InvalidPayload(
                 "invalid window promotion request",
             ));
         }
-        conn_state.bind_window_sync_mode(WindowSyncMode::Residence)?;
         let selector = decode_sync_selector(payload)
             .map_err(|_| ProtocolError::InvalidPayload("invalid promotion selector"))?;
+        if !read_window_list(&server.root_doc).contains(&key) {
+            if !setup && !refusal_keeps_socket {
+                return Err(ProtocolError::InvalidPayload(
+                    "invalid window promotion request",
+                ));
+            }
+            if refusal_keeps_socket {
+                refuse_follow(window_key, direct_tx)?;
+            }
+            return Ok(ControlFlow::Continue(()));
+        }
+        conn_state.bind_window_sync_mode(WindowSyncMode::Residence)?;
         let window = server
             .serve_window(&key)
             .await

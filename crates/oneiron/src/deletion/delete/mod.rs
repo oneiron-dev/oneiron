@@ -10,6 +10,7 @@ mod plan;
 mod preflight;
 mod preview;
 mod receipt;
+pub(crate) mod remaining;
 
 pub(crate) use self::confirmed::ConfirmedEraseOutcome;
 pub use self::impact::{HeldBytes, LfsChunkImpact};

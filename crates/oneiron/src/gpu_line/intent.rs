@@ -136,6 +136,13 @@ impl IntentAsk {
         })
     }
 
+    /// The digest of the ask, without its intent key: what a door's logical
+    /// key compares when another intent key names the same thing.
+    #[must_use]
+    pub fn ask_digest(&self) -> &str {
+        &self.ask_digest
+    }
+
     /// Where this ask stands under its key, read in the door's write
     /// transaction before anything is written.
     ///

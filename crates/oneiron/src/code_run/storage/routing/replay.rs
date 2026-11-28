@@ -15,8 +15,8 @@ use std::borrow::Cow;
 
 use super::super::overlay_erase::fence_overlay_replay_in_txn;
 use super::super::records::{
-    MODEL_HEAL_COUNTS, next_additive_heal_count, replay_generation_matches, replay_generation_of,
-    stored_replay_generation,
+    FinishedOutput, MODEL_HEAL_COUNTS, next_additive_heal_count, replay_generation_matches,
+    replay_generation_of, stored_replay_generation,
 };
 use super::super::replay_rows::{self, REPLAY_RECORDS};
 use super::super::response_erase::fence_replay_in_txn;
@@ -139,6 +139,7 @@ impl SessionBinding<'_> {
         expected: Option<CodeRunReplayGeneration>,
         run: EntityId,
         actor: EntityId,
+        output: Option<&FinishedOutput>,
     ) -> Result<CodeRunReplayGeneration> {
         use crate::side_table::RoutedDbs;
         let next_generation = record.generation()?;
@@ -150,19 +151,24 @@ impl SessionBinding<'_> {
         };
         let overlay_record: &CodeRunReplayRecord = &fenced;
         self.answered(|| {
+            let output = output
+                .map(|output| self.prepare_output_row(output, &output.output, record.run_id))
+                .transpose()?;
             self.session
                 .routed_side_txn(&self.route, |wtxn, read, write| {
                     let stored = stored_replay_generation(&read, wtxn, &record.run_id)?;
                     replay_generation_matches(stored, expected)?;
+                    stamp_response_owner_in_txn(&write, wtxn, record.run_id, run, actor)?;
+                    if let Some(output) = &output {
+                        output.publish_in_txn(wtxn, read, write)?;
+                    }
                     match write {
                         RoutedDbs::Base(vault) => {
-                            stamp_response_owner_in_txn(vault, wtxn, record.run_id, run, actor)?;
                             let record = fence_replay_in_txn(vault, wtxn, Cow::Borrowed(record))?;
                             refuse_room_bound_record(&record)?;
                             replay_rows::put_fenced(vault, wtxn, &record)
                         }
                         RoutedDbs::Session(_) => {
-                            stamp_response_owner_in_txn(&write, wtxn, record.run_id, run, actor)?;
                             let record = fence_overlay_replay_in_txn(
                                 &write,
                                 wtxn,

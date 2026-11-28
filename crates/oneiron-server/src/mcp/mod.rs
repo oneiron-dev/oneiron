@@ -16,7 +16,6 @@ mod exec_host;
 mod live_lease_backend;
 #[cfg(feature = "code-sandbox-wasmtime")]
 mod quickjs_provider;
-mod run_seats;
 #[cfg(feature = "code-sandbox-wasmtime")]
 pub use self::quickjs_provider::{
     McpQuickJsProvider, checked_in_quickjs_runtime, checked_in_quickjs_runtime_with_wall,
@@ -49,20 +48,21 @@ pub(crate) use self::codec::mcp_raw_call_arguments;
 pub(crate) use self::endpoint_args::McpHeldContent;
 pub(crate) use self::endpoint_args::validate_mcp_endpoint_tool_args_as;
 pub use self::endpoint_args::{
-    McpCacheHint, McpExecuteCodeToolArgs, McpInvokeActionToolArgs, McpPageRequest,
-    McpReadResultToolArgs, McpResultFacet, McpSetupToolArgs, McpVerbArguments, McpVerbToolArgs,
-    McpVerbToolPayload, validate_mcp_endpoint_tool_args,
+    McpCacheHint, McpExecuteToolArgs, McpInvokeActionToolArgs, McpPageRequest, McpResumeToolArgs,
+    McpSetupToolArgs, McpVerbArguments, McpVerbToolArgs, McpVerbToolPayload,
+    validate_mcp_endpoint_tool_args,
 };
 pub(crate) use self::endpoint_schema::verb_input_unknown_field;
 pub use self::endpoint_schema::{
     MCP_BOARD_BUDGET_TOK_MAX, MCP_CACHE_TTL_MS_MAX, MCP_FRAME_EPOCH_MAX, MCP_PAGE_LIMIT_MAX,
     MCP_PAGE_LIMIT_MIN,
 };
+pub use self::exec_host::McpCodeRunEnd;
 pub use self::exec_host::{
     CodeRunLimits, McpCodeExecutionError, McpCodeExecutionHost, McpCodeExecutionRequest,
-    McpCodeModeProvider, McpCodeRunResumeCondition, McpCodeRunResumed, McpCodeRunSelfBrief,
-    McpEngineNativeCodeHost, PlannedMeter, PlannedModel, PlannedRoute, ReaderMeter,
-    ReaderRequestObserver, RunCompactionSeat, RunProfiledCompactionSeat,
+    McpCodeModeProvider, McpCodeRunInput, McpCodeRunResumeCondition, McpCodeRunResumed,
+    McpCodeRunSelfBrief, McpEngineNativeCodeHost, PlannedMeter, PlannedModel, PlannedRoute,
+    ReaderMeter, ReaderRequestObserver, RunCompactionSeat, RunProfiledCompactionSeat,
     bind_mcp_code_execution_host, mcp_code_execution_host, mcp_code_run_id, mcp_scoped_identity_id,
 };
 pub(crate) use self::exec_host::{
@@ -78,7 +78,9 @@ pub use self::paging::{
 };
 pub(crate) use self::paging::{McpPageCursorState, McpPageSnapshot, mcp_page_argument_digest_held};
 pub use self::registry::McpConnectorActorRegistry;
-pub(crate) use self::results::mcp_stamp_call_receipt;
+pub(crate) use self::results::{
+    MCP_CODE_RUN_CONSENT_POLICY_REF, is_code_run_result, mcp_stamp_call_receipt,
+};
 pub use self::results::{
     McpBoardKeyframe, McpResultMetadata, McpSetupPayload, McpSetupPayloadError, McpSetupSelfBrief,
     mcp_effective_scope_label, mcp_effective_scope_value, mcp_recovery_suggestions,
@@ -86,13 +88,13 @@ pub use self::results::{
 };
 pub use self::surface::{
     MCP_BOARD_BUDGET_TOK, MCP_CODE_HOST_UNBOUND_CODE, MCP_CODE_RUN_SCHEMA_VERSION,
-    MCP_DISCOVER_CACHE_SCOPE, MCP_DISCOVER_TTL_MS, MCP_EXECUTE_CODE_TOOL, MCP_INVOKE_ACTION_TOOL,
-    MCP_PAGE_ITEM_CAP, MCP_READ_RESULT_TOOL, MCP_RESULT_CACHE_SCOPE,
-    MCP_RESULT_META_SCHEMA_VERSION, MCP_RESULT_TTL_MS, MCP_SETUP_INSTRUCTIONS, MCP_SETUP_TOOL,
-    MCP_STREAM_CONNECTION_PREFIX, MCP_VERB_GRAMMAR_SCHEMA_VERSION, McpEndpointTool,
-    McpEndpointToolSchema, McpGeneratedVerbTool, McpRegisteredSurface, McpSurfaceConstructionError,
-    McpSurfaceMode, McpVerbFamily, exported_verb_rows, generated_verb_tools, project_verb_rows,
-    registered_surface, try_registered_surface, try_registered_surface_with_execution,
+    MCP_DISCOVER_CACHE_SCOPE, MCP_DISCOVER_TTL_MS, MCP_EXECUTE_TOOL, MCP_INVOKE_ACTION_TOOL,
+    MCP_PAGE_ITEM_CAP, MCP_RESULT_CACHE_SCOPE, MCP_RESULT_META_SCHEMA_VERSION, MCP_RESULT_TTL_MS,
+    MCP_RESUME_TOOL, MCP_SETUP_INSTRUCTIONS, MCP_SETUP_TOOL, MCP_STREAM_CONNECTION_PREFIX,
+    MCP_VERB_GRAMMAR_SCHEMA_VERSION, McpEndpointTool, McpEndpointToolSchema, McpGeneratedVerbTool,
+    McpRegisteredSurface, McpSurfaceConstructionError, McpSurfaceMode, McpVerbFamily,
+    exported_verb_rows, generated_verb_tools, project_verb_rows, registered_surface,
+    try_registered_surface, try_registered_surface_with_execution,
 };
 pub use self::tool_catalog::{
     MCP_BOOK_OPERATIONS, MCP_SERVER_NAME, MCP_TOOL_ARGS_SCHEMA_VERSION, McpToolValidationError,

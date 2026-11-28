@@ -92,7 +92,7 @@ pub use self::residence::{
     request_ask_option_link, sealed_bundle_relay_observation,
 };
 pub(crate) use self::residence::{
-    catch_up_authority, exchange_checkpoint_roots, exchange_machine_names,
+    catch_up_authority, catch_up_mesh_authority, exchange_checkpoint_roots, exchange_machine_names,
     fetch_owed_machine_history, mark_ungranted_windows_in_txn, observe_sealed_bundle_relay,
     pinned_checkpoint_pending, refresh_followed_tombstones, relay_sealed_bundle,
     request_media_vectors, retry_refused_retains, search_resident,

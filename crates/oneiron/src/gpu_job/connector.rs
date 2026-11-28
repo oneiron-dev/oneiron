@@ -39,6 +39,9 @@ pub enum GpuResourceStatus {
     },
     /// The job's process ended by itself.
     Exited { used_secs: u64 },
+    /// The provider ended the job at its maximum seconds: a hard stop, with or
+    /// without a checkpoint (design pass 33, 8.6).
+    TimeLimit { used_secs: u64 },
     /// The provider no longer knows the resource.
     Gone,
 }
@@ -98,7 +101,8 @@ pub enum GpuJobEnd {
 }
 
 impl GpuJobEnd {
-    /// Whether the workload never ran, so nothing is billed.
+    /// A key that never started bills zero (lead ruling LE-2 = A). This reports whether
+    /// the machine withdrew or refused the key before it ran.
     #[must_use]
     pub fn never_ran(&self) -> bool {
         matches!(

@@ -6,7 +6,9 @@
 
 use super::record::parked_wait_now;
 use super::types::EngineExecutorResult;
-use crate::code_run::{CodeRunReplayGeneration, ExecutorStorage, WaitKey};
+use crate::code_run::{
+    CodeRunReplayGeneration, CodeRunReplayRecord, ExecutorStorage, SelfDurableWait, WaitKey,
+};
 use crate::{EntityId, Vault};
 
 /// A canonical run's committed record as it stands now.
@@ -18,6 +20,14 @@ pub struct CodeRunPosition {
     /// delivered. `None` once the run resumed from its latest wait, or when
     /// it never parked.
     pub parked_wait: Option<WaitKey>,
+}
+
+/// The wait in the canonical record the host already loaded, without entering it.
+pub fn code_run_parked_wait(
+    vault: &Vault,
+    record: &CodeRunReplayRecord,
+) -> EngineExecutorResult<Option<(WaitKey, SelfDurableWait)>> {
+    parked_wait_now(&ExecutorStorage::Canonical(vault), record)
 }
 
 /// Where canonical run `run_id`'s record stands now. `None` when the run

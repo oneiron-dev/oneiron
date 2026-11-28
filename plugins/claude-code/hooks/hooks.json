@@ -1,5 +1,5 @@
 {
-  "description": "Oneiron's Claude Code hook lanes: bind a vault and recall at session start; queue the session's log for import before compaction, after each reply and at session end.",
+  "description": "Oneiron's Claude Code hooks bind a vault at session start, recall after tool results, restore the board after compaction, and queue the session log for import before compaction, after each reply and at session end.",
   "hooks": {
     "SessionStart": [
       {
@@ -7,7 +7,29 @@
           {
             "type": "command",
             "timeout": 15,
-            "command": "oneiron hook --host claude-code session-start --credential-file \"${HOME}/.config/oneiron/claude-code-hooks.cred\""
+            "command": "oneiron hook --host claude-code session-start --credential-file \"${HOME}/.config/oneiron/claude-code-hooks.cred\" --query \" \""
+          }
+        ]
+      },
+      {
+        "matcher": "compact",
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 15,
+            "command": "oneiron hook --host claude-code focus-refresh --credential-file \"${HOME}/.config/oneiron/claude-code.cred\""
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 10,
+            "command": "oneiron hook --host claude-code tool-result --credential-file \"${HOME}/.config/oneiron/claude-code-hooks.cred\""
           }
         ]
       }

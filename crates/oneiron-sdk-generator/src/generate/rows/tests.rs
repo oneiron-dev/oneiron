@@ -13,13 +13,17 @@ fn tree(name: &str, files: &[(&str, &str)]) -> PathBuf {
     fs::create_dir_all(&verbs).expect("a scratch tree");
     // The `facade_types` import reads it before any verb file.
     fs::write(root.join("scripts/sdk/type_names.json"), "{}\n").expect("type_names.json");
+    let verb_tree = root.join("scripts/sdk/verb-tree");
+    fs::create_dir_all(&verb_tree).expect("a verb tree");
+    fs::write(verb_tree.join("families.json"), "{}\n").expect("families.json");
+    fs::write(verb_tree.join("vault_capabilities.json"), "{}\n").expect("vault_capabilities.json");
     for (file, text) in files {
         fs::write(verbs.join(file), text).expect("a verb file");
     }
     root
 }
 
-const BASE: &str = r#""name": "zz_fixture", "input": "ZzInput", "output": "ZzOutput", "call": "zz_call(memory, &input)?", "scope": "Read", "act_class": "unstated", "section": false"#;
+const BASE: &str = r#""name": "zz_fixture", "description": "Reads a fixture.", "input": "ZzInput", "output": "ZzOutput", "call": "zz_call(memory, &input)?", "scope": "Read", "act_class": "unstated", "section": false"#;
 
 // Each expected line: the last stderr line of the Python generator's module level (Python 3.14.7 on nelly) over
 // a tree whose only verb file is the row.
@@ -64,7 +68,7 @@ fn refusals_match_python() {
         ),
         (
             r#""description": "no period""#,
-            "ValueError: zz_fixture: a description is one printable ASCII line of a callable row, ending in a period, with no backslash, double quote or `*/`",
+            "ValueError: zz_fixture: every row has a description: one printable ASCII line ending in a period, with no backslash, double quote or `*/`",
         ),
         (
             r#""admission": [1]"#,
@@ -116,7 +120,7 @@ fn refusals_match_python() {
 fn grant_class_refusals_match_python() {
     // The expected lines are the ones the Python generator printed for the same rows, through both halves of the
     // port harness on G5 with main 30deae1a20e merged, before this change removed it.
-    const RUN: &str = r#""name": "zz_run", "input": "ZzInput", "output": "ZzOutput", "scope": "Write", "act_class": "reversible_work", "context": "run", "effect": "ZzEffect""#;
+    const RUN: &str = r#""name": "zz_run", "description": "Runs a fixture.", "input": "ZzInput", "output": "ZzOutput", "scope": "Write", "act_class": "reversible_work", "context": "run", "effect": "ZzEffect""#;
     let phrase = "ValueError: zz_run: a grant class is one printable ASCII phrase, with no backslash, double quote \
                   or `*/`";
     let keys = "ValueError: zz_run: a run row names its input, scope, act class, effect, output, per-input outputs, run surface \
@@ -172,7 +176,7 @@ fn grant_class_refusals_match_python() {
 
 #[test]
 fn power_is_spawn_or_save_agent() {
-    const RUN: &str = r#""name": "zz_run", "input": "ZzInput", "output": "ZzOutput", "scope": "Write", "act_class": "reversible_work", "context": "run", "effect": "ZzEffect""#;
+    const RUN: &str = r#""name": "zz_run", "description": "Runs a fixture.", "input": "ZzInput", "output": "ZzOutput", "scope": "Write", "act_class": "reversible_work", "context": "run", "effect": "ZzEffect""#;
     let refused = "ValueError: zz_run: a power is `spawn` or `save_agent`";
     let cases: &[(&str, &str)] = &[
         (r#""power": "spawn""#, ""),
@@ -256,6 +260,7 @@ fn sets_share_rows_and_bindings_move() {
         keys,
         [
             "name",
+            "description",
             "input",
             "output",
             "call",

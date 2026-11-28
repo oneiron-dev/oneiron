@@ -1,5 +1,6 @@
 {
   "name": "self.compact",
+  "description": "Requests a fold of all pending marks and compacts settled steps at the run's next step boundary.",
   "input": "crate::compaction::FoldCompactInput",
   "output": "crate::compaction::FoldReply<crate::compaction::FoldCompactAsked>",
   "scope": "Write",

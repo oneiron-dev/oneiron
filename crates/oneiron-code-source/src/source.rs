@@ -134,6 +134,7 @@ pub struct PreparedSource<'a> {
     /// Lines a host prelude put before the authored source (a callable
     /// skill's arguments): a position names the authored line, past them.
     prelude_lines: u32,
+    capture_return: bool,
 }
 
 /// The JavaScript Oxc printed for a TypeScript program, and how its
@@ -208,6 +209,7 @@ pub fn prepare_source(source: &str) -> PreparedSource<'_> {
         transpiled,
         note,
         prelude_lines: 0,
+        capture_return: false,
     }
 }
 
@@ -218,6 +220,27 @@ impl<'a> PreparedSource<'a> {
     pub fn with_prelude_lines(mut self, lines: u32) -> Self {
         self.prelude_lines = lines;
         self
+    }
+
+    /// A caller-source body returns a value instead of writing a REPL finish.
+    #[must_use]
+    pub fn with_return_capture(mut self) -> Self {
+        self.capture_return = true;
+        self
+    }
+
+    /// The QuickJS guest's finish stream takes strings. Encode the return as
+    /// JSON before writing it, so a string stays distinct from a JSON value.
+    /// The caller's own source and its TypeScript preparation stay unchanged.
+    pub fn guest_program(&self) -> std::borrow::Cow<'_, str> {
+        if !self.capture_return {
+            return self.executed().into();
+        }
+        format!(
+            "await (async (run, record, encode) => {{ const value = await run(); record(value === undefined ? \"\" : encode(value) ?? \"\"); }})(async () => {{\n{}\n}}, finish, JSON.stringify);",
+            self.executed()
+        )
+        .into()
     }
 
     /// The program as written: the program of record.
@@ -265,23 +288,42 @@ impl<'a> PreparedSource<'a> {
             transpiled: Some(kept.clone()),
             note: None,
             prelude_lines: self.prelude_lines,
+            capture_return: self.capture_return,
         })
     }
 
-    /// Where a failed TypeScript program threw, in its TypeScript source, as
-    /// the suffix its error carries. `None` for a JavaScript program, whose
-    /// error stays exactly as it was, and for a throw outside the authored
-    /// source (the guest envelope, a helper or a prelude line).
+    /// Where a failed program threw, in its authored source, as the suffix its
+    /// error carries: through the TypeScript map for a TypeScript program, and
+    /// the wrapper-adjusted position directly for a plain JavaScript
+    /// caller-source body (one prepared with [`Self::with_return_capture`]).
+    /// `None` for any other JavaScript program, whose error stays exactly as
+    /// it was, and for a throw outside the authored source (the guest
+    /// envelope, a helper or a prelude line).
     pub fn failure_position(&self, at: Option<GuestPosition>) -> Option<String> {
-        let (line, column) = self
-            .transpiled
-            .as_ref()?
-            .source_position(self.original, at?)?;
-        let line = line
-            .checked_sub(self.prelude_lines)
-            .filter(|line| *line > 0)?;
+        let mut at = at?;
+        if self.capture_return {
+            at = at.after_prefix(1)?;
+        }
+        if let Some(transpiled) = self.transpiled.as_ref() {
+            let (line, column) = transpiled.source_position(self.original, at)?;
+            let line = line
+                .checked_sub(self.prelude_lines)
+                .filter(|line| *line > 0)?;
+            return Some(format!(
+                "; at line {line}, column {column} of the TypeScript source"
+            ));
+        }
+        // A JavaScript program names its position only as caller source: a
+        // hook body's, a foreign step's and a task run's error read as written.
+        if !self.capture_return {
+            return None;
+        }
+        self.original
+            .split('\n')
+            .nth(at.line.checked_sub(1)? as usize)?;
+        let GuestPosition { line, column } = at.after_prefix(self.prelude_lines)?;
         Some(format!(
-            "; at line {line}, column {column} of the TypeScript source"
+            "; at line {line}, column {column} of the JavaScript source"
         ))
     }
 }

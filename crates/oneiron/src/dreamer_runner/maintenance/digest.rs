@@ -1,8 +1,8 @@
 //! One durable proactivity digest per vault cadence, with intent-bound urgent wakes.
 //! A regular digest also carries the cleanup cron's after-notice (OF-449),
 //! the NOTE tombstone review's open proposals (OF-073) and the Dreamer's
-//! applied-maintenance after-notice (FIX 3226) and the drafter line (FIX
-//! 14977).
+//! applied-maintenance after-notice (FIX 3226), the drafter line (FIX 14977)
+//! and the answer-schema line (HOUSE-SCHEMA-SWITCH).
 //! Each digest is stored once, under a stable locator with a content hash
 //! (FIX 2332), and every read, answer and delivery of it is its viewer's
 //! own view, screened of private thread words they do not read (FIX 6411).
@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 mod after_notice;
 mod assembly;
+mod erase;
 mod pending;
 mod policy;
 pub(super) mod policy_author;
@@ -25,6 +26,9 @@ mod private_sources;
 mod urgent;
 mod view;
 pub use after_notice::{APPLIED_GROUP, APPLIED_VIEW, DigestApplied, DigestAppliedItem};
+pub(crate) use erase::erase_sources_in_txn;
+#[cfg(oneiron_test_support)]
+pub(crate) use erase::{claim_digests_indexed_for_test, forget_claim_digest_index_for_test};
 use pending::{pending_proposals, unseen_cleanup, unseen_note_tombstones, unseen_offers};
 pub use policy::{ProactivityPolicyBasis, ProactivityPolicyFiling};
 pub(super) use policy::{ProactivityPolicyInverse, revert_policy_in_txn};
@@ -325,6 +329,10 @@ pub struct ProactivityDigest {
     /// carried yet (FIX 14977).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub drafter: Option<crate::drafter::DigestDrafter>,
+    /// The answer-schema line, on a regular digest with answer-schema events no digest
+    /// carried yet (HOUSE-SCHEMA-SWITCH).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answer_schema: Option<crate::dreamer_consolidation::answer_schema::DigestAnswerSchema>,
     /// The Coach's agent-health cards opened, updated or settled since the
     /// last regular digest (OF-568), concern first and newest first.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -362,6 +370,9 @@ struct DigestState {
     /// The newest drafter event a digest already carried (FIX 14977).
     #[serde(default, with = "crate::serialize::entity_ref::optional")]
     drafter_seen: Option<EntityId>,
+    /// The newest answer-schema event a digest already carried (HOUSE-SCHEMA-SWITCH).
+    #[serde(default, with = "crate::serialize::entity_ref::optional")]
+    answer_schema_seen: Option<EntityId>,
     /// Results an urgent digest carried, by the one owner it went to (FIX
     /// 8952): they leave that owner's own digests, and every other reader's
     /// digest still carries them.
@@ -412,6 +423,12 @@ impl Vault {
             && after_notice::unseen_in_txn(self, &txn, &state.applied_seen)?.is_none()
             && !crate::drafter::unseen_drafter_line_in_txn(&self.store, &txn, state.drafter_seen)?
                 .is_some_and(|line| line.arms())
+            && !crate::dreamer_consolidation::answer_schema::unseen_answer_schema_line_in_txn(
+                &self.store,
+                &txn,
+                state.answer_schema_seen,
+            )?
+            .is_some_and(|line| line.arms())
         {
             // Health cards alone arm it too (FIX 1979). A card touched since
             // the last regular digest joins the first digest whose period

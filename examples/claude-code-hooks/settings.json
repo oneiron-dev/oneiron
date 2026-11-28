@@ -6,7 +6,29 @@
           {
             "type": "command",
             "timeout": 15,
-            "command": "/path/to/oneiron hook --host claude-code session-start --credential-file /path/to/claude-code-hooks.cred"
+            "command": "/path/to/oneiron hook --host claude-code session-start --credential-file /path/to/claude-code-hooks.cred --query \" \""
+          }
+        ]
+      },
+      {
+        "matcher": "compact",
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 15,
+            "command": "/path/to/oneiron hook --host claude-code focus-refresh --credential-file /path/to/claude-code.cred"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 10,
+            "command": "/path/to/oneiron hook --host claude-code tool-result --credential-file /path/to/claude-code-hooks.cred"
           }
         ]
       }

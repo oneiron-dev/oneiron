@@ -1,5 +1,6 @@
 {
   "name": "vault.worlds.privacy.set",
+  "description": "Requests a change to one world's privacy settings and returns the applied change, proposal, or consent ask.",
   "input": "crate::policy_model::WorldPrivacySetInput",
   "output": "crate::policy_model::WorldPrivacySetOutput",
   "scope": "Write",

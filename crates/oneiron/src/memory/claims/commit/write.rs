@@ -64,6 +64,10 @@ impl Memory<'_> {
         birth: Option<&crate::provenance::birth::RowBirth>,
         skip_exact_hook_replay: bool,
     ) -> MemoryResult<CommitReceipt> {
+        // An attached session's write that names no project lands in its folder's project
+        // (RECALL-SESSION-PROJECT), before the prior-head key and the admission read it.
+        let placed = self.placed_in_session_project(input);
+        let input = placed.as_ref().unwrap_or(input);
         refuse_typed_claim_family(input)?;
         // ABC row 22: every claim door that commits here (claim_upsert,
         // commit, claim_propose and the scoped admission) measures the claim

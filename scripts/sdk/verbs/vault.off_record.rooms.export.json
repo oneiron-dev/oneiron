@@ -14,5 +14,6 @@
   "section": false,
   "openapi": true,
   "attachment": "off-record-talk.json",
-  "host_door_proof": "off_record_room"
+  "host_door_proof": "off_record_room",
+  "caller_code": "refused"
 }

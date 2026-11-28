@@ -1,0 +1,6 @@
+vault.notes.create({ kind: string, markdown: string })
+  -> { entity_ref, receipt_ref, record: { short_id } }
+  Adds a NOTE: longer text you write; recall finds it by its words. kind is one of {note_kinds}.
+  Work notes kept for later sessions are "research".
+  To change a note later: verbs.expand("vault.notes.edit").
+  e.g. await vault.notes.create({ kind: "research", markdown: "# D1 test plan: working notes\n- bar: chat >= 1.00x" })

@@ -521,6 +521,7 @@ pub(crate) fn scoped_child_service_admission(
         .ok_or_else(|| AgentVerbRefusal {
             hook_notice: None,
             code: SCOPED_CHILD_SERVICE_UNBOUND.to_owned(),
+            reason_codes: Vec::new(),
         })
 }
 

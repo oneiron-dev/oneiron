@@ -20,7 +20,7 @@ use crate::claim::EvidenceKind;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
+use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead, ShortIdStoreRead};
 use crate::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN,
 };
@@ -35,7 +35,6 @@ pub(crate) fn claim_conversation_sources_in(
     txn: &RoTxn<'_>,
     claim: &EntityId,
 ) -> Result<BTreeSet<EntityId>> {
-    let mut conversations = BTreeSet::new();
     let body = store.port_entity_with_raw(txn, claim, |raw| {
         if raw.first() != Some(&ENTITY_TYPE_CLAIM) || raw.len() < ENTITY_METADATA_HEADER_LEN {
             return Ok(None);
@@ -43,14 +42,50 @@ pub(crate) fn claim_conversation_sources_in(
         Ok(crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true).ok())
     })?;
     let Some(body) = body.flatten() else {
-        return Ok(conversations);
+        return Ok(BTreeSet::new());
     };
-    for source in &claim_sources_in(store, txn, claim, &body)? {
-        if let Some(conversation) = source_conversation_in(store, txn, source)? {
-            conversations.insert(conversation);
+    claim_conversation_walk_in(store, txn, claim, &body)?.collect()
+}
+
+/// Follow the sources in walk order; several sources may lead to the same conversation.
+fn claim_conversation_walk_in<'a>(
+    store: &'a StoreRead<'_>,
+    txn: &'a RoTxn<'_>,
+    claim: &EntityId,
+    body: &crate::ClaimBody,
+) -> Result<impl Iterator<Item = Result<EntityId>> + 'a> {
+    Ok(claim_sources_in(store, txn, claim, body)?
+        .into_iter()
+        .filter_map(move |source| source_conversation_in(store, txn, &source).transpose()))
+}
+
+impl crate::claim::ScopedRead<'_> {
+    /// Short refs for up to three distinct conversations in the claim's source walk that this
+    /// lane admits. Use the body the caller read, even if the item pinned an older revision.
+    pub(crate) fn admitted_claim_conversation_refs_in(
+        &self,
+        txn: &RoTxn<'_>,
+        claim: &EntityId,
+        body: &crate::ClaimBody,
+    ) -> Result<Vec<String>> {
+        let store = self.store_read();
+        let policy = self.policy_manifest_in(txn)?;
+        let mut seen = BTreeSet::new();
+        let mut refs = Vec::new();
+        for conversation in claim_conversation_walk_in(&store, txn, claim, body)? {
+            let conversation = conversation?;
+            if seen.insert(conversation)
+                && self.is_entity_readable_with_policy_in(txn, &policy, &conversation)?
+                && let Some((name, hash)) = store.port_short_id_reference(txn, &conversation)?
+            {
+                refs.push(format!("{name}:{hash:02x}"));
+                if refs.len() == 3 {
+                    break;
+                }
+            }
         }
+        Ok(refs)
     }
-    Ok(conversations)
 }
 
 /// One TURN a claim's words came from: the TURN, the conversation it is a

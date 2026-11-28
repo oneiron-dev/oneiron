@@ -120,6 +120,7 @@ pub(super) fn released_value(
     let owner_export = verb == OWNER_EXPORT_VERB && auth.is_owner_grade();
     let owner_whole_vault_export =
         super::export_transfer::owner_whole_vault_export_admitted(server, auth, verb);
+    let hydrate_answer = verb == crate::device_local::HYDRATE_VERB;
     let destination = auth.destination();
     let carried = take_program_steps(verb, &value);
     let held = known_denied(
@@ -129,6 +130,7 @@ pub(super) fn released_value(
         carried.as_ref().map_or(&value, |(base, _)| base),
         owner_export,
         owner_whole_vault_export,
+        hydrate_answer,
     );
     let released = carried.filter(|_| !held).and_then(|(_, feedback)| {
         let rows = rows.as_deref();
@@ -212,6 +214,7 @@ pub(crate) fn replayed_value(
         return details_on_device();
     }
     let owner_export = verb == OWNER_EXPORT_VERB && auth.is_owner_grade();
+    let hydrate_answer = verb == crate::device_local::HYDRATE_VERB;
     let destination = auth.destination();
     let carried = take_program_steps(verb, &release.value);
     if known_denied(
@@ -221,6 +224,7 @@ pub(crate) fn replayed_value(
         carried.as_ref().map_or(&release.value, |(base, _)| base),
         owner_export,
         owner_whole_vault_export,
+        hydrate_answer,
     ) {
         return details_on_device();
     }
@@ -424,10 +428,16 @@ pub(crate) fn rows_still_admitted(
         }
         let erased =
             oneiron::sync::bridge::local_deletion_is_materialized(vault, row).unwrap_or(false);
+        // A held claim an own held list served its writer fails the
+        // credential's Surfaceable lane; it is judged again as that list
+        // served it, and every other row as before.
         !erased
-            && auth
+            && (auth
                 .can_read_entity_at(vault, row, &destination)
                 .unwrap_or(true)
+                || auth
+                    .reads_own_held_claim_at(vault, row, &destination)
+                    .unwrap_or(false))
     })
 }
 
@@ -449,6 +459,7 @@ pub(super) fn known_denied_rows(
         value,
         false,
         owner_whole_vault_export,
+        false,
     )
 }
 
@@ -461,7 +472,11 @@ pub(super) fn known_denied_rows(
 /// owner's own whole-vault export (`owner_whole_vault_export`) is judged by
 /// the same rows, refs and ids, its notices' world names read as no ref, and
 /// only an integrity hold withholds it: his recipient choice keeps none of
-/// its rows (owner ruling 1-EXPORT = B).
+/// its rows (owner ruling 1-EXPORT = B). A hydrate answer (`hydrate_answer`,
+/// as its route names the verb) is judged with its miss echoes, its
+/// caller's own strings, read as no ref and no id, for the short-ref scan
+/// and the byte scan alike (REVIEW-10571 P1 1); its found views scan
+/// exactly as before.
 fn known_denied(
     vault: &oneiron::Vault,
     destination: &ReadDestination,
@@ -469,6 +484,7 @@ fn known_denied(
     value: &serde_json::Value,
     owner_pack_export: bool,
     owner_whole_vault_export: bool,
+    hydrate_answer: bool,
 ) -> bool {
     let Some(rows) = rows else {
         return false;
@@ -476,16 +492,22 @@ fn known_denied(
     if !destination.is_off_device() {
         return false;
     }
+    let cleared = if hydrate_answer {
+        crate::device_local::hydrate_misses_cleared(value)
+    } else if owner_whole_vault_export {
+        notice_names_cleared(value)
+    } else {
+        None
+    };
+    let scanned = cleared.as_ref().unwrap_or(value);
     let mut named = rows.to_vec();
     if !owner_pack_export {
-        let cleared = owner_whole_vault_export
-            .then(|| notice_names_cleared(value))
-            .flatten();
-        let scanned = cleared.as_ref().unwrap_or(value);
         named.extend(crate::device_local::short_refs_named(vault, scanned).unwrap_or_default());
     }
     let payload = if owner_pack_export {
         Vec::new()
+    } else if hydrate_answer {
+        serde_json::to_vec(scanned).unwrap_or_default()
     } else {
         serde_json::to_vec(value).unwrap_or_default()
     };

@@ -23,5 +23,6 @@
       "ts": "/** One repo proposal's semantic change from its base, under the provenance it was proposed with. */",
       "py": "One repo proposal's semantic change from its base, under the provenance it was proposed with."
     }
-  }
+  },
+  "caller_code": "refused"
 }

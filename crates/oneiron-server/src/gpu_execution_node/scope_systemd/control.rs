@@ -23,14 +23,27 @@
 //! process is the workload and never `job-exec` in its start, which a
 //! checkpoint signal could end (review r6 R6-06). Before that the notice is
 //! refused and lost, as a notice may be.
+//!
+//! The fourth verb, `renew <id> <cutoff boot ns>`, is a session's renewal
+//! (pass 34, 2.5; row W1): the handler, given the node file, moves that
+//! unit's cutoff forward by root's timer handoff ([`super::renew`]).
+//!
+//! The fifth, `device-query <word>`, is the engine's GPU probe after the
+//! device hand-over: the handler, given the node file, runs that one query of
+//! a closed list as the job account and answers its output, one query on the
+//! machine at a time ([`super::device_query`]; FIX
+//! EXEC-NODE-PROBE-AFTER-HANDOVER).
 
 use std::io::{Read as _, Write as _};
 use std::os::fd::{AsFd as _, AsRawFd as _};
 use std::os::unix::net::UnixStream;
+use std::path::Path;
 use std::time::{Duration, Instant};
 
 use super::super::jobs::JobKeyId;
 use super::super::node_settings::CHECKPOINT_SIGNALS;
+use super::device_query;
+use super::exec::connect_by_deadline;
 use super::safe_fs::account;
 use super::systemd_unit::{SYSTEMCTL_TIMEOUT, run_tool, show};
 use super::unit_file::plain_account;
@@ -55,19 +68,38 @@ pub const CONTROL_JOB_MODE: &str = "replace";
 const SIGNAL_ACTIVE_STATE: &str = "active";
 
 /// The longest request line: `signal `, 32 hex digits, a space, the
-/// longest checkpoint signal's name and the newline fit with room.
+/// longest checkpoint signal's name and the newline fit with room, and so
+/// does `renew `, 32 hex digits, a space, a `u64`'s 20 digits and the
+/// newline (60 bytes).
 const REQUEST_MAX_BYTES: usize = 64;
+
+/// The most digits a renewal's cutoff has: a `u64`.
+const CUTOFF_DIGITS_MAX: usize = 20;
 
 /// The longest reply line the engine reads.
 const REPLY_MAX_BYTES: usize = 1024;
 
 /// How long the handler waits for the whole request line, from its start.
-const REQUEST_WAIT: Duration = Duration::from_secs(5);
+/// The engine's job control connect and the socket writes wait as long.
+pub(super) const REQUEST_WAIT: Duration = Duration::from_secs(5);
 
 /// How long the engine waits for the handler's answer: the handler's own
 /// `systemctl` wait ([`SYSTEMCTL_TIMEOUT`]) and its start, with room, so a
 /// slow but successful start is not reported as no answer (review r4 R4-05).
 pub const CONTROL_ANSWER_WAIT: Duration = Duration::from_secs(25);
+
+/// Whether a job control socket file is at `path` and this process may
+/// connect to it: it may write to the socket file (the engine's group, or
+/// root). The socket unit removes the file when it stops (`RemoveOnStop=yes`);
+/// a file left behind with no listener, or a connection a security module
+/// denies, is found at the connection, and the GPU probe then runs its tool
+/// itself ([`super::device_query::DeviceQueryError::Unusable`]).
+#[must_use]
+pub fn control_socket_usable(path: &Path) -> bool {
+    use std::os::unix::fs::FileTypeExt as _;
+    std::fs::symlink_metadata(path).is_ok_and(|found| found.file_type().is_socket())
+        && rustix::fs::access(path, rustix::fs::Access::WRITE_OK).is_ok()
+}
 
 /// What the engine may ask for one job unit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,6 +108,11 @@ pub enum ControlVerb {
     Stop,
     /// A checkpoint notice: one of [`CHECKPOINT_SIGNALS`], by name.
     Signal(&'static str),
+    /// A session's renewal (row W1): move the unit's cutoff forward to this
+    /// boot-clock time.
+    Renew {
+        cutoff_boot_ns: u64,
+    },
 }
 
 impl ControlVerb {
@@ -86,6 +123,7 @@ impl ControlVerb {
             Self::Start => "start",
             Self::Stop => "stop",
             Self::Signal(_) => "signal",
+            Self::Renew { .. } => "renew",
         }
     }
 
@@ -111,9 +149,11 @@ impl ControlVerb {
         }
     }
 
-    /// The `systemctl` arguments that carry the verb out on `unit`.
-    fn systemctl_args(self, unit: &str) -> Vec<String> {
-        match self {
+    /// The `systemctl` arguments that carry the verb out on `unit`; `None`
+    /// for a renewal, which root carries out itself ([`super::renew`]).
+    fn systemctl_args(self, unit: &str) -> Option<Vec<String>> {
+        Some(match self {
+            Self::Renew { .. } => return None,
             Self::Start | Self::Stop => vec![
                 self.word().to_owned(),
                 "--no-block".to_owned(),
@@ -126,23 +166,41 @@ impl ControlVerb {
                 format!("--signal=SIG{name}"),
                 unit.to_owned(),
             ],
-        }
+        })
     }
 }
 
+/// A renewal's cutoff as the request line carries it: 1 to 20 decimal
+/// digits, not zero.
+fn parse_cutoff(text: &str) -> Result<u64, String> {
+    let malformed = || "renew_cutoff_malformed".to_owned();
+    if text.is_empty()
+        || text.len() > CUTOFF_DIGITS_MAX
+        || !text.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return Err(malformed());
+    }
+    text.parse::<u64>()
+        .ok()
+        .filter(|cutoff| *cutoff > 0)
+        .ok_or_else(malformed)
+}
+
 /// The request line for `verb` on the job unit `id`: `<verb> <32 hex>\n`,
-/// or `signal <32 hex> <name>\n`.
+/// `signal <32 hex> <name>\n` or `renew <32 hex> <cutoff>\n`.
 #[must_use]
 pub fn render_request(verb: ControlVerb, id: &JobKeyId) -> String {
     match verb {
         ControlVerb::Signal(name) => format!("signal {id} {name}\n"),
+        ControlVerb::Renew { cutoff_boot_ns } => format!("renew {id} {cutoff_boot_ns}\n"),
         ControlVerb::Start | ControlVerb::Stop => format!("{} {id}\n", verb.word()),
     }
 }
 
 /// One request line, as the handler reads it: exactly a known verb, one
 /// space, a job instance id (32 lower-hex digits), for `signal` one space
-/// and a checkpoint signal's name, and a newline.
+/// and a checkpoint signal's name, for `renew` one space and the cutoff's
+/// boot-clock time in decimal, and a newline.
 ///
 /// # Errors
 ///
@@ -155,28 +213,55 @@ pub fn parse_request(line: &[u8]) -> Result<(ControlVerb, JobKeyId), String> {
     let (word, rest) = text
         .split_once(' ')
         .ok_or_else(|| "request_malformed".to_owned())?;
-    let (id, signal) = match word {
+    let (id, extra) = match word {
         "signal" => rest
             .split_once(' ')
             .map(|(id, name)| (id, Some(name)))
             .ok_or_else(|| "signal_name_missing".to_owned())?,
+        "renew" => rest
+            .split_once(' ')
+            .map(|(id, cutoff)| (id, Some(cutoff)))
+            .ok_or_else(|| "renew_cutoff_missing".to_owned())?,
         _ => (rest, None),
     };
-    let verb = ControlVerb::from_words(word, signal)?;
+    let verb = match (word, extra) {
+        ("renew", Some(cutoff)) => ControlVerb::Renew {
+            cutoff_boot_ns: parse_cutoff(cutoff)?,
+        },
+        _ => ControlVerb::from_words(word, extra)?,
+    };
     let id = JobKeyId::parse(id).ok_or_else(|| "instance_not_a_job".to_owned())?;
     Ok((verb, id))
 }
 
-/// The engine's side: asks the handler for `verb` on the job unit `id` and
-/// waits at most [`CONTROL_ANSWER_WAIT`] for its answer.
+/// The engine's side: makes the connection within `REQUEST_WAIT`, asks the
+/// handler for `verb` on the job unit `id`, then waits at most
+/// [`CONTROL_ANSWER_WAIT`] for its answer.
 ///
 /// # Errors
 ///
-/// The socket is missing or did not answer, or the handler refused (its
-/// reason).
+/// As [`request_at`].
 pub fn request(verb: ControlVerb, id: &JobKeyId) -> Result<(), String> {
-    let fail = |error: std::io::Error| format!("{CONTROL_SOCKET_PATH}: {error}");
-    let mut stream = UnixStream::connect(CONTROL_SOCKET_PATH).map_err(fail)?;
+    request_at(Path::new(CONTROL_SOCKET_PATH), verb, id, REQUEST_WAIT)
+}
+
+/// Asks the handler at `socket` for `verb` on the job unit `id`, allowing
+/// `connect_wait` for the connection.
+///
+/// # Errors
+///
+/// The socket could not be reached or did not answer, or the handler refused
+/// (its reason).
+pub fn request_at(
+    socket: &Path,
+    verb: ControlVerb,
+    id: &JobKeyId,
+    connect_wait: Duration,
+) -> Result<(), String> {
+    let fail = |error: std::io::Error| format!("{}: {error}", socket.display());
+    let deadline = Instant::now() + connect_wait;
+    let address = rustix::net::SocketAddrUnix::new(socket).map_err(|error| fail(error.into()))?;
+    let mut stream = connect_by_deadline(&address, deadline).map_err(fail)?;
     stream.set_write_timeout(Some(REQUEST_WAIT)).map_err(fail)?;
     stream
         .write_all(render_request(verb, id).as_bytes())
@@ -192,9 +277,11 @@ pub fn request(verb: ControlVerb, id: &JobKeyId) -> Result<(), String> {
         .map_or_else(|| format!("job-control answered {reply:?}"), str::to_owned))
 }
 
-/// `oneiron job-control --engine-account <name>` (root, one instance of the
-/// socket's handler per connection; the connection is its standard input
-/// and output). Answers `ok` or `refused <reason>` on one line.
+/// `oneiron job-control --engine-account <name> [--node-file <path>]` (root,
+/// one instance of the socket's handler per connection; the connection is
+/// its standard input and output). Answers `ok` or `refused <reason>` on one
+/// line. Only `renew` reads the node file; a handler installed without it
+/// refuses a renewal.
 #[must_use]
 pub fn run(args: &[String]) -> i32 {
     let answer = std::io::stdin()
@@ -204,17 +291,11 @@ pub fn run(args: &[String]) -> i32 {
         .map(UnixStream::from)
         .and_then(|mut stream| {
             let answer = serve(args, &mut stream);
-            let line = match &answer {
-                Ok(()) => "ok\n".to_owned(),
-                // One line: the engine reads up to the first newline
-                // (review r4 R4-06).
-                Err(why) => format!("refused {}\n", why.replace(['\n', '\r'], " ")),
-            };
-            let _ = stream.write_all(line.as_bytes());
+            let _ = write_reply(&mut stream, &render_reply(&answer), REQUEST_WAIT);
             answer
         });
     match answer {
-        Ok(()) => 0,
+        Ok(_) => 0,
         Err(why) => {
             journal_line!("job-control: refused: {why}");
             1
@@ -222,10 +303,103 @@ pub fn run(args: &[String]) -> i32 {
     }
 }
 
-fn serve(args: &[String], stream: &mut UnixStream) -> Result<(), String> {
-    let engine = match args {
-        [flag, name] if flag == "--engine-account" && plain_account(name) => name,
-        _ => return Err("usage: job-control --engine-account <name>".to_owned()),
+/// Writes the handler's reply. A device query can return up to
+/// [`device_query::DEVICE_QUERY_OUTPUT_MAX_BYTES`] bytes of output. The whole
+/// reply gets `wait`, measured from the first byte (review r1 of #10579),
+/// not each write: if the peer does not drain the reply, the root handler
+/// gives up after `wait`, rather than waiting for the unit's `RuntimeMaxSec`.
+/// No write starts once `wait` has passed (review r2 of #10579), so a reply
+/// is never finished late.
+///
+/// # Errors
+///
+/// The stream's blocking mode could not be changed, the peer closed the
+/// reply, the peer did not take the whole reply within `wait`, or a write
+/// failed.
+pub fn write_reply(stream: &mut UnixStream, reply: &[u8], wait: Duration) -> std::io::Result<()> {
+    let deadline = Instant::now() + wait;
+    stream.set_nonblocking(true)?;
+    let mut written = 0;
+    let mut result: std::io::Result<()> = Ok(());
+    while written < reply.len() {
+        // The deadline holds before every write, also after a poll that
+        // ended at it: a peer that drains the reply late takes no more of it
+        // (review r2 of #10579, P1).
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            result = Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "the peer did not take the reply within its wait",
+            ));
+            break;
+        }
+        match stream.write(&reply[written..]) {
+            Ok(0) => {
+                result = Err(std::io::ErrorKind::WriteZero.into());
+                break;
+            }
+            Ok(count) => written += count,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                let mut poll = libc::pollfd {
+                    fd: stream.as_raw_fd(),
+                    events: libc::POLLOUT,
+                    revents: 0,
+                };
+                let sub_ms = u64::from(left.subsec_nanos() % 1_000_000 != 0);
+                let millis = left.as_millis().saturating_add(u128::from(sub_ms));
+                let millis = libc::c_int::try_from(millis).unwrap_or(libc::c_int::MAX);
+                // SAFETY: one valid pollfd.
+                let ready = unsafe { libc::poll(&raw mut poll, 1, millis) };
+                if ready < 0 {
+                    let error = std::io::Error::last_os_error();
+                    if error.kind() != std::io::ErrorKind::Interrupted {
+                        result = Err(error);
+                        break;
+                    }
+                }
+            }
+            Err(error) => {
+                result = Err(error);
+                break;
+            }
+        }
+    }
+    let _ = stream.set_nonblocking(false);
+    result
+}
+
+/// The handler's reply to one request: `ok\n`; for a device query, `ok <n>\n`
+/// and the query's `n` bytes of output; or `refused <why>\n`, on one line,
+/// since the engine reads up to the first newline (review r4 R4-06).
+#[must_use]
+pub fn render_reply(answer: &Result<Option<Vec<u8>>, String>) -> Vec<u8> {
+    match answer {
+        Ok(None) => b"ok\n".to_vec(),
+        Ok(Some(output)) => {
+            let mut reply = format!("ok {}\n", output.len()).into_bytes();
+            reply.extend_from_slice(output);
+            reply
+        }
+        Err(why) => format!("refused {}\n", why.replace(['\n', '\r'], " ")).into_bytes(),
+    }
+}
+
+/// Serves one connection: the device query's output, `None` for the other
+/// verbs, or the refusal's reason.
+fn serve(args: &[String], stream: &mut UnixStream) -> Result<Option<Vec<u8>>, String> {
+    let (engine, node_file) = match args {
+        [flag, name] if flag == "--engine-account" && plain_account(name) => (name, None),
+        [flag, name, file_flag, file]
+            if flag == "--engine-account" && plain_account(name) && file_flag == "--node-file" =>
+        {
+            (name, Some(std::path::Path::new(file)))
+        }
+        _ => {
+            return Err(
+                "usage: job-control --engine-account <name> [--node-file <path>]".to_owned(),
+            );
+        }
     };
     let (engine_uid, _, _) =
         account(engine).map_err(|error| format!("engine account {engine}: {error}"))?;
@@ -235,7 +409,20 @@ fn serve(args: &[String], stream: &mut UnixStream) -> Result<(), String> {
     }
     let line = read_line(stream, REQUEST_MAX_BYTES, REQUEST_WAIT)
         .map_err(|error| format!("request: {error}"))?;
+    if let Some(query) = device_query::parse_request(&line) {
+        let query = query?;
+        let node_file = node_file
+            .ok_or("device_query_needs_node_file: run `oneiron execution-node install` again")?;
+        let settings = device_query::query_settings(node_file, engine_uid)?;
+        return device_query::answer_installed(query, &settings).map(Some);
+    }
     let (verb, id) = parse_request(&line)?;
+    if let ControlVerb::Renew { cutoff_boot_ns } = verb {
+        let node_file = node_file.ok_or(
+            "renew_needs_node_file: run `oneiron execution-node install` again for sessions",
+        )?;
+        return super::renew::renew_cutoff(node_file, engine, &id, cutoff_boot_ns).map(|()| None);
+    }
     let unit = id.unit_name();
     if matches!(verb, ControlVerb::Signal(_)) {
         let found = show(&unit, &["ActiveState"])?;
@@ -244,9 +431,11 @@ fn serve(args: &[String], stream: &mut UnixStream) -> Result<(), String> {
             return Err(format!("workload_not_running: the unit is {state:?}"));
         }
     }
-    let args = verb.systemctl_args(&unit);
+    let args = verb
+        .systemctl_args(&unit)
+        .ok_or("verb_not_a_systemctl_request")?;
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
-    run_tool("systemctl", &args, SYSTEMCTL_TIMEOUT).map(drop)
+    run_tool("systemctl", &args, SYSTEMCTL_TIMEOUT).map(|_| None)
 }
 
 /// The uid of the process at the other end of `stream`, from the kernel
@@ -283,7 +472,11 @@ fn peer_uid(stream: &UnixStream) -> Result<u32, String> {
 /// all within `wait` of the call: the deadline is for the whole line, not
 /// for each read, so a peer that sends a byte at a time cannot hold the
 /// reader past it (review r4 R4-04).
-fn read_line(stream: &mut UnixStream, limit: usize, wait: Duration) -> std::io::Result<Vec<u8>> {
+pub(super) fn read_line(
+    stream: &mut UnixStream,
+    limit: usize,
+    wait: Duration,
+) -> std::io::Result<Vec<u8>> {
     let deadline = Instant::now() + wait;
     let mut line = Vec::new();
     let mut byte = [0_u8; 1];
@@ -312,6 +505,90 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_reply_to_a_peer_that_never_reads_gives_up_within_its_wait() {
+        let (mut writer, _reader) = UnixStream::pair().expect("a connected pair");
+        let wait = Duration::from_millis(200);
+        let limit = wait + Duration::from_secs(3);
+        let (answered, answer) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let reply = vec![0_u8; 8 << 20];
+            // testkit-lint: allow(wall-clock) measures the real socket write timeout
+            let started = Instant::now();
+            let result = write_reply(&mut writer, &reply, wait);
+            let _ = answered.send((result, started.elapsed()));
+        });
+        let (result, elapsed) = answer.recv_timeout(limit).expect("the write timed out");
+        let error = result.expect_err("the peer never drained the reply");
+        assert!(
+            matches!(
+                error.kind(),
+                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+            ),
+            "{error}"
+        );
+        assert!(elapsed < limit, "the write took {elapsed:?}");
+    }
+
+    #[test]
+    fn a_reply_to_a_peer_that_reads_slowly_gives_up_at_its_deadline() {
+        use std::io::Read as _;
+        let (mut writer, mut reader) = UnixStream::pair().expect("a connected pair");
+        let wait = Duration::from_millis(200);
+        let limit = wait + Duration::from_secs(3);
+        std::thread::spawn(move || {
+            let mut drained = [0_u8; 4096];
+            loop {
+                match reader.read(&mut drained) {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) => {
+                        // testkit-lint: allow(sleep) a slow peer drains a little at a time
+                        std::thread::sleep(Duration::from_millis(20));
+                    }
+                }
+            }
+        });
+        let (answered, answer) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let reply = vec![0_u8; 8 << 20];
+            // testkit-lint: allow(wall-clock) measures the real socket write deadline
+            let started = Instant::now();
+            let result = write_reply(&mut writer, &reply, wait);
+            let _ = answered.send((result, started.elapsed()));
+        });
+        let (result, elapsed) = answer.recv_timeout(limit).expect("the write answered");
+        let error = result.expect_err("the slow peer never took the whole reply");
+        assert!(
+            matches!(
+                error.kind(),
+                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+            ),
+            "{error}"
+        );
+        assert!(
+            elapsed < wait + Duration::from_secs(2),
+            "the write took {elapsed:?}"
+        );
+    }
+
+    /// No write starts once the wait has passed (review r2 of #10579): a
+    /// reply with no wait left sends nothing, even to a peer that would take
+    /// it at once, so a peer that drains late never receives a finished reply.
+    #[test]
+    fn no_write_starts_once_the_reply_wait_has_passed() {
+        use std::io::Read as _;
+        let (mut writer, mut reader) = UnixStream::pair().expect("a connected pair");
+        let error = write_reply(&mut writer, b"ok\n", Duration::ZERO)
+            .expect_err("a reply with no wait left is not written");
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut, "{error}");
+        drop(writer);
+        let mut taken = Vec::new();
+        reader
+            .read_to_end(&mut taken)
+            .expect("the peer reads the closed stream");
+        assert!(taken.is_empty(), "the peer took {taken:?}");
+    }
+
+    #[test]
     fn a_request_names_a_known_verb_and_a_job_instance_and_nothing_else() {
         let id = JobKeyId::for_key("k");
         let line = render_request(ControlVerb::Start, &id);
@@ -332,8 +609,13 @@ mod tests {
             assert_eq!(parse_request(line.as_bytes()), Ok((verb, id.clone())));
             let signal = format!("--signal=SIG{name}");
             assert_eq!(
-                verb.systemctl_args("u"),
+                verb.systemctl_args("u").expect("a systemctl request"),
                 ["kill", "--kill-whom=main", signal.as_str(), "u"]
+            );
+            // A renewal is root's own handoff, never a systemctl request.
+            assert_eq!(
+                ControlVerb::Renew { cutoff_boot_ns: 5 }.systemctl_args("u"),
+                None
             );
         }
         for (bad, why) in [

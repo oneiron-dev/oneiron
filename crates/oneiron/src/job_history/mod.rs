@@ -21,11 +21,25 @@
 //! same snapshot. It shows the attempt's number, who ordered, how long the order waited for the
 //! attempt, and what the RANK, PLACE and AFTER slots decided, as the order's row keeps them.
 //!
-//! What the rows do not keep, history does not invent: a plain offer chunk has no end time and
-//! no machine of its own, a resumed chunk's starter is not stored (the job's starter or the
-//! owner), and an occupancy is known only where a machine measured it or a provider reported a
-//! chunk's final run time; a lost machine's or a lost resource's occupancy is unknown, never
-//! zero.
+//! A chunk one of the vault's machines ran has the issuer's observation of its key
+//! (`JOB_OBSERVATION`, pass 33 5.1): the newest receipt the machine signed, read in the same
+//! snapshot. Its confirmed end gives how the billed seconds were found (the meter), and for a
+//! plain offer chunk, whose job row names no machine and keeps no end time, also the machine
+//! that answered, its device, the machine's end cause, when the issuer received it, the seconds
+//! the machine measured and a lost key's last seen run time.
+//!
+//! A machine that ran jobs for this vault that no row of it names (an issuer restored from an
+//! older backup, pass 33 8.5 and EM-15) has their seconds recorded against the allocation
+//! generation their submit named, as unattributed (`GPU_ALLOCATION_NODE`). The totals show
+//! them on their own sum fields: by machine and, for a line's generation, by line and period,
+//! never by family, since no family pays them. Only the owner reads them: no row names who
+//! started those jobs.
+//!
+//! What the rows do not keep, history does not invent: a plain offer chunk on a provider has no
+//! end time and no machine of its own, a resumed chunk's starter is not stored (the job's
+//! starter or the owner), and an occupancy is known only where a machine measured it or a
+//! provider reported a chunk's final run time; a lost machine's or a lost resource's occupancy
+//! is unknown, never zero.
 
 use std::collections::BTreeSet;
 
@@ -34,7 +48,7 @@ use serde::{Deserialize, Serialize};
 use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
-use crate::gpu_line::{UnitClaim, claims_in_txn, stored_period_in_txn};
+use crate::gpu_line::{UnitClaim, claims_in_txn, stored_period_in_txn, unattributed_in_txn};
 use crate::memory::verb_grant_caller::VerbGrantCaller;
 use crate::memory::{MEMORY_CODE_BAD_REQUEST, Memory, MemoryError, MemoryResult};
 use crate::work_order::{AttemptEnd, OrderClass, OrderedBy, SlotDecision};
@@ -160,17 +174,24 @@ pub struct JobHistoryAttempt {
     pub device: Option<String>,
     /// When it was reserved, on the vault's clock, where a row keeps it.
     pub reserved_at_ms: Option<u64>,
-    /// When its end was written, where a row keeps it.
+    /// When its end was written, where a row keeps it; for a chunk a vault machine ran, when the
+    /// issuer received the machine's end.
     pub ended_at_ms: Option<u64>,
     /// The seconds it held: the reservation, or the chunk's quote.
     pub reserved_secs: u64,
-    /// The machine's occupied seconds; for an offer chunk the provider's final run time, known
-    /// only from the exit it reported (and 0 for a chunk held before anything ran); absent when
-    /// unknown, as for a stop, a cancel or a lost resource, whose last reported run time is
-    /// only a sample.
+    /// The machine's occupied seconds, as it measured them (0 for a run that never started); for
+    /// an offer chunk on a provider, the final run time, known only from the exit it reported
+    /// (and 0 for a chunk held before anything ran); absent when unknown, as for a lost machine,
+    /// or a provider's stop, cancel or lost resource, whose last reported run time is only a
+    /// sample.
     pub occupied_secs: Option<u64>,
     /// The seconds billed, where a row keeps them.
     pub billed_secs: Option<u64>,
+    /// How the billed seconds were found, where the issuer confirmed a vault machine's end:
+    /// `agreed` (the machine's measured seconds lie inside the issuer's own bracket),
+    /// `bracketed` (they were above it, so the bracket was billed) or `unknown` (no measured
+    /// seconds: a lost machine, billed 0).
+    pub meter: Option<String>,
     /// The seconds charged: for a line unit what the line's pools paid (`min(billed,
     /// reserved)` for a run that ended, else 0); for an offer chunk its settled units over its
     /// quote's price of one second. Absent where no settlement is recorded.
@@ -184,9 +205,10 @@ pub struct JobHistoryAttempt {
     pub settled_units: Option<u64>,
     pub unit: Option<String>,
     /// How it ended: `settled`, `released`, `box_lost` or `written_off` for a line unit;
-    /// `exited`, `at_maximum`, `cancelled`, `gone`, `written_off` or `held` for an offer chunk
-    /// (a chunk that stopped at its maximum stays `at_maximum` when the customer cancels the
-    /// stopped job).
+    /// `exited`, `time_limit`, `at_maximum`, `cancelled`, `gone`, `written_off` or `held` for an
+    /// offer chunk (a chunk that stopped at its maximum stays `at_maximum` when the customer
+    /// cancels the stopped job; `time_limit` is a backend's hard stop at the maximum, with no
+    /// resume).
     pub end: String,
     /// Why it was released or held, where a row says.
     pub end_reason: Option<String>,
@@ -253,7 +275,8 @@ pub struct JobHistoryOrder {
 }
 
 /// The seconds of a set of ended attempts. Sums count the known figures; `occupied_unknown`
-/// counts the attempts whose occupancy no row knows.
+/// counts the attempts whose occupancy no row knows. The unattributed seconds are no attempt's
+/// and enter no other figure.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct JobHistorySum {
     pub attempts: u32,
@@ -268,6 +291,13 @@ pub struct JobHistorySum {
     /// `queued_attempts` attempts whose wait the order's row keeps.
     pub queued_ms: u64,
     pub queued_attempts: u32,
+    /// The device seconds machines ran for this vault on jobs no row of the vault names, as the
+    /// allocation records them (pass 33 8.5, EM-15): no family pays them, and only the owner
+    /// sees them.
+    pub unattributed_secs: u64,
+    /// The unattributed jobs whose machine holds no terminal receipt yet: their seconds can
+    /// still grow.
+    pub unattributed_running: u32,
 }
 
 /// Totals of one machine; `machine` absent for the attempts no row places.
@@ -352,9 +382,10 @@ pub fn job_history_embedded(
     job_history_as(memory, owner.as_ref(), input)
 }
 
-/// Reads the rows history projects, the jobs, the claims, their periods and the work orders, in
-/// one snapshot (a claim's terminal and its job's terminal row are one write, and an order's
-/// attempt entry is written with its job), and projects them.
+/// Reads the rows history projects, the jobs, the claims, their periods, the work orders, the
+/// issuer's observations of their attempt keys and the allocation's unattributed records, in one
+/// snapshot (a claim's terminal and its job's terminal row are one write, and an order's attempt
+/// entry is written with its job), and projects them.
 ///
 /// # Errors
 ///
@@ -378,11 +409,21 @@ fn read_job_history_in_txn(
     let jobs = vault.gpu_jobs_in_txn(txn)?;
     let claims = claims_in_txn(vault, txn)?;
     let orders = vault.work_orders_in_txn(txn)?;
-    let windows: BTreeSet<(EntityId, u32)> = claims
+    let unattributed = unattributed_in_txn(vault, txn)?;
+    let mut observations = Vec::new();
+    for key in project::attempt_keys(&jobs, &claims) {
+        if let Some(observation) = vault.job_observation_in_txn(txn, &key)? {
+            observations.push(observation);
+        }
+    }
+    let mut windows: BTreeSet<(EntityId, u32)> = claims
         .iter()
         .filter(|claim| !claim.is_open())
         .map(|claim: &UnitClaim| (claim.line, claim.period))
         .collect();
+    for record in &unattributed {
+        windows.extend(record.line_period());
+    }
     let mut periods = Vec::with_capacity(windows.len());
     for (line, index) in windows {
         if let Some(period) = stored_period_in_txn(vault, txn, &line, index)? {
@@ -395,6 +436,8 @@ fn read_job_history_in_txn(
             claims: &claims,
             periods: &periods,
             orders: &orders,
+            observations: &observations,
+            unattributed: &unattributed,
         },
         filter,
         viewer,

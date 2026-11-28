@@ -703,6 +703,88 @@ fn install_board_pack_version(server: &SyncServer, name: &str, version: u32) -> 
     receipt.content_hash
 }
 
+#[cfg(oneiron_test_support)]
+#[tokio::test]
+async fn focus_refresh_masks_a_pack_claim_cell_for_a_non_owner_but_not_for_its_owner() {
+    const PREDICATE: &str = "alice.masked.topic";
+    const SECRET: &str = "cedar-lantern-71";
+    let value = format!(
+        "Quarterly handover: {SECRET}{} after-cell-cap",
+        " context".repeat(40)
+    );
+
+    let (_dir, server) = test_server_with_config(SyncServerConfig {
+        auth_secret: Some("secret".to_owned()),
+        ..Default::default()
+    });
+    let owner = server.vault.ensure_embedded_owner_actor().unwrap();
+    // The board's pinned verb floor is far over the default 1,200-token cap
+    // ([BOARD-KEYFRAME-OVER-BUDGET]), which sheds the pack section before
+    // either cell is compared: the owner's cap leaves room for it.
+    let owner_proof = server
+        .vault
+        .authenticate_owner(
+            owner,
+            "principal:pack-lifted-board-cap",
+            true,
+            oneiron::store::GateDecisionId::now(),
+        )
+        .unwrap();
+    server
+        .vault
+        .set_board_layout_settings(&owner_proof, None, Some(Some(20_000)), None, None, None)
+        .unwrap();
+    let reader = seeded_test_entity_id(0x2477_9201);
+    let readers = [("pack-lifted-reader", reader), ("pack-lifted-owner", owner)];
+    for (credential, actor) in readers {
+        register_mcp_actor(&server, credential, actor, oneiron::EdgeActorClass::Human).await;
+    }
+    put_actor_read_grant(&server.vault, reader, None);
+    install_board_pack(&server, "alice.masked");
+
+    let claim = seeded_test_entity_id(0x2477_9202);
+    server
+        .vault
+        .put_claim(
+            &claim,
+            &oneiron::ClaimBody::new(
+                PREDICATE,
+                oneiron::ClaimSubject::Entity(reader),
+                rmpv::Value::from(value.as_str()),
+                0.9,
+                oneiron::ClaimApprovalStatus::Auto,
+                oneiron::ClaimLifecycleStatus::Active,
+            )
+            .unwrap(),
+            oneiron::TimeRange { start: 5, end: 5 },
+            5,
+        )
+        .unwrap();
+    let handle =
+        oneiron::test_doors::lifted_text::mark_lifted_key(&server.vault, claim, &value, SECRET)
+            .unwrap();
+
+    for (credential, actor) in readers {
+        let response =
+            board_mcp_call(&server, credential, actor, "self.focus.refresh", json!({})).await;
+        let frame = response["result"]["structuredContent"]["output"]["frame"]["kind"]["payload"]
+            .as_str()
+            .expect("focus refresh keyframe");
+        let cell = frame
+            .lines()
+            .find(|line| line.contains(PREDICATE))
+            .expect("pack section claim row");
+        assert!(!cell.contains("after-cell-cap"), "{cell}");
+        if actor == owner {
+            assert!(cell.contains(SECRET), "{cell}");
+            assert!(!cell.contains(&handle), "{cell}");
+        } else {
+            assert!(cell.contains(&handle), "{cell}");
+            assert!(!frame.contains(SECRET), "{frame}");
+        }
+    }
+}
+
 /// F16 H385: the core board's changed line names only packs whose source row
 /// its reader reads. To a reader that cannot read the pack's source, the
 /// pack is not installed; once its grant reads the source, it sees the

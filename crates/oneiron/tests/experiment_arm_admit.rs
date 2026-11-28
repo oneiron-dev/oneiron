@@ -5,8 +5,9 @@
 //!   family's floor, so another arm of that family cannot take the room,
 //!   while an arm of another family still fits.
 //! - T7: an arm is not admitted when no first allowance fits: the refusal is
-//!   `budget_denied`, and the write is discarded whole (no arm, no intent).
-//!   The one `GPU_LINE_REFUSAL` row joins with row M2-C's table.
+//!   `budget_denied`, and its write holds one `GPU_LINE_REFUSAL` row (no
+//!   arm yet, rung 1, the first allowance asked, the bucket that ran out and
+//!   what fits) and nothing else: no arm, no intent.
 //! - T8: the intent key replays its answer and refuses a changed ask; the
 //!   logical key (family, contract sha256) answers the same ask under a new
 //!   key and refuses another ask on an open arm's contract.
@@ -30,7 +31,7 @@
 //! the test door `experiment_arm_rows` stands the arm in that state.
 //!
 //! On the base (#10398's head) the r2 arm shape does not exist, so every
-//! test fails there.
+//! test fails there. On #10454's head T7 fails: its refusal commits no write.
 //!
 //! Fleet command: `RUSTFLAGS="--cfg oneiron_test_support" cargo test
 //! --locked -p oneiron --all-features --test experiment_arm_admit`.
@@ -49,7 +50,7 @@ use oneiron::experiment_arm::{
 use oneiron::federation::{Scope, ScopeAxis, ScopeId, WalletRef};
 use oneiron::gpu_line::{
     AllowanceHold, BudgetPolicy, Draw, DrawSource, GpuLineFamilyAdmitRequest, GpuLinePolicy,
-    GpuLineSetRequest, Track, gpu_seconds,
+    GpuLineSetRequest, LineRefusal, LineRefusalKey, Track, gpu_seconds, line_refusals_in_txn,
 };
 use oneiron::memory::{
     MEMORY_CODE_BUDGET_SPENT, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE,
@@ -58,6 +59,7 @@ use oneiron::memory::{
 use oneiron::receipt::task_type_ref::TypeRef;
 use oneiron::store::GateDecisionId;
 use oneiron::test_doors::experiment_arm_rows::put_arm;
+use oneiron::test_doors::gpu_line_hold_is_the_claim::read_txn;
 use oneiron::test_doors::room_facet_set::create_owner_project;
 use oneiron::test_doors::store_writes::last_committed_write;
 use oneiron::verbs::{AgentGrantMintRequest, mint_agent_grant_as};
@@ -336,6 +338,12 @@ impl Fixture {
             .expect("the owner lists the lane's arms")
     }
 
+    /// The refusal rows of `lane`'s line in period `period`, in order.
+    fn refusals(&self, lane: EntityId, period: u32) -> Vec<(LineRefusalKey, LineRefusal)> {
+        let txn = read_txn(&self.vault).expect("read snapshot");
+        line_refusals_in_txn(&self.vault, &txn, &lane, period).expect("read refusal rows")
+    }
+
     /// The stored arm `id`.
     fn arm(&self, id: EntityId) -> ExperimentArm {
         self.vault
@@ -495,29 +503,78 @@ fn an_arm_is_not_admitted_when_no_first_allowance_fits() {
             .unwrap_or_else(|error| panic!("arm {key} fits the floor: {error:?}"));
     }
 
+    assert!(
+        fixture.refusals(lane, 0).is_empty(),
+        "two admissions refused nothing"
+    );
     let before = last_committed_write(&fixture.vault);
     let refused = fixture
         .admit(None, &ask("c", lane, family, 3, "third arm"))
         .expect_err("the floor holds two first allowances");
     refused_as(&refused, MEMORY_CODE_BUDGET_SPENT, "budget_denied:");
-    assert!(
-        refused.message.contains("s fit now"),
-        "the refusal names what fits: {}",
-        refused.message
-    );
-    assert_eq!(
+    assert_ne!(
         last_committed_write(&fixture.vault),
         before,
-        "a refused admission commits no write"
+        "the budget refusal commits its refusal row"
     );
+    let rows = fixture.refusals(lane, 0);
+    assert_eq!(rows.len(), 1, "one refusal row: {rows:?}");
+    let (key, row) = &rows[0];
+    assert_eq!(
+        *key,
+        LineRefusalKey {
+            line: lane,
+            period: 0,
+            sequence: 0,
+        }
+    );
+    assert!(
+        row.short.is_some(),
+        "the row names the bucket that ran out: {row:?}"
+    );
+    assert!(
+        row.room < RUNG_1_SECS,
+        "what fits is less than the ask: {row:?}"
+    );
+    assert_eq!(
+        *row,
+        LineRefusal {
+            family,
+            arm: None,
+            rung: 1,
+            cohort: None,
+            asked_secs: RUNG_1_SECS,
+            short: row.short,
+            room: row.room,
+            reason: "budget_denied".to_owned(),
+            by: Some(fixture.owner),
+            at_ms: NOW_MS,
+        },
+        "the row records the ask: no arm yet, rung 1, one first allowance"
+    );
+    // The answer and the row say the same.
+    for mark in [
+        format!("{:?} ran out", row.short),
+        format!("{} s fit now", row.room),
+    ] {
+        assert!(
+            refused.message.contains(&mark),
+            "{mark}: {}",
+            refused.message
+        );
+    }
     assert_eq!(fixture.arms_of(lane).len(), 2, "no third arm was written");
 
     // The refusal kept no intent: the same key with another ask is judged
-    // as a new ask, not refused as a changed one.
+    // as a new ask, not refused as a changed one, and writes its own row.
     let again = fixture
         .admit(None, &ask("c", lane, family, 4, "another third arm"))
         .expect_err("the floor is still spent");
     refused_as(&again, MEMORY_CODE_BUDGET_SPENT, "budget_denied:");
+    let rows = fixture.refusals(lane, 0);
+    assert_eq!(rows.len(), 2, "a second refusal, a second row: {rows:?}");
+    assert_eq!(rows[1].0.sequence, 1);
+    assert_eq!(fixture.arms_of(lane).len(), 2, "still no third arm");
 }
 
 /// T8.

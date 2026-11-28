@@ -92,6 +92,7 @@ pub(crate) use self::forward::arm_index_built_hook;
 #[cfg(test)]
 pub(crate) use self::forward::forward_recovery;
 pub use self::forward::forward_rematerialize;
+pub(in crate::sync) use self::forward::forward_rematerialize_classified;
 #[cfg(oneiron_test_support)]
 pub(crate) use self::forward::replay_window_in_edge_order_for_test;
 pub(crate) use self::forward::{

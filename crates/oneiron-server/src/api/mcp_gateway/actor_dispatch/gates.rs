@@ -1,4 +1,4 @@
-//! The gates an MCP call passes before it executes: proof, verb, credential, execute_code's
+//! The gates an MCP call passes before it executes: proof, verb, credential, a code run's
 //! session and each operation a run makes.
 //! `mcp_proof_admits`, `mcp_verb_gate`, `mcp_execute_code_gate`, `mcp_run_call_gate` and
 //! `mcp_host_verb_gate` are its call surface.
@@ -191,9 +191,9 @@ pub(super) fn mcp_call_scope(
     }
 }
 
-/// `execute_code`'s session gate: the native run this credential starts,
-/// enters again or reads a result of, at that call and at each later check
-/// of it (after an await, at a replay, at the answer's release). Its holder,
+/// `execute` and `resume`'s session gate: the native run this credential
+/// starts or enters again, at that call and at each later check of it
+/// (after an await, at a replay, at the answer's release). Its holder,
 /// class and organization were judged where the call resolved
 /// (`mcp_proof_admits`). Here the credential is live now, holds Read, and
 /// carries no record bound, since no proof projection reaches a run. The
@@ -213,6 +213,14 @@ pub(in crate::api::mcp_gateway) fn mcp_execute_code_gate(
     )
 }
 
+/// The refusal a connector's run meets when it sets a world's privacy
+/// (CODE-MODE-LENDING-WORLD-PRIVACY = A): a world's privacy is set by its
+/// holder directly, not by a connector's run, for both run authors (caller
+/// code and engine model), until a direct row exists. Native agent runs keep
+/// the act: the engine's own dispatcher
+/// (`crates/oneiron/src/code_run/dispatcher/world_privacy_set.rs`) is unchanged.
+pub(crate) const MCP_WORLD_PRIVACY_REFUSED: &str = "mcp_world_privacy_refused";
+
 /// One call a run serves itself (`RunCall`): the live session, then what
 /// the call does (`McpCallEffect::of_run_call`). A read needs the session's
 /// Read alone; every write takes effect at once, so it needs Write.
@@ -221,18 +229,41 @@ pub(in crate::api::mcp_gateway) fn mcp_run_call_gate(
     actor: &McpCallContext,
     call: oneiron::code_run::RunCall,
 ) -> Result<(), McpGatewayError> {
+    if matches!(
+        call,
+        oneiron::code_run::RunCall::Bridge(oneiron::code_run::SelfEffect::WorldPrivacySet)
+    ) {
+        let mut refused = McpGatewayError::new(
+            -32020,
+            MCP_WORLD_PRIVACY_REFUSED,
+            "a world's privacy is set by its holder directly, not by a connector's run",
+        );
+        refused.reason_codes = vec!["world_privacy.set_by_holder_directly".to_owned()];
+        return Err(refused);
+    }
     mcp_session_operation_gate(server, actor, McpCallEffect::of_run_call(call))
 }
 
 /// One speech call of a run, at `destination`, where its storage lands it:
-/// the live session, then Read in the run's own derived conversation and
-/// Write anywhere else (`McpCallEffect::of_run_speech`).
+/// the live session, then Write in the run's own derived conversation as
+/// anywhere else (`McpCallEffect::of_run_speech`, FIX CODE-MODE-LENDING-W7).
 pub(in crate::api::mcp_gateway) fn mcp_run_speech_gate(
     server: &Arc<SyncServer>,
     actor: &McpCallContext,
     destination: oneiron::code_run::RunSpeechDestination,
 ) -> Result<(), McpGatewayError> {
     mcp_session_operation_gate(server, actor, McpCallEffect::of_run_speech(destination))
+}
+
+/// One speech call of a run whose program its caller wrote (FIX
+/// EXECUTE-CALLER-CODE): the live session, then Write wherever it lands.
+/// No direct call writes a MESSAGE under a Read grant, so the caller's own
+/// code does not either.
+pub(in crate::api::mcp_gateway) fn mcp_caller_code_speech_gate(
+    server: &Arc<SyncServer>,
+    actor: &McpCallContext,
+) -> Result<(), McpGatewayError> {
+    mcp_session_operation_gate(server, actor, McpCallEffect::Commits)
 }
 
 /// One row a run's door serves itself, not through a tool: a browser or
@@ -246,6 +277,17 @@ pub(crate) fn mcp_host_verb_gate(
     verb: oneiron::task_verb::sdk::AgentVerb,
 ) -> Result<(), McpGatewayError> {
     mcp_session_operation_gate(server, actor, McpCallEffect::of_host_verb(verb))
+}
+
+/// One browser row of a run, whatever it reads: the live session, then
+/// Write. The row drives the host's browser guest, which a direct call
+/// reaches only through the caller's attached live run, and attaching needs
+/// Write (FIX CODE-MODE-LENDING-W2).
+pub(in crate::api::mcp_gateway) fn mcp_browser_guest_gate(
+    server: &Arc<SyncServer>,
+    actor: &McpCallContext,
+) -> Result<(), McpGatewayError> {
+    mcp_session_operation_gate(server, actor, McpCallEffect::Commits)
 }
 
 /// The live session, then one operation's own effect: a read needs only the

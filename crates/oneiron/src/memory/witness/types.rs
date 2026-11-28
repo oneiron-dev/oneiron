@@ -110,6 +110,17 @@ pub struct WitnessMessage {
     pub quote: Option<crate::store::conversation_record::QuoteSpan>,
 }
 
+/// Where a record-placement project came from: named by the caller on the
+/// write, or the attached session's folder binding. The admission is the same
+/// either way; only the refusal names its source.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ProjectPlacementSource {
+    /// The caller named the project (`WitnessTurn.project`).
+    CallerNamed,
+    /// The session's folder binding placed it (`Memory::session_placement`).
+    SessionFolder,
+}
+
 /// One conversational turn to witness: create-or-get CONVERSATION/TURN plus
 /// gated MESSAGE puts, edges, and text indexing in ONE batch (B2).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]

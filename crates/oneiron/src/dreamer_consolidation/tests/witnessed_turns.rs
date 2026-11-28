@@ -475,7 +475,7 @@ fn witnessed_user_turn_reaches_extraction_and_lands_its_message_evidence() -> Re
         assert!(
             backend
                 .request_text(0)
-                .contains(&format!("[T1 user] {SAID}\n")),
+                .contains(&format!("[T1 user P1] {SAID}\n")),
             "the extraction model reads the witnessed words"
         );
         let [claim] = sink.outcome.landed.as_slice() else {

@@ -68,6 +68,24 @@ pub(crate) fn measured_floors(
         .and_then(|model| model.evidence)
 }
 
+/// The relevance bar measured for `model_id` (`org/name@revision`), as
+/// [`measured_floors`] reads its floors: a shipped model with a bar, run with
+/// `profile`'s measured settings and queried unprompted; `None` otherwise
+/// (RECALL-CARRIER-THRESHOLD).
+pub(crate) fn measured_recall_bar(
+    model_id: &str,
+    profile: &RunProfile,
+    unprompted: bool,
+) -> Option<f32> {
+    if !unprompted || !profile.is_measured() {
+        return None;
+    }
+    PINNED_MODELS
+        .iter()
+        .find(|model| model_id == format!("{}@{}", model.repo, model.revision))
+        .and_then(|model| model.recall_bar)
+}
+
 /// Where vector evidence starts for a local section: its model's measured
 /// floors when it runs the shipped profile with no query prompt.
 pub(crate) fn pinned_evidence(config: &EmbedderConfig) -> Option<VectorEvidenceFloors> {
@@ -95,6 +113,26 @@ pub(crate) fn pinned_evidence_resolved(
     );
     let files = format!("{}@{}", config.local.repo, revision);
     measured_floors(&files, &RunProfile::of(config), unprompted)
+}
+
+/// [`pinned_evidence_resolved`]'s twin for the relevance bar: the measured
+/// bar of a local section that runs its shipped model as it was measured.
+pub(crate) fn pinned_recall_bar_resolved(
+    config: &EmbedderConfig,
+    resolved: Option<&ResolvedLocalRevision>,
+) -> Option<f32> {
+    let unprompted = config
+        .query_instruction
+        .as_deref()
+        .map_or(config.query_prompt_name.is_none(), |instruction| {
+            super::batcher::strip(instruction).is_empty()
+        });
+    let revision = resolved.map_or(
+        config.local.revision.as_str(),
+        ResolvedLocalRevision::commit,
+    );
+    let files = format!("{}@{}", config.local.repo, revision);
+    measured_recall_bar(&files, &RunProfile::of(config), unprompted)
 }
 
 /// Whether an endpoint section's queries reach the model unprompted: it names

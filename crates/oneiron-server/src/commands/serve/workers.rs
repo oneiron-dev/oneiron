@@ -338,8 +338,9 @@ pub(crate) async fn start_desktop_workers(
     // its issuer; a refusal is logged there and the server serves on (pass
     // 33, 8.1 and 8.7).
     let _ = crate::gpu_execution_node::issuer::register_vault_machine_at_start(&sync_server);
-    // Customer GPU jobs step on their offers' backends (row L10-31), when
-    // `[gpu_jobs]` posts an offer.
+    // Customer GPU jobs step on the backends their rows name (row L10-31;
+    // pass 33, 8.1), when `[gpu_jobs]` posts an offer or a job or work order
+    // is live.
     workers.extend(crate::gpu_host::spawn_gpu_job_steps(
         Arc::clone(&sync_server),
         admitted(),
