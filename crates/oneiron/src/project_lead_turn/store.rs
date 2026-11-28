@@ -228,7 +228,6 @@ pub(super) fn fold_cause(
     }
     if registration.owed.is_none() {
         registration.owed = Some(LeadTurnOpen::opened_at(now_ms));
-        registration.next_due_ms = now_ms.saturating_add(secs_ms(registration.settings.every_secs));
     }
     registration
         .owed
