@@ -8,7 +8,7 @@ use crate::dreamer_consolidation::{
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::side_table::{self, Raw, SideTable};
-use crate::{EdgeActorClass, TimeRange, Vault};
+use crate::{TimeRange, Vault};
 
 /// The backfill marker this door resets and reads.
 const MARKER: SideTable<(), Vec<u8>, Raw> =
@@ -36,16 +36,17 @@ pub fn reset_cited_source_dependency_backfill(vault: &Vault) -> Result<()> {
 }
 
 /// The Complete counters (scanned, linked, withdrawn, undecodable,
-/// missing_without_marker, archived, stale_source), or None while incomplete.
-pub fn cited_source_dependency_backfill_counts(vault: &Vault) -> Result<Option<[u64; 7]>> {
+/// missing_without_marker, archived, stale_source, untrusted_writer,
+/// rewritten_source), or None while incomplete.
+pub fn cited_source_dependency_backfill_counts(vault: &Vault) -> Result<Option<[u64; 9]>> {
     let txn = vault.store.env.read_txn()?;
     let Some(raw) = MARKER.get_bytes(&vault.store, &txn, &())? else {
         return Ok(None);
     };
-    if raw.len() != 57 || raw[0] != 2 {
+    if raw.len() != 73 || raw[0] != 2 {
         return Ok(None);
     }
-    let mut counts = [0u64; 7];
+    let mut counts = [0u64; 9];
     for (slot, chunk) in counts.iter_mut().zip(raw[1..].chunks_exact(8)) {
         *slot = u64::from_be_bytes(
             chunk
@@ -85,6 +86,33 @@ pub fn write_claim_citing_source_at(
     )
 }
 
+/// A CLAIM about `subject` at `id` citing `source`'s CURRENT body, written
+/// as [`write_claim_citing_source_at`] writes its CLAIM but with the binding
+/// the verifier computes over the source as stored now (for T10: redact the
+/// source after, and the citation no longer names it). The source must be
+/// stored; the CLAIM carries no dependency row.
+pub fn write_claim_citing_source_with_current_binding(
+    vault: &Vault,
+    subject: EntityId,
+    id: EntityId,
+    source: EntityId,
+) -> Result<()> {
+    let txn = vault.store.env.read_txn()?;
+    let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, &source)?
+        .ok_or(crate::error::Error::EntityNotFound)?;
+    let body = raw
+        .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
+        .ok_or(crate::error::Error::CorruptedIndex("cited source row"))?;
+    let hash = crate::dreamer_consolidation::swarm_evidence_content_hash(body);
+    drop(txn);
+    put_claim_with_inner(
+        vault,
+        subject,
+        id,
+        consolidation_inner_with_locators_and_hash(source, hash),
+    )
+}
+
 /// The same CLAIM with a `locators` entry the strict decoder rejects; its id.
 pub fn write_claim_with_undecodable_locators(vault: &Vault, subject: EntityId) -> Result<EntityId> {
     let missing = EntityId::now();
@@ -105,6 +133,12 @@ pub fn write_claim_with_undecodable_locators(vault: &Vault, subject: EntityId) -
 /// Evidence with `refs = [source]` and one Claim-shaped locator, `[0; 32]`
 /// hash and no MESSAGE spans.
 fn consolidation_inner_with_locators(source: EntityId) -> rmpv::Value {
+    consolidation_inner_with_locators_and_hash(source, [0; 32])
+}
+
+/// Evidence with `refs = [source]` and one Claim-shaped locator, `hash` and
+/// no MESSAGE spans.
+fn consolidation_inner_with_locators_and_hash(source: EntityId, hash: [u8; 32]) -> rmpv::Value {
     use crate::claim::ClaimSource;
 
     encode_consolidation_evidence_with_locators(
@@ -119,52 +153,66 @@ fn consolidation_inner_with_locators(source: EntityId) -> rmpv::Value {
                 claim_id: Some(source),
                 byte_range: None,
             },
-            [0; 32],
+            hash,
             Vec::new(),
         )],
     )
 }
 
 /// A `profile.note` CLAIM about `subject` at `id` with the envelope around
-/// `inner`.
+/// `inner`, S1-writer-shaped: the Dreamer authority's stamp and machine
+/// signature (review 10625 round 1 P1-1: the backfill trusts only a base
+/// agent's stamp). It lands as the other Dreamer doors land theirs: signed,
+/// then a `claim_candidate` with its envelope in one write transaction, so
+/// the write chokepoint verifies the first birth against that envelope (a
+/// raw `put_claim` carries no envelope, and a signed first birth without one
+/// is refused). Proposed, as those doors write; the backfill never reads
+/// approval. The fixture retains the Dreamer signer
+/// (`provision_engine_machine_identities`), so without one this errors
+/// instead of landing an unsigned Dreamer row.
 fn put_claim_with_inner(
     vault: &Vault,
     subject: EntityId,
     id: EntityId,
     inner: rmpv::Value,
 ) -> Result<()> {
-    use crate::claim::{
-        ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
-    };
-    use crate::write_envelope::{
-        WriteActor, WriteEnvelope, WriteProvenance, write_envelope_evidence,
-    };
+    use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
+    use crate::write_envelope::{ClaimCandidate, SourceLineage, WriteEnvelope, WriteProvenance};
 
-    let envelope = WriteEnvelope::new(
-        WriteActor::new(
-            crate::vault::embedded_owner_actor_id()?,
-            EdgeActorClass::Human,
-        ),
+    let mut envelope = WriteEnvelope::with_lineage(
+        vault.dreamer_authority()?,
         ClaimSource::Observed,
         WriteProvenance::new(rmpv::Value::Map(vec![(
             rmpv::Value::from("door"),
             rmpv::Value::from("cited_source_dependency_backfill"),
         )]))?,
-        ClaimApprovalStatus::Auto,
+        ClaimApprovalStatus::Proposed,
+        SourceLineage::of(ClaimSource::Generated).with(ClaimSource::Observed),
     );
-    let mut body = ClaimBody::new(
+    let candidate = ClaimCandidate::new(
         "profile.note",
         ClaimSubject::Entity(subject),
         rmpv::Value::from("the cited note"),
         1.0,
-        ClaimApprovalStatus::Auto,
-        ClaimLifecycleStatus::Active,
-    )?;
-    body.source = Some(ClaimSource::Observed);
-    body.scope = None;
-    body.scope_facet = vault.default_facet()?;
-    body.evidence = Some(write_envelope_evidence(&envelope, Some(inner)));
+    )
+    .with_evidence(inner)
+    .with_scope(crate::dreamer_promotion::scope_with_taint(
+        None,
+        ClaimSource::Observed,
+    ));
     let at = vault.now_recorded_at();
-    vault.put_claim(&id, &body, TimeRange { start: at, end: at }, at)?;
+    vault.with_write_txn_grouped(|txn| {
+        vault.sign_retained_machine_claim_in_txn(&*txn, &id, &candidate, &mut envelope)?;
+        vault
+            .batch_in()
+            .claim_candidate(
+                &id,
+                candidate,
+                &envelope,
+                TimeRange { start: at, end: at },
+                at,
+            )
+            .apply_recording_gate_decisions(txn)
+    })?;
     Ok(())
 }

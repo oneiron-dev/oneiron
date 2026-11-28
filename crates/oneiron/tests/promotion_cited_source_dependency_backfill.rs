@@ -21,8 +21,9 @@ use oneiron::test_doors::cited_source_dependency_backfill::{
     cited_source_dependency_backfill_counts, cited_source_dependency_sources,
     forget_cited_source_dependencies, reset_cited_source_dependency_backfill,
     write_claim_citing_missing_source, write_claim_citing_source_at,
-    write_claim_with_undecodable_locators,
+    write_claim_citing_source_with_current_binding, write_claim_with_undecodable_locators,
 };
+use oneiron::test_doors::claim_value_redaction::redact_claim_value_fields;
 use oneiron::test_doors::derive::{
     open_conflict_with_alternative, open_conflict_with_imported_alternative, settlement_kept_claim,
 };
@@ -169,6 +170,81 @@ fn owner_claim(fixture: &Fixture, value: &str) -> EntityId {
         .vault
         .put_claim(&id, &body, TimeRange { start: at, end: at }, at)
         .expect("the owner's own claim");
+    id
+}
+
+/// A CLAIM through the public `put_claim` door whose `body.evidence` carries
+/// a claim-shaped locator to `source` that no Dreamer run verified: unstamped
+/// top-level evidence with a 32-zero-byte hash; its id.
+fn caller_claim_citing_source(fixture: &Fixture, source: EntityId) -> EntityId {
+    let mut body = ClaimBody::new(
+        "profile.note",
+        ClaimSubject::Entity(fixture.subject),
+        rmpv::Value::from("the caller's note"),
+        1.0,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    )
+    .expect("a claim body");
+    body.source = Some(ClaimSource::Observed);
+    body.scope = None;
+    body.scope_facet = fixture.vault.default_facet().expect("the default facet");
+    body.evidence = Some(rmpv::Value::Map(vec![(
+        rmpv::Value::from("locators"),
+        rmpv::Value::Array(vec![rmpv::Value::Map(vec![
+            (
+                rmpv::Value::from("source_id"),
+                rmpv::Value::Binary(source.as_bytes().to_vec()),
+            ),
+            (
+                rmpv::Value::from("claim_id"),
+                rmpv::Value::Binary(source.as_bytes().to_vec()),
+            ),
+            (
+                rmpv::Value::from("content_hash"),
+                rmpv::Value::Binary(vec![0; 32]),
+            ),
+        ])]),
+    )]));
+    let id = EntityId::now();
+    let at = fixture.vault.now_recorded_at();
+    fixture
+        .vault
+        .put_claim(&id, &body, TimeRange { start: at, end: at }, at)
+        .expect("the caller's claim");
+    id
+}
+
+/// The owner's own claim about the fixture's subject with a map value holding
+/// `secret_note` (for redaction) beside a public field; its id.
+fn owner_map_claim(fixture: &Fixture) -> EntityId {
+    let mut body = ClaimBody::new(
+        "profile.note",
+        ClaimSubject::Entity(fixture.subject),
+        rmpv::Value::Map(vec![
+            (
+                rmpv::Value::from("secret_note"),
+                rmpv::Value::from("the door code"),
+            ),
+            (
+                rmpv::Value::from("public_note"),
+                rmpv::Value::from("likes tea"),
+            ),
+        ]),
+        1.0,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    )
+    .expect("a claim body");
+    body.source = Some(ClaimSource::Observed);
+    body.scope = None;
+    body.scope_facet = fixture.vault.default_facet().expect("the default facet");
+    let id = EntityId::now();
+    let at = fixture.vault.now_recorded_at();
+    fixture
+        .vault
+        .put_claim(&id, &body, TimeRange { start: at, end: at }, at)
+        .expect("the owner's map claim");
     id
 }
 
@@ -467,5 +543,78 @@ fn the_backfill_runs_once() {
     assert_eq!(
         first, second,
         "a second open leaves the backfill counts unchanged"
+    );
+}
+
+#[test]
+fn a_row_with_caller_supplied_evidence_stays() {
+    let f = Fixture::new();
+    let a = owner_claim(&f, "the cited note");
+    let b = caller_claim_citing_source(&f, a);
+    assert!(
+        f.vault.get_claim(&b).expect("read B").is_some(),
+        "B does not read before the backfill"
+    );
+    let deleted = f
+        .vault
+        .delete_entity_with_reason_as_owner(&f.proof, &a, DeleteReason::UserHardDelete)
+        .expect("the owner hard deletes the cited CLAIM");
+    assert!(deleted.existed, "the cited CLAIM existed");
+    reset_cited_source_dependency_backfill(&f.vault).expect("reset the backfill marker");
+    let f = f.reopen();
+    assert!(
+        f.vault.get_claim(&b).expect("read B").is_some(),
+        "a row with caller-supplied evidence was withdrawn"
+    );
+    let counts = cited_source_dependency_backfill_counts(&f.vault)
+        .expect("read the backfill counts")
+        .expect("the backfill is complete");
+    assert_eq!(counts[7], 1, "untrusted_writer counts B");
+    assert_eq!(counts[2], 0, "nothing was withdrawn");
+    let sources = cited_source_dependency_sources(&f.vault, b).expect("read B's sources");
+    assert!(
+        sources.is_empty(),
+        "a row with caller-supplied evidence gained a dependency"
+    );
+}
+
+#[test]
+fn a_row_citing_a_redacted_claim_value_is_withdrawn() {
+    let f = Fixture::new();
+    let a = owner_map_claim(&f);
+    let b = EntityId::now();
+    write_claim_citing_source_with_current_binding(&f.vault, f.subject, b, a)
+        .expect("write B citing A's value");
+    assert!(
+        f.vault.get_claim(&b).expect("read B").is_some(),
+        "B does not read before the backfill"
+    );
+    redact_claim_value_fields(&f.vault, a, &["secret_note".to_owned()], f.owner)
+        .expect("redact A's value field");
+    let redacted = f
+        .vault
+        .get_claim(&a)
+        .expect("read A")
+        .expect("the redacted CLAIM no longer reads");
+    assert!(
+        matches!(&redacted.value, rmpv::Value::Map(entries)
+            if !entries.iter().any(|(key, _)| key.as_str() == Some("secret_note"))),
+        "the redacted CLAIM kept the field"
+    );
+    reset_cited_source_dependency_backfill(&f.vault).expect("reset the backfill marker");
+    let f = f.reopen();
+    assert!(
+        f.vault.get_claim(&b).expect("read B").is_none(),
+        "B still reads after citing a redacted CLAIM value"
+    );
+    let counts = cited_source_dependency_backfill_counts(&f.vault)
+        .expect("read the backfill counts")
+        .expect("the backfill is complete");
+    assert_eq!(counts[8], 1, "rewritten_source counts B");
+    assert_eq!(counts[2], 1, "the backfill withdrew B");
+    let sources = cited_source_dependency_sources(&f.vault, b).expect("read B's sources");
+    assert!(
+        sources.is_empty(),
+        "B gained a dependency to the redacted A"
     );
 }
