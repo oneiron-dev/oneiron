@@ -224,7 +224,7 @@ impl Vault {
                     }
                     Ok(IntentStand::New) => {}
                 }
-                let parent = request.parent.unwrap_or(root);
+                let parent = root;
                 let Some(view) = reader.effective(parent)? else {
                     return Ok(Err(refusal(
                         MEMORY_CODE_NOT_FOUND,
