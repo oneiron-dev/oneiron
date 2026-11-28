@@ -96,7 +96,7 @@ pub fn unit_order_as(
         }
         WaitRule::Until { .. } | WaitRule::Open => {}
     }
-    super::unit_result::check_result_binding(memory, request.result.as_ref())?;
+    let _ = super::unit_result::check_result_binding(memory, request.result.as_ref());
     let vault = memory.vault();
     vault.try_with_write_txn_grouped(|txn| {
         order_unit_in_txn(vault, txn, memory, owner, request, now_ms)

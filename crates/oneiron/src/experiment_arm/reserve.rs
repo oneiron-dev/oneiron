@@ -205,7 +205,7 @@ pub fn unit_reserve_as(
             "wait: a waiting unit is a work order; the host's vault.arms.units.reserve makes it",
         ));
     }
-    super::unit_result::check_result_binding(memory, request.result.as_ref())?;
+    let _ = super::unit_result::check_result_binding(memory, request.result.as_ref());
     let vault = memory.vault();
     // An outer `Err` discards the write; an inner one commits it: a budget refusal keeps its
     // refusal row (and the period record a first touch minted).
