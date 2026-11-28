@@ -625,7 +625,7 @@ fn put_stale_mark_in_txn(store: &Store, txn: &mut RwTxn<'_>, id: &EntityId) -> R
     Ok(())
 }
 
-fn mark_one_stale_in_txn(
+pub(super) fn mark_one_stale_in_txn(
     write: &crate::secret_custody::CustodyWrite<'_>,
     txn: &mut RwTxn<'_>,
     id: &EntityId,

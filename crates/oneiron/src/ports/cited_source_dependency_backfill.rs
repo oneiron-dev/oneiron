@@ -514,11 +514,10 @@ impl Vault {
         if withdraw || rewritten {
             // Through the dependent walk: a CLAIM this pass linked to `citing`
             // earlier (its id sorts first) is withdrawn with it.
-            super::integrity::withdraw_dependent_in_txn(
+            super::integrity::mark_one_stale_in_txn(
                 &crate::secret_custody::CustodyWrite::of(self),
                 wtxn,
                 citing,
-                &crate::settings::CarriedWorlds::default(),
             )?;
             counts.withdrawn += 1;
             if rewritten {
