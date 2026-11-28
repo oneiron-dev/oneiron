@@ -1,6 +1,6 @@
 import { afterAll, test } from "bun:test";
-import { createHash } from "node:crypto";
-import { copyFile, mkdir, readFile, readdir } from "node:fs/promises";
+import { createHash, createHmac } from "node:crypto";
+import { copyFile, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { Facade, FacadeInput, FacadeResult } from "@oneiron/client";
 import { EngineFixture, awaitPublic, type PairedActor } from "./support/engine.ts";
@@ -1479,39 +1479,398 @@ suite.test(test, "COORDINATION-05", "An agent TASK goes to the runner and a peer
   }
 });
 
-/* COORDINATION-06 — Addressed ask gets evidence or explicit refusal should work.
+/** COORDINATION-06 authored inputs (fixture discriminant, not a wire DTO). */
+interface Coordination06Scenario {
+  id: "COORDINATION-06";
+  inputs: {
+    responders: string[];
+    question: string;
+    fact: { label: string; content: string };
+    answer: { responder: string; result: string; evidence: string[] };
+    abstention: { responder: string; result: string; reason: string; reasonLabel: string };
+    arrivalOrder: string[];
+    unanswered: string;
+    cutoffDefault: "hold" | "proceed";
+    cancelBeforeDeadline: boolean;
+  };
+  expected: {
+    collectionOrder: string[];
+    peerAnswerHasEvidence: boolean;
+    childAbstentionHasDurableReason: boolean;
+    unansweredHasResult: boolean;
+    unansweredCountsAsSuccess: boolean;
+    refusalCountsAsAnswerSuccess: boolean;
+    terminalReasonsRemainDistinct: boolean;
+    rootRereadsEvidence: boolean;
+  };
+}
+type Coordination06Consult = FacadeResult<"vault.consults.get">;
+type Coordination06Ask = FacadeResult<"ask">;
+
+/** Every ask deadline: far in the future, so no cutoff settles an ask while the case runs. */
+const COORDINATION06_UNTIL = 1893456000;
+function coordination06InputId(label: string): string {
+  return createHash("sha256").update(`coordination-e2e:COORDINATION-06:${label}`).digest("hex").slice(0, 32);
+}
+async function coordination06Scenario(): Promise<Coordination06Scenario> {
+  const data = await (await loadFixtures()).readJson<{ scenarios: { id: string }[] }>("coordination-scenarios");
+  const row = data.scenarios.find(item => item.id === "COORDINATION-06");
+  if (!row) throw new Error("Missing COORDINATION-06 fixture scenario");
+  return row as Coordination06Scenario; // Fixture discriminant, not an invented wire DTO.
+}
+async function coordination06Agent(client: PublicHttpClient, label: string, ceiling?: "auto"): Promise<string> {
+  const agent_def_ref = coordination06InputId(label);
+  const created = await client.call("vault.agents.create", {
+    agent_def_ref, definition: { agent_id: label, display_name: label, desc: `COORDINATION-06 ${label}`, version: "1", ...(ceiling === undefined ? {} : { ceiling }) },
+  });
+  expect(created.agent_def_ref).toBe(agent_def_ref);
+  return agent_def_ref;
+}
+/** One owner-authored claim at a chosen id, read back as a CLAIM (a public input, not a seeded record). */
+async function coordination06Claim(owner: PublicHttpClient, ownerRef: string, label: string, predicate: string,
+  value: string, occurred_at: number): Promise<string> {
+  const id = coordination06InputId(label);
+  const scope = await ownerBaseClaimScope(owner, ownerRef);
+  const upserted = await owner.call("vault.claims.upsert", {
+    id, predicate, subject_ref: ownerRef, value, confidence: 1, source: "user_stated", scope, occurred_at,
+  });
+  expect(upserted.approval).toBe("auto");
+  const row = (await owner.call("vault.get", { entity_ref: id })).value;
+  expect(row?.kind).toBe("CLAIM");
+  expect(row?.id_hex).toBe(id);
+  return id;
+}
+/** The owner lets each responder read what its ask cites and what it lands: one exact-actor read grant each
+ * through the public policy door (COORDINATION-05's board-human grant). Ask admission checks that the asker
+ * AND each holder read the question (task_ask.rs validate_task_answer_unit); a word's result and provenance,
+ * and a landing's TASK, result and reason, are checked the same way for the party that gives them. */
+async function coordination06GrantRead(owner: PublicHttpClient, actorRefs: readonly string[]): Promise<void> {
+  const policy = await owner.call("vault.gate.policy.get", {});
+  const manifest = policy.manifests.find(row => row.manifest_ref === policy.default_manifest_ref);
+  if (!manifest) throw new Error("Default policy manifest is absent");
+  const reads: Facade.PolicyScopedGrantRow[] = actorRefs.map(actor_ref => ({
+    actor_ref, effector: "core:read", receipt_required: false,
+    scope: { worlds: { kind: "all" }, facets: { kind: "all" }, bands: { kind: "all" },
+      audience: { kind: "all" }, verbs: { kind: "some", values: ["read"] }, sensitivity: { kind: "all" } },
+  }));
+  const granted = await owner.call("vault.gate.policy.put", {
+    manifest_ref: manifest.manifest_ref, expected_body_hash: manifest.body_hash,
+    manifest: { ...manifest.manifest, scoped_grants: [...(manifest.manifest.scoped_grants ?? []), ...reads] },
+  });
+  expect(granted.receipt_ref.length).toBeGreaterThan(0);
+  const after = await owner.call("vault.gate.policy.get", {});
+  const live = after.manifests.find(row => row.manifest_ref === after.default_manifest_ref);
+  for (const actor_ref of actorRefs)
+    expect(live?.manifest.scoped_grants?.some(grant => grant.actor_ref === actor_ref && grant.effector === "core:read")).toBe(true);
+}
+/** A step whose program asks the owner one held question and parks on it: a durable wait that keeps the run's
+ * lease and live entry (COORDINATION-04's leader run), so its agent can attach to it. */
+function coordination06ParkStep(providers: ScriptedProviders, id: string, purpose: string, ownerRef: string,
+  turn: string, key: string): void {
+  coordination04Step(providers, id, purpose, [
+    `const asked = await ask({ intent_key: "${key}", who: { responder: { human: { actor_ref: "${ownerRef}" } } },`,
+    `  what: { reference: { turn: "${turn}" }, revision: 1, options: { proceed: { label: "Proceed" } }, context_refs: [] } });`,
+    `await wait({ handle: asked.handle, step_key: "${key}" });`,
+  ].join("\n"));
+}
+/** The owner's read of one consult TASK: its deadline and terminal register, as refs. */
+async function coordination06Consult(owner: PublicHttpClient, task_ref: string): Promise<Coordination06Consult> {
+  const read = await owner.call("vault.consults.get", { task_ref });
+  expect(read.task_ref).toBe(task_ref);
+  return read;
+}
+/** The one member TASK of a single-responder ask. */
+function coordination06Member(receipt: Coordination06Ask): string {
+  expect(receipt.task_refs).toHaveLength(1);
+  const member = receipt.task_refs[0];
+  if (!member) throw new Error("Ask minted no member TASK");
+  return member;
+}
+/** The asker's resumed wait: Ready at once, or Ready after the ask's settlement is readable (only the describe
+ * READ repeats; the second wait is the resuming act, as in MUSE-LOOP-05). */
+async function coordination06WaitReady(client: PublicHttpClient, handle: Coordination06Ask["handle"], step_key: string) {
+  const first = await client.call("wait", { handle, step_key });
+  if ("Ready" in first) return first.Ready;
+  await awaitPublic(async () => {
+    const described = await client.call("describe", { handle: { kind: "ask", group_ref: handle.group_ref } });
+    if (described.kind !== "task_status") throw new Error(`describe answered ${described.kind}, not task_status`);
+    return described.receipt.outcome;
+  }, outcome => outcome.kind === "snapshot" && outcome.phase.phase === "asked" && outcome.phase.settled,
+  { label: "COORDINATION-06 peer ask settles on its word", timeoutMs: LIMITS.requestMs });
+  const second = await client.call("wait", { handle, step_key });
+  if (!("Ready" in second)) throw new Error(`Answered ask did not resume Ready: ${Object.keys(second).join(",")}`);
+  return second.Ready;
+}
+/** A refused public call: the typed HTTP error, whatever its status. */
+async function coordination06Refused(call: Promise<unknown>, label: string): Promise<PublicHttpError> {
+  try { await call; } catch (error) {
+    if (!(error instanceof PublicHttpError)) throw error;
+    expect(error.reply.status).toBeGreaterThanOrEqual(400);
+    return error;
+  }
+  throw new Error(`${label}: expected a refusal, the call succeeded`);
+}
+
+/* COORDINATION-06 (partial, Engine E2E-PARTIAL option A; COORD-E2E-ASK-ORDER = A, 24 Nov 22:44).
  * Rows: OF-383, OF-391. Canon: ARCH-0067 #tasks; ARCH-0026 #swarm-fanout.
- *
- * Existing typed calls:
- *   ask({ intent_key, who: { responder: TaskAssignee }, what: {
- *     reference: { claim } | { turn }, revision, options, context_refs },
- *     until, default: "hold", need?, decide?, ... }) -> TaskAskReceipt
- *   peek({ handle: { group_ref } }) -> TaskAskStatus
- *   tasks.answer({ handle, word: { result_ref, provenance_refs } })
- *     -> TaskAskAnswer { task_ref, actor_ref, result_ref, word_ref, ... }
- *   cancel({ task_ref }) -> TaskCancelReceipt
- * Canon result: an Answer carries a result ref and nonempty evidence refs;
- * an Abstain carries a result ref and a durable reason ref. A bare string or
- * missing reply is neither. The current native ConsultResultKind encodes
- * these separately; it has no typed HTTP/SDK consult-result landing method.
- *
- * Ask peer, child and unavailable responder, retaining input order. Admit the
- * child's explicit inability first and the peer's cited answer second, using
- * barriers instead of sleeps. Partial collection must retain identity and
- * reference provenance despite arrival order. Re-read the cited fixture fact
- * as root; a generated summary does not add corroboration. Cancel the third
- * while it is unanswered and inspect its receipt/status. It must remain
- * distinguishable from an answered consult, from an explicit inability, and
- * from execution failure; no empty result may be reported as success. If the
- * separate run view reports a never-answered/reclaimed run, it is abandoned,
- * never delivered/archived success. A cancellation need not be relabelled an
- * expiry; preserve each public terminal reason rather than collapsing them.
- *
- * Missing: typed HTTP/SDK child spawn and evidence-or-abstention consult
- * landing/inspection. Public tasks.answer is an ask word, not an invented
- * {abstain: ...} payload or automatic proof of successful agent execution.
+ * Promise: three addressed asks, kept in input order by the case itself (peer, child, unavailable): the
+ *   running child's explicit inability lands first with its durable reason, the peer's answer lands second
+ *   citing its evidence, the root re-reads the cited fact, and the cancelled unanswered ask holds no result.
+ *   Collected in input order despite arrival order, the three stay apart: an answer with evidence, an
+ *   abstention with a reason that never counts as an answer, and a cancelled consult with no terminal.
+ *   An answer with no evidence lands nothing.
+ * Doors: HTTP facade only: vault.agents.create, vault.people.create, vault.conversations.create,
+ *   vault.witness, vault.get, vault.claims.upsert/list, vault.gate.policy.get/put, tasks.create,
+ *   vault.runs.branches.get, vault.runs.checkpoint, self.run.attach, self.agents.spawn (the leader's own
+ *   credential on its parked live run), ask, peek, wait, describe, tasks.answer (the peer's word),
+ *   tasks.consult.result (the child's own credential on its own parked run, #10421), cancel and
+ *   vault.consults.get (the owner); pairActor; ScriptedProviders drive the two parked runs.
+ * Mapping: the owner is the asker (her own TASKs, so her cancel is her own act, query_facade.rs
+ *   owner_cancel_own_task). foreign-executor is a same-vault agent addressed as a peer (the PeerSyncedOnly
+ *   route is the same, gate/task_assignee.rs); worker-b-child is spawned in the leader's slice from the
+ *   leader's parked run and lands from its own parked run (lands_from_run: a consult addressed to the
+ *   running child); unavailable-responder is a person who is never paired, addressed as a human. The fixture
+ *   facts (route note, answer, inability and its reason) are owner-authored claims at chosen ids.
+ * Unproved: one ask carrying all three in input order (Responder holds one assignee; People is a set of
+ *   humans and peers): the three-ask form is the ruled one. A foreign executor admitted through
+ *   vault.federation.connect.*. The run view's abandoned and failed reasons (reclaimedRunStatus,
+ *   executionFailureStatus): no public door reclaims a parked run or fails one on cue here. A generated
+ *   summary adding no corroboration (the root's de-dup of cited sources). The MCP surface (HTTP here).
  */
-suite.todo(test, "COORDINATION-06", "waits on typed child spawn and evidence-or-abstention consult result landing/inspection");
+suite.test(test, "COORDINATION-06", "Three addressed asks kept in input order by the case: the running child's explicit inability lands with its reason, the peer's answer cites evidence the root re-reads, and the cancelled unanswered ask holds no result and stays apart from both", async () => {
+  const c = await coordination06Scenario();
+  const [peerLabel, childLabel, unavailableLabel] = c.inputs.responders;
+  if (!peerLabel || !childLabel || !unavailableLabel) throw new Error("COORDINATION-06 fixture names fewer than three responders");
+  expect(c.inputs.answer.responder).toBe(peerLabel);
+  expect(c.inputs.abstention.responder).toBe(childLabel);
+  expect(c.inputs.unanswered).toBe(unavailableLabel);
+  expect(c.inputs.arrivalOrder).toEqual([childLabel, peerLabel]);
+  expect(c.inputs.cancelBeforeDeadline).toBe(true);
+  const providers = await ScriptedProviders.start({ id: "coordination06-runs", origins: ["chat"], steps: [] });
+  const engine = await EngineFixture.start({ id: "COORDINATION-06", profile, serverLog: "oneiron=info", serverConfig: `
+[models.providers.coord06chat]
+kind = "local-openai-compat"
+base_url = "${providers.urls.chat}"
+revision = "coordination-v1"
+[models.roles.generative_reasoner]
+model = "coord06chat:${coordination04Model}"
+[models.dreamer]
+enabled = false
+[models.workflows]
+enabled = false
+[models.code_mode]
+prompt_package = ${JSON.stringify(resolve(import.meta.dir, "fixtures/hooks/host/prompts"))}
+` });
+  try {
+    const owner = engine.client;
+    const ownerRef = engine.pairedActor.principalRef;
+    const occurred = 1769947200; // Public setup input, never an engine clock override.
+
+    // ---- Parties: the leader and the child (both may ask), the peer agent, the unavailable person. ----
+    const leaderRef = await coordination06Agent(owner, "leader", "auto");
+    const childRef = await coordination06Agent(owner, childLabel, "auto");
+    const peerRef = await coordination06Agent(owner, peerLabel);
+    const leader = await engine.pairActor({ principalRef: leaderRef, actorClass: "agent", scope: ["core:read", "core:write"] });
+    const child = await engine.pairActor({ principalRef: childRef, actorClass: "agent", scope: ["core:read", "core:write"] });
+    const peer = await engine.pairActor({ principalRef: peerRef, actorClass: "agent", scope: ["core:read", "core:write"] });
+    expect((await child.client.call("self.actor", {})).actor_ref).toBe(childRef);
+    expect((await peer.client.call("self.actor", {})).actor_ref).toBe(peerRef);
+    const conversation = await owner.call("vault.conversations.create", {
+      body: {}, occurred_start: occurred, occurred_end: occurred, learned_at: occurred,
+    });
+    const witnessTurn = async (content: string) => {
+      const witnessed = await owner.call("vault.witness", {
+        conversation_ref: conversation.id, occurred_at: occurred,
+        messages: [{ author: "user", message_type: "text", content, is_visible: true, order: 0 }],
+      });
+      const turn = (await owner.call("vault.get", { entity_ref: witnessed.turn_short_id })).value;
+      expect(turn?.kind).toBe("TURN");
+      if (!turn) throw new Error(`TURN for "${content}" is not readable`);
+      return turn.id_hex;
+    };
+    const identityTurn = await witnessTurn("This distinct person is the unavailable responder.");
+    const unavailable = await owner.call("vault.people.create", {
+      identity: { name: unavailableLabel }, identity_evidence_refs: [identityTurn], occurred_at: occurred,
+    });
+    const unavailableRef = unavailable.person.id_hex;
+    expect(unavailableRef).not.toBe(ownerRef);
+    await grantAgentAskAuthority(owner, leaderRef);
+    await grantAgentAskAuthority(owner, childRef);
+    await coordination06GrantRead(owner, [peerRef, childRef, unavailableRef]);
+
+    // ---- The asked question, the fact it cites and the results the responders give (public inputs). ----
+    const holdTurn = await witnessTurn("Hold the route plan until I confirm.");
+    const questionTurn = await witnessTurn(c.inputs.question);
+    const routeNote = await coordination06Claim(owner, ownerRef, c.inputs.fact.label, "coordination.route_note",
+      c.inputs.fact.content, occurred);
+    expect(c.inputs.answer.evidence).toEqual([c.inputs.fact.label]);
+    const answerRef = await coordination06Claim(owner, ownerRef, c.inputs.answer.result, "coordination.route_answer",
+      "The route note lists the north entrance.", occurred);
+    const inabilityRef = await coordination06Claim(owner, ownerRef, c.inputs.abstention.result, "coordination.child_inability",
+      "The child abstains from the route-note question.", occurred);
+    const reasonRef = await coordination06Claim(owner, ownerRef, c.inputs.abstention.reasonLabel,
+      "coordination.child_inability_reason", c.inputs.abstention.reason, occurred);
+
+    // ---- The leader's run parks on its own ask; the leader attaches under her own credential. ----
+    coordination06ParkStep(providers, "coordination06-leader", "the leader's run asks its owner and parks", ownerRef,
+      holdTurn, "coordination-06/leader/hold");
+    const request = "Route the entrance question to the workers.";
+    const posted = await owner.call("tasks.create", {
+      spec: { title: request }, label: "coordination-06-leader", assignee: { agent_def: { agent_def_ref: leaderRef } },
+      intent_key: "coordination-06/leader/post",
+      brief: {
+        schema: 1, type_ref: { node_id: coordination06InputId("task-type"), tree_version: 1 },
+        objective: request, intent: { need: request, care: "light" },
+        success: { question: "Did each addressed responder answer, abstain or stay unanswered on its own record?",
+          criteria: { yes_if_all: [{ text: "Each responder's outcome is read apart from the others." }] } },
+        settled: [],
+        escalation: { to: { people: [ownerRef] }, triggers: [], default: "proceed", reversibility: "reversible_read" },
+      },
+    });
+    expect(posted.effected).toBe(true);
+    const leaderTask = posted.task_ref;
+    if (!leaderTask) throw new Error("Leader TASK has no task_ref");
+    const leaderBranches = (await owner.call("vault.runs.branches.get", { task_ref: leaderTask })).branches;
+    expect(leaderBranches).toHaveLength(1);
+    const leaderRun = leaderBranches[0]!.branch;
+    await awaitPublic(() => owner.call("vault.runs.checkpoint", { run_ref: leaderRun }),
+      view => (view?.completed_steps ?? 0) >= 1, { label: "COORDINATION-06 leader run commits its asking step" });
+    const parkedLeader = (await owner.call("vault.runs.branches.get", { task_ref: leaderTask })).branches[0];
+    await expectParkedBranchLeased(engine, "COORDINATION-06 leader after its asking step", parkedLeader);
+    const leaderAttached = await leader.client.call("self.run.attach", { run: leaderRun });
+    expect(leaderAttached.live_run.startsWith(`lr1.${leaderRun}.`)).toBe(true);
+
+    // ---- The leader spawns worker-b-child inside her slice: queued at once, no widening proposal. ----
+    coordination06ParkStep(providers, "coordination06-child", "the spawned child's run asks its owner and parks", ownerRef,
+      holdTurn, "coordination-06/child/hold");
+    const spawned = await leader.client.call("self.agents.spawn", { live_run: leaderAttached.live_run, spec: {
+      need: "Answer the entrance question you are asked.", prompt: "Answer only from sources your slice reads.",
+      intent_key: "coordination-06/spawn/child", agent: childRef } });
+    if (spawned.state !== "queued") throw new Error(`In-slice spawn answered ${spawned.state}, not queued`);
+    expect(spawned.kind).toBe("agent_spawn");
+    const childRun = spawned.attempt;
+    expect(childRun).toMatch(/^[a-f0-9]{32}$/);
+    expect((await owner.call("vault.widen_proposals", {})).proposals).toEqual([]);
+    await awaitPublic(() => owner.call("vault.runs.checkpoint", { run_ref: childRun }),
+      view => (view?.completed_steps ?? 0) >= 1, { label: "COORDINATION-06 child run commits its asking step" });
+    const childAttached = await child.client.call("self.run.attach", { run: childRun });
+    expect(childAttached.live_run.startsWith(`lr1.${childRun}.`)).toBe(true);
+
+    // ---- Ask each, in input order: one single-responder ask per responder. ----
+    const responders: Record<string, FacadeInput<"ask">["who"]> = {
+      [peerLabel]: { responder: { peer: { actor_ref: peerRef } } },
+      [childLabel]: { responder: { child: { actor_ref: childRef } } },
+      [unavailableLabel]: { responder: { human: { actor_ref: unavailableRef } } },
+    };
+    const asks: { label: string; receipt: Coordination06Ask; member: string }[] = [];
+    for (const label of c.inputs.responders) {
+      const who = responders[label];
+      if (!who) throw new Error(`No responder for ${label}`);
+      const receipt = await owner.call("ask", {
+        intent_key: `coordination-06/ask/${label}`, who,
+        what: { reference: { turn: questionTurn }, revision: 1, options: {}, context_refs: [], label: c.inputs.question },
+        until: COORDINATION06_UNTIL, default: c.inputs.cutoffDefault,
+      });
+      expect(receipt.handle.group_ref.length).toBeGreaterThan(0);
+      asks.push({ label, receipt, member: coordination06Member(receipt) });
+    }
+    expect(asks.map(row => row.label)).toEqual(c.inputs.responders);
+    expect(new Set(asks.map(row => row.member)).size).toBe(3);
+    const [peerAsk, childAsk, unavailableAsk] = asks as [typeof asks[number], typeof asks[number], typeof asks[number]];
+    for (const row of asks) {
+      const open = await coordination06Consult(owner, row.member);
+      expect(typeof open.deadline_at).toBe("number");
+      expect(open.terminal ?? null).toBeNull();
+    }
+
+    // ---- Arrival 1: the child. A bare answer with no evidence lands nothing; its inability lands with a reason. ----
+    const completedAt = () => Math.floor(Date.now() / 1000) - 1;
+    await coordination06Refused(child.client.call("tasks.consult.result", { live_run: childAttached.live_run, spec: {
+      task_ref: childAsk.member, kind: { kind: "answer", result_ref: inabilityRef, evidence_refs: [] }, completed_at: completedAt(),
+    } }), "COORDINATION-06 child answer without evidence");
+    expect((await coordination06Consult(owner, childAsk.member)).terminal ?? null).toBeNull();
+    const abstained = await child.client.call("tasks.consult.result", { live_run: childAttached.live_run, spec: {
+      task_ref: childAsk.member, kind: { kind: "abstain", result_ref: inabilityRef, reason_ref: { claim: reasonRef } },
+      completed_at: completedAt(),
+    } });
+    expect(abstained.task_ref).toBe(childAsk.member);
+    expect(abstained.idempotent_replay).toBe(false);
+    expect(abstained.terminal.disposition).toBe("completed");
+    expect(abstained.terminal.result_ref).toBe(inabilityRef);
+    expect(abstained.terminal.summary).toEqual({ kind: "abstained", reason_ref: { claim: reasonRef } });
+
+    // Partial collection: the peer has not answered yet, and the child's inability is no ask word.
+    expect((await coordination06Consult(owner, peerAsk.member)).terminal ?? null).toBeNull();
+    expect((await owner.call("peek", childAsk.receipt.handle)).some(row => row.kind === "word")).toBe(false);
+
+    // ---- Arrival 2: the peer answers as itself, citing the route note. ----
+    const answered = await peer.client.call("tasks.answer", { handle: peerAsk.receipt.handle,
+      word: { result_ref: answerRef, provenance_refs: [{ claim: routeNote }] } });
+    expect(answered.task_ref).toBe(peerAsk.member);
+    expect(answered.actor_ref).toBe(peerRef);
+    expect(answered.result_ref).toBe(answerRef);
+    expect(answered.word_ref.length).toBeGreaterThan(0);
+    const peerWord = (await owner.call("peek", peerAsk.receipt.handle)).find(row => row.kind === "word");
+    if (!peerWord) throw new Error("The peer's ask shows no word after tasks.answer");
+    expect(peerWord.who).toBe(peerRef);
+    expect(peerWord.answer?.result_ref).toBe(answerRef);
+    const peerReady = await coordination06WaitReady(owner, peerAsk.receipt.handle, "coordination-06/peer/collect");
+    expect(peerReady.coverage.met).toBe(true);
+    expect(peerReady.coverage.responded).toEqual([peerRef]);
+    expect(peerReady.effect_authorization).toBe("not_evaluated_by_ask");
+    expect(peerReady.evidence.map(row => [row.person_ref, row.word.result_ref, row.word.provenance_refs]))
+      .toEqual([[peerRef, answerRef, [{ claim: routeNote }]]]);
+
+    // The root re-reads the cited fact itself: the evidence ref names the owner's route-note claim.
+    expect(c.expected.rootRereadsEvidence).toBe(true);
+    const cited = (await owner.call("vault.get", { entity_ref: routeNote })).value;
+    expect(cited?.kind).toBe("CLAIM");
+    expect(cited?.id_hex).toBe(routeNote);
+    expect((await owner.call("vault.claims.list", { subject_ref: ownerRef, predicate: "coordination.route_note", limit: 10 }))
+      .value.map(row => row.value)).toEqual([c.inputs.fact.content]);
+
+    // ---- The unavailable responder never answers: the owner cancels her own unanswered ask before its deadline. ----
+    expect((await owner.call("peek", unavailableAsk.receipt.handle)).some(row => row.kind === "word")).toBe(false);
+    const cancelled = await owner.call("cancel", { task_ref: unavailableAsk.member });
+    expect(cancelled.approval).toBe("auto");
+    expect(cancelled.effected).toBe(true);
+    expect(cancelled.forced).toBe(false);
+    expect(cancelled.cancel_requested).toBe(false);
+    expect(cancelled.status).toBe("cancelled");
+    expect(cancelled.proposal_ref ?? null).toBeNull();
+
+    // ---- Inspect in input order: an answer with evidence, an abstention with its reason, and no result. ----
+    const collected: { label: string; read: Coordination06Consult }[] = [];
+    for (const row of asks) collected.push({ label: row.label, read: await coordination06Consult(owner, row.member) });
+    expect(collected.map(row => row.label)).toEqual(c.expected.collectionOrder);
+    const [peerRead, childRead, unavailableRead] = collected.map(row => row.read) as
+      [Coordination06Consult, Coordination06Consult, Coordination06Consult];
+    expect(c.expected.peerAnswerHasEvidence).toBe(true);
+    expect(peerRead.terminal?.disposition).toBe("completed");
+    expect(peerRead.terminal?.result_ref).toBe(answerRef);
+    expect(peerRead.terminal?.summary).toEqual({ kind: "answer", evidence_refs: [{ claim: routeNote }] });
+    expect(c.expected.childAbstentionHasDurableReason).toBe(true);
+    expect(childRead.terminal?.disposition).toBe("completed");
+    expect(childRead.terminal?.result_ref).toBe(inabilityRef);
+    expect(childRead.terminal?.summary).toEqual({ kind: "abstained", reason_ref: { claim: reasonRef } });
+    expect(c.expected.unansweredHasResult).toBe(false);
+    expect(c.expected.unansweredCountsAsSuccess).toBe(false);
+    expect(unavailableRead.terminal ?? null).toBeNull();
+    expect(typeof unavailableRead.deadline_at).toBe("number");
+    // The child's refusal is not an answer: its ask holds no word, so nothing counted it as one.
+    expect(c.expected.refusalCountsAsAnswerSuccess).toBe(false);
+    expect((await owner.call("peek", childAsk.receipt.handle)).some(row => row.kind === "word")).toBe(false);
+    expect((await owner.call("peek", unavailableAsk.receipt.handle)).some(row => row.kind === "word")).toBe(false);
+    expect(c.expected.terminalReasonsRemainDistinct).toBe(true);
+    const shapes = collected.map(row => JSON.stringify(row.read.terminal?.summary ?? null));
+    expect(new Set(shapes).size).toBe(3);
+  } finally {
+    const errors: string[] = [];
+    try { await engine.close(); } catch (error) { errors.push(error instanceof Error ? error.message : String(error)); }
+    try { await providers.close(); } catch (error) { errors.push(error instanceof Error ? error.message : String(error)); }
+    if (errors.length) throw new Error(`close: ${errors.join("; ")}`);
+  }
+});
 
 /* COORDINATION-07 — One task type drives team plan should work.
  * Rows: OF-540, OF-541, OF-543. Canon: ARCH-0079 #task-type, #planner,
@@ -1930,41 +2289,452 @@ prompt_package = ${JSON.stringify(resolve(import.meta.dir, "fixtures/hooks/host/
   }
 });
 
-/* COORDINATION-09 — Wave dependencies and issue mirror should work.
- * Row: OF-427. Canon: ARCH-0067 #tasks; ARCH-0079 #work.
- *
- * Existing typed HTTP/SDK:
- *   tasks.wave({ epic_task_ref, planner_ref, objective, constraints? })
- *     -> { attempt_ref, state }
- * Existing HTTP: POST /v1/ai/waves with those refs/objective/constraints;
- * GET /v1/ai/waves/{attempt} observes the durable planning status.
- * The planner emits task dependency data, not a new workflow DSL. Public
- * tasks.accept/update and run-tree reads remain the work/status surface.
- *
- * Use ScriptedProviders for the external planner and a local Linear-compatible
- * HTTP service, never a fake task store. Plan A -> B -> C from the fixture:
- * initially only A is ready, after A only B, after B only C. A failed/reclaimed
- * A attempt must not unlock B. Complete predecessors publicly and observe
- * readiness before accepting successors. The fixture's three task identities
- * and blocked_by edges must stay stable through mirrors and result retries.
- *
- * Mirror one task to issue COORD-101. Edit its title publicly and observe ONE
- * outbound update for the SAME issue with originating actor/provenance. Send
- * the inbound description edit with stable external event id, then replay
- * that exact webhook. Assert the same TASK/issue mapping, one imported change,
- * no new TASKs/edges and preserved external source/actor/event provenance.
- * Use disjoint fields to avoid inventing a conflict-resolution winner. Inspect
- * graph and mirror receipts, not logs, counts alone or computed engine hashes.
- *
- * Missing: typed Linear webhook/event intake and TASK-issue mapping/provenance
- * inspection/edit calls, plus the planner definition fixture setup. Main's
- * linear_host is a scheduled bridge/direct GraphQL poller, not a typed webhook
- * door. The direct adapter pins its vendor endpoint; do not use real Linear
- * or silently replace the requested webhook replay with polling. A public
- * local endpoint/config seam and observable mirror completion are prerequisites
- * for the full deterministic journey, not permission to call LinearTaskStore.
+/** COORDINATION-09 authored inputs (fixture discriminant, not a wire DTO). */
+interface Coordination09Scenario {
+  id: "COORDINATION-09";
+  inputs: {
+    wave: { objective: string; nodes: { label: string; objective: string; blocked_by: string[] }[] };
+    issue: { provider: string; workspace: string; id: string; identifier: string; task: string };
+    outboundEdit: { field: "title"; value: string; actor: string };
+    inboundEdit: { event_id: string; issue_id: string; field: "description"; value: string; actor: string };
+    inboundDeliveries: number;
+  };
+  expected: {
+    readyInitially: string[]; readyAfterACompletes: string[]; readyAfterBCompletes: string[];
+    dependencyEdges: [string, string][]; issueMappedTask: string; mirroredIssueCount: number;
+    inboundApplicationsForTwoIdenticalEvents: number; webhookReplayCreatesTasks: number;
+    mappingIdentityStable: boolean; externalEventProvenanceRetained: boolean;
+    successorsReadyAfterAFailure: string[]; waveChildTasksCreated: number;
+  };
+}
+/** `GET /v1/ai/waves/{attempt}` (ai_host/waves.rs:412-455), a raw HTTP route: its body is typed here. */
+interface Coordination09WaveStatus {
+  attempt_ref: string; epic_task_ref: string; state: string; result_ref: string | null; last_error: string | null;
+  plan_ref?: string; task_refs?: Record<string, string>;
+}
+/** `POST /v1/hooks/linear`'s receipt (oneiron-records linear_sync/webhook.rs, LinearWebhookReceipt). */
+interface Coordination09WebhookReceipt {
+  delivery_id: string; status: "applied" | "conflict" | "noop" | "ignored"; task_ref: string | null;
+  issue: { issue_id: string; team_id: string; identifier: string } | null; conflicts: unknown[];
+  mirror: { status: string; direction: string; operation_id: string; conflicts: unknown[]; mirrored_at: number } | null;
+  event_ref: string; replayed: boolean; recorded_at: number;
+}
+type Coordination09MirrorRow = FacadeResult<"vault.tasks.linear.provenance">["events"][number];
+const COORDINATION09_AT = 1769947200; // Public setup input, never an engine clock override.
+/** The planner's one buffered call on the generative seat, under the cut's JSON schema (ai_host/waves.rs:153-230,
+ * openai_compat/wire.rs:147-169). Its system text is the planner definition's craft, which the runner may extend,
+ * so only the stable wire contract is matched. */
+const COORDINATION09_PLAN = { method: "POST", path: "/v1/chat/completions", model: "coordination09-planner",
+  fields: { stream: false, response_format: { type: "json_schema" } } } as const;
+/** The local tracker's workflow state and user ids: inputs of this host's [linear] mapping, sent back by the tracker. */
+const COORDINATION09_STATE_QUEUED = "coordination-state-queued";
+const COORDINATION09_TRACKER_OWNER = "coordination-user-board-human";
+const COORDINATION09_WEBHOOK = { webhookId: "coordination-webhook", organizationId: "coordination-org" } as const;
+
+async function coordination09Scenario(): Promise<Coordination09Scenario> {
+  const data = await (await loadFixtures()).readJson<{ scenarios: { id: string }[] }>("coordination-scenarios");
+  const row = data.scenarios.find(item => item.id === "COORDINATION-09");
+  if (!row) throw new Error("Missing COORDINATION-09 fixture scenario");
+  return row as Coordination09Scenario; // Fixture discriminant, not an invented wire DTO.
+}
+// Chosen public input ids, passed to their create doors before any read.
+function coordination09InputId(label: string): string {
+  return createHash("sha256").update(`coordination-e2e:COORDINATION-09:${label}`).digest("hex").slice(0, 32);
+}
+function coordination09Models(providers: ScriptedProviders): string {
+  return `
+[models.providers.planner]
+kind = "local-openai-compat"
+base_url = "${providers.urls.planner}"
+revision = "e2e-v1"
+[models.roles.generative_reasoner]
+model = "planner:coordination09-planner"
+[models.dreamer]
+enabled = false
+`;
+}
+/** This host's [linear] table: the signed webhook's tracker mapping alone, with no mirror mode, so no poller or
+ * sender runs (config/linear.rs:1-22, 222-240). The owner's TASK token maps to the tracker's user. */
+function coordination09LinearTable(team: string, ownerRef: string): string {
+  return `
+[linear]
+team_id = ${JSON.stringify(team)}
+[linear.status_ids]
+queued = ${JSON.stringify(COORDINATION09_STATE_QUEUED)}
+[linear.assignee_ids]
+${JSON.stringify(ownerRef)} = ${JSON.stringify(COORDINATION09_TRACKER_OWNER)}
+`;
+}
+/** One Linear `Issue` update delivery as the tracker sends it: the issue's whole snapshot with flat team, state and
+ * assignee ids, and `updatedFrom` naming what moved (oneiron-linear webhook.rs:93-160). */
+/** The vault's TASK count as the owner's discover read reports it (registry ENTITY_TYPE_TASK = 101). */
+async function coordination09TaskCount(owner: { request<T>(method: string, path: string): Promise<{ body: T }> }): Promise<number> {
+  const discovered = (await owner.request<{ counts: Record<string, number> }>("GET", "/api/core/discover")).body;
+  return discovered.counts["101"] ?? 0;
+}
+
+function coordination09Delivery(c: Coordination09Scenario, issue: { title: string; description: string | null },
+  updatedFrom: Record<string, unknown>, updatedAtMs: number): string {
+  const updatedAt = new Date(updatedAtMs).toISOString();
+  return JSON.stringify({
+    action: "update", type: "Issue", createdAt: updatedAt,
+    actor: { id: c.inputs.inboundEdit.actor, type: "user", name: c.inputs.inboundEdit.actor },
+    data: { id: c.inputs.issue.id, identifier: c.inputs.issue.identifier, teamId: c.inputs.issue.workspace,
+      stateId: COORDINATION09_STATE_QUEUED, assigneeId: COORDINATION09_TRACKER_OWNER, title: issue.title,
+      description: issue.description, priority: null, updatedAt },
+    updatedFrom, url: `https://linear.invalid/${c.inputs.issue.workspace}/issue/${c.inputs.issue.identifier}`,
+    ...COORDINATION09_WEBHOOK, webhookTimestamp: updatedAtMs,
+  });
+}
+/** One signed delivery of these exact bytes: hex HMAC-SHA256 over the raw body (linear_host/webhook.rs:29-125). */
+async function coordination09Deliver(hook: PublicHttpClient, delivery: string, body: string, key: string): Promise<{ status: number; body: unknown }> {
+  const reply = await hook.raw("POST", "/v1/hooks/linear", body, { "content-type": "application/json",
+    "linear-delivery": delivery, "linear-signature": createHmac("sha256", key).update(body).digest("hex") });
+  return { status: reply.status, body: reply.body };
+}
+function coordination09Receipt(reply: { status: number; body: unknown }): Coordination09WebhookReceipt {
+  if (reply.status !== 200) throw new Error(`Linear webhook answered HTTP ${reply.status}: ${JSON.stringify(reply.body)}`);
+  return reply.body as Coordination09WebhookReceipt; // The route's own receipt, typed above.
+}
+async function coordination09Wave(client: PublicHttpClient, attempt: string): Promise<Coordination09WaveStatus> {
+  return (await client.request<Coordination09WaveStatus>("GET", `/v1/ai/waves/${attempt}`)).body;
+}
+/** The held cut's row on the owner's context board, the designed owner surface of a held launch: it names the
+ * resume door's arguments verbatim (context_board/fanout.rs:56-85; board.rs:450-463). */
+async function coordination09HeldLaunch(client: PublicHttpClient): Promise<{ tasks: number; launch_ref: string; plan_digest: string } | null> {
+  const board = await client.request<{ tasks: string[] }>("POST", "/v1/core/context-board", {});
+  for (const row of board.body.tasks) {
+    const held = /\bpaused tasks=(\d+)\b.*\bresume=vault\.fanout\.resume launch_ref=([a-f0-9]{32}) plan_digest=([a-f0-9]{64})\b/.exec(row);
+    if (held) return { tasks: Number(held[1]), launch_ref: held[2]!, plan_digest: held[3]! };
+  }
+  return null;
+}
+/** A TASK whose blocker has not completed cannot be taken: the claim finds no ready try and the accept rolls back
+ * whole, leaving no attempt (highway_accept.rs:351-367, scheduling.rs:24-80). It is the one public readiness read. */
+async function coordination09NotReady(client: PublicHttpClient, task_ref: string, intent_key: string): Promise<void> {
+  expect(await coordination05Refusal(client.call("tasks.accept", { task_ref, intent_key })))
+    .toEqual({ status: 409, code: "INVALID_STATE", message: "this task's next try is not ready yet" });
+}
+/** Every blocked_by edge out of the wave's TASKs as [dependent, blocker] labels, through the public neighbourhood
+ * read (the edge runs from the dependent to its blocker, wave_port.rs:539-560). */
+async function coordination09Edges(client: PublicHttpClient, tasks: Record<string, string>): Promise<[string, string][]> {
+  const labels = new Map(Object.entries(tasks).map(([label, ref]) => [ref, label]));
+  const edges: [string, string][] = [];
+  for (const [label, ref] of Object.entries(tasks)) {
+    const hits = (await client.call("vault.neighbors", { entity_ref: ref, opts: { edge_kind: "blocked_by", limit: 10 } })).value;
+    expect(hits.length).toBeLessThan(10); // The read is complete, not a truncated window.
+    for (const hit of hits.filter(item => item.direction === "out")) {
+      expect(hit.kind).toBe("TASK");
+      const blocker = hit.record?.id ? labels.get(hit.record.id) : undefined;
+      if (!blocker) throw new Error(`${label}'s blocked_by edge names no wave TASK: ${JSON.stringify(hit)}`);
+      edges.push([label, blocker]);
+    }
+  }
+  return edges.sort((x, y) => x.join(">").localeCompare(y.join(">")));
+}
+/** Every mirror event row of one TASK, drained page by page. */
+async function coordination09Provenance(client: PublicHttpClient, task_ref: string): Promise<Coordination09MirrorRow[]> {
+  const rows: Coordination09MirrorRow[] = [];
+  let cursor: string | null = null;
+  for (let pages = 0; pages < 20; pages++) {
+    const page: FacadeResult<"vault.tasks.linear.provenance"> =
+      await client.call("vault.tasks.linear.provenance", { task_ref, cursor, limit: 50 });
+    rows.push(...page.events);
+    cursor = page.next_cursor ?? null;
+    if (cursor === null) return rows;
+  }
+  throw new Error("COORDINATION-09 provenance did not end within 20 pages");
+}
+
+/* COORDINATION-09 (partial, Engine E2E-PARTIAL option A). Row: OF-427. Canon: ARCH-0068 (a wave's plan step is a
+ *   task whose planner emits the DAG as data; a Linear sync adapter mirrors TASK and issue both ways).
+ * Promise: the owner's wave cuts the epic into A -> B -> C as data; readiness follows the blocked_by edges (only A
+ *   at first, only B after A completes, only C after B), and a failed A attempt unlocks nothing. The cut is held
+ *   for the owner and lands only on the owner's approval of the exact digest. B is linked to issue COORD-101; the
+ *   owner's title edit stays the TASK's and is owed outward to that same issue; the tracker's signed description
+ *   edit lands on B once, with the tracker's actor, delivery id and archived body as its provenance, and its exact
+ *   replay answers the stored receipt and writes nothing. A forged signature and a reused delivery id are refused.
+ *   The three TASKs and both edges stay the same throughout.
+ * Doors: HTTP facade tasks.create/wave/accept/update, vault.agents.create, vault.claims.upsert, vault.fanout.launch/
+ *   resume, vault.neighbors, vault.get, vault.tasks.linear.mapping/.mapping.edit/.provenance; raw HTTP
+ *   GET /v1/ai/waves/{attempt}, POST /v1/core/context-board, POST /v1/owner/secrets/register, POST /v1/hooks/linear.
+ *   Host config: a public [linear] table (webhook mapping, no mirror mode) appended once the owner's ref exists,
+ *   then engine.restart(), as portability.test.ts changes public TOML.
+ * Disjoint fields: a fresh link has no common base, so every differing field would conflict at its first event
+ *   (linear_sync/facade.rs:135-154). A first delivery, a label change carrying the tracker's whole snapshot, gives the
+ *   link its base; then the local title edit and the tracker's description edit merge without a winner.
+ * Unproved (FIX rows): the ONE outbound update for the same issue. In direct mode the conditional update is not
+ *   implemented, so every push of a linked TASK answers linear_remote_changed (egress.rs:163-178,
+ *   linear_sync/model.rs:490-504); and no public door admits a Linear send (a standing linear_issue_create grant
+ *   has no public minter; a held press's digest reaches only the server log, api/linear_push.rs:131-134). Hence
+ *   no local GraphQL stub: no outbound request exists to observe. Readiness has no typed field (describe shows
+ *   queued for blocked and ready alike); the accept refusal is its only public read. The held cut's launch_ref
+ *   reaches the owner only as board text.
  */
-suite.todo(test, "COORDINATION-09", "waits on typed Linear webhook intake and task-issue mirror edit/mapping/provenance doors");
+suite.test(test, "COORDINATION-09", "A planned wave readies A, then B, then C, and a failed A unlocks nothing; a signed tracker edit lands on the mirrored TASK once, with its source, and its replay writes nothing", async () => {
+  const c = await coordination09Scenario();
+  const providers = await ScriptedProviders.start({ id: "coordination-09-wave", origins: ["planner"], steps: [] });
+  const engine = await EngineFixture.start({ id: "COORDINATION-09", profile, serverConfig: coordination09Models(providers) });
+  try {
+    const owner = engine.client;
+    const ownerRef = engine.pairedActor.principalRef;
+    const labels = c.inputs.wave.nodes.map(node => node.label);
+
+    // ---- Host setup: the webhook's tracker mapping, then the custody secret it verifies deliveries with. ----
+    const config = resolve(engine.root, "oneiron.toml");
+    await writeFile(config, `${await readFile(config, "utf8")}${coordination09LinearTable(c.inputs.issue.workspace, ownerRef)}`, { mode: 0o600 });
+    await engine.restart();
+    const signingSecret = secretHex();
+    redactor.add(signingSecret);
+    const registered = await owner.request<{ name: string; rotation_generation: number; bindings: { effector: string }[] }>(
+      "POST", "/v1/owner/secrets/register", { name: "linear.webhook_signing_secret", class: "custody-portable", rung: 0,
+        bindings: [{ effector: "connector:linear", scopes: ["read"] }], value_base64: Buffer.from(signingSecret).toString("base64") });
+    expect(registered.body.name).toBe("linear.webhook_signing_secret");
+    expect(registered.body.rotation_generation).toBe(0);
+    expect(registered.body.bindings.map(row => row.effector)).toEqual(["connector:linear"]);
+    expect(registered.raw).not.toContain(signingSecret);
+
+    // ---- The epic, its planner and the result each step will name: public setup through typed doors. ----
+    const epicCreated = await owner.call("tasks.create", { spec: { title: c.inputs.wave.objective }, label: "coordination-09-epic" });
+    const epic = epicCreated.task_ref;
+    if (!epic) throw new Error("The epic TASK has no task_ref");
+    const planner = coordination09InputId("planner");
+    expect((await owner.call("vault.agents.create", { agent_def_ref: planner, definition: { agent_id: "coordination-09-planner",
+      display_name: "coordination-09-planner", desc: "COORDINATION-09 wave planner: cuts an epic into dependent TASKs.",
+      version: "1" } })).agent_def_ref).toBe(planner);
+    const scope = await ownerBaseClaimScope(owner, ownerRef);
+    const results = new Map<string, string>();
+    for (const node of c.inputs.wave.nodes) {
+      const id = coordination09InputId(`result-${node.label}`);
+      const claim = await owner.call("vault.claims.upsert", { id, predicate: "coordination.wave_step_result", subject_ref: ownerRef,
+        value: `${node.objective} Done.`, confidence: 1, source: "user_stated", scope, occurred_at: COORDINATION09_AT });
+      expect(claim.approval).toBe("auto");
+      results.set(node.label, id);
+    }
+
+    // ---- The planner returns the cut as data: three TASKs for the owner, each naming its blockers. ----
+    const plan = { tasks: c.inputs.wave.nodes.map(node => ({ local_key: node.label, label: node.objective,
+      spec: { title: node.objective }, assignee_ref: ownerRef, blocked_by: node.blocked_by })) };
+    providers.enqueue({ id: "coordination09-plan", origin: "planner", role: "generative_reasoner",
+      purpose: "the planner cuts the epic into A -> B -> C", request: COORDINATION09_PLAN,
+      response: openaiText("coordination09-plan", COORDINATION09_PLAN.model, JSON.stringify(plan), { inputTokens: 96, outputTokens: 160 }) });
+    const queued = await owner.call("tasks.wave", { epic_task_ref: epic, planner_ref: planner,
+      objective: c.inputs.wave.objective, constraints: {} });
+    expect(queued.state).toBe("queued");
+    expect(queued.attempt_ref).toMatch(/^[a-f0-9]{32}$/);
+
+    // ---- The cut waits for the owner: auto mode with no decider holds every launch (fanout_launch.rs:668-707). ----
+    const held = await awaitPublic(() => coordination09HeldLaunch(owner), launch => launch !== null,
+      { label: "the held wave launch on the owner's board" });
+    if (!held) throw new Error("No held wave launch");
+    expect(held.tasks).toBe(c.expected.waveChildTasksCreated);
+    const planCalls = providers.seenFixtureCalls.filter(call => call.fixtureId === "coordination09-plan");
+    expect(planCalls).toHaveLength(1);
+    expect(JSON.stringify(planCalls[0]?.body)).toContain(epic); // The planner was asked about this epic.
+    const waiting = await coordination09Wave(owner, queued.attempt_ref);
+    expect(waiting.epic_task_ref).toBe(epic);
+    expect(waiting.state).not.toBe("completed");
+    expect(waiting.task_refs).toBeUndefined();
+    const parked = await owner.call("vault.fanout.launch", { launch_ref: held.launch_ref });
+    expect(parked?.plan_digest).toBe(held.plan_digest);
+    expect(parked?.held?.denied).toBe(false);
+    expect(parked?.task_refs).toEqual([]);
+
+    // ---- The owner approves the exact digest: the frozen cut lands and the planning attempt completes. ----
+    const resumed = await owner.call("vault.fanout.resume", { launch_ref: held.launch_ref, plan_digest: held.plan_digest,
+      ruling: "approve_once" });
+    if (!("task_refs" in resumed)) throw new Error(`vault.fanout.resume answered ${JSON.stringify(resumed)}`);
+    expect(resumed.held).toBeUndefined();
+    expect(resumed.task_refs).toHaveLength(c.expected.waveChildTasksCreated);
+    const landed = await awaitPublic(() => coordination09Wave(owner, queued.attempt_ref), status => status.state === "completed",
+      { label: "the approved wave plan completed" });
+    const tasks = landed.task_refs;
+    if (!tasks) throw new Error("The completed wave names no TASKs");
+    expect(Object.keys(tasks).sort()).toEqual([...labels].sort());
+    expect(Object.values(tasks).sort()).toEqual([...resumed.task_refs].sort());
+    const ref = (label: string): string => {
+      const id = tasks[label];
+      if (!id) throw new Error(`The wave has no TASK ${label}`);
+      return id;
+    };
+    for (const node of c.inputs.wave.nodes) {
+      const row = (await owner.call("vault.get", { entity_ref: ref(node.label) })).value;
+      expect(row?.kind).toBe("TASK");
+      expect(coordination08Object(row?.body, "TASK body").label).toBe(node.objective);
+    }
+    const edges = await coordination09Edges(owner, tasks);
+    expect(edges).toEqual(c.expected.dependencyEdges);
+    const result = (label: string): string => {
+      const id = results.get(label);
+      if (!id) throw new Error(`No result claim for ${label}`);
+      return id;
+    };
+    const notReadyExcept = async (ready: readonly string[], done: readonly string[], phase: string): Promise<void> => {
+      for (const label of labels.filter(item => !ready.includes(item) && !done.includes(item)))
+        await coordination09NotReady(owner, ref(label), `coordination-09/${label}/accept-${phase}`);
+    };
+    const finish = async (label: string, attempt: Facade.AttemptHandle): Promise<void> => {
+      const done = coordination05Reported(await owner.call("tasks.update", { task_ref: ref(label),
+        report_key: `coordination-09/${label}/done`, attempt, report: { done: { result_ref: result(label) } } }));
+      expect(done.phase).toEqual({ phase: "terminal", disposition: "completed" });
+    };
+
+    // ---- Only A is ready at first. ----
+    await notReadyExcept(c.expected.readyInitially, [], "initially");
+    const firstA = coordination05Attempt(await owner.call("tasks.accept", { task_ref: ref("A"), intent_key: "coordination-09/A/accept-1" }));
+    expect(firstA.task_ref).toBe(ref("A"));
+    expect(c.expected.readyInitially).toEqual(["A"]);
+
+    // ---- Failure step: A's attempt fails retryably; A requeues and unlocks no successor. ----
+    const failed = coordination05Reported(await owner.call("tasks.update", { task_ref: ref("A"), report_key: "coordination-09/A/fail-1",
+      attempt: firstA, report: { failed: { error: "checklist draft not saved", retryable: true } } }));
+    expect(failed.phase.phase).toBe("queued");
+    await notReadyExcept(["A", ...c.expected.successorsReadyAfterAFailure], [], "after-a-failed");
+
+    // ---- A's retry keeps its identity behind a new fence and completes; then only B is ready. ----
+    const secondA = coordination05Attempt(await owner.call("tasks.accept", { task_ref: ref("A"), intent_key: "coordination-09/A/accept-2" }));
+    expect(secondA.task_ref).toBe(ref("A"));
+    expect(secondA.attempt_ref).not.toBe(firstA.attempt_ref);
+    await finish("A", secondA);
+    await notReadyExcept(c.expected.readyAfterACompletes, ["A"], "after-a");
+
+    // ---- Mirror B to its tracker issue: a link through the typed mapping door, replayed by its intent key. ----
+    expect(c.inputs.issue.task).toBe(c.expected.issueMappedTask);
+    const issueTask = ref(c.inputs.issue.task);
+    const issueTitle = c.inputs.wave.nodes.find(node => node.label === c.inputs.issue.task)?.objective;
+    if (!issueTitle) throw new Error("The mirrored TASK has no fixture node");
+    const unlinked = await owner.call("vault.tasks.linear.mapping", { task_ref: issueTask });
+    expect(unlinked.link).toBeNull();
+    expect(unlinked.opted_out).toBe(false);
+    const linkEdit: FacadeInput<"vault.tasks.linear.mapping.edit"> = { task_ref: issueTask,
+      expected_mapping_revision: unlinked.mapping_revision, intent_key: "coordination-09/link-101",
+      op: { kind: "link", issue_id: c.inputs.issue.id, identifier: c.inputs.issue.identifier } };
+    const linked = await owner.call("vault.tasks.linear.mapping.edit", linkEdit);
+    const issue = { issue_id: c.inputs.issue.id, team_id: c.inputs.issue.workspace, identifier: c.inputs.issue.identifier };
+    expect(linked).toMatchObject({ task_ref: issueTask, op: "link", opted_out: false, issue, replayed: false });
+    expect(linked.mapping_revision).toBe(unlinked.mapping_revision + 1);
+    expect(await owner.call("vault.tasks.linear.mapping.edit", linkEdit)).toEqual({ ...linked, replayed: true });
+
+    // ---- The tracker's first delivery (a label change) carries the issue as it stands: the link's common base. ----
+    const hook = new PublicHttpClient(engine.url, { artifacts: engine.artifacts, label: "linear-webhook" });
+    const witnessAt = (COORDINATION09_AT + 60) * 1000;
+    const witnessDelivery = `${c.inputs.inboundEdit.event_id}-label`;
+    const witnessBody = coordination09Delivery(c, { title: issueTitle, description: null }, { labelIds: [] }, witnessAt);
+    // Failure step: a delivery signed with another key is refused before its body is read, and records nothing.
+    expect(await coordination09Deliver(hook, witnessDelivery, witnessBody, secretHex()))
+      .toEqual({ status: 401, body: { error: "linear_webhook_unsigned" } });
+    const witnessed = coordination09Receipt(await coordination09Deliver(hook, witnessDelivery, witnessBody, signingSecret));
+    expect(witnessed).toMatchObject({ delivery_id: witnessDelivery, status: "noop", task_ref: issueTask, issue, conflicts: [], replayed: false });
+
+    // ---- The owner edits B's title publicly; the edit is the TASK's and is owed outward to the same issue. ----
+    const based = await owner.call("vault.tasks.linear.mapping", { task_ref: issueTask });
+    expect(based.link?.issue).toEqual(issue);
+    const edited = coordination05Reported(await owner.call("tasks.update", { task_ref: issueTask, report_key: "coordination-09/title-101",
+      report: { edit: { expected_revision: based.task_revision, title: c.inputs.outboundEdit.value } } }));
+    expect(edited.phase.phase).toBe("queued");
+    const owed = await owner.call("vault.tasks.linear.mapping", { task_ref: issueTask });
+    expect(owed.task_revision).toBe(based.task_revision + 1);
+    expect(owed.dirty_revision).toBe(owed.task_revision);
+    expect(owed.link?.issue).toEqual(issue);
+    // Failure step: an edit at the revision it no longer holds is refused.
+    expect(await coordination05Refusal(owner.call("tasks.update", { task_ref: issueTask, report_key: "coordination-09/title-101-stale",
+      report: { edit: { expected_revision: based.task_revision, title: `${c.inputs.outboundEdit.value} (stale)` } } })))
+      .toEqual({ status: 409, code: "INVALID_STATE", message: "the task moved since the revision this edit names" });
+
+    // ---- The tracker's description edit (a disjoint field) lands once; its exact replay writes nothing. ----
+    const editedAt = witnessAt + 60_000;
+    const inboundBody = coordination09Delivery(c, { title: issueTitle, description: c.inputs.inboundEdit.value },
+      { description: null, updatedAt: new Date(witnessAt).toISOString() }, editedAt);
+    const applied = coordination09Receipt(await coordination09Deliver(hook, c.inputs.inboundEdit.event_id, inboundBody, signingSecret));
+    expect(applied).toMatchObject({ delivery_id: c.inputs.inboundEdit.event_id, status: "applied", task_ref: issueTask, issue,
+      conflicts: [], replayed: false });
+    expect(applied.mirror).toMatchObject({ status: "applied", direction: "issue_to_task", conflicts: [] });
+    // The one imported change is one TASK revision; the title edit stays owed with it.
+    const appliedMapping = await owner.call("vault.tasks.linear.mapping", { task_ref: issueTask });
+    expect(appliedMapping.task_revision).toBe(owed.task_revision + 1);
+    expect(appliedMapping.mapping_revision).toBe(linked.mapping_revision);
+    const appliedRows = await coordination09Provenance(owner, issueTask);
+    const tasksBeforeReplay = await coordination09TaskCount(owner);
+    expect(tasksBeforeReplay).toBeGreaterThanOrEqual(labels.length);
+    const deliveries = [applied];
+    for (let delivery = 1; delivery < c.inputs.inboundDeliveries; delivery++) {
+      deliveries.push(coordination09Receipt(await coordination09Deliver(hook, c.inputs.inboundEdit.event_id, inboundBody, signingSecret)));
+    }
+    expect(deliveries.slice(1)).toEqual(Array(c.inputs.inboundDeliveries - 1).fill({ ...applied, replayed: true }));
+    // The replays wrote nothing for B: its TASK, dirty, mapping and link revisions and its provenance rows are as
+    // the first application left them (a replay that put the same body again would move the revisions).
+    expect(await owner.call("vault.tasks.linear.mapping", { task_ref: issueTask })).toEqual(appliedMapping);
+    expect(await coordination09Provenance(owner, issueTask)).toEqual(appliedRows);
+    expect(await coordination09TaskCount(owner)).toBe(tasksBeforeReplay); // No replay creates a TASK.
+    // Failure step: the same delivery id with another body is refused, never applied.
+    const reusedBody = coordination09Delivery(c, { title: issueTitle, description: `${c.inputs.inboundEdit.value} (reused)` },
+      { description: null, updatedAt: new Date(witnessAt).toISOString() }, editedAt);
+    expect(await coordination09Deliver(hook, c.inputs.inboundEdit.event_id, reusedBody, signingSecret))
+      .toEqual({ status: 409, body: { error: "linear_webhook_delivery_reused" } });
+
+    // ---- Graph and mirror receipts: one imported change, the owner's title kept, the same mapping and TASKs. ----
+    const mirrored = await coordination08TaskBody(owner, issueTask);
+    expect(mirrored.label).toBe(c.inputs.outboundEdit.value);
+    expect(coordination08Object(mirrored.mirror_fields, "TASK mirror fields").description).toBe(c.inputs.inboundEdit.value);
+    const mapped = await owner.call("vault.tasks.linear.mapping", { task_ref: issueTask });
+    expect(c.expected.mappingIdentityStable).toBe(true);
+    expect(mapped.link?.issue).toEqual(issue);
+    expect(mapped.link?.unresolved_conflicts).toEqual([]);
+    expect(mapped.mapping_revision).toBe(linked.mapping_revision);
+    expect(mapped.dirty_revision).toBe(mapped.task_revision); // The title edit is still owed outward.
+    const unmirrored = labels.filter(label => label !== c.inputs.issue.task);
+    for (const label of unmirrored) expect((await owner.call("vault.tasks.linear.mapping", { task_ref: ref(label) })).link).toBeNull();
+    expect(labels.length - unmirrored.length).toBe(c.expected.mirroredIssueCount);
+    const rows = await coordination09Provenance(owner, issueTask);
+    const inbound = rows.filter(row => row.event.direction === "issue_to_task");
+    expect(inbound.map(row => row.event.delivery_id).sort()).toEqual([c.inputs.inboundEdit.event_id, witnessDelivery].sort());
+    const imported = inbound.filter(row => row.event.status === "applied");
+    expect(imported).toHaveLength(c.expected.inboundApplicationsForTwoIdenticalEvents);
+    expect(c.expected.externalEventProvenanceRetained).toBe(true);
+    expect(imported[0]?.event_ref).toBe(applied.event_ref);
+    expect(imported[0]?.event).toMatchObject({ delivery_id: c.inputs.inboundEdit.event_id, task_ref: issueTask, issue,
+      external_actor: { id: c.inputs.inboundEdit.actor, kind: "user", name: c.inputs.inboundEdit.actor },
+      changed_fields: [c.inputs.inboundEdit.field], webhook_id: COORDINATION09_WEBHOOK.webhookId,
+      organization_id: COORDINATION09_WEBHOOK.organizationId, webhook_timestamp_ms: editedAt, writer_actor: null });
+    // The archived tracker body it came from: the exact version payload_ref names holds the delivered bytes.
+    const archivedAt = /^blob:([0-9a-f]+)@(\d+)$/.exec(imported[0]?.event.payload_ref ?? "");
+    expect(archivedAt).not.toBeNull();
+    const archived = await owner.call("vault.artifacts.export", { artifact_ref: archivedAt![1]!, version: Number(archivedAt![2]) });
+    expect(Buffer.from(archived?.content_base64 ?? "", "base64").toString("utf8")).toBe(inboundBody);
+    const titleEdits = rows.filter(row => row.event.direction === "task_edit");
+    expect(titleEdits).toHaveLength(1);
+    expect(titleEdits[0]?.event).toMatchObject({ status: "edited", task_ref: issueTask, writer_actor: ownerRef, writer_class: "human" });
+    const links = rows.filter(row => row.event.direction === "mapping_edit");
+    expect(links).toHaveLength(1);
+    expect(links[0]?.event).toMatchObject({ status: "link", task_ref: issueTask, writer_actor: ownerRef });
+    expect(rows.filter(row => row.event.direction === "task_to_issue")).toEqual([]); // No send: see Unproved.
+    // The replays created no TASK: the owner's discover count of TASKs did not move across them (above).
+    expect(c.expected.webhookReplayCreatesTasks).toBe(0);
+    expect((await coordination09Wave(owner, queued.attempt_ref)).task_refs).toEqual(tasks);
+    expect(await coordination09Edges(owner, tasks)).toEqual(edges);
+
+    // ---- B was ready all along and completes; then only C is ready, and it completes. ----
+    const takenB = coordination05Attempt(await owner.call("tasks.accept", { task_ref: issueTask, intent_key: "coordination-09/B/accept-1" }));
+    expect(takenB.task_ref).toBe(issueTask);
+    await finish("B", takenB);
+    await notReadyExcept(c.expected.readyAfterBCompletes, ["A", "B"], "after-b");
+    for (const label of c.expected.readyAfterBCompletes) {
+      const taken = coordination05Attempt(await owner.call("tasks.accept", { task_ref: ref(label), intent_key: `coordination-09/${label}/accept-1` }));
+      expect(taken.task_ref).toBe(ref(label));
+      await finish(label, taken);
+    }
+    for (const label of labels) {
+      expect((await coordination05Status(owner, ref(label))).phase).toEqual({ phase: "terminal", disposition: "completed" });
+    }
+    expect((await coordination09Wave(owner, queued.attempt_ref)).task_refs).toEqual(tasks);
+    expect(await coordination09Edges(owner, tasks)).toEqual(edges);
+  } finally {
+    const errors: string[] = [];
+    try { await engine.close(); } catch (error) { errors.push(error instanceof Error ? error.message : String(error)); }
+    try { await providers.close(); } catch (error) { errors.push(error instanceof Error ? error.message : String(error)); }
+    if (errors.length) throw new Error(`close: ${errors.join("; ")}`);
+  }
+});
 
 // ---- MUSE-LOOP-01 (Muse Wonder Full, ported 10 Nov) ----
 /*

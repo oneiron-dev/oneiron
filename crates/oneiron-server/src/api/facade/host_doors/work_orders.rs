@@ -46,7 +46,7 @@ const LOGS_TAIL_ASK_EVERY: Duration = Duration::from_secs(1);
 /// in its way, else an invalid state, with every blocker as a reason code (14.4). An order
 /// whose `after` ended without its end answers as the door's admission does, whichever of the
 /// two found that end first.
-fn refusal_of_end(why: &GiveUpWhy) -> Option<oneiron::memory::MemoryError> {
+pub(super) fn refusal_of_end(why: &GiveUpWhy) -> Option<oneiron::memory::MemoryError> {
     let blocked = match why {
         GiveUpWhy::NeverFits { blocked } | GiveUpWhy::WaitEnded { blocked } => blocked,
         GiveUpWhy::Upstream { order } => return Some(upstream_ended_refusal(order)),

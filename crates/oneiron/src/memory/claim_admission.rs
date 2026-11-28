@@ -163,6 +163,7 @@ impl Memory<'_> {
                 self.scoped_claim_check(txn, &prepared, &lane)
             },
             Some(&prepared.birth),
+            None,
         )
     }
 
