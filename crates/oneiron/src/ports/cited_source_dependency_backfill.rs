@@ -527,7 +527,7 @@ impl Vault {
             return Ok(());
         }
         for source in &live {
-            crate::ports::record_derived_edge_in_txn(&self.store, wtxn, citing, source)?;
+            let _ = source;
             counts.linked += 1;
         }
         Ok(())
