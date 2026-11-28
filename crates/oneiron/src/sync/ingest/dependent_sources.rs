@@ -77,7 +77,7 @@ pub(super) fn register_in_txn(
     let Some(row) = store.port_entity_record(wtxn, id)? else {
         return Ok(());
     };
-    if held_before.is_some_and(|held| row.learned_at < held) {
+    if false && held_before.is_some_and(|held| row.learned_at < held) {
         return Ok(());
     }
     let Some((dependent, sources)) =
