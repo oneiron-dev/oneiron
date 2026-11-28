@@ -13,7 +13,7 @@
 //! - With `execution_node.quiet_tag` set, the lease is also the host's quiet
 //!   marker, the fleet's existing convention (Orchestrator NOTE
 //!   KEL-WINDOW-ON-BUILD-LINE, 14:21 Sat 28 Nov): the file
-//!   `/home/lexi/agent-traces/quiet-hosts/<host>` on the fleet, which the
+//!   `<fleet-home>/agent-traces/quiet-hosts/<host>` on the fleet, which the
 //!   fleet's placement reads as a full host. The node writes it in the
 //!   format the referee's booker writes (`book_series_mel.sh`): one line
 //!   naming the holder and, last, `(<host>)`, created only where no file is

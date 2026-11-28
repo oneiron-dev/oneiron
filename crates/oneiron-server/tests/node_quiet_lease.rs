@@ -2,7 +2,7 @@
 //! a run of a quiet template has the host to itself, and while it holds the
 //! lease the node keeps the fleet's quiet marker for the host
 //! (`execution_node.quiet_tag`, the fleet's
-//! `/home/lexi/agent-traces/quiet-hosts/<host>`), in the format the referee's
+//! `<fleet-home>/agent-traces/quiet-hosts/<host>`), in the format the referee's
 //! booker writes: one line naming the holder, then `(<host>)`.
 //!
 //! - The marker is written at the quiet key's reserve, kept fresh while the
