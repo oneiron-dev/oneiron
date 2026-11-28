@@ -523,6 +523,20 @@ impl ChangedLine {
         }
     }
 
+    /// Tokens to reserve for the escaped keyframe rider, including its newline.
+    pub fn ride_tokens(&self) -> usize {
+        let lines = self.render();
+        if lines.is_empty() {
+            return 0;
+        }
+        let escaped = lines
+            .iter()
+            .map(|line| super::frame::xml_text_token(line))
+            .collect::<Vec<_>>()
+            .join("\n");
+        crate::count_context_pack_tokens(&format!("\n{escaped}"))
+    }
+
     /// Adds a rider only to an already-produced frame. `None` stays `None`:
     /// lifecycle movement can never create a push in STREAM mode.
     pub fn ride(&self, frame: Option<BoardStreamFrame>) -> Option<BoardStreamFrame> {

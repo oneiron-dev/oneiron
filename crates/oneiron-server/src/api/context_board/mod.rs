@@ -348,15 +348,17 @@ pub(crate) async fn context_board_hydrate(
         hydrate_inner(auth, State(Arc::clone(&server)), payload, false).await?;
     // The delivered board's items go to this machine's home as prefetch seeds: its MEMORIES rows
     // (pins included) first, then every other row it was derived from.
-    let memories = response
-        .memories
-        .iter()
-        .flat_map(|memories| &memories.rows)
-        .filter_map(|row| oneiron::EntityId::from_hex(&row.id).ok());
-    crate::board_seed_report::report_delivered_board(
-        &server,
-        memories.chain(served.0.rows.iter().copied()),
-    );
+    if response.board_budget.cut_rows == 0 {
+        let memories = response
+            .memories
+            .iter()
+            .flat_map(|memories| &memories.rows)
+            .filter_map(|row| oneiron::EntityId::from_hex(&row.id).ok());
+        crate::board_seed_report::report_delivered_board(
+            &server,
+            memories.chain(served.0.rows.iter().copied()),
+        );
+    }
     Ok((served, response))
 }
 
@@ -700,13 +702,15 @@ async fn hydrate_inner(
     };
     // What a chat turn's context records keep of this render (FIX 6921):
     // for a split turn, of the two parts its call carries.
+    let presented_render = chat_split
+        .as_ref()
+        .map_or(&board_render, |split| &split.render.render);
+    let cut = presented_render.shed.cut_rows > 0;
     let chat_context = chat_emit::capture_chat_context(
         &auth,
         memories.as_ref(),
         &parts.authority,
-        chat_split
-            .as_ref()
-            .map_or(&board_render, |split| &split.render.render),
+        presented_render,
         layout_candidate.clone(),
     );
     // What each rendered section was read from (DESIGN-V2 R2), beside the
@@ -802,8 +806,20 @@ async fn hydrate_inner(
     }
     // The response is final: each hook block it carried spends a delivery. A
     // failed record leaves the block to show again, never to vanish unseen.
-    let mut hook_blocks = parts.hook_blocks.clone();
-    if let Some(memories) = &response.memories {
+    let presented_memories = if cut {
+        response
+            .chat_context
+            .as_ref()
+            .and_then(ChatContextCapture::shown_memories)
+    } else {
+        response.memories.as_ref()
+    };
+    let mut hook_blocks = if cut {
+        Default::default()
+    } else {
+        parts.hook_blocks.clone()
+    };
+    if let Some(memories) = presented_memories {
         hook_blocks.extend(memories.hook_blocks_delivered(&hook_pins));
     }
     if let Err(error) = server.vault.record_board_hook_deliveries(&hook_blocks) {
@@ -821,21 +837,25 @@ async fn hydrate_inner(
     extend_source_rows(
         &mut delivered,
         &mut response.rows_complete,
-        response
-            .memories
-            .iter()
+        presented_memories
+            .into_iter()
             .flat_map(|memories| &memories.rows)
             .map(|row| row.id.as_str()),
     );
-    delivered.extend(hits_of(response.pack.as_ref()));
-    delivered.extend(parts.named.iter().copied());
+    if !cut {
+        delivered.extend(hits_of(response.pack.as_ref()));
+        delivered.extend(parts.named.iter().copied());
+    }
     let mut rider_key = None;
     if let Some(mut reads) = session_read_set(&server, caller, session_id.as_deref()).await? {
         reads
             .observe_rows(&read, &delivered)
             .map_err(|error| super::core_engine_error("board read set failed", error))?;
         // The tier each MEMORIES row rode, and its hook, for an explain read.
-        for row in response.memories.iter().flat_map(|memories| &memories.rows) {
+        for row in presented_memories
+            .into_iter()
+            .flat_map(|memories| &memories.rows)
+        {
             let tier = match row.tier {
                 oneiron::context_board::MemoryTier::Pinned => "pinned",
                 oneiron::context_board::MemoryTier::Snippet => "snippet",
@@ -1084,6 +1104,8 @@ pub(crate) struct ChatBoard {
     pub(crate) rows: Vec<oneiron::EntityId>,
     /// Whether `rows` is a complete source witness for this board.
     pub(crate) rows_complete: bool,
+    /// Whether the handed frame cut rows from its pre-render source list.
+    pub(crate) cut: bool,
     /// What the turn's context records keep of it (FIX 6921); `None` when
     /// its MEMORIES did not match its settled render.
     pub(crate) context: Option<ChatContextCapture>,
@@ -1242,6 +1264,7 @@ async fn read_chat_board(
     .map_err(|refused| axum::response::IntoResponse::into_response(refused).status())?;
     Ok(match context.chat_split {
         Some(split) => ChatBoard {
+            cut: split.render.render.shed.cut_rows > 0,
             block: split.render.state,
             rows: served.0.rows,
             rows_complete: context.rows_complete,
@@ -1254,6 +1277,7 @@ async fn read_chat_board(
             }),
         },
         None => ChatBoard {
+            cut: context.board_budget.cut_rows > 0,
             block: context.board,
             rows: served.0.rows,
             rows_complete: context.rows_complete,

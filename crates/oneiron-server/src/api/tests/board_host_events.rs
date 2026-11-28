@@ -256,6 +256,44 @@ async fn board_mcp_call(
     reply
 }
 
+/// BOARD-KEYFRAME-OVER-BUDGET: setup's keyframe at the default budget holds
+/// no VERBS section, and its render stays within its budget.
+#[tokio::test]
+async fn setup_keyframe_holds_no_verbs_section_and_stays_within_budget() {
+    let (_dir, server) = auth_test_server();
+    let actor = seeded_test_entity_id(0x2477_6001);
+    register_mcp_actor(
+        &server,
+        "board-no-verbs",
+        actor,
+        oneiron::EdgeActorClass::Human,
+    )
+    .await;
+    let setup = board_mcp_call(&server, "board-no-verbs", actor, "setup_oneiron", json!({})).await;
+    let board = &setup["result"]["structuredContent"]["board"];
+    let keyframe = board["keyframe"].as_str().expect("setup states a keyframe");
+    assert!(
+        keyframe
+            .lines()
+            .all(|line| line != "VERBS" && !line.starts_with("VERBS ")),
+        "keyframe holds no VERBS section header: {keyframe:?}"
+    );
+    let rendered = board["render"]["rendered_tok"]
+        .as_u64()
+        .expect("render states rendered_tok");
+    let budget = board["render"]["budget_tok"]
+        .as_u64()
+        .expect("render states budget_tok");
+    assert!(
+        rendered <= budget,
+        "render stays within budget: rendered {rendered} <= budget {budget}"
+    );
+    assert!(
+        board["render"]["cut_rows"].is_number(),
+        "render states cut_rows: {board:?}"
+    );
+}
+
 async fn enqueue_board_frame(server: &Arc<SyncServer>, credential: &str, kind: FrameKind) {
     let mut registry = server.mcp_registry.lock().await;
     let connection = registry
@@ -1187,14 +1225,33 @@ async fn delivering_an_outcome_keeps_the_returned_epoch_current() {
         "{board}"
     );
     let epoch = board["epoch"].as_u64().unwrap();
+    // The returned epoch is still current: a fresh describe of a section this
+    // fixture's board has (TASKS) succeeds.
     board_mcp_call(
         &server,
         "rider-epoch",
         agent,
         "describe",
-        json!({"key": "VERBS", "frame_epoch": epoch}),
+        json!({"key": "TASKS", "frame_epoch": epoch}),
     )
     .await;
+    // VERBS left the keyframe: a fresh describe of it takes the ordinary
+    // missing-key path (BoardVerbError::CurrentTargetMissing).
+    let missing = mcp_refusal(
+        &server,
+        mcp_endpoint_call_request(
+            MCP_TOOL_FIRST_PATH,
+            "rider-epoch",
+            "rider-verbs-missing",
+            "describe",
+            mcp_merge_args(
+                mcp_endpoint_envelope(agent, "read_board"),
+                json!({ "arguments": { "key": "VERBS", "frame_epoch": epoch } }),
+            ),
+        ),
+    )
+    .await;
+    assert_mcp_structured_error(&missing, "verb_dispatch_failed");
 }
 
 /// A full cap of older outcomes cannot hold a rejection back, and whatever

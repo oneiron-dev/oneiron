@@ -385,7 +385,15 @@ pub(super) fn record_board_turn_with_layout(
     candidate: Option<BoardLayoutCandidate>,
     check: impl FnOnce(&ContextBoardResponse) -> Result<(), ApiError>,
 ) -> Result<(), ApiError> {
-    let memories = response.memories.clone();
+    let memories = if response.board_budget.cut_rows > 0 {
+        response
+            .chat_context
+            .as_ref()
+            .and_then(super::chat_emit::ChatContextCapture::shown_memories)
+    } else {
+        response.memories.as_ref()
+    }
+    .cloned();
     let mut refused = None;
     let recorded = server
         .vault

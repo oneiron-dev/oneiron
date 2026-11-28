@@ -182,6 +182,23 @@ impl McpBoardHooks {
         }
     }
 
+    /// A cut invalidates the pre-render hook-block lists. Keep only the
+    /// standing disclosure receipt for MEMORIES rows the keyframe still shows.
+    pub(super) fn shown_by_render(mut self, shed: &oneiron::context_board::ShedOutcome) -> Self {
+        if shed.cut_rows > 0 {
+            let shown = shed
+                .sections
+                .iter()
+                .filter(|section| section.name.starts_with("MEMORIES world="))
+                .flat_map(|section| section.shown_ids.iter().flatten().copied())
+                .collect();
+            self.receipt = self.receipt.take().map(|receipt| receipt.only(&shown));
+            self.blocks.clear();
+            self.memories.clear();
+        }
+        self
+    }
+
     /// The owner's receipt for what the hook rows disclose under a contact's
     /// standing clearance, recorded before the board goes out, as the HTTP
     /// board records it. A receipt that fails refuses the result.

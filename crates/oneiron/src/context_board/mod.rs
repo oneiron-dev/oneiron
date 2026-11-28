@@ -56,6 +56,7 @@ pub use worlds::{WorldPresence, WorldsSection, world_set_scope};
 mod frame;
 mod history;
 mod hydration;
+mod keyframe_cut;
 mod self_brief;
 pub use history::{
     BoardHistoryError, BoardSelection, BoardTurn, BoardTurnEpoch, BoardTurnHistory,
@@ -132,6 +133,7 @@ pub use frame::{
     assemble_tasks_section, render_board_block, render_split_board_block, resolve_board_budget,
     section_policy_for_budget_ref, shed,
 };
+pub use frame::{render_board_block_reserving, render_split_board_block_reserving};
 mod turn_opener;
 pub use hydration::{
     AssembledContext, HydrationBudget, NotificationItem, SessionContext, UnprocessedItem,

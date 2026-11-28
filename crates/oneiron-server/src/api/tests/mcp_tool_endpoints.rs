@@ -221,6 +221,10 @@ async fn mcp_setup_returns_keyframe_grammar_instructions_and_no_carrier() {
         structured["board"]["render"]["floor_exceeds_cap"].is_boolean(),
         "render metadata passes through losslessly: {structured:?}"
     );
+    assert!(
+        structured["board"]["render"]["cut_rows"].is_number(),
+        "render metadata passes through losslessly: {structured:?}"
+    );
     assert_eq!(
         structured["verb_grammar"]["verbs"].as_array().map(Vec::len),
         Some(mcp_expected_generated_names().len()),

@@ -125,12 +125,6 @@ pub(super) fn mcp_setup_payload_error(error: crate::mcp::McpSetupPayloadError) -
     McpGatewayError::new(-32603, "board_render_failed", error.to_string())
 }
 
-pub(super) fn mcp_surface_construction_error(
-    error: crate::mcp::McpSurfaceConstructionError,
-) -> McpGatewayError {
-    McpGatewayError::new(-32603, "board_render_failed", error.to_string())
-}
-
 pub(in crate::api::mcp_gateway) fn mcp_board_verb_error(
     error: oneiron::board_verb::BoardVerbError,
 ) -> McpGatewayError {

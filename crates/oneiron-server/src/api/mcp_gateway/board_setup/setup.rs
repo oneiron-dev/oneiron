@@ -123,8 +123,12 @@ pub(crate) async fn execute_mcp_setup(
         let mut budget = args.board_budget_request();
         budget.harness_default_tok =
             crate::api::context_board::board_cap_tok(&server.vault, budget.harness_default_tok);
-        let mut payload = crate::mcp::mcp_setup_payload(&header, &board.laid_out, budget)
-            .map_err(mcp_setup_payload_error)?;
+        // The rider below fits the changed line into the keyframe after the
+        // render: reserve its exact tokens so the render sheds for them.
+        let reserved_tok = board.changes.ride_tokens();
+        let (mut payload, board_shed) =
+            crate::mcp::mcp_setup_payload_reserving(&header, &board.laid_out, budget, reserved_tok)
+                .map_err(mcp_setup_payload_error)?;
         // The keyframe shows the connector actor's layout batch: once this
         // page resolves, the batch it shows becomes live (BOARD-LAYOUT).
         layout_candidate = board.layout_candidate.clone();
@@ -165,8 +169,10 @@ pub(crate) async fn execute_mcp_setup(
             read_rows: Vec::new(),
         };
         staged_brief = brief;
-        hooks = Some(board.hooks);
-        board_rows.clone_from(&board.rows);
+        hooks = Some(board.hooks.shown_by_render(&board_shed));
+        if board_shed.cut_rows == 0 {
+            board_rows.clone_from(&board.rows);
+        }
         rider = Some((board.changes, board.epoch));
         (structured, keyframe, health, snapshot, Some(board.epoch))
     };

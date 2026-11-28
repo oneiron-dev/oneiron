@@ -2,7 +2,7 @@ use crate::EntityId;
 use crate::context_board::{
     BoardBlockHeader, BoardBudgetRequest, BoardFrame, BoardFrameError, BoardLegend, BoardRender,
     BoardSection, BoardSnapshot, BoardStreamFrame, BoardStreamRegistry, StreamConnectionId,
-    render_board_block,
+    render_board_block_reserving,
 };
 use crate::context_board::{SubscriptionError, SubscriptionReceipt, SubscriptionScope};
 use std::collections::{BTreeMap, BTreeSet};
@@ -103,8 +103,18 @@ pub fn render_current_keyframe(
     sections: &[BoardSection],
     request: BoardBudgetRequest,
 ) -> Result<BoardRender, BoardFrameError> {
+    render_current_keyframe_reserving(header, sections, request, 0)
+}
+/// [`render_current_keyframe`] under the same cap, reserving `reserved_tok`
+/// for the lines a transport rides onto the keyframe after the render.
+pub fn render_current_keyframe_reserving(
+    header: &BoardBlockHeader,
+    sections: &[BoardSection],
+    request: BoardBudgetRequest,
+    reserved_tok: usize,
+) -> Result<BoardRender, BoardFrameError> {
     let legend = BoardLegend::canonical();
-    render_board_block(
+    render_board_block_reserving(
         &BoardFrame {
             you: None,
             changes: None,
@@ -113,6 +123,7 @@ pub fn render_current_keyframe(
             sections,
         },
         request,
+        reserved_tok,
     )
 }
 pub trait LiveBoardSource {

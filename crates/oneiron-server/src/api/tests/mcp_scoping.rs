@@ -579,7 +579,9 @@ async fn mcp_board_epoch_is_state_monotonic() {
         actor.stream_connection.clone()
     };
 
-    // A frame at the retained epoch is NOT stale.
+    // A frame at the retained epoch is NOT stale. TASKS is a section this
+    // fixture's board always has: assembly always pushes TASKS, WORLDS and
+    // PACKS, even with no rows seeded.
     let (_, fresh) = route_json(
         server.clone(),
         mcp_endpoint_call_request(
@@ -589,7 +591,7 @@ async fn mcp_board_epoch_is_state_monotonic() {
             "describe",
             mcp_merge_args(
                 mcp_endpoint_envelope(actor_ref, "read_board"),
-                json!({ "arguments": { "key": "VERBS", "frame_epoch": epoch } }),
+                json!({ "arguments": { "key": "TASKS", "frame_epoch": epoch } }),
             ),
         ),
     )
@@ -598,6 +600,24 @@ async fn mcp_board_epoch_is_state_monotonic() {
         fresh.get("error").is_none(),
         "a clock that moved must not stale a fresh frame: {fresh:?}"
     );
+
+    // VERBS left the keyframe: a fresh describe of it takes the ordinary
+    // missing-key path (BoardVerbError::CurrentTargetMissing).
+    let missing = mcp_refusal(
+        &server,
+        mcp_endpoint_call_request(
+            MCP_TOOL_FIRST_PATH,
+            credential,
+            "epoch-verbs-missing",
+            "describe",
+            mcp_merge_args(
+                mcp_endpoint_envelope(actor_ref, "read_board"),
+                json!({ "arguments": { "key": "VERBS", "frame_epoch": epoch } }),
+            ),
+        ),
+    )
+    .await;
+    assert_mcp_structured_error(&missing, "verb_dispatch_failed");
 
     // A frame at any other epoch IS stale — the fence still fires.
     let stale = mcp_refusal(

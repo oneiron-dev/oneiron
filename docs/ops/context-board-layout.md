@@ -31,7 +31,7 @@ Each section may have:
   writer the caller cannot read, or a row with none, matches no `who`; a row
   the fold keeps open stays. PINNED MEMORIES always stay.
 
-A pinned section (VERBS, ROOM) takes no layout. A section's own pinned rows
+A pinned section (ROOM) takes no layout. A section's own pinned rows
 (PINNED MEMORIES, loaded SKILLS) and the legend never fold. A fold is a view
 setting: the section stays live, `describe` still opens it in full, and the
 fold line counts every admitted row, so a filter or a window never hides a
@@ -39,6 +39,10 @@ failure from it. A filter narrows rows the reader already reads; a group
 roster is read only when the reader reads the project.
 
 The canonical shed order still runs over the laid-out board (ARCH-0067 §3).
+A board still over its `budget_tok` after the last rank has rows cut from its
+end, pinned rows last, and ends its memory block with one `cut for size:` line
+naming the cut sections; `describe` still opens a section in full. The render
+metadata's `cut_rows` counts the rows cut.
 
 ## Verbs
 

@@ -77,6 +77,8 @@ pub(crate) struct ContextBoardRenderBudget {
     rendered_tok: usize,
     /// True when the never-shed floor alone exceeds the cap.
     floor_exceeds_cap: bool,
+    /// Rows the render cut for size, 0 when it cut none.
+    pub(super) cut_rows: usize,
     /// The shed ranks applied, in order.
     applied_shed: Vec<String>,
     /// Concrete TASK-row projection budget, when the request or the TASKS
@@ -105,6 +107,7 @@ impl ContextBoardRenderBudget {
             budget_tok: render.metadata.budget_tok,
             rendered_tok: render.metadata.rendered_tok,
             floor_exceeds_cap: render.metadata.floor_exceeds_cap,
+            cut_rows: render.metadata.cut_rows,
             applied_shed: render
                 .shed
                 .applied

@@ -32,6 +32,9 @@ pub(super) struct McpLiveBoard {
     /// enforced rather than ignored.
     world: oneiron::EntityId,
     view: oneiron::board_verb::LiveBoardView,
+    /// The settled outcome of the keyframe render the snapshot holds, so the
+    /// caller can gate its hook and prefetch bookkeeping on a cut.
+    shed: oneiron::context_board::ShedOutcome,
 }
 
 impl oneiron::board_verb::LiveBoardSource for McpLiveBoard {
@@ -66,7 +69,9 @@ fn mcp_live_board(
         epoch: board.epoch,
         scope: board.scope_label.clone(),
     };
-    let render = oneiron::board_verb::render_current_keyframe(
+    // A refresh rides the changed line onto this keyframe after dispatch:
+    // reserve its exact tokens so the render sheds for them.
+    let render = oneiron::board_verb::render_current_keyframe_reserving(
         &header,
         &board.laid_out,
         oneiron::context_board::BoardBudgetRequest {
@@ -74,6 +79,7 @@ fn mcp_live_board(
             caller_limit_tok: None,
             explicit_override_tok: None,
         },
+        board.changes.ride_tokens(),
     )
     .map_err(mcp_board_frame_error)?;
 
@@ -101,6 +107,7 @@ fn mcp_live_board(
             },
             expansions,
         },
+        shed: render.shed,
     })
 }
 
@@ -193,8 +200,13 @@ pub(super) async fn execute_mcp_board_verb(
                 frame.epoch,
             )
             .await;
-            // Its items go to this machine's home as prefetch seeds, whoever runs the session.
-            crate::board_seed_report::report_delivered_board(server, board.rows.iter().copied());
+            // The pre-render source list cannot witness what a cut delivered.
+            if source.shed.cut_rows == 0 {
+                crate::board_seed_report::report_delivered_board(
+                    server,
+                    board.rows.iter().copied(),
+                );
+            }
             oneiron::board_verb::BoardVerbOutput::Frame(frame)
         }
         other => other,
@@ -202,7 +214,9 @@ pub(super) async fn execute_mcp_board_verb(
     // The hook rows this answer shows go out with it: the caller records
     // their receipt and spends their blocks once it is released (OF-579).
     *hooks = match &output {
-        oneiron::board_verb::BoardVerbOutput::Frame(_) => Some(board.hooks),
+        oneiron::board_verb::BoardVerbOutput::Frame(_) => {
+            Some(board.hooks.shown_by_render(&source.shed))
+        }
         oneiron::board_verb::BoardVerbOutput::Expanded { key, .. } => {
             Some(board.hooks.shown_by(key))
         }
@@ -305,10 +319,8 @@ pub(crate) async fn execute_run_board_verb_in_session(
         .await
         .map_err(run_board_error)?;
     let world = actor.entity_ref();
-    let source = McpLiveBoard {
-        world,
-        view: live_board_view(server, &board).map_err(run_board_error)?,
-    };
+    let (view, shed) = live_board_view(server, &board).map_err(run_board_error)?;
+    let source = McpLiveBoard { world, view, shed };
     let scope = oneiron::board_verb::BoardWorldScope::single(world);
     let output = {
         let mut registry = server.mcp_registry.lock().await;
@@ -341,8 +353,13 @@ pub(crate) async fn execute_run_board_verb_in_session(
                 frame.epoch,
             )
             .await;
-            // An agent run's board too: its items go to this machine's home as prefetch seeds.
-            crate::board_seed_report::report_delivered_board(server, board.rows.iter().copied());
+            // The pre-render source list cannot witness what a cut delivered.
+            if source.shed.cut_rows == 0 {
+                crate::board_seed_report::report_delivered_board(
+                    server,
+                    board.rows.iter().copied(),
+                );
+            }
             let _superseded = server
                 .mcp_registry
                 .lock()
@@ -353,7 +370,9 @@ pub(crate) async fn execute_run_board_verb_in_session(
         other => other,
     };
     *hooks = match &output {
-        oneiron::board_verb::BoardVerbOutput::Frame(_) => Some(board.hooks),
+        oneiron::board_verb::BoardVerbOutput::Frame(_) => {
+            Some(board.hooks.shown_by_render(&source.shed))
+        }
         oneiron::board_verb::BoardVerbOutput::Expanded { key, .. } => {
             Some(board.hooks.shown_by(key))
         }
@@ -426,19 +445,29 @@ pub(super) fn run_board_budget_request(
     }
 }
 
-/// [`mcp_live_board`]'s view of one rendered board.
+/// [`mcp_live_board`]'s view of one rendered board, with the settled shed
+/// outcome, so the caller can gate its hook and prefetch bookkeeping on a cut.
 fn live_board_view(
     server: &SyncServer,
     board: &McpBoardState,
-) -> Result<oneiron::board_verb::LiveBoardView, McpGatewayError> {
+) -> Result<
+    (
+        oneiron::board_verb::LiveBoardView,
+        oneiron::context_board::ShedOutcome,
+    ),
+    McpGatewayError,
+> {
     let header = oneiron::context_board::BoardBlockHeader {
         epoch: board.epoch,
         scope: board.scope_label.clone(),
     };
-    let render = oneiron::board_verb::render_current_keyframe(
+    // A refresh rides the changed line onto this keyframe after dispatch:
+    // reserve its exact tokens so the render sheds for them.
+    let render = oneiron::board_verb::render_current_keyframe_reserving(
         &header,
         &board.laid_out,
         run_board_budget_request(server),
+        board.changes.ride_tokens(),
     )
     .map_err(mcp_board_frame_error)?;
     let mut rows = std::collections::BTreeMap::new();
@@ -455,14 +484,17 @@ fn live_board_view(
         }
         expansions.insert(section.name().to_owned(), lines);
     }
-    Ok(oneiron::board_verb::LiveBoardView {
-        snapshot: oneiron::context_board::BoardSnapshot {
-            epoch: board.epoch,
-            keyframe: render.text,
-            rows,
+    Ok((
+        oneiron::board_verb::LiveBoardView {
+            snapshot: oneiron::context_board::BoardSnapshot {
+                epoch: board.epoch,
+                keyframe: render.text,
+                rows,
+            },
+            expansions,
         },
-        expansions,
-    })
+        render.shed,
+    ))
 }
 
 /// A board refusal as the run's door states it: the verb's own refusal is

@@ -124,14 +124,16 @@ pub fn assemble_memories_sections(
             .and_then(|id| crate::EntityId::from_hex(id).ok())
             .is_some_and(crate::entity_id::is_foreign_world_id_range);
         let mut pinned = Vec::new();
+        let mut pinned_ids = Vec::new();
         let mut details = Vec::new();
         let mut detail_ids = Vec::new();
         for row in &rows {
             let texts = memory_board_rows(row, foreign);
+            let id = crate::EntityId::from_hex(&row.id).ok();
             if row.tier == MemoryTier::Pinned {
+                pinned_ids.extend(std::iter::repeat_n(id, texts.len()));
                 pinned.extend(texts);
             } else {
-                let id = crate::EntityId::from_hex(&row.id).ok();
                 detail_ids.extend(std::iter::repeat_n(id, texts.len()));
                 details.extend(texts);
             }
@@ -155,6 +157,7 @@ pub fn assemble_memories_sections(
         .with_fold_summary(
             super::layout::FoldSummary::total(rows.len()).count("pinned", pinned_count),
         );
+        board.pinned_row_ids = pinned_ids;
         if foreign {
             board = board.with_foreign_host(world.unwrap_or("unknown"));
         }

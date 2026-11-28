@@ -8,6 +8,7 @@
 //! Rendering is a pure function of typed state plus an explicit budget
 //! request: no store, cache, session, clock, or response is read or mutated.
 
+use super::keyframe_cut::CutBudget;
 use super::one_line_token;
 use super::tasks::{TasksSection, fits_row};
 use crate::tokenizer::count_context_pack_tokens;
@@ -178,8 +179,8 @@ pub fn section_policy_for_budget_ref(
     }
 }
 
-/// One validated board section: an always-rendered pinned floor, a full-detail
-/// view, and the non-empty collapsed fallback the shed ladder degrades to.
+/// One validated board section: pinned rows that bypass the shed ladder,
+/// a full-detail view, and the non-empty collapsed fallback.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BoardSection {
     name: String,
@@ -188,13 +189,15 @@ pub struct BoardSection {
     count_rows: Vec<String>,
     policy: SectionPolicy,
     discovery_rows: Vec<String>,
-    foreign_host: Option<String>,
+    pub(super) foreign_host: Option<String>,
     /// The key an agent's board layout names this section by (BOARD-LAYOUT).
     layout_key: String,
     /// The typed id behind each detail row, where the producer knows one;
     /// empty when it knows none. A fold keeps rows open by these ids only,
     /// never by parsing a rendered line.
-    row_ids: Vec<Option<crate::EntityId>>,
+    pub(super) row_ids: Vec<Option<crate::EntityId>>,
+    /// Typed ids aligned to the producer's pinned rows, when it knows them.
+    pub(super) pinned_row_ids: Vec<Option<crate::EntityId>>,
     /// The section's live state as a fold renders it, built by its producer
     /// from typed state every render.
     fold_summary: Option<super::layout::FoldSummary>,
@@ -205,7 +208,7 @@ pub struct BoardSection {
     shown_ids: Option<Vec<crate::EntityId>>,
     /// The rows a fold keeps open in the pinned floor, by id: shown in
     /// every view.
-    kept_ids: Vec<crate::EntityId>,
+    pub(super) kept_ids: Vec<crate::EntityId>,
     /// The detail rows a hook block pins, by typed id (OF-579): no fold or
     /// share takes them off the board.
     hook_pinned_ids: Vec<crate::EntityId>,
@@ -266,6 +269,7 @@ impl BoardSection {
             foreign_host: None,
             layout_key,
             row_ids: Vec::new(),
+            pinned_row_ids: Vec::new(),
             fold_summary: None,
             fold_line: None,
             shown_ids: None,
@@ -352,6 +356,7 @@ impl BoardSection {
             foreign_host: self.foreign_host.clone(),
             layout_key: self.layout_key.clone(),
             row_ids: Vec::new(),
+            pinned_row_ids: base.pinned_row_ids,
             fold_summary: self.fold_summary.clone(),
             fold_line: Some(line),
             shown_ids: Some(kept_ids.clone()),
@@ -636,9 +641,8 @@ pub struct ShedSection {
     pub name: String,
     pub rows: Vec<String>,
     pub view: SectionView,
-    /// Set when the actor's board layout narrowed what the section shows:
-    /// the ids of the detail rows it still shows in this view. `None`
-    /// shows every detail row of a full view, and none of a count view.
+    /// Typed rows still shown after layout or a budget cut. `None` shows
+    /// every detail row of a full view, and none of a count view.
     pub shown_ids: Option<Vec<crate::EntityId>>,
 }
 
@@ -673,6 +677,7 @@ impl ShedSection {
 pub struct ShedOutcome {
     pub sections: Vec<ShedSection>,
     pub applied: Vec<ShedRank>,
+    pub cut_rows: usize,
     pub rendered_tok: usize,
     pub floor_exceeds_cap: bool,
 }
@@ -684,6 +689,7 @@ pub struct BoardRenderMetadata {
     pub budget_tok: usize,
     pub budget_source: BoardBudgetSource,
     pub explicit_override_tok: Option<usize>,
+    pub cut_rows: usize,
     pub rendered_tok: usize,
     pub floor_exceeds_cap: bool,
 }
@@ -751,7 +757,7 @@ pub fn resolve_board_budget(request: BoardBudgetRequest) -> BoardBudget {
 /// parsed. It receives the whole frame so token accounting includes the
 /// wrapper and the never-shed legend.
 pub fn shed(frame: &BoardFrame<'_>, budget: &BoardBudget) -> Result<ShedOutcome, BoardFrameError> {
-    Ok(shed_and_render(frame, budget).0)
+    Ok(shed_and_render(frame, budget, 0).0)
 }
 
 /// Resolves the adaptive cap, performs deterministic shedding, renders the
@@ -760,8 +766,17 @@ pub fn render_board_block(
     frame: &BoardFrame<'_>,
     request: BoardBudgetRequest,
 ) -> Result<BoardRender, BoardFrameError> {
+    render_board_block_reserving(frame, request, 0)
+}
+
+/// Renders under the same cap, reserving tokens for a transport's rider.
+pub fn render_board_block_reserving(
+    frame: &BoardFrame<'_>,
+    request: BoardBudgetRequest,
+    reserved_tok: usize,
+) -> Result<BoardRender, BoardFrameError> {
     let budget = resolve_board_budget(request);
-    let (shed, text) = shed_and_render(frame, &budget);
+    let (shed, text) = shed_and_render(frame, &budget, reserved_tok);
     Ok(BoardRender {
         metadata: BoardRenderMetadata {
             budget_tok: budget.cap_tok,
@@ -769,6 +784,7 @@ pub fn render_board_block(
             explicit_override_tok: request.explicit_override_tok,
             rendered_tok: shed.rendered_tok,
             floor_exceeds_cap: shed.floor_exceeds_cap,
+            cut_rows: shed.cut_rows,
         },
         text,
         shed,
@@ -777,32 +793,48 @@ pub fn render_board_block(
 
 /// Runs the shed ladder and keeps the exact text the outcome was counted over,
 /// so the public seams never render the settled frame twice.
-fn shed_and_render(frame: &BoardFrame<'_>, budget: &BoardBudget) -> (ShedOutcome, String) {
+fn shed_and_render(
+    frame: &BoardFrame<'_>,
+    budget: &BoardBudget,
+    reserved_tok: usize,
+) -> (ShedOutcome, String) {
+    let cut_budget = CutBudget::new(budget.cap_tok, reserved_tok);
     let mut sections: Vec<ShedSection> = frame
         .sections
         .iter()
         .map(|section| ShedSection::of(section, SectionView::Full))
         .collect();
-    let mut text = render_candidate(frame, budget, &sections);
+    let mut text = render_candidate(frame, budget, &sections, None);
     let mut rendered_tok = count_context_pack_tokens(&text);
     let mut applied = Vec::new();
 
     for rank in SHED_ORDER {
-        if rendered_tok <= budget.cap_tok {
+        if !cut_budget.over_cap(rendered_tok) {
             break;
         }
         collapse_rank(frame.sections, &mut sections, rank);
         applied.push(rank);
-        text = render_candidate(frame, budget, &sections);
+        text = render_candidate(frame, budget, &sections, None);
         rendered_tok = count_context_pack_tokens(&text);
     }
+    let cut_rows = cut_budget.trim(
+        frame.sections,
+        &[],
+        &mut sections,
+        &mut rendered_tok,
+        |sections, mark| {
+            text = render_candidate(frame, budget, sections, Some(mark));
+            count_context_pack_tokens(&text)
+        },
+    );
 
     (
         ShedOutcome {
             sections,
             applied,
             rendered_tok,
-            floor_exceeds_cap: rendered_tok > budget.cap_tok,
+            floor_exceeds_cap: cut_budget.over_cap(rendered_tok),
+            cut_rows,
         },
         text,
     )
@@ -832,6 +864,7 @@ fn render_candidate(
     frame: &BoardFrame<'_>,
     budget: &BoardBudget,
     sections: &[ShedSection],
+    mark: Option<&str>,
 ) -> String {
     let row_count: usize = sections.iter().map(|section| 1 + section.rows.len()).sum();
     let mut lines = Vec::with_capacity(3 + row_count);
@@ -855,6 +888,7 @@ fn render_candidate(
         lines.push(xml_text_token(&original.header_line()));
         lines.extend(section.rows.iter().map(|row| xml_text_token(row)));
     }
+    lines.extend(mark.map(xml_text_token));
     lines.push("</memory>".to_owned());
     for (section, original) in sections.iter().zip(frame.sections) {
         let Some(host) = original.foreign_host.as_deref() else {
@@ -910,26 +944,50 @@ pub fn render_split_board_block(
     parts: &[BoardPart],
     request: BoardBudgetRequest,
 ) -> SplitBoardRender {
+    render_split_board_block_reserving(frame, parts, request, 0)
+}
+
+/// Renders both parts under one cap, reserving tokens for a transport's rider.
+#[must_use]
+pub fn render_split_board_block_reserving(
+    frame: &BoardFrame<'_>,
+    parts: &[BoardPart],
+    request: BoardBudgetRequest,
+    reserved_tok: usize,
+) -> SplitBoardRender {
     let budget = resolve_board_budget(request);
+    let cut_budget = CutBudget::new(budget.cap_tok, reserved_tok);
     let mut sections: Vec<ShedSection> = frame
         .sections
         .iter()
         .map(|section| ShedSection::of(section, SectionView::Full))
         .collect();
-    let (mut state, mut query) = render_split_candidate(frame, &budget, &sections, parts);
+    let (mut state, mut query) = render_split_candidate(frame, &budget, &sections, parts, None);
     let mut text = joined_parts(&state, query.as_deref());
     let mut rendered_tok = count_context_pack_tokens(&text);
     let mut applied = Vec::new();
     for rank in SHED_ORDER {
-        if rendered_tok <= budget.cap_tok {
+        if !cut_budget.over_cap(rendered_tok) {
             break;
         }
         collapse_rank(frame.sections, &mut sections, rank);
         applied.push(rank);
-        (state, query) = render_split_candidate(frame, &budget, &sections, parts);
+        (state, query) = render_split_candidate(frame, &budget, &sections, parts, None);
         text = joined_parts(&state, query.as_deref());
         rendered_tok = count_context_pack_tokens(&text);
     }
+    let cut_rows = cut_budget.trim(
+        frame.sections,
+        parts,
+        &mut sections,
+        &mut rendered_tok,
+        |sections, mark| {
+            (state, query) = render_split_candidate(frame, &budget, sections, parts, Some(mark));
+            text = joined_parts(&state, query.as_deref());
+            count_context_pack_tokens(&text)
+        },
+    );
+    let floor_exceeds_cap = cut_budget.over_cap(rendered_tok);
     SplitBoardRender {
         render: BoardRender {
             metadata: BoardRenderMetadata {
@@ -937,14 +995,16 @@ pub fn render_split_board_block(
                 budget_source: budget.source,
                 explicit_override_tok: request.explicit_override_tok,
                 rendered_tok,
-                floor_exceeds_cap: rendered_tok > budget.cap_tok,
+                floor_exceeds_cap,
+                cut_rows,
             },
             text,
             shed: ShedOutcome {
                 sections,
                 applied,
                 rendered_tok,
-                floor_exceeds_cap: rendered_tok > budget.cap_tok,
+                floor_exceeds_cap,
+                cut_rows,
             },
         },
         state,
@@ -969,6 +1029,7 @@ fn render_split_candidate(
     budget: &BoardBudget,
     sections: &[ShedSection],
     parts: &[BoardPart],
+    mark: Option<&str>,
 ) -> (String, Option<String>) {
     let part = |index: usize| parts.get(index).copied().unwrap_or(BoardPart::State);
     let mut state = vec![
@@ -985,7 +1046,7 @@ fn render_split_candidate(
     if let Some(changes) = frame.changes {
         state.extend(changes.render().iter().map(|line| xml_text_token(line)));
     }
-    part_lines(&mut state, frame, sections, |index| {
+    part_lines(&mut state, frame, sections, mark, |index| {
         part(index) == BoardPart::State
     });
     let state = state.join("\n");
@@ -996,7 +1057,7 @@ fn render_split_candidate(
         "<memory surface=\"board\" part=\"query\" epoch=\"{}\">",
         frame.header.epoch
     )];
-    part_lines(&mut query, frame, sections, |index| {
+    part_lines(&mut query, frame, sections, None, |index| {
         part(index) == BoardPart::Query
     });
     (state, Some(query.join("\n")))
@@ -1008,6 +1069,7 @@ fn part_lines(
     lines: &mut Vec<String>,
     frame: &BoardFrame<'_>,
     sections: &[ShedSection],
+    mark: Option<&str>,
     rides: impl Fn(usize) -> bool,
 ) {
     let kept: Vec<(&ShedSection, &BoardSection)> = sections
@@ -1024,6 +1086,7 @@ fn part_lines(
         lines.push(xml_text_token(&original.header_line()));
         lines.extend(section.rows.iter().map(|row| xml_text_token(row)));
     }
+    lines.extend(mark.map(xml_text_token));
     lines.push("</memory>".to_owned());
     for (section, original) in &kept {
         let Some(host) = original.foreign_host.as_deref() else {

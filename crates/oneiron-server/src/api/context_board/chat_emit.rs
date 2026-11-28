@@ -58,6 +58,12 @@ pub(crate) struct ChatContextCapture {
     layout_candidate: Option<BoardLayoutCandidate>,
 }
 
+impl ChatContextCapture {
+    pub(super) fn shown_memories(&self) -> Option<&MemoriesSection> {
+        self.memories.as_ref()
+    }
+}
+
 /// A capture frozen against the call admitted with it. Its emit fields are
 /// apart from the selection, so a stamp that cannot be frozen costs only the
 /// receipt.
@@ -159,8 +165,8 @@ fn settled_memories(memories: &MemoriesSection, render: &BoardRender) -> Option<
                 continue;
             }
             matched += rows.len();
-            // A row the actor's board layout folded or fitted away is not
-            // shown: only the ids the section still shows are (BOARD-LAYOUT).
+            // The settled ids exclude what layout or the final cut withheld.
+            // When a cut ran, they also account for the physical pinned rows.
             let shown = |row: &MemoryRow| match &section.shown_ids {
                 Some(ids) => EntityId::from_hex(&row.id).is_ok_and(|id| ids.contains(&id)),
                 None => section.view != SectionView::Counts,
@@ -169,7 +175,7 @@ fn settled_memories(memories: &MemoriesSection, render: &BoardRender) -> Option<
                 for row in rows
                     .iter()
                     .filter(|row| (row.tier == MemoryTier::Pinned) == pinned)
-                    .filter(|row| pinned || shown(row))
+                    .filter(|row| (pinned && render.shed.cut_rows == 0) || shown(row))
                 {
                     let mut shown = MemoryRow::clone(row);
                     if foreign {
