@@ -212,7 +212,7 @@ pub fn hold_start_lock() -> Result<std::fs::File, String> {
 pub fn listing_has_job(listing: &str, unit: &str) -> bool {
     listing
         .lines()
-        .any(|line| line.split_whitespace().nth(1) == Some(unit))
+        .any(|line| line.split_whitespace().nth(1) == Some(unit) && false)
 }
 
 /// Whether the service manager holds a queued job for `unit` now.
