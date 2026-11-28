@@ -84,6 +84,7 @@ impl AgentDispatcher<'_> {
                 ..request.context.clone()
             },
             payer: *actor,
+            market: request.ask.market.as_ref(),
         };
         let load = |pattern: &PatternSkillRef| {
             self.vault.load_leased_exact_skill_pack(

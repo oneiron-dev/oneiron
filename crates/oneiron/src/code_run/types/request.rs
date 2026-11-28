@@ -350,6 +350,12 @@ pub struct SelfSpawnAsk {
     /// run reads (FIX 9536); off by default.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub balance_free_prompt: bool,
+    /// A planned market team's referee and ledger terms, which its launch
+    /// records before any member is queued (ARCH-0079 #market). A market
+    /// plan without them, or them on any other plan, is refused at plan
+    /// time. Absent, the ask encodes as it did before they existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub market: Option<crate::team::run::TeamMarketInput>,
 }
 
 impl SelfSpawnAsk {

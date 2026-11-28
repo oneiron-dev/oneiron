@@ -13,6 +13,12 @@
 //! Anything but a fresh queued attempt drops the whole group, and the
 //! refusal is kept. A solo queues its one agent the same way, with no team.
 //!
+//! A market binds before the work (ARCH-0079 #market): the ask names the
+//! referee and the ledger's terms, a market plan without them (or them on
+//! any other plan) is refused as the plan is frozen, and the group's writer
+//! records the ledger after the leader and before any member, with the asker
+//! as the referee's setter and the vault's time.
+//!
 //! A launched intent answers the identities it kept and never runs the
 //! runner or a dispatch again. Until a host binds a runner, a team plan
 //! refuses and stays planned. Only the asker's proof, the plan and the
@@ -24,15 +30,18 @@
 mod child;
 
 use crate::attempt_queue::{AttemptId, AttemptRecord};
+use crate::code_run::SelfSpawnAsk;
 use crate::consent::AuthenticatedOwner;
 use crate::context_projection::{ContextSpec, normalize_context_spec, validate_spec_narrows};
 use crate::edge::EdgeActorClass;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::skill::LoadedSkillPack;
+use crate::team::market::{Market, bind_market_in_txn};
+use crate::team::run::{TeamMarketInput, market_opening};
 use crate::team::{
     PatternLaunchRunner, PatternLaunchSpec, PatternSkillRef, PlannedIntentView, PlannedSpawnHost,
-    PlannedSpawnRequest, SpawnPhase, TeamRunBinding, record_team_start_in_txn,
+    PlannedSpawnRequest, SpawnPhase, TeamPattern, TeamRunBinding, record_team_start_in_txn,
 };
 use crate::write_envelope::WriteActor;
 
@@ -57,28 +66,39 @@ const START_MOVED: &str = "another call froze a different start for this intent;
      under the same intent key to launch the one it froze";
 const NOT_FRESH: &str = "a planned launch queues fresh agents only, and its dispatch answered \
      otherwise";
+const MARKET_UNBOUND: &str = "a planned market names its referee and ledger terms (`market`) \
+     before the work, and this ask names none";
+const TERMS_OUTSIDE_MARKET: &str = "market terms bind a market plan only, and this plan is no \
+     market: pin the pattern market, or drop the terms";
+const MARKET_MOVED: &str = "this team already opened a market on other terms";
+/// The team reference a plan's market terms are tried under before its
+/// launch names the real one.
+const PLANNED_TEAM_REF: &str = "team:planned";
 
 /// One planned group's launch: the intent it launches, where its leader
 /// goes and on which run, the leader's context before the plan stamps it,
 /// and the payer its pattern run is metered to. The owner's leader goes to
 /// the root on no run, under the host's root spend; a leased agent's goes
 /// under the attempt it spawns from, on its run, in the context the agent
-/// asked for. Members go under the leader.
+/// asked for. Members go under the leader. A market's terms are the ask's,
+/// which the intent froze with its digest.
 struct GroupLaunch<'a> {
     name: &'a IntentName<'a>,
     parent: Option<AttemptId>,
     run_id: Option<String>,
     leader: AgentSpawnContext,
     payer: WriteActor,
+    market: Option<&'a TeamMarketInput>,
 }
 
 /// Where a group queues: the intent's digest its dedupe keys and team
-/// reference carry, the leader's parent (none at the root), and the run
-/// every agent of the group rides.
+/// reference carry, the leader's parent (none at the root), the run every
+/// agent of the group rides, and a market's terms with their setter.
 struct GroupAnchor<'a> {
     digest: &'a str,
     parent: Option<AttemptId>,
     run_id: Option<&'a str>,
+    market: Option<(&'a TeamMarketInput, EntityId)>,
 }
 
 impl AgentDispatcher<'_> {
@@ -126,6 +146,7 @@ impl AgentDispatcher<'_> {
                 ..AgentSpawnContext::default()
             },
             payer: WriteActor::new(owner.actor_for_read(self.vault)?, EdgeActorClass::Human),
+            market: request.ask.market.as_ref(),
         };
         let load = |pattern: &PatternSkillRef| -> Result<LoadedSkillPack> {
             self.root_pattern_pack_in_txn(&self.vault.store.env.read_txn()?, pattern)
@@ -249,7 +270,8 @@ impl AgentDispatcher<'_> {
             parent,
             run_id,
             mut leader,
-            payer: _,
+            payer,
+            market,
         } = launch;
         let plan = planned.plan()?;
         let start = planned.spec();
@@ -263,10 +285,14 @@ impl AgentDispatcher<'_> {
                 .collect()
         });
         let digest = planned.digest_hex();
+        // The referee's setter is the asker: the owner at the root, the
+        // leasing agent (its AGENT_DEF) under a lease, whom the writer below
+        // proves again before anything is queued.
         let anchor = GroupAnchor {
             digest: &digest,
             parent,
             run_id: run_id.as_deref(),
+            market: market.map(|terms| (terms, payer.entity_ref())),
         };
         let preflight = self.preflight_group(
             plan,
@@ -358,10 +384,12 @@ impl AgentDispatcher<'_> {
     /// Queues the leader under the anchor's parent and each member as its
     /// child in the caller's writer, all on the anchor's run, and binds the
     /// members as the leader's team; a solo queues its one agent and binds
-    /// none. The dedupe keys and the team reference carry the intent's
-    /// digest. Only a fresh queued attempt passes: anything else refuses,
-    /// and the caller drops the whole group. Answers the leader, the members
-    /// and the team.
+    /// none. A market's ledger is recorded after the leader, whose attempt
+    /// its team reference names, and before any member. The dedupe keys and
+    /// the team reference carry the intent's digest. Only a fresh queued
+    /// attempt and an opened ledger pass: anything else refuses, and the
+    /// caller drops the whole group. Answers the leader, the members and the
+    /// team.
     fn queue_group_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -389,6 +417,14 @@ impl AgentDispatcher<'_> {
             return Ok((leader.id, Vec::new(), None));
         };
         let team_ref = format!("team:{}:{digest}", bytes_to_hex_lower(leader.id.as_bytes()));
+        if pattern == TeamPattern::Market {
+            let (terms, setter) = anchor.market.ok_or_else(|| invalid(MARKET_UNBOUND))?;
+            let now = self.vault.now_recorded_at();
+            let opening = planned_market(&team_ref, terms, setter, member_contexts.len(), now)?;
+            if !bind_market_in_txn(self.vault, wtxn, &opening)? {
+                return Err(invalid(MARKET_MOVED));
+            }
+        }
         let stamp = TeamRunStamp::new(team_ref, pattern)?;
         let mut members = Vec::with_capacity(member_contexts.len());
         for (ordinal, context) in member_contexts.into_iter().enumerate() {
@@ -443,6 +479,50 @@ impl AgentDispatcher<'_> {
             Err(error)
         }
     }
+
+    /// Whether `plan` and the market terms `ask` names agree, as the plan is
+    /// frozen and before any pattern runs: a market plan names terms that
+    /// open a ledger among its members with `asker` as the setter, and no
+    /// other plan names any. A refusal is the intent's to keep.
+    pub(super) fn check_market_plan(
+        &self,
+        ask: &SelfSpawnAsk,
+        plan: &SpawnPlanReceipt,
+        asker: EntityId,
+    ) -> Result<()> {
+        let market = team_pattern(plan.plan.shape.pattern) == Some(TeamPattern::Market);
+        match (ask.market.as_ref(), market) {
+            (None, false) => Ok(()),
+            (None, true) => Err(invalid(MARKET_UNBOUND)),
+            (Some(_), false) => Err(invalid(TERMS_OUTSIDE_MARKET)),
+            (Some(terms), true) => {
+                let members = usize::try_from(plan.plan.shape.width.saturating_sub(1))
+                    .map_err(|_| invalid(INCOMPLETE_START))?;
+                let now = self.vault.now_recorded_at();
+                planned_market(PLANNED_TEAM_REF, terms, asker, members, now).map(drop)
+            }
+        }
+    }
+}
+
+/// The market a planned team opens under `team_ref`: `terms` among its
+/// `members` in launch order, named `member:<n>` as each one's dispatch key
+/// names its role, with `asker` as the referee's setter at `now`. Terms no
+/// ledger opens on are the launch's refusal.
+fn planned_market(
+    team_ref: &str,
+    terms: &TeamMarketInput,
+    asker: EntityId,
+    members: usize,
+    now: u64,
+) -> Result<Market> {
+    let agents: Vec<String> = (0..members)
+        .map(|ordinal| format!("member:{ordinal}"))
+        .collect();
+    market_opening(team_ref, terms, asker, &agents, now).map_err(|error| match error {
+        Error::InvalidClaimBody(why) => invalid(why),
+        error => error,
+    })
 }
 
 /// A context that briefs and asks for nothing else: the default projection,
