@@ -230,6 +230,7 @@ impl Vault {
             )?
             || self.store.known_history_scope_exists_in_txn(txn, id)?
             || crate::world_keys::world_pad_scope_exists_in_txn(&self.store, txn, id)?
+            || crate::batch::export::archive_retained_record_erase::retained_side_rows_of_record_exist_in_txn(&self.store, txn, id)?
         {
             return Ok(true);
         }

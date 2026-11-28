@@ -19,11 +19,11 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron::gpu_job::{
     GpuJob, GpuJobActor, GpuJobAgent, GpuJobAllowRequest, GpuJobAllowanceView, GpuJobConnector,
     GpuJobError, GpuJobList, GpuJobListRequest, GpuJobQuote, GpuJobQuoteRequest, GpuJobQuoteTerms,
-    GpuJobRef, GpuJobStart, GpuJobStartRequest, GpuJobStatus, GpuJobVerb,
+    GpuJobRef, GpuJobResultBinding, GpuJobStart, GpuJobStartRequest, GpuJobStatus, GpuJobVerb,
 };
 use oneiron::llm::run_admission::ResumeRefused;
 use oneiron::memory::{
-    MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, MEMORY_CODE_NOT_FOUND, MemoryError,
+    MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, MEMORY_CODE_NOT_FOUND, Memory, MemoryError,
     MemoryResult,
 };
 
@@ -74,6 +74,19 @@ async fn gpu_door<T: Send + 'static>(
     verb: GpuJobVerb,
     act: impl FnOnce(&SyncServer, &DoorCaller) -> MemoryResult<T> + Send + 'static,
 ) -> Listed<T> {
+    gpu_door_reading(server, auth, verb, move |server, caller, _| {
+        act(server, caller)
+    })
+    .await
+}
+
+/// [`gpu_door`], `act` also given the caller's own credential-bound Memory.
+async fn gpu_door_reading<T: Send + 'static>(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    verb: GpuJobVerb,
+    act: impl FnOnce(&SyncServer, &DoorCaller, &Memory<'_>) -> MemoryResult<T> + Send + 'static,
+) -> Listed<T> {
     let caller = match crate::api::facade::facade_actor(server, auth)
         .map_err(FacadeApiError::into_memory_error)
     {
@@ -99,7 +112,7 @@ async fn gpu_door<T: Send + 'static>(
                 Some(owner) => DoorCaller::Owner(owner),
                 None => DoorCaller::Agent(memory.gpu_job_agent()),
             };
-            act(server, &caller)
+            act(server, &caller, &memory)
         },
     )
     .await
@@ -186,9 +199,13 @@ pub(crate) async fn vault_gpu_jobs_start(
     auth: &CoreAuth,
     input: GpuJobStartRequest,
 ) -> Listed<GpuJobStatus> {
-    gpu_door(server, auth, GpuJobVerb::Start, move |server, caller| {
+    let verb = GpuJobVerb::Start;
+    gpu_door_reading(server, auth, verb, move |server, caller, memory| {
         let quote = GpuJobQuote::try_from(input.quote)?;
         let (offer, connector) = offer_with_backend(server, &quote.offer)?;
+        if let DoorCaller::Agent(_) = caller {
+            result_binding_admits(memory, &quote)?;
+        }
         let resume = if input.resume {
             let job = server
                 .vault
@@ -217,6 +234,30 @@ pub(crate) async fn vault_gpu_jobs_start(
         Ok(GpuJobStatus::from(&job))
     })
     .await
+}
+
+/// An agent's chunk binds a result (`inputs.result { artifact, task }`) only to rows the
+/// credential it presented reads, a slip's records list included: a result whose starter
+/// lapsed lands through the owner's lane, which reads every row. Judged before the chunk is
+/// written, so every chunk carries a binding its own start call admitted. A binding that does
+/// not parse is left to the backend's own refusal.
+fn result_binding_admits(memory: &Memory<'_>, quote: &GpuJobQuote) -> MemoryResult<()> {
+    let Some(binding) = quote
+        .inputs
+        .get("result")
+        .filter(|binding| !binding.is_null())
+        .and_then(|binding| serde_json::from_value::<GpuJobResultBinding>(binding.clone()).ok())
+    else {
+        return Ok(());
+    };
+    if memory.gpu_job_result_binding_admits(&binding)? {
+        return Ok(());
+    }
+    Err(MemoryError::new(
+        MEMORY_CODE_FORBIDDEN,
+        "result_binding_unreadable: the job's result binds a row this credential does not read",
+        &["Bind an artifact and a task this credential reads."],
+    ))
 }
 
 /// `vault.gpu.jobs.status`: where one job stands, with its spend against its

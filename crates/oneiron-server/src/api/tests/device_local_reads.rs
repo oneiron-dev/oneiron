@@ -1528,3 +1528,364 @@ async fn a_run_off_this_device_holding_a_device_local_proposal_reads_as_no_run()
         ClaimApprovalStatus::Proposed
     );
 }
+
+/// REVIEW-10571 P1 1: a hydrate answer's miss echoes are its caller's own
+/// strings, so off this device they read as no ref and no id: an unknown
+/// short ref in `missing` neither withholds the found views nor names a
+/// row. Before the fix the whole MCP result was withheld (Placement).
+#[tokio::test]
+async fn an_off_device_mcp_hydrate_returns_the_view_and_lists_an_unknown_short_ref_as_not_found() {
+    let (_dir, server, _caller, grower) = serve();
+    let owner = server.vault.ensure_embedded_owner_actor().unwrap();
+    let open = put_orchid_claim(
+        &server,
+        grower,
+        "test.hydrate_open",
+        None,
+        "orchid hydrate open",
+    );
+    let credential = "hydrate-miss-release";
+    register_mcp_actor(&server, credential, owner, oneiron::EdgeActorClass::Human).await;
+    put_actor_read_grant(&server.vault, owner, None);
+    let (_, body) = route_json(
+        server,
+        mcp_endpoint_call_request(
+            MCP_TOOL_FIRST_PATH,
+            credential,
+            "hydrate-miss-1",
+            "vault.hydrate",
+            mcp_merge_args(
+                mcp_endpoint_envelope(owner, "read_memory"),
+                json!({ "arguments": { "request": { "refs": [open.to_hex(), "zz9:a3"] } } }),
+            ),
+        ),
+    )
+    .await;
+    assert!(body.get("error").is_none(), "{body}");
+    let output = &body["result"]["structuredContent"]["output"];
+    assert_eq!(
+        output["value"].as_array().expect("views").len(),
+        1,
+        "{body}"
+    );
+    assert_eq!(output["value"][0]["id_hex"], json!(open.to_hex()), "{body}");
+    assert_eq!(
+        output["missing"],
+        json!([{"ref": "zz9:a3", "reason": "not_found"}]),
+        "{body}"
+    );
+    assert!(output["narrowing"].is_object(), "{body}");
+}
+
+fn device_local_hydrate_claim(server: &SyncServer, subject: EntityId) -> EntityId {
+    let world = put_world(&server.vault);
+    let kept = put_orchid_claim(
+        server,
+        subject,
+        "test.hydrate_release_kept",
+        Some(world),
+        "orchid hydrate release kept",
+    );
+    server
+        .vault
+        .keep_world_on_this_machine_under_for_test(
+            &crate::test_credentials::host_issuer(server),
+            world,
+            true,
+        )
+        .unwrap();
+    kept
+}
+
+#[tokio::test]
+async fn an_off_device_mcp_hydrate_misses_a_device_local_row_like_a_never_used_id() {
+    let (_dir, server, _caller, grower) = serve();
+    let owner = server.vault.ensure_embedded_owner_actor().unwrap();
+    let kept = device_local_hydrate_claim(&server, grower);
+    let credential = "hydrate-miss-mcp-device-local";
+    register_mcp_actor(&server, credential, owner, oneiron::EdgeActorClass::Human).await;
+    put_actor_read_grant(&server.vault, owner, None);
+
+    for reference in [EntityId::now().to_hex(), kept.to_hex()] {
+        let mut request = mcp_endpoint_call_request(
+            MCP_TOOL_FIRST_PATH,
+            credential,
+            "hydrate-miss-mcp-device-local",
+            "vault.hydrate",
+            mcp_merge_args(
+                mcp_endpoint_envelope(owner, "read_memory"),
+                json!({"arguments": {"request": {"refs": [reference]}}}),
+            ),
+        );
+        request.extensions_mut().insert(ConnectInfo(AWAY.peer));
+        let (_, body) = route_json(server.clone(), request).await;
+        let result = &body["result"];
+        let structured = &result["structuredContent"];
+        assert_eq!(structured["output"]["value"], json!([]), "{body}");
+        assert_eq!(
+            structured["output"]["missing"],
+            json!([{"ref": reference, "reason": "not_found"}]),
+            "{body}"
+        );
+        let text = result["content"][1]["text"].as_str().expect("text mirror");
+        assert_eq!(serde_json::from_str::<Value>(text).unwrap(), *structured);
+    }
+}
+
+#[tokio::test]
+async fn an_off_device_socket_hydrate_keeps_the_readable_view_beside_a_device_local_miss() {
+    use crate::livequery::connection::{Connection, Hub};
+    use crate::livequery::{RpcRequest, SocketCallContext, rpc_reply, test_wire};
+    use oneiron::claim::CallerLocality;
+
+    let (_dir, server, _caller, grower) = serve();
+    let owner = server.vault.ensure_embedded_owner_actor().unwrap();
+    let auth = crate::test_credentials::authenticate(
+        &server,
+        &format!("principal_ref={};actor_class=human", owner.to_hex()),
+    )
+    .at(CallerLocality::OffDevice);
+    put_actor_read_grant(&server.vault, owner, None);
+    let kept = device_local_hydrate_claim(&server, grower);
+    let open = put_orchid_claim(&server, grower, "test.hydrate_socket_open", None, "orchid");
+    let conn = 1;
+    let mut socket = Connection::new(Hub::for_server(&server), conn);
+    for (seq, reference) in [EntityId::now().to_hex(), kept.to_hex()]
+        .into_iter()
+        .enumerate()
+    {
+        let request = RpcRequest {
+            request_id: seq as u64 + 1,
+            method: "vault.hydrate".to_owned(),
+            params: json!({"refs": [open.to_hex(), reference]}),
+        };
+        let server = server.clone();
+        let auth = auth.clone();
+        let reply = crate::test_engine_stack::on_engine_stack(async move {
+            rpc_reply(&server, &auth, request, SocketCallContext::default()).await
+        })
+        .await
+        .unwrap();
+        let released: Vec<_> = reply
+            .queued(conn)
+            .iter()
+            .map(|frame| socket.release(CallerLocality::OffDevice, frame).unwrap())
+            .collect();
+        let reply = test_wire::reply(&released);
+        let output = &reply["result"];
+        assert_eq!(
+            output["value"].as_array().expect("found views").len(),
+            1,
+            "{reply}"
+        );
+        assert_eq!(output["value"][0]["id_hex"], open.to_hex(), "{reply}");
+        assert_eq!(
+            output["missing"],
+            json!([{"ref": reference, "reason": "not_found"}]),
+            "{reply}"
+        );
+    }
+}
+
+#[cfg(feature = "code-sandbox-wasmtime")]
+#[tokio::test]
+async fn an_off_device_mcp_code_run_releases_a_device_local_hydrate_miss_like_a_never_used_id() {
+    let never = EntityId::now().to_hex();
+    let kept = EntityId::now();
+    let refs = [never, kept.to_hex()];
+    let scripts = refs
+        .iter()
+        .map(|reference| {
+            format!("await vault.hydrate({{refs: ['{reference}']}}); finish('hydrated');")
+        })
+        .collect();
+    let mode = super::mcp_quickjs::code_mode_server_with(scripts, None);
+    let actor = mode.vault.ensure_embedded_owner_actor().unwrap();
+    let credential = "hydrate-miss-mcp-code";
+    register_mcp_actor(
+        &mode.server,
+        credential,
+        actor,
+        oneiron::EdgeActorClass::Human,
+    )
+    .await;
+    put_actor_read_grant(&mode.vault, actor, None);
+    let world = put_world(&mode.vault);
+    let mut claim = oneiron::ClaimBody::new(
+        "test.hydrate_code_kept",
+        oneiron::ClaimSubject::Entity(actor),
+        rmpv::Value::from("orchid hydrate code kept"),
+        0.8,
+        ClaimApprovalStatus::Auto,
+        oneiron::ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    claim.world = Some(world);
+    mode.vault
+        .put_claim(&kept, &claim, oneiron::TimeRange { start: 1, end: 1 }, 1)
+        .unwrap();
+    mode.vault
+        .keep_world_on_this_machine_under_for_test(
+            &crate::test_credentials::host_issuer(&mode.server),
+            world,
+            true,
+        )
+        .unwrap();
+
+    // No MCP tool starts a task run since EXECUTE-CALLER-CODE PR D: the kept
+    // task path is entered through its test seam, off this device.
+    for (run_ref, reference) in ["hydrate-never", "hydrate-kept"].into_iter().zip(refs) {
+        let body = execute_task_run_for_test(
+            &mode.server,
+            credential,
+            run_ref,
+            "hydrate the supplied reference",
+        )
+        .await;
+        let structured = &body["result"]["structuredContent"];
+        assert_eq!(structured["result"]["status"], "complete", "{body}");
+        let step = &structured["steps"][0];
+        assert_eq!(step["effect"], "self.verbs.call", "{body}");
+        let output: Value =
+            serde_json::from_str(step["outcome"]["output"].as_str().expect("hydrate output"))
+                .unwrap();
+        assert_eq!(output["value"], json!([]), "{body}");
+        assert_eq!(
+            output["missing"],
+            json!([{"ref": reference, "reason": "not_found"}]),
+            "{body}"
+        );
+    }
+}
+
+/// #10571 ported to the MCP `execute` tool (EXECUTE-CALLER-CODE PR D): off
+/// this device, caller code that hydrates a device-local row's hex id gets
+/// its answer released exactly as for a never-used id. The release scans a
+/// copy whose hydrate miss echoes are cleared, so neither answer is withheld.
+#[cfg(feature = "code-sandbox-wasmtime")]
+#[tokio::test]
+async fn an_off_device_caller_code_hydrate_misses_a_device_local_row_like_a_never_used_id() {
+    let mode = super::mcp_quickjs::code_mode_server_with(Vec::new(), None);
+    let actor = mode.vault.ensure_embedded_owner_actor().unwrap();
+    let credential = "hydrate-miss-caller-code";
+    register_mcp_actor(
+        &mode.server,
+        credential,
+        actor,
+        oneiron::EdgeActorClass::Human,
+    )
+    .await;
+    put_actor_read_grant(&mode.vault, actor, None);
+    let kept = device_local_hydrate_claim(&mode.server, actor);
+    let refs = [EntityId::now().to_hex(), kept.to_hex()];
+    for (run_ref, reference) in ["caller-hydrate-never", "caller-hydrate-kept"]
+        .into_iter()
+        .zip(refs)
+    {
+        let code = format!("await vault.hydrate({{refs: ['{reference}']}}); return 'hydrated';");
+        let mut request = mcp_endpoint_call_request(
+            "/mcp",
+            credential,
+            run_ref,
+            "execute",
+            json!({"code": code, "run_ref": run_ref}),
+        );
+        request.extensions_mut().insert(ConnectInfo(AWAY.peer));
+        let (_, body) = route_json(mode.server.clone(), request).await;
+        let structured = &body["result"]["structuredContent"];
+        assert_eq!(structured["status"], "complete", "{reference}: {body}");
+        assert_eq!(structured["result"], "hydrated", "{reference}: {body}");
+        let calls = structured["calls"].as_array().expect("calls");
+        assert!(
+            calls
+                .iter()
+                .any(|call| call["verb"] == "vault.hydrate" && call["outcome"] == "read"),
+            "{reference}: {body}"
+        );
+    }
+}
+
+/// REVIEW-10571 P1 1: off this device a facade hydrate misses a
+/// device-local row's hex id exactly like a never-used id: `not_found`,
+/// never `details_on_device`, so the miss reveals nothing about which
+/// records exist.
+#[tokio::test]
+async fn an_off_device_facade_hydrate_misses_a_device_local_row_like_a_never_used_id() {
+    let (_dir, server, caller, grower) = serve();
+    let kept_world = put_world(&server.vault);
+    let kept = put_orchid_claim(
+        &server,
+        grower,
+        "test.hydrate_kept",
+        Some(kept_world),
+        "orchid hydrate kept",
+    );
+    server
+        .vault
+        .keep_world_on_this_machine_under_for_test(
+            &crate::test_credentials::host_issuer(&server),
+            kept_world,
+            true,
+        )
+        .unwrap();
+    let never = EntityId::now();
+    for reference in [kept.to_hex(), never.to_hex()] {
+        let (status, body) = caller
+            .call(
+                AWAY,
+                "POST",
+                "/v1/core/facade/vault.hydrate",
+                Some(json!({"refs": [reference]})),
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["value"], json!([]), "{body}");
+        assert_eq!(
+            body["missing"],
+            json!([{"ref": reference, "reason": "not_found"}]),
+            "{body}"
+        );
+        assert!(body["narrowing"].is_object(), "{body}");
+    }
+}
+
+/// REVIEW-10571 P1 1: the found views keep their scan: a view whose body
+/// names a device-local row is still withheld off this device, before and
+/// after the miss-echo fix alike.
+#[tokio::test]
+async fn an_off_device_facade_hydrate_withholds_a_found_view_naming_a_device_local_row() {
+    let (_dir, server, caller, grower) = serve();
+    let kept_world = put_world(&server.vault);
+    let kept = put_orchid_claim(
+        &server,
+        grower,
+        "test.hydrate_subject_kept",
+        Some(kept_world),
+        "orchid subject kept",
+    );
+    let open = put_orchid_claim(
+        &server,
+        grower,
+        "test.hydrate_names_kept",
+        None,
+        &format!("orchid names {}", kept.to_hex()),
+    );
+    server
+        .vault
+        .keep_world_on_this_machine_under_for_test(
+            &crate::test_credentials::host_issuer(&server),
+            kept_world,
+            true,
+        )
+        .unwrap();
+    let (status, body) = caller
+        .call(
+            AWAY,
+            "POST",
+            "/v1/core/facade/vault.hydrate",
+            Some(json!({"refs": [open.to_hex()]})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body, json!({"details_on_device": true}), "{body}");
+}

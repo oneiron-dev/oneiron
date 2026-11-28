@@ -23,5 +23,6 @@
       "ts": "/** The semantic changes between two tested states of one code file, each with the operations that made it. */",
       "py": "The semantic changes between two tested states of one code file, each with the operations that made it."
     }
-  }
+  },
+  "caller_code": "refused"
 }

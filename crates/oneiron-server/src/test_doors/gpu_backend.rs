@@ -10,6 +10,7 @@ use oneiron::EntityId;
 use oneiron::gpu_job::{GpuJobConnector, GpuJobStepReport};
 use oneiron::llm::run_admission::{Allocation, AllocationRef, LeaseUnit};
 
+use crate::gpu_execution_node::issuer::JobNodeClient;
 use crate::server::SyncServer;
 
 /// The `[gpu_jobs]` section whose body is `section` (the lines under the
@@ -124,6 +125,18 @@ pub fn gpu_job_worker_starts(server: &Arc<SyncServer>) -> bool {
     }
 }
 
+/// One tick of `server`'s GPU job worker, as its loop runs one with every pass
+/// admitted (`gpu_host::worker_tick`): one worker pass, then the scheduled
+/// readiness read the tick starts and does not wait for, or `None` when it
+/// started none (one already runs). Call it inside a Tokio runtime.
+pub async fn run_gpu_job_worker_tick(
+    server: &Arc<SyncServer>,
+) -> Option<tokio::task::JoinHandle<()>> {
+    let admit: crate::server::HousekeepingAdmission =
+        Arc::new(|| Some(Box::new(()) as Box<dyn Send>));
+    crate::gpu_host::worker_tick(server, &admit).await
+}
+
 /// One pass of the GPU job worker: one step of every live job, each with its
 /// outcome as text when it refused.
 pub fn step_gpu_jobs(server: &SyncServer) -> Vec<(EntityId, Result<GpuJobStepReport, String>)> {
@@ -131,4 +144,11 @@ pub fn step_gpu_jobs(server: &SyncServer) -> Vec<(EntityId, Result<GpuJobStepRep
         .into_iter()
         .map(|(job, outcome)| (job, outcome.map_err(|error| error.to_string())))
         .collect()
+}
+
+/// Answers `server`'s node calls (the work-order loop's and `vault.jobs.logs.tail`'s) through
+/// `nodes` from now on. False when the loop already made its own client: call it before the
+/// first order or tail.
+pub fn use_job_nodes(server: &SyncServer, nodes: Arc<dyn JobNodeClient>) -> bool {
+    server.gpu_jobs.orders().use_nodes(nodes)
 }

@@ -1,0 +1,3 @@
+verbs.search(query: string, { under?: string, limit?: number })
+  -> text. Verbs whose name or description holds your words, best first, one line each with their fields.
+  e.g. return await verbs.search("send mail")           return await verbs.search("merge queue", { under: "vault.code" })

@@ -151,6 +151,18 @@ pub struct JobSubmit {
     /// the key ends `LaunchRefused { authority_stale }` at the staging
     /// limit.
     pub authority_heads: Vec<String>,
+    /// A session's renewal (pass 34, 2.5; row W1): the first key of the run
+    /// this submit pays one more chunk of. The key is then a paid slice of
+    /// that run: it needs no reserve, never starts a process and never
+    /// holds a lease, and its chunk begins where the run's paid time ends.
+    /// Absent from the encoding when `None`, so a submit without it signs
+    /// the same bytes as before. A node that predates it decodes a renewal
+    /// without it, so the signature it checks fails
+    /// (`SubmitSignatureInvalid`): it journals and starts nothing. A
+    /// renewal's `chunk` stays the issuer's own chunk counter, as for any
+    /// submit; its place in the run is its receipt's `slice.renewal`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub continues: Option<String>,
 }
 
 /// A submit with the issuer's machine-key signature under
@@ -325,6 +337,26 @@ pub struct Breadcrumb {
     pub devices: Vec<DeviceSample>,
 }
 
+/// What a run of a template is (pass 34, 2.5).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TemplateKind {
+    /// A finite workload: its run ends at the submit's maximum.
+    #[default]
+    Job,
+    /// A long-running harness or service: its run goes on while its issuer
+    /// pays each next chunk before the current one ends (row W1).
+    Session,
+}
+
+impl TemplateKind {
+    /// Whether this is the default kind, a job.
+    #[must_use]
+    pub fn is_job(&self) -> bool {
+        *self == Self::Job
+    }
+}
+
 /// One template a node holds, as [`NodeAnswer`] names it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TemplateOffer {
@@ -340,6 +372,11 @@ pub struct TemplateOffer {
     /// lacks one does not fit. Every bound not listed that the scope does
     /// not enforce is recorded on the run as unproven.
     pub require: Vec<BoundRequirement>,
+    /// What a run of the template is (pass 34, 2.5; row W1): only a
+    /// `session`'s run takes a renewal. Absent for a job, as before, so an
+    /// issuer reads a node that predates sessions as offering jobs alone.
+    #[serde(default, skip_serializing_if = "TemplateKind::is_job")]
+    pub kind: TemplateKind,
 }
 
 /// One launch scope a node starts runs in, and what it can enforce now.
@@ -555,6 +592,10 @@ pub enum JobEnd {
     },
     /// The node ended it at its maximum.
     TimeLimit,
+    /// A session's paid slice whose time ran out while the run went on under
+    /// the next chunk's key (pass 34, 2.5; row W1). The run itself has not
+    /// ended: its process and leases stay with its first key.
+    Continued,
     /// The node ended it over its memory request.
     MemoryLimit,
     /// The node ended it over its disk request.
@@ -694,6 +735,29 @@ pub struct JobReceipt {
     pub seq: u64,
     pub boot_id: String,
     pub reported_at_ms: u64,
+    /// The paid slice of a session's run this receipt reports (pass 34,
+    /// 2.5; row W1); `None` for a key whose run was never renewed. Absent
+    /// from the encoding when `None`, so such a receipt signs the same bytes
+    /// as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slice: Option<ReceiptSlice>,
+}
+
+/// One chunk's paid bounds inside a session's run, on the node's boot clock
+/// of the run's launch: from the end of the chunk before (the launch, for the
+/// first chunk) to this chunk's cutoff. `occupied` says how much of it the
+/// run used; the slices of one run never overlap and leave no gap.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReceiptSlice {
+    /// The key the run was launched under, which holds its process and
+    /// leases.
+    pub first_key: String,
+    /// The slice's place in the run: 0 for the first key's own slice, `n`
+    /// for its `n`th renewal. Not the submit's `chunk`, the issuer's own
+    /// counter.
+    pub renewal: u32,
+    pub from_boot_ns: u64,
+    pub to_boot_ns: u64,
 }
 
 /// A receipt with the node's machine-key signature under

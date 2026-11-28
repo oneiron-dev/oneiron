@@ -101,7 +101,8 @@ pub enum GpuJobEnd {
 }
 
 impl GpuJobEnd {
-    /// Whether the workload never ran, so nothing is billed.
+    /// A key that never started bills zero (lead ruling LE-2 = A). This reports whether
+    /// the machine withdrew or refused the key before it ran.
     #[must_use]
     pub fn never_ran(&self) -> bool {
         matches!(

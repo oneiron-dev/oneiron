@@ -12,5 +12,6 @@
     "unrestricted_record_scope": true
   },
   "section": false,
-  "host_door_proof": "engine_controller"
+  "host_door_proof": "engine_controller",
+  "caller_code": "refused"
 }

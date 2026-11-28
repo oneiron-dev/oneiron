@@ -24,6 +24,7 @@
 //! also re-dirty their TURN without changing its row. Each scope consumes
 //! exactly the carrier identity its queued round selected.
 
+pub mod answer_schema;
 mod assembly;
 mod attempt_reads;
 mod branch;
@@ -109,6 +110,11 @@ pub use conflict::*;
 pub(crate) use conflict::{candidate_probe_body, topic_key_canonical_bytes};
 #[cfg(oneiron_test_support)]
 pub(crate) use executor::extraction::entity_id_from_hex;
+#[cfg(oneiron_test_support)]
+pub(crate) use executor::extraction::{
+    check_extraction_reply_for_test, extraction_answer_schema_for_test,
+    extraction_request_params_for_test,
+};
 pub use executor::*;
 #[cfg(oneiron_test_support)]
 pub(crate) use extracted_people::mint_named_person_for_test;
@@ -118,6 +124,9 @@ pub(crate) use extracted_people::{
 };
 pub use gap::*;
 pub(crate) use neighbourhood::unpin_neighbourhood_in_txn;
+pub(crate) use note_review::forget_note_review_in_txn;
+#[cfg(oneiron_test_support)]
+pub(crate) use note_review::note_review_seen_in_txn;
 pub(crate) use partition::PartitionAudience;
 pub use partition::*;
 pub use persistence::close_persistent_conflict;

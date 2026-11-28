@@ -12,8 +12,8 @@
 use heed::RoTxn;
 
 use super::{
-    LOCAL_PACK_NAME, PackInstallReceipt, PackInstallStatus, PackKind, PackManifest, admission,
-    invalid,
+    LOCAL_PACK_NAME, PackInstallReceipt, PackInstallStatus, PackKind, PackManifest, PackSource,
+    admission, invalid,
 };
 use crate::error::{ErrorKind, Result};
 use crate::skill_hub::{HubFile, skill_scan_verdict_stands_in_store};
@@ -59,16 +59,16 @@ pub(super) fn read_source_setting_defaults(
 }
 
 impl Vault {
-    /// The table of setting defaults of `pack`'s Active install, where that install may carry one
-    /// ([`install_may_carry_setting_defaults`]), read in `txn` from the source its receipt names.
-    /// `None` with no such install, or one whose source is gone, does not match its receipt's
-    /// name, kind and content hash, or has no scan verdict standing on its bytes. A catalog row
-    /// that does not read fails the read.
-    pub(crate) fn installed_setting_defaults_in_txn(
+    /// The source of `pack`'s Active install, where that install may carry presets
+    /// ([`install_may_carry_presets`]), read in `txn` from the source its receipt names. `None`
+    /// with no such install, or one whose source is gone, does not match its receipt's name, kind
+    /// and content hash, or has no scan verdict standing on its bytes. A catalog row that does
+    /// not read fails the read.
+    pub(crate) fn preset_source_in_txn(
         &self,
         txn: &RoTxn<'_>,
         pack: &str,
-    ) -> Result<Option<PackSettingDefaults>> {
+    ) -> Result<Option<PackSource>> {
         let receipt = admission::PACK_INSTALL
             .get(&self.store, txn, &pack.to_owned())
             .map_err(|error| {
@@ -78,8 +78,7 @@ impl Vault {
                     error
                 }
             })?;
-        let Some(receipt) =
-            receipt.filter(|receipt| install_may_carry_setting_defaults(pack, receipt))
+        let Some(receipt) = receipt.filter(|receipt| install_may_carry_presets(pack, receipt))
         else {
             return Ok(None);
         };
@@ -96,13 +95,26 @@ impl Vault {
         {
             return Ok(None);
         }
-        Ok(source.setting_defaults().cloned())
+        Ok(Some(source))
+    }
+
+    /// The table of setting defaults of `pack`'s Active install, where that install may carry
+    /// one ([`Vault::preset_source_in_txn`]). `None` otherwise.
+    pub(crate) fn installed_setting_defaults_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        pack: &str,
+    ) -> Result<Option<PackSettingDefaults>> {
+        Ok(self
+            .preset_source_in_txn(txn, pack)?
+            .and_then(|source| source.setting_defaults().cloned()))
     }
 }
 
-/// Whether the install `receipt` under `name` may carry setting defaults: Active, a capability
-/// pack, and neither the `local` pack nor an agent-authored install.
-pub(super) fn install_may_carry_setting_defaults(name: &str, receipt: &PackInstallReceipt) -> bool {
+/// Whether the install `receipt` under `name` may carry presets, a table of setting defaults or
+/// a line preset: Active, a capability pack, and neither the `local` pack nor an agent-authored
+/// install.
+pub(super) fn install_may_carry_presets(name: &str, receipt: &PackInstallReceipt) -> bool {
     receipt.status == PackInstallStatus::Active
         && receipt.kind == PackKind::Capability
         && receipt.pack_name == name

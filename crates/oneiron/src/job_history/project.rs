@@ -1,17 +1,22 @@
-//! The pure projection behind `vault.jobs.history`: stored jobs, claims and periods in, the
-//! ended attempts and their totals out. It reads the claim's terminal exactly as the line's
-//! fold does, so its charged seconds are the fold's.
+//! The pure projection behind `vault.jobs.history`: stored jobs, claims, periods, work orders,
+//! the issuer's observations and the allocation's unattributed records in, the ended attempts
+//! and their totals out. It reads the claim's terminal exactly as the line's fold does, so its
+//! charged seconds are the fold's.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::entity_id::EntityId;
-use crate::gpu_job::{GpuEndReason, GpuJob, GpuJobState};
-use crate::gpu_line::{ClaimState, GpuLinePeriod, UnitClaim, UnitEnd, UnitPurpose, UnitTerminal};
+use crate::gpu_job::{GpuEndReason, GpuJob, GpuJobEnd, GpuJobState, MeterVerdict};
+use crate::gpu_line::{
+    ClaimState, GpuLinePeriod, UnattributedRecord, UnitClaim, UnitEnd, UnitPurpose, UnitTerminal,
+};
+use crate::job_dispatch::JobObservation;
+use crate::work_order::{OrderAttempt, WorkOrder};
 
 use super::{
     JobHistory, JobHistoryAttempt, JobHistoryFamilySum, JobHistoryLineCharge, JobHistoryLineSum,
-    JobHistoryMachineSum, JobHistoryOfferCharge, JobHistoryPeriodSum, JobHistorySum,
-    JobHistoryTotals,
+    JobHistoryMachineSum, JobHistoryOfferCharge, JobHistoryOrder, JobHistoryPeriodSum,
+    JobHistorySum, JobHistoryTotals,
 };
 
 /// The stored rows the projection reads.
@@ -23,6 +28,14 @@ pub struct HistoryInputs<'a> {
     pub claims: &'a [UnitClaim],
     /// The minted periods the ended claims name (a period with no record shows no window).
     pub periods: &'a [GpuLinePeriod],
+    /// Every work order: each attempt entry names the job it made.
+    pub orders: &'a [WorkOrder],
+    /// The issuer's observation of each attempt key a vault machine answered for
+    /// (`JOB_OBSERVATION`, pass 33 5.1), in any order.
+    pub observations: &'a [JobObservation],
+    /// Every machine's answer that lists jobs no row of the vault names (`GPU_ALLOCATION_NODE`,
+    /// pass 33 8.5, EM-15), in any order.
+    pub unattributed: &'a [UnattributedRecord],
 }
 
 /// Whose attempts the answer holds.
@@ -42,6 +55,7 @@ pub struct JobHistoryFilter {
     pub line: Option<EntityId>,
     pub family: Option<EntityId>,
     pub period: Option<u32>,
+    pub order: Option<EntityId>,
     pub limit: usize,
     pub after: Option<HistoryCursor>,
 }
@@ -103,6 +117,12 @@ pub fn project(
 ) -> JobHistory {
     let unit_jobs: BTreeSet<EntityId> = inputs.claims.iter().map(|claim| claim.id).collect();
     let jobs: BTreeMap<EntityId, &GpuJob> = inputs.jobs.iter().map(|job| (job.id, job)).collect();
+    let ordered = OrderIndex::of(inputs.orders);
+    let observed: BTreeMap<&str, &JobObservation> = inputs
+        .observations
+        .iter()
+        .map(|observation| (observation.key.as_str(), observation))
+        .collect();
     let mut attempts: Vec<JobHistoryAttempt> = inputs
         .claims
         .iter()
@@ -114,10 +134,18 @@ pub fn project(
                 .filter(|job| !unit_jobs.contains(&job.id))
                 .flat_map(offer_attempts),
         )
+        .map(|mut attempt| {
+            if let Some(observation) = observed.get(attempt.key.as_str()) {
+                observe(&mut attempt, observation);
+            }
+            attempt.order = ordered.order_of(&attempt, viewer);
+            attempt
+        })
         .filter(|attempt| admitted(attempt, filter, viewer))
         .collect();
     attempts.sort_by_cached_key(HistoryCursor::of);
-    let totals = totals(&attempts, inputs.periods);
+    let unattributed = unattributed_of(inputs.unattributed, filter, viewer);
+    let totals = totals(&attempts, &unattributed, inputs.periods);
     let start = filter.after.as_ref().map_or(0, |after| {
         attempts.partition_point(|attempt| HistoryCursor::of(attempt) <= *after)
     });
@@ -160,7 +188,151 @@ fn admitted(attempt: &JobHistoryAttempt, filter: &JobHistoryFilter, viewer: Hist
     {
         return false;
     }
+    if let Some(wanted) = hex(&filter.order)
+        && attempt
+            .order
+            .as_ref()
+            .is_none_or(|order| order.order != wanted)
+    {
+        return false;
+    }
     true
+}
+
+/// One attempt entry of a work order, with the entry before it.
+#[derive(Debug, Clone, Copy)]
+struct OrderedAttempt<'a> {
+    order: &'a WorkOrder,
+    attempt: &'a OrderAttempt,
+    /// The attempt before it, whose end opened the order again.
+    before: Option<&'a OrderAttempt>,
+}
+
+/// The work orders' attempt entries by the hex of the job each made.
+struct OrderIndex<'a>(BTreeMap<String, OrderedAttempt<'a>>);
+
+impl<'a> OrderIndex<'a> {
+    fn of(orders: &'a [WorkOrder]) -> Self {
+        let mut by_job = BTreeMap::new();
+        for order in orders {
+            let mut before = None;
+            for attempt in &order.attempts {
+                by_job.insert(
+                    attempt.job.to_hex(),
+                    OrderedAttempt {
+                        order,
+                        attempt,
+                        before,
+                    },
+                );
+                before = Some(attempt);
+            }
+        }
+        Self(by_job)
+    }
+
+    /// The work order `attempt` was made for, as `viewer` reads it. An order's attempt is its
+    /// job's first chunk: a later chunk is a resume, which no order makes.
+    fn order_of(
+        &self,
+        attempt: &JobHistoryAttempt,
+        viewer: HistoryViewer,
+    ) -> Option<JobHistoryOrder> {
+        if attempt.chunk != 0 {
+            return None;
+        }
+        let OrderedAttempt {
+            order,
+            attempt: made,
+            before,
+        } = *self.0.get(&attempt.job)?;
+        let queued_from_ms = match before {
+            None => Some(order.ordered_at_ms),
+            Some(before) => before.end.as_ref().map(|end| end.at_ms),
+        };
+        let own = order.id.to_hex();
+        let mut ranked = made.ranked.clone();
+        // The orders runnable in that pass may be other callers': an agent sees only its own.
+        if matches!(viewer, HistoryViewer::Requester(_)) {
+            ranked.options.retain(|option| *option == own);
+        }
+        Some(JobHistoryOrder {
+            order: own,
+            attempt: made.n,
+            ordered_by: order.ordered_by.clone(),
+            class: order.class,
+            ordered_at_ms: order.ordered_at_ms,
+            made_at_ms: made.made_at_ms,
+            queued_ms: queued_from_ms.map(|from| made.made_at_ms.saturating_sub(from)),
+            started_at_ms: made.started_at_ms,
+            machine: made.machine.map(|machine| machine.to_hex()),
+            ranked,
+            placed: made.placed.clone(),
+            end: made.end.clone(),
+        })
+    }
+}
+
+/// What the issuer's observation of an attempt's key adds (pass 33, 5.1). Every attempt whose
+/// end the issuer confirmed shows how its billed seconds were found. A plain offer chunk's job
+/// row names no machine and keeps no end time, so for a chunk a vault machine ran the
+/// observation names the machine that answered and its device, and its confirmed end gives the
+/// machine's end cause, when the issuer received it, the seconds the machine measured (0 for a
+/// run that never started) and a lost key's last seen run time. A line unit's claim terminal
+/// already holds those, from the same receipt, as the line's fold charged it.
+fn observe(attempt: &mut JobHistoryAttempt, observation: &JobObservation) {
+    let terminal = observation.terminal.as_ref();
+    attempt.meter = terminal.map(|terminal| meter_label(terminal.meter));
+    if attempt.line.is_some() {
+        return;
+    }
+    let machine = terminal
+        .and_then(|terminal| terminal.machine)
+        .unwrap_or(observation.machine);
+    attempt.machine = Some(machine.to_hex());
+    attempt.device = terminal
+        .and_then(|terminal| terminal.device_id.clone())
+        .or_else(|| observation.device_id.clone());
+    let Some(terminal) = terminal else {
+        return;
+    };
+    attempt.node_end = Some(terminal.end.label());
+    attempt.ended_at_ms = observation.end_seen.as_ref().map(|seen| seen.wall_ms);
+    attempt.occupied_secs = if terminal.end.never_ran() {
+        Some(0)
+    } else {
+        terminal.measured_secs
+    };
+    attempt.lost_secs = if let GpuJobEnd::Lost { last_seen_secs, .. } = terminal.end {
+        last_seen_secs
+    } else {
+        0
+    };
+}
+
+/// The meter verdict as views show it: `agreed`, `bracketed` or `unknown`.
+fn meter_label(meter: MeterVerdict) -> String {
+    match meter {
+        MeterVerdict::Agreed => "agreed",
+        MeterVerdict::Bracketed { .. } => "bracketed",
+        MeterVerdict::Unknown => "unknown",
+    }
+    .to_owned()
+}
+
+/// The key of every attempt `jobs` and `claims` can list: each chunk's, and a claim's first
+/// chunk key where its job row is gone. History reads each key's observation by it.
+pub(super) fn attempt_keys(jobs: &[GpuJob], claims: &[UnitClaim]) -> BTreeSet<String> {
+    let mut keys = BTreeSet::new();
+    for job in jobs {
+        for chunk in &job.chunks {
+            keys.insert(chunk.idempotency_key.clone());
+        }
+    }
+    for claim in claims {
+        keys.insert(chunk_key(&claim.id, 0));
+    }
+    keys
 }
 
 /// A line unit's attempt, from its claim's terminal; `None` while the claim is open.
@@ -209,6 +381,7 @@ fn unit_attempt(claim: &UnitClaim, job: Option<&GpuJob>) -> Option<JobHistoryAtt
         reserved_secs: claim.reserved_secs,
         occupied_secs,
         billed_secs: chunk.and_then(|chunk| chunk.billed_secs),
+        meter: None,
         charged_secs: Some(terminal.charged_secs),
         returned_secs: Some(claim.reserved_secs.saturating_sub(terminal.charged_secs)),
         lost_secs: terminal.lost_secs,
@@ -218,6 +391,7 @@ fn unit_attempt(claim: &UnitClaim, job: Option<&GpuJob>) -> Option<JobHistoryAtt
         end_reason,
         node_end: terminal.node_end.clone(),
         continues: None,
+        order: None,
     })
 }
 
@@ -243,6 +417,8 @@ enum OfferEnd {
     /// The backend ended the chunk at its maximum seconds (pass 33, 8.6), and reported its run
     /// time with the end, as with an exit: never `AtMaximum`, whose stop offers a resume.
     TimeLimit,
+    /// The machine refused or withdrew the chunk before it ran.
+    NeverStarted,
     /// Refused before any resource existed: nothing ran and nothing was charged.
     Held(String),
 }
@@ -256,6 +432,7 @@ impl OfferEnd {
             GpuEndReason::Gone => Self::Gone,
             GpuEndReason::Unconfirmed => Self::WrittenOff,
             GpuEndReason::TimeLimit => Self::TimeLimit,
+            GpuEndReason::NeverStarted => Self::NeverStarted,
         }
     }
 
@@ -281,6 +458,7 @@ impl OfferEnd {
             Self::Gone => "gone",
             Self::WrittenOff => "written_off",
             Self::TimeLimit => "time_limit",
+            Self::NeverStarted => "never_started",
             Self::Held(reason) => return ("held".to_owned(), Some(reason.clone())),
         };
         (end.to_owned(), None)
@@ -291,15 +469,16 @@ impl OfferEnd {
 /// resume starts only from a stop); the last has ended when the job no longer runs, and its end
 /// is the job's, except that a stopped job the customer cancelled keeps its `at_maximum`. The
 /// row keeps no chunk's own end time (the job's last write moves at every later write, a resume
-/// or a cancel), so none is shown, and no offer chunk names a machine: an offer's inputs are the
-/// customer's, not a placement. Only the first chunk names its starter: a resume's is not stored
+/// or a cancel) and names no machine (an offer's inputs are the customer's, not a placement); a
+/// chunk a vault machine ran takes both from the issuer's observation of its key ([`observe`]).
+/// Only the first chunk names its starter: a resume's is not stored
 /// (an agent resumes only its own job, the owner any). The run time a chunk last reported is
 /// final only for an exit or a time limit, which the provider reports with it; a stop or a
 /// cancel terminates after the last report, so its occupancy is unknown, and a lost resource's
-/// is a lower bound, shown as lost. A chunk held before any resource existed ran for nothing
-/// and charged nothing, and its whole quote went back. A chunk the owner wrote off has no
-/// confirmed end: its occupancy is unknown, and it charged what its settlement says (zero,
-/// where this host held its permit).
+/// is a lower bound, shown as lost. A held or never-started chunk occupied zero seconds, charged
+/// nothing and returned its whole quote. A chunk the owner wrote off has no confirmed end:
+/// its occupancy is unknown, and it charged what its settlement says (zero where this host held
+/// its permit).
 fn offer_attempts(job: &GpuJob) -> Vec<JobHistoryAttempt> {
     let last = job.chunks.len().saturating_sub(1);
     job.chunks
@@ -311,9 +490,9 @@ fn offer_attempts(job: &GpuJob) -> Vec<JobHistoryAttempt> {
             } else {
                 OfferEnd::last(job)?
             };
-            let held = matches!(end, OfferEnd::Held(_));
+            let never_ran = matches!(end, OfferEnd::Held(_) | OfferEnd::NeverStarted);
             // The settled units are the charged seconds times the quote's price of one second.
-            let charged_secs = if held {
+            let charged_secs = if never_ran {
                 Some(0)
             } else {
                 chunk
@@ -323,7 +502,7 @@ fn offer_attempts(job: &GpuJob) -> Vec<JobHistoryAttempt> {
             };
             let occupied_secs = match end {
                 OfferEnd::Exited | OfferEnd::TimeLimit => Some(chunk.used_secs),
-                OfferEnd::Held(_) => Some(0),
+                OfferEnd::Held(_) | OfferEnd::NeverStarted => Some(0),
                 OfferEnd::AtMaximum
                 | OfferEnd::Cancelled
                 | OfferEnd::Gone
@@ -359,6 +538,7 @@ fn offer_attempts(job: &GpuJob) -> Vec<JobHistoryAttempt> {
                 reserved_secs: chunk.quote.quantity,
                 occupied_secs,
                 billed_secs: chunk.billed_secs,
+                meter: None,
                 charged_secs,
                 returned_secs: charged_secs
                     .map(|charged| chunk.quote.quantity.saturating_sub(charged)),
@@ -371,6 +551,7 @@ fn offer_attempts(job: &GpuJob) -> Vec<JobHistoryAttempt> {
                 continues: index
                     .checked_sub(1)
                     .map(|before| job.chunks[before].idempotency_key.clone()),
+                order: None,
             })
         })
         .collect()
@@ -398,9 +579,76 @@ fn add(sum: &mut JobHistorySum, attempt: &JobHistoryAttempt) {
         .returned_secs
         .saturating_add(attempt.returned_secs.unwrap_or(0));
     sum.lost_secs = sum.lost_secs.saturating_add(attempt.lost_secs);
+    if let Some(queued) = attempt.order.as_ref().and_then(|order| order.queued_ms) {
+        sum.queued_ms = sum.queued_ms.saturating_add(queued);
+        sum.queued_attempts = sum.queued_attempts.saturating_add(1);
+    }
 }
 
-fn totals(attempts: &[JobHistoryAttempt], periods: &[GpuLinePeriod]) -> JobHistoryTotals {
+/// One unattributed job, as the totals place it.
+struct Unattributed {
+    machine: String,
+    /// The line and the period, for a line's generation.
+    place: Option<(String, u32)>,
+    secs: u64,
+    ended: bool,
+}
+
+/// The unattributed jobs (pass 33 8.5, EM-15) `filter` admits, for the owner only: no row names
+/// who started them, and the design gives them to the owner. They belong to no family and to no
+/// work order, so a family or an order filter admits none, and a line or a period filter admits
+/// only a line's generation it names.
+fn unattributed_of(
+    records: &[UnattributedRecord],
+    filter: &JobHistoryFilter,
+    viewer: HistoryViewer,
+) -> Vec<Unattributed> {
+    if viewer != HistoryViewer::Owner || filter.family.is_some() || filter.order.is_some() {
+        return Vec::new();
+    }
+    let mut admitted = Vec::new();
+    for record in records {
+        if let Some(machine) = filter.machine
+            && machine != record.machine
+        {
+            continue;
+        }
+        let place = record.line_period();
+        if let Some(line) = filter.line
+            && place.is_none_or(|(at, _)| at != line)
+        {
+            continue;
+        }
+        if let Some(period) = filter.period
+            && place.is_none_or(|(_, at)| at != period)
+        {
+            continue;
+        }
+        let place = place.map(|(line, period)| (line.to_hex(), period));
+        for job in &record.jobs {
+            admitted.push(Unattributed {
+                machine: record.machine.to_hex(),
+                place: place.clone(),
+                secs: job.secs,
+                ended: job.ended,
+            });
+        }
+    }
+    admitted
+}
+
+fn add_unattributed(sum: &mut JobHistorySum, job: &Unattributed) {
+    sum.unattributed_secs = sum.unattributed_secs.saturating_add(job.secs);
+    if !job.ended {
+        sum.unattributed_running = sum.unattributed_running.saturating_add(1);
+    }
+}
+
+fn totals(
+    attempts: &[JobHistoryAttempt],
+    unattributed: &[Unattributed],
+    periods: &[GpuLinePeriod],
+) -> JobHistoryTotals {
     let mut all = JobHistorySum::default();
     let mut by_machine: BTreeMap<Option<String>, JobHistorySum> = BTreeMap::new();
     let mut by_line: BTreeMap<String, JobHistorySum> = BTreeMap::new();
@@ -426,6 +674,17 @@ fn totals(attempts: &[JobHistoryAttempt], periods: &[GpuLinePeriod]) -> JobHisto
                     .or_default(),
                 attempt,
             );
+        }
+    }
+    for job in unattributed {
+        add_unattributed(&mut all, job);
+        add_unattributed(
+            by_machine.entry(Some(job.machine.clone())).or_default(),
+            job,
+        );
+        if let Some((line, period)) = &job.place {
+            add_unattributed(by_line.entry(line.clone()).or_default(), job);
+            add_unattributed(by_period.entry((line.clone(), *period)).or_default(), job);
         }
     }
     let window: BTreeMap<(String, u32), (u64, u64)> = periods

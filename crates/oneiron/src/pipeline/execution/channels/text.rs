@@ -6,7 +6,7 @@ use crate::bm25::{Bm25Config, HiddenRowTest};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::pipeline::builder::PipelineBuilder;
-use crate::pipeline::channels::{fusion_fetch_limit, truncate_widened_channel_results_to_scope};
+use crate::pipeline::channels::fusion_fetch_limit;
 use crate::pipeline::execution::types::HydeAttemptOverrides;
 use crate::pipeline::filters::{
     allowed_set_withholds_row, claim_status_gate_allows, clamp_hides_row,
@@ -21,6 +21,15 @@ use crate::query_expansion::{HydeExpansion, retry_channel_limit};
 use crate::retrieval_quality::RetrievalDiagnostics;
 use crate::store::RetrievalSignal;
 use heed::RoTxn;
+
+mod truncation;
+
+/// How many rows the text channel fetches for a barred direct-match push: the window's whole
+/// bound, not the fusion floor. The bar drops under-bar hits after the fold, so a push that
+/// fetched only the floor's 80 rows would never see a passing claim ranked below 80
+/// under-bar hits (REVIEW-10566/10567 round 2). Pull and no-bar recalls keep the floor; past
+/// this bound the window still hides a passing claim.
+const BARRED_PUSH_TEXT_WINDOW: usize = crate::memory::caps::MAX_SEARCH_LIMIT;
 
 /// What the text channel reads, plus the widening probe's gate cache it
 /// consumes.
@@ -204,7 +213,7 @@ impl PipelineBuilder<'_> {
     /// admission: a term's document frequency asks it of every posting. It
     /// answers each row once across the stage's reads (the turn fold's
     /// longer reads ask again of the same postings).
-    fn hidden_row_test<'t>(
+    pub(super) fn hidden_row_test<'t>(
         &'t self,
         rtxn: &'t RoTxn<'_>,
         (filter_config, world_allowed_set): (
@@ -263,6 +272,18 @@ impl PipelineBuilder<'_> {
             answers.insert(*id, hidden);
             Ok(hidden)
         })))
+    }
+
+    /// Whether this run is a push the owner's bar judges by direct match
+    /// (RECALL-CARRIER-THRESHOLD): a barred `start` or `carrier` on a vault with no embedder
+    /// (or under an explicit direct-match row). Only such a run reads the text window whole
+    /// ([`BARRED_PUSH_TEXT_WINDOW`]); pull and no-bar recalls never set the claims-only flag.
+    fn barred_direct_match_push(&self) -> bool {
+        self.recall_bar_claims_only
+            && self
+                .recall_bar
+                .as_ref()
+                .is_some_and(crate::memory::recall::bar::BarJudge::is_direct_match)
     }
 
     /// Runs the text channel, the next of `stages_left` deadline stages, and
@@ -352,11 +373,15 @@ impl PipelineBuilder<'_> {
                         &mut retry_prefix_probe_claim_gate,
                     )
                 };
-                let candidate_limit = if self.candidate_filter.is_some() {
+                let mut candidate_limit = if self.candidate_filter.is_some() {
                     retry_scoped_text_limit
                 } else {
                     retry_text_channel_limit
                 };
+                if self.barred_direct_match_push() {
+                    candidate_limit =
+                        candidate_limit.max(self.text_channel_limit(BARRED_PUSH_TEXT_WINDOW));
+                }
                 let mut results = if self.memory_category {
                     self.search_text_candidates(
                         rtxn,
@@ -493,11 +518,14 @@ impl PipelineBuilder<'_> {
             .hyde_expansion
             .as_ref()
             .map_or(query, |expansion| expansion.grounded_query.as_str());
-        let candidate_limit = if self.candidate_filter.is_some() {
+        let mut candidate_limit = if self.candidate_filter.is_some() {
             self.text_channel_limit(limit)
         } else {
             text_channel_limit
         };
+        if self.barred_direct_match_push() {
+            candidate_limit = candidate_limit.max(self.text_channel_limit(BARRED_PUSH_TEXT_WINDOW));
+        }
         // A run that folds each MESSAGE into its TURN returns turns, so the
         // bound counts turns: several messages of one turn would otherwise
         // fill it and keep later conversations out. Such a run reads on,
@@ -596,54 +624,6 @@ impl PipelineBuilder<'_> {
             &text_results,
         );
         Ok((text_results, text_exhausted, withheld))
-    }
-    /// Keeps the rows of a widened text read that the run's own scope
-    /// admits, up to `requested` results. A run that folds each MESSAGE into
-    /// its TURN counts results as the fold leaves them, as the unwidened
-    /// bound does ([`turn_fold::rows_holding_distinct_turns`]): several
-    /// messages of one turn are one result, so they cannot crowd the next
-    /// turn out. Like the unwidened read, it looks no further than
-    /// `PER_SCAN_CAP_FACTOR` times the bound. The cut takes the call's
-    /// `made_by` slice; the fold's turn count judges each TURN by the run's
-    /// shared scope, as the fold itself does.
-    fn truncate_widened_text_results(
-        &self,
-        rows: &mut Vec<ScoredEntity>,
-        rtxn: &RoTxn<'_>,
-        requested: usize,
-        filter_config: PipelineFilterConfig<'_>,
-        metadata_cache: &mut EntityMetadataCache,
-        claim_gate: &mut ClaimStatusGateCache,
-    ) -> Result<()> {
-        let kept = if self.turn_fold == TurnFold::Off {
-            requested
-        } else {
-            requested.saturating_mul(PER_SCAN_CAP_FACTOR)
-        };
-        truncate_widened_channel_results_to_scope(
-            rows,
-            &self.read,
-            rtxn,
-            kept,
-            self.bounded_result_filters(filter_config),
-            metadata_cache,
-            claim_gate,
-        )?;
-        if self.turn_fold != TurnFold::Off
-            && let Some(held) = turn_fold::rows_holding_distinct_turns(
-                rows,
-                requested,
-                self.turn_fold,
-                &self.read,
-                rtxn,
-                filter_config,
-                metadata_cache,
-                claim_gate,
-            )?
-        {
-            rows.truncate(held);
-        }
-        Ok(())
     }
 
     /// The memory lane's text read: every posting through the lane's kinds

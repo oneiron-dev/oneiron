@@ -6,8 +6,9 @@ use super::SyncServer;
 
 impl SyncServer {
     /// Bind a readiness-verified QuickJS provider before exposing this vault's
-    /// routes, running at most `runs` at once. Missing components or providers
-    /// keep execute_code unadvertised.
+    /// routes, running at most `runs` at once. A missing component keeps `execute` and
+    /// `resume` unadvertised; a provider without task readiness still lists them, and task
+    /// entries refuse with the model-unavailable kind (FIX EXECUTE-CALLER-CODE).
     #[cfg(feature = "code-sandbox-wasmtime")]
     #[must_use]
     pub fn with_mcp_quickjs_provider(

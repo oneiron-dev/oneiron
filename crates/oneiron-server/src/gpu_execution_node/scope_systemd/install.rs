@@ -4,8 +4,16 @@
 //! the job control socket through which the engine's account starts and
 //! stops its instances and nothing else ([`super::control`]; the engine's
 //! account gets no polkit grant), makes the state and payload directories
-//! the engine's, reloads the service manager and starts the socket. It is
-//! idempotent: a second run with the same inputs changes nothing.
+//! the engine's and the device query's lock root's
+//! ([`super::device_query::provision_lock`]), reloads the service manager
+//! and starts the socket. It is idempotent: a second run with the same
+//! inputs changes nothing. Before any change it refuses an engine's
+//! directory that overlaps the lock's, and an oneiron binary beneath it
+//! ([`super::device_query::require_install_paths_apart`]), and any entry
+//! where the version before this one kept its query lock in the state
+//! directory ([`super::device_query::require_no_old_state_dir_lock`]).
+//! Before any change it also refuses a work directory whose path staging
+//! would refuse ([`crate::gpu_execution_node::jobs::staging::work_dir_verdict`]).
 
 use std::ffi::OsStr;
 use std::os::fd::OwnedFd;
@@ -14,6 +22,10 @@ use std::path::{Path, PathBuf};
 use super::super::node_settings::ExecutionNodeSettings;
 use super::UNIT_TEMPLATE_PATH;
 use super::control::{CONTROL_SERVICE_UNIT_PATH, CONTROL_SOCKET_UNIT, CONTROL_SOCKET_UNIT_PATH};
+use super::device_query::{
+    DEVICE_QUERY_LOCK_DIR, DEVICE_QUERY_LOCK_FILE, provision_lock, require_install_paths_apart,
+    require_no_old_state_dir_lock,
+};
 use super::safe_fs::{
     account, account_entry, borrow, facts, make_dir_beneath, open_dir_beneath, open_dir_path,
     require_root_owned,
@@ -22,6 +34,9 @@ use super::systemd_unit::{SYSTEMCTL_TIMEOUT, run_tool, tool_path};
 use super::unit_file::{
     UnitInputs, plain_account, render_control_service, render_control_socket, render_job_unit,
     unit_path_word,
+};
+use crate::gpu_execution_node::jobs::staging::{
+    WorkDirAccess, WorkDirFault, WorkDirVerdict, work_dir_verdict_for,
 };
 
 /// What `install` is given.
@@ -74,13 +89,7 @@ pub fn install(request: &InstallRequest) -> Result<(), String> {
     protected.extend(request.protect.iter().cloned());
     protected.sort();
     protected.dedup();
-    let runtime_max_secs = settings
-        .templates
-        .values()
-        .map(|template| template.max_secs)
-        .max()
-        .unwrap_or(0)
-        .max(1);
+    let runtime_max_secs = unit_runtime_max_secs(&settings);
     let inputs = UnitInputs {
         binary,
         node_file: request.node_file.clone(),
@@ -104,16 +113,39 @@ pub fn install(request: &InstallRequest) -> Result<(), String> {
     {
         unit_path_word(path)?;
     }
+    let lock_dir = Path::new(DEVICE_QUERY_LOCK_DIR);
+    require_install_paths_apart(
+        &inputs.state_dir,
+        &inputs.work_dir,
+        &inputs.binary,
+        lock_dir,
+    )?;
+    let engine_access = WorkDirAccess {
+        uid: engine_uid,
+        gid: engine_gid,
+        groups: super::safe_fs::account_groups(&request.engine_account, engine_gid).map_err(
+            |error| {
+                format!(
+                    "the groups of the engine account {}: {error}",
+                    request.engine_account
+                )
+            },
+        )?,
+    };
+    require_work_dir_chain(&inputs.work_dir, &request.engine_account, &engine_access)?;
     let unit = render_job_unit(&inputs);
     let socket = render_control_socket(engine_gid);
     let handler = render_control_service(&inputs);
     if request.dry_run {
         stdout_line!(
-            "--- {UNIT_TEMPLATE_PATH}\n{unit}--- {CONTROL_SOCKET_UNIT_PATH}\n{socket}--- {CONTROL_SERVICE_UNIT_PATH}\n{handler}"
+            "--- {UNIT_TEMPLATE_PATH}\n{unit}--- {CONTROL_SOCKET_UNIT_PATH}\n{socket}--- {CONTROL_SERVICE_UNIT_PATH}\n{handler}--- {DEVICE_QUERY_LOCK_DIR}/{DEVICE_QUERY_LOCK_FILE}\nroot's empty file, mode 0600, in root's directory, mode 0700\n"
         );
         print_templates(&settings);
         return Ok(());
     }
+    // Before any other change: an entry where the version before this one
+    // kept its query lock means a query of it may still hold that lock.
+    require_no_old_state_dir_lock(&inputs.state_dir)?;
     ensure_job_account(&settings.job_account, engine_uid)?;
     ensure_dir(&inputs.state_dir, engine_uid, engine_gid, 0o700)?;
     ensure_dir(
@@ -123,6 +155,8 @@ pub fn install(request: &InstallRequest) -> Result<(), String> {
         0o700,
     )?;
     ensure_dir(&inputs.work_dir, engine_uid, engine_gid, 0o755)?;
+    // Before the socket starts: a handler never makes the lock.
+    let lock_changed = provision_lock(lock_dir)?;
     let unit_changed = write_if_changed(Path::new(UNIT_TEMPLATE_PATH), &unit)?;
     let socket_changed = write_if_changed(Path::new(CONTROL_SOCKET_UNIT_PATH), &socket)?;
     let handler_changed = write_if_changed(Path::new(CONTROL_SERVICE_UNIT_PATH), &handler)?;
@@ -144,15 +178,51 @@ pub fn install(request: &InstallRequest) -> Result<(), String> {
     )?;
     let said = |changed: bool| if changed { "written" } else { "unchanged" };
     stdout_line!(
-        "installed: {UNIT_TEMPLATE_PATH} ({}), {CONTROL_SOCKET_UNIT_PATH} ({}, started), {CONTROL_SERVICE_UNIT_PATH} ({}), job account {}, RuntimeMaxSec {runtime_max_secs}",
+        "installed: {UNIT_TEMPLATE_PATH} ({}), {CONTROL_SOCKET_UNIT_PATH} ({}, started), {CONTROL_SERVICE_UNIT_PATH} ({}), {DEVICE_QUERY_LOCK_DIR}/{DEVICE_QUERY_LOCK_FILE} ({}), job account {}, RuntimeMaxSec {runtime_max_secs}",
         said(unit_changed),
         said(socket_changed),
         said(handler_changed),
+        said(lock_changed),
         settings.job_account
     );
     print_templates(&settings);
     stdout_line!("next: `oneiron execution-node check` as root proves each bound in a probe unit");
     Ok(())
+}
+
+/// Refuses a work directory whose path staging would refuse, before any
+/// change: the staging rule
+/// ([`crate::gpu_execution_node::jobs::staging::work_dir_verdict_for`]) for
+/// the engine's account, with the engine's file access, so a directory root
+/// may search but the engine may not is refused here as staging refuses it.
+/// A path that is not there yet passes even where the engine may not make
+/// it, because the root install makes the missing path: [`ensure_dir`] makes
+/// missing parents root's (mode 0755) and the leaf the engine's, which pass.
+fn require_work_dir_chain(
+    work_dir: &Path,
+    engine_account: &str,
+    engine: &WorkDirAccess,
+) -> Result<(), String> {
+    let engine_uid = engine.uid;
+    match work_dir_verdict_for(work_dir, engine)
+        .map_err(|why| format!("work_dir {}: not judged for the engine account {engine_account} (uid {engine_uid}): {why}", work_dir.display()))?
+    {
+        WorkDirVerdict::Passes(_) | WorkDirVerdict::Missing { .. } => Ok(()),
+        WorkDirVerdict::Unsafe(unsafe_) if unsafe_.fault == WorkDirFault::EngineMayNotWrite => {
+            Err(format!(
+                "work_dir {}: {}, judged for the engine account {engine_account} \
+                 (uid {engine_uid}): staging would fail every job (checkout_failed); \
+                 give {engine_account} write access to it, or pick another work_dir",
+                unsafe_.path.display(),
+                unsafe_.fault
+            ))
+        }
+        WorkDirVerdict::Unsafe(unsafe_) => Err(format!(
+            "work_dir {}: {}, judged for the engine account {engine_account} (uid {engine_uid}): staging would refuse every job (work_dir_unsafe); give the path to root or to {engine_account}, or pick another work_dir",
+            unsafe_.path.display(),
+            unsafe_.fault
+        )),
+    }
 }
 
 fn print_templates(settings: &ExecutionNodeSettings) {
@@ -313,6 +383,25 @@ fn write_if_changed(path: &Path, text: &str) -> Result<bool, String> {
     Ok(true)
 }
 
+/// The job unit template's `RuntimeMaxSec`, a backstop behind each run's
+/// cutoff timer: the longest run any template allows, which for a session
+/// template is its `session_max_secs` across renewals (pass 34, 2.5; row
+/// W1), so the backstop never ends a paid session at one chunk's maximum.
+#[must_use]
+pub fn unit_runtime_max_secs(settings: &ExecutionNodeSettings) -> u64 {
+    settings
+        .templates
+        .values()
+        .map(|template| {
+            template
+                .session_max_secs()
+                .map_or(template.max_secs, |longest| longest.max(template.max_secs))
+        })
+        .max()
+        .unwrap_or(0)
+        .max(1)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -329,5 +418,46 @@ mod tests {
         assert!(existing_job_account_fits(nologin, 1000, 971).is_err());
         assert!(existing_job_account_fits(nologin, 0, 971).is_err());
         assert!(existing_job_account_fits(nologin, 971, 971).is_err());
+    }
+
+    #[test]
+    fn install_refuses_a_work_dir_whose_path_staging_would_refuse() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let dir = tempfile::tempdir().expect("temp dir");
+        let root = dir.path().canonicalize().expect("resolved temp dir");
+        let open = root.join("open");
+        let work = open.join("work");
+        let ok = root.join("ok");
+        let good = ok.join("work");
+        for (path, mode) in [(&open, 0o777), (&work, 0o755), (&ok, 0o755), (&good, 0o755)] {
+            std::fs::create_dir(path).expect("make test directory");
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
+                .expect("test directory mode");
+        }
+        let me = WorkDirAccess::this_process().expect("this process's file access");
+        let why = require_work_dir_chain(&work, "oneiron", &me)
+            .expect_err("the work directory beneath the open ancestor is refused");
+        assert!(why.contains(open.display().to_string().as_str()), "{why}");
+        assert!(why.contains("work_dir_unsafe"), "{why}");
+        assert_eq!(require_work_dir_chain(&good, "oneiron", &me), Ok(()));
+        let missing = ok.join("missing").join("work");
+        assert_eq!(require_work_dir_chain(&missing, "oneiron", &me), Ok(()));
+        if rustix::process::geteuid().as_raw() != 0 {
+            let ro = root.join("ro");
+            std::fs::create_dir(&ro).expect("make test directory");
+            std::fs::set_permissions(&ro, std::fs::Permissions::from_mode(0o555))
+                .expect("test directory mode");
+            let why = require_work_dir_chain(&ro, "oneiron", &me)
+                .expect_err("a work directory the engine may not write in is refused");
+            assert!(why.contains("checkout_failed"), "{why}");
+            assert_eq!(
+                require_work_dir_chain(&ro.join("missing").join("work"), "oneiron", &me),
+                Ok(()),
+                "install makes a missing path even where the engine may not"
+            );
+            std::fs::set_permissions(&ro, std::fs::Permissions::from_mode(0o755))
+                .expect("restore test directory mode");
+        }
     }
 }

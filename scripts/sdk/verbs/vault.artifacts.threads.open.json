@@ -19,5 +19,6 @@
   "prose_links": [
     "/text"
   ],
-  "openapi": true
+  "openapi": true,
+  "caller_code": "refused"
 }

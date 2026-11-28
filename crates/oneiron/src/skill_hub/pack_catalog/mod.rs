@@ -11,6 +11,7 @@ mod hooks;
 mod hub_install;
 mod import_notice;
 mod lenses;
+mod line_preset_pack;
 mod local;
 mod manifest;
 mod migrations;
@@ -41,6 +42,7 @@ pub use lenses::{
     PackLens, PackLensComponent, PackLensEntry, PackLensProposeRequest, WEAVE_LENS_PACK_NAME,
     WEAVE_REPORT_LENS, weave_lens_pack_files,
 };
+pub use line_preset_pack::{LINE_PRESET_DIR, PackLinePreset};
 pub use local::LOCAL_PACK_NAME;
 pub(crate) use local::PreparedPackPut;
 pub use manifest::{PackAdapter, PackKind, PackManifest};

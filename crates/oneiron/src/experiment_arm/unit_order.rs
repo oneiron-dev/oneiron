@@ -200,6 +200,8 @@ fn order_unit_in_txn(
         attempts: Vec::new(),
         result: None,
         intent_key: Some(request.intent_key.clone()),
+        after: None,
+        group: None,
         ordered_at_ms: now_ms,
         updated_at_ms: now_ms,
         revision: 0,

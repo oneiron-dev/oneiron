@@ -16,5 +16,6 @@
     ]
   },
   "section": false,
-  "openapi": true
+  "openapi": true,
+  "caller_code": "refused"
 }

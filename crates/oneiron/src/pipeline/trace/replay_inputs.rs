@@ -404,6 +404,12 @@ pub(in crate::pipeline) fn capture_replay_inputs(
         "space": space,
         "kinds": kinds.unwrap_or_default(),
     });
+    // retrieval.vector_evidence: the owner's floors for the run's space judge
+    // every kind there; recorded only when set.
+    if let Some(owner) = floors.owner.get(space) {
+        inputs.config["vector_evidence"]["owner"] =
+            json!({"floor": owner.floor, "strong": owner.strong});
+    }
     if let Some(memory) = replay_inputs_memory.as_mut() {
         memory.track_config(&inputs);
     }

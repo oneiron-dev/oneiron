@@ -15,7 +15,9 @@ use crate::memory::{
 use crate::{EntityId, Vault};
 
 use super::blocker::Blocker;
+use super::caps::{RunningCaps, caps_problem};
 use super::fit::{MachineFacts, scope_allowed};
+use super::group::{admit_group_member_in_txn, replay_is_same_member_in_txn};
 use super::pass::OrderFit;
 use super::place::place;
 use super::record::{
@@ -29,6 +31,7 @@ pub enum CancelRefused {
     /// The order is at an end.
     Ended,
 }
+use super::upstream::admit_after_in_txn;
 use super::wire::{
     MachinesPlaceRequest, MachinesPlaceView, WorkOrderList, WorkOrderListRequest, WorkOrderRef,
     WorkOrderRequest, WorkOrderView,
@@ -161,7 +164,8 @@ pub(super) fn reaches(caller: VerbGrantCaller, order: &WorkOrder) -> bool {
     }
 }
 
-/// Whether `order` was made from the same request as `input` by the same caller.
+/// Whether `order` was made from the same request as `input` by the same caller, but for its
+/// group, which [`replay_is_same_member_in_txn`] reads.
 fn same_request(order: &WorkOrder, input: &WorkOrderRequest, by: &OrderedBy) -> bool {
     order.ordered_by.actor() == by.actor()
         && order.workload == input.workload
@@ -172,6 +176,7 @@ fn same_request(order: &WorkOrder, input: &WorkOrderRequest, by: &OrderedBy) -> 
         && order.wait == input.wait
         && order.retry_on == input.retry_on
         && order.result == input.result
+        && order.after == input.after
 }
 
 /// `vault.jobs.order`: `memory`'s caller orders one pinned workload at `now_ms`. The order is
@@ -218,6 +223,9 @@ pub fn order_work_as(
     {
         return Err(bad_request("wait.until is a time after now"));
     }
+    if let Some(problem) = caps_problem(&input.limits.caps) {
+        return Err(bad_request(&problem));
+    }
     let vault = memory.vault();
     vault
         .with_write_txn_grouped(|txn| -> crate::Result<MemoryResult<WorkOrderView>> {
@@ -236,7 +244,9 @@ pub fn order_work_as(
                             && order.ordered_by.actor() == by.actor()
                     });
                 if let Some(order) = earlier {
-                    if same_request(&order, input, &by) {
+                    if same_request(&order, input, &by)
+                        && replay_is_same_member_in_txn(vault, txn, &order, input.group.as_ref())?
+                    {
                         let view =
                             vault.order_view_in_txn(txn, order_seen_by(caller, order), true)?;
                         return Ok(Ok(view));
@@ -255,8 +265,24 @@ pub fn order_work_as(
                     &[Blocker::WorkloadUnknown],
                 )));
             };
+            if let Some(after) = &input.after
+                && let Err(refused) = admit_after_in_txn(vault, txn, after, caller)?
+            {
+                return Ok(Err(refused));
+            }
+            // A group the request starts takes the order's id.
+            let id = EntityId::now();
+            let (member, new_group) = match &input.group {
+                Some(request) => {
+                    match admit_group_member_in_txn(vault, txn, request, id, &by, caller, now_ms)? {
+                        Ok((member, row)) => (Some(member), row),
+                        Err(refused) => return Ok(Err(refused)),
+                    }
+                }
+                None => (None, None),
+            };
             let order = WorkOrder {
-                id: EntityId::now(),
+                id,
                 ordered_by: by,
                 workload: input.workload.clone(),
                 request: row.pin.request,
@@ -276,6 +302,8 @@ pub fn order_work_as(
                 attempts: Vec::new(),
                 result: input.result,
                 intent_key: input.intent_key.clone(),
+                after: input.after,
+                group: member,
                 ordered_at_ms: now_ms,
                 updated_at_ms: now_ms,
                 revision: 0,
@@ -298,6 +326,9 @@ pub fn order_work_as(
                 )));
             }
             WORK_ORDERS.put(&vault.store, txn, &order.id, &order)?;
+            if let Some(group) = &new_group {
+                vault.put_work_order_group_in_txn(txn, group)?;
+            }
             Ok(Ok(WorkOrderView {
                 order,
                 replayed: false,
@@ -471,6 +502,9 @@ pub fn machines_place_as(
             "workload is a digest of 64 lower-hex characters",
         ));
     }
+    if let Some(problem) = caps_problem(&input.limits.caps) {
+        return Err(bad_request(&problem));
+    }
     let vault: &Vault = memory.vault();
     let caller = {
         let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
@@ -508,11 +542,14 @@ pub fn machines_place_as(
         attempts: Vec::new(),
         result: None,
         intent_key: None,
+        after: None,
+        group: None,
         ordered_at_ms: now_ms,
         updated_at_ms: now_ms,
         revision: 0,
     };
-    match vault.order_fit(&order, machines, now_ms)? {
+    let running = RunningCaps::of(&vault.work_orders()?);
+    match vault.order_fit(&order, machines, &running, now_ms)? {
         OrderFit::Runnable { candidates, .. } => {
             let facts: Vec<&MachineFacts> = machines
                 .iter()
@@ -540,8 +577,8 @@ pub fn machines_place_as(
             blocked,
             decision: None,
         }),
-        // The read's order waits openly, so its wait never runs out.
-        OrderFit::WaitEnded => Ok(MachinesPlaceView {
+        // The read's order waits openly, so its wait never runs out, and it waits on no order.
+        OrderFit::WaitEnded | OrderFit::UpstreamEnded(_) => Ok(MachinesPlaceView {
             candidates: Vec::new(),
             blocked: Vec::new(),
             decision: None,

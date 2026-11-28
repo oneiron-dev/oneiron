@@ -134,6 +134,7 @@ static LEAVE_KEPT_FAMILIES: &[&SideTableDecl] = &[
     // Legal holds: definitions and logs.
     &side_table::LEGAL_HOLD_ROW,
     &side_table::LEGAL_HOLD_EVENT,
+    &side_table::LEGAL_HOLD_SEALED_RECORD,
     &side_table::LEGAL_HOLD_HOST_ROW,
     &side_table::LEGAL_HOLD_HOST_PROSPECTIVE,
     &side_table::LEGAL_HOLD_HOST_PROSPECTIVE_OUTBOX,

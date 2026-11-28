@@ -245,7 +245,10 @@ impl Vault {
     /// its billed time plus overhead, never above its quote; the rest of the
     /// reservation goes back (lifecycle 05-06). A stop at the maximum then
     /// writes the add-funds notice, whose resume is the next chunk (C2 04,
-    /// 05). A unit's job holds no permit: its claim is its hold, and the
+    /// 05). The machine's confirmed terminal, where its backend keeps one,
+    /// says how a hard stop ended: a cancel that came after it settles as the
+    /// time limit, and the run's occupancy is the machine's measure (pass 33,
+    /// 8.6). A unit's job holds no permit: its claim is its hold, and the
     /// claim's terminal is written in the same write as the job's, so no
     /// crash leaves an ended job whose hold stays open (design pass 32 r2,
     /// 7.2 point 6; pass 33, 8.4 fault 1).
@@ -278,10 +281,35 @@ impl Vault {
             },
         };
         let paid = permits.holds_chunk(&job.id, &key);
+        // The end the job's machine established, which its backend stored
+        // beside the receipt at the confirmed end (pass 33, 8.4): none when
+        // no resource was made, or for a backend that keeps none.
+        let terminal = match billed_secs {
+            Some(_) => self
+                .job_observation(&key)?
+                .and_then(|observation| observation.terminal),
+            None => None,
+        };
+        let reason = confirmed_reason(reason, terminal.as_ref());
         let chunk = job.chunk_mut()?;
         chunk.resource = resource;
-        let billed_with_overhead =
-            billed_secs.map_or(0, |secs| secs.saturating_add(chunk.quote.overhead_secs));
+        // A hard stop's seconds are the machine's own measure, from the launch
+        // to the empty unit: they replace a live estimate a status took before
+        // the end, which can run past it (pass 33, 8.6).
+        if let Some(measured) = terminal
+            .as_ref()
+            .filter(|terminal| terminal.end == GpuJobEnd::TimeLimit)
+            .and_then(|terminal| terminal.measured_secs)
+        {
+            chunk.used_secs = measured;
+        }
+        // JOB-SETTLES-ON-LAUNCH-REFUSED (LE-2 = A): a key that never started bills
+        // zero, including overhead.
+        let billed_with_overhead = if terminal.as_ref().is_some_and(|t| t.end.never_ran()) {
+            0
+        } else {
+            billed_secs.map_or(0, |secs| secs.saturating_add(chunk.quote.overhead_secs))
+        };
         let charged_secs = billed_with_overhead.min(chunk.quote.quantity);
         chunk.billed_secs = billed_secs;
         chunk.unbilled_secs = billed_with_overhead - charged_secs;
@@ -300,7 +328,7 @@ impl Vault {
                 return Ok(None);
             }
             if let Some(claim) = &job.claim {
-                let report = self.unit_end_in_txn(txn, &key, reason, billed_secs, used_secs)?;
+                let report = unit_end(terminal.as_ref(), reason, billed_secs, used_secs);
                 // A claim that already ended keeps its terminal: the owner's
                 // write-off came first.
                 let _ = settle_unit_in_txn(self, txn, claim, &job.id, &report, now_ms)?;
@@ -395,32 +423,42 @@ impl Vault {
         }
         Ok(ids)
     }
+}
 
-    /// What ends the unit whose job's chunk under `key` ended for `reason`,
-    /// read in the job's terminal write. With no resource ever made
-    /// (`billed_secs` is `None`) nothing ran, and the unit is released. Else
-    /// it is the typed terminal the job's machine established, which its
-    /// backend stored beside the receipt at the confirmed end (pass 33, 8.4),
-    /// or, for a backend that keeps none, the step's own end
-    /// ([`generic_terminal`]).
-    fn unit_end_in_txn(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        key: &str,
-        reason: GpuEndReason,
-        billed_secs: Option<u64>,
-        used_secs: u64,
-    ) -> crate::Result<UnitEndReport> {
-        let Some(billed_secs) = billed_secs else {
-            return Ok(UnitEndReport::Refused {
-                reason: GpuJobEnd::Withdrawn.label(),
-            });
+/// What ends the unit whose job's chunk ended for `reason`. With no resource
+/// ever made (`billed_secs` is `None`) nothing ran, and the unit is released.
+/// Else it is `terminal`, the typed terminal the job's machine established,
+/// which its backend stored beside the receipt at the confirmed end (pass 33,
+/// 8.4), or, for a backend that keeps none, the step's own end
+/// ([`generic_terminal`]).
+fn unit_end(
+    terminal: Option<&GpuJobTerminal>,
+    reason: GpuEndReason,
+    billed_secs: Option<u64>,
+    used_secs: u64,
+) -> UnitEndReport {
+    let Some(billed_secs) = billed_secs else {
+        return UnitEndReport::Refused {
+            reason: GpuJobEnd::Withdrawn.label(),
         };
-        let terminal = self
-            .job_observation_in_txn(txn, key)?
-            .and_then(|observation| observation.terminal)
-            .unwrap_or_else(|| generic_terminal(reason, billed_secs, used_secs));
-        Ok(UnitEndReport::Machine(terminal))
+    };
+    UnitEndReport::Machine(
+        terminal
+            .cloned()
+            .unwrap_or_else(|| generic_terminal(reason, billed_secs, used_secs)),
+    )
+}
+
+/// The reason a confirmed end settles with. A chunk the machine never started ends as
+/// `NeverStarted`, unless the caller cancelled it. A cancel that reached a run already
+/// ended by its machine at the maximum ends as `TimeLimit` (pass 33, 8.6).
+fn confirmed_reason(asked: GpuEndReason, terminal: Option<&GpuJobTerminal>) -> GpuEndReason {
+    match terminal.map(|terminal| &terminal.end) {
+        Some(GpuJobEnd::TimeLimit) if asked == GpuEndReason::Cancelled => GpuEndReason::TimeLimit,
+        Some(end) if end.never_ran() && asked != GpuEndReason::Cancelled => {
+            GpuEndReason::NeverStarted
+        }
+        _ => asked,
     }
 }
 
@@ -450,13 +488,17 @@ fn generic_terminal(reason: GpuEndReason, billed_secs: u64, used_secs: u64) -> G
         GpuEndReason::Exited => GpuJobEnd::Exited { code: 0 },
         GpuEndReason::AtMaximum | GpuEndReason::TimeLimit => GpuJobEnd::TimeLimit,
         GpuEndReason::Cancelled => GpuJobEnd::Stopped,
-        // `Gone`: no other reason ends a chunk through a step.
-        _ => GpuJobEnd::Lost {
+        // Fallback only: NeverStarted comes with a typed terminal or from the hold path,
+        // which settles its claim itself.
+        GpuEndReason::NeverStarted => GpuJobEnd::Withdrawn,
+        // Only `Gone` reaches this branch through a step, not a write-off.
+        GpuEndReason::Gone | GpuEndReason::Unconfirmed => GpuJobEnd::Lost {
             reason: "gone".to_owned(),
             last_seen_secs: used_secs,
         },
     };
     let lost = matches!(end, GpuJobEnd::Lost { .. });
+    let billed_secs = if end.never_ran() { 0 } else { billed_secs };
     GpuJobTerminal {
         end,
         measured_secs: (!lost).then_some(billed_secs),

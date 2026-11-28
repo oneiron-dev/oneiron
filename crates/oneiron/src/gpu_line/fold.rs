@@ -520,6 +520,11 @@ pub struct GpuLine {
     pub set_at_ms: u64,
     /// Bumped at every write; a period record names the revision it read.
     pub revision: u64,
+    /// The lane preset the policy was last set from, by its document's
+    /// digest; `None` for a policy the owner stated whole (pass 34, 3.2). The
+    /// values above are the full values in force either way.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preset: Option<crate::gpu_line::LinePresetRef>,
 }
 
 impl GpuLine {

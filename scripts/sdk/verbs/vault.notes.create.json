@@ -1,6 +1,7 @@
 {
   "name": "vault.notes.create",
   "description": "Creates a NOTE of a registered kind, its first authored text as its birth.",
+  "example": "await vault.notes.create({ kind: \"research\", markdown: \"# D1 test plan: working notes\" });",
   "prose_links": [
     "/markdown"
   ],

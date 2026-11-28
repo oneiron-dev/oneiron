@@ -9,6 +9,7 @@
 mod attempt_cancels;
 mod board_frames;
 use oneiron_base::step_cancellation as cancel;
+mod caller_run_output;
 mod capture;
 pub mod checkpoint_read;
 mod code_check;
@@ -18,6 +19,7 @@ pub mod continuation;
 mod driver;
 pub mod history;
 mod host;
+mod no_model;
 mod program_entry;
 mod record;
 mod repl;
@@ -30,6 +32,7 @@ mod session_refusal;
 pub(crate) mod setting_keys;
 mod shadow_step;
 mod skill_call;
+mod source_entry;
 mod stack_floor;
 mod step_evidence;
 mod store;
@@ -39,6 +42,7 @@ mod types;
 mod wire;
 
 pub(crate) use self::attempt_cancels::{AttemptCancels, stop_attempt_step};
+pub use self::caller_run_output::{CallerRunOutput, read_caller_run_output};
 pub use self::cancel::{CANCEL_POLL_SLICE, StepCancellation};
 pub use self::code_check::TypeFeedback;
 // FIX 10389: a program a door other than a run's own step runs, checked as a
@@ -48,17 +52,18 @@ pub use self::compaction::{CompactionReport, CompactionSpawn, RunCompaction, Win
 pub(crate) use self::compaction_host::{ParkedKindFolds, parked_kind_folds};
 pub use self::driver::EngineNativeExecutor;
 pub(crate) use self::host::ACT_GATES_COUNT_CALLABLE_ROWS;
+pub use self::no_model::NoModelBackend;
 // DOOR-141 PR3b: a turn program's pinned entry, for its runtime alone.
 pub(crate) use self::program_entry::{PinnedProgramEntry, PinnedProgramRun};
 #[cfg(test)]
 use self::record::step_state_hash;
-pub use self::record::{EnteredRun, entered_run};
-pub(crate) use self::record::{caller_task_in_txn, code_run_complete_in_txn, parked_wait_now};
+pub use self::record::{EnteredRun, caller_run_input, entered_run};
+pub(crate) use self::record::{caller_run_input_in_txn, code_run_terminal_in_txn, parked_wait_now};
 #[cfg(oneiron_test_support)]
 pub(crate) use self::record::{executor_config_hash_for_test, step_state_hash_for_test};
 // FIX 4606: a canonical run's generation and parked wait, read outside its
 // entries.
-pub use self::run_position::{CodeRunPosition, code_run_position};
+pub use self::run_position::{CodeRunPosition, code_run_parked_wait, code_run_position};
 // FIX 17594: the host's self-brief port a native run's requests carry.
 pub use self::self_brief::{
     BriefBoundary, BriefCandidateToken, BriefPrefix, BriefRecheck, FoldBoundary, SelfBriefPort,
@@ -82,13 +87,13 @@ pub(crate) use self::store::{
     terminal_output_seq, write_receipt_result_output_path,
 };
 pub use self::types::{
-    CallableProgram, ENGINE_EXECUTOR_COMPACTION_PURPOSE_NAME, ENGINE_EXECUTOR_FALLBACK_NAME,
-    ENGINE_EXECUTOR_PURPOSE_NAME, ENGINE_EXECUTOR_SOFT_STEP_LIMIT, EngineExecutorConfig,
-    EngineExecutorError, EngineExecutorLimits, EngineExecutorOutcome, EngineExecutorResult,
-    EngineExecutorStatus, ExecutorLegibility, GUEST_BUDGET_RESPONSE_KEY, JsCodeModeHost,
-    JsCodeModeOutput, JsCodeModeRuntime, JsCodeModeStep, JsCodeModeStepOutcome, JsCodeModeStream,
-    JsResultCall, JsResultRef, JsResultTarget, ParkedWait, SelfDispatchResponse, StoreReceiptInput,
-    StoreReceiptTree, guest_response_with_budget,
+    CallableProgram, CallerRunInput, ENGINE_EXECUTOR_COMPACTION_PURPOSE_NAME,
+    ENGINE_EXECUTOR_FALLBACK_NAME, ENGINE_EXECUTOR_PURPOSE_NAME, ENGINE_EXECUTOR_SOFT_STEP_LIMIT,
+    EngineExecutorConfig, EngineExecutorError, EngineExecutorLimits, EngineExecutorOutcome,
+    EngineExecutorResult, EngineExecutorStatus, ExecutorLegibility, GUEST_BUDGET_RESPONSE_KEY,
+    JsCodeModeHost, JsCodeModeOutput, JsCodeModeRuntime, JsCodeModeStep, JsCodeModeStepOutcome,
+    JsCodeModeStream, JsResultCall, JsResultRef, JsResultTarget, ParkedWait, SelfDispatchResponse,
+    StoreReceiptInput, StoreReceiptTree, guest_response_with_budget,
 };
 // L8-23: what a resumed pending step's walk met, on its outcome and its hold.
 pub use self::host::resume_preflight::{

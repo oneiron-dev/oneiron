@@ -17,6 +17,11 @@ pub(super) const OWN_MACHINE_RPC_INCARNATION: u64 = 1;
 /// off the carrying device (FIX 11991): the search judged its hits for an
 /// unknown destination, so the send judges its rows for one again.
 pub(super) const OFF_CARRIER_RPC_INCARNATION: u64 = 2;
+/// Internal request incarnation for a `vault.hydrate` reply whose rows hold
+/// every whole id its body names outside its miss echoes (REVIEW-10571 P1
+/// 2): the send judges those rows again and scans no byte of the frame, so
+/// an echo of a caller's own string reads as no row.
+pub(super) const BODY_NAMED_RPC_INCARNATION: u64 = 3;
 
 /// A frame as its routing header addressed it.
 pub(super) struct Routed<'a> {

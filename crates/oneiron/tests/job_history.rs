@@ -5,7 +5,8 @@
 //! reservation at the reservation, a refusal before anything ran and a lost machine at zero,
 //! and a closed arm's first-allowance hold at what its unit took from it. An open claim is not
 //! history, and a claim of another period counts in that period only. An agent reads only the
-//! attempts it reserved, and totals over those.
+//! attempts it reserved, and totals over those. A line unit shows the meter the issuer's
+//! observation of its key holds, and keeps its claim's terminal for the rest.
 //!
 //! The projection is pure, so these run without a vault. Fleet command:
 //! `cargo test --locked -p oneiron --all-features --test job_history`.
@@ -19,6 +20,7 @@ use oneiron::gpu_line::{
     GpuLinePeriod, PeriodRoom, PinnedMode, RuleRef, SpendRow, Track, UnitClaim, UnitEndReport,
     UnitPurpose, gpu_seconds, mint_period,
 };
+use oneiron::job_dispatch::JobObservation;
 use oneiron::job_history::{HistoryInputs, HistoryViewer, JobHistoryRequest, project};
 use oneiron::llm::run_admission::AllocationRef;
 
@@ -109,6 +111,7 @@ fn line() -> GpuLine {
         set_by: None,
         set_at_ms: 0,
         revision: 1,
+        preset: None,
     }
 }
 
@@ -359,6 +362,9 @@ fn history_totals_equal_the_settled_holds_of_the_same_period() {
         jobs: &[],
         claims: &fixture.claims,
         periods: &fixture.periods,
+        orders: &[],
+        observations: &[],
+        unattributed: &[],
     };
     let filter = request().filter().expect("a valid request");
     let history = project(&inputs, &filter, HistoryViewer::Owner);
@@ -429,6 +435,9 @@ fn an_agent_reads_only_the_attempts_it_reserved_and_their_totals() {
         jobs: &[],
         claims: &fixture.claims,
         periods: &fixture.periods,
+        orders: &[],
+        observations: &[],
+        unattributed: &[],
     };
     let filter = request().filter().expect("a valid request");
     let own = project(&inputs, &filter, HistoryViewer::Requester(other_agent()));
@@ -474,4 +483,61 @@ fn an_agent_reads_only_the_attempts_it_reserved_and_their_totals() {
         .map(|attempt| attempt.key)
         .collect();
     assert_eq!(seen, all);
+}
+
+#[test]
+fn a_line_unit_shows_the_meter_its_issuer_judged_and_keeps_its_claim_terminal() {
+    let fixture = fixture();
+    // The issuer's observation of the first settled unit's key: the same end the claim's
+    // terminal took, with the issuer's meter verdict.
+    let settled = &fixture.claims[0];
+    let end = GpuJobTerminal {
+        end: GpuJobEnd::Exited { code: 0 },
+        measured_secs: Some(700),
+        billed_secs: 700,
+        meter: MeterVerdict::Agreed,
+        machine: Some(machine()),
+        device_id: Some("GPU-1f2e3d4c".to_owned()),
+        outputs: Vec::new(),
+    };
+    let observations = [JobObservation {
+        key: format!("{}:0", settled.id.to_hex()),
+        machine: machine(),
+        device_id: Some("GPU-1f2e3d4c".to_owned()),
+        receipt: Vec::new(),
+        epoch: "epoch-1".to_owned(),
+        seq: 12,
+        last_measured_secs: Some(700),
+        observed_at_ms: ANCHOR_MS + 3_600_000,
+        end_seen: None,
+        meter: Some(MeterVerdict::Agreed),
+        terminal: Some(end),
+        started: true,
+    }];
+    let inputs = HistoryInputs {
+        jobs: &[],
+        claims: &fixture.claims,
+        periods: &fixture.periods,
+        orders: &[],
+        observations: &observations,
+        unattributed: &[],
+    };
+    let filter = request().filter().expect("a valid request");
+    let history = project(&inputs, &filter, HistoryViewer::Owner);
+    let unit = history
+        .attempts
+        .iter()
+        .find(|attempt| attempt.job == settled.id.to_hex())
+        .expect("the settled unit is history");
+    assert_eq!(unit.meter.as_deref(), Some("agreed"));
+    // The claim's terminal stays the record of the rest, as the line's fold charged it.
+    assert_eq!(unit.occupied_secs, Some(700));
+    assert_eq!(unit.charged_secs, Some(700));
+    assert_eq!(unit.node_end.as_deref(), Some("exited(0)"));
+    let metered = history
+        .attempts
+        .iter()
+        .filter(|attempt| attempt.meter.is_some())
+        .count();
+    assert_eq!(metered, 1, "only the observed key has a meter");
 }

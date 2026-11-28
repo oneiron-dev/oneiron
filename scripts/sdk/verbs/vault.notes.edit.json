@@ -9,6 +9,7 @@
   ],
   "input": "EditNoteRequest",
   "output": "crate::note::NoteProgramEditOutcome",
+  "example": "await vault.notes.edit({ note_ref: note.entity_ref, edit: { kind: \"whole_text\", text: \"# D1 test plan\\n- bar: chat >= 1.00x\\n- result: pass\", timeout_ms: 2000, base: null } });",
   "call": "memory.edit_note(&input.note_ref, &input.edit)?",
   "scope": "Write",
   "act_class": "reversible_work",

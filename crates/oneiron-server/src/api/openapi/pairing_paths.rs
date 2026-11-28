@@ -322,7 +322,7 @@ fn pairing_link_answer() -> Value {
         "required": ["code", "expires_at", "comm"],
         "properties": {
             "code": {"type": "string", "description": "The single-use link code (8 Crockford base32 chars, mod.rs:148-151)."},
-            "expires_at": {"type": "integer", "minimum": 0, "description": "When the link expires, as Unix seconds."},
+            "expires_at": {"type": "integer", "minimum": 0, "description": "When the link expires, as a second on the vault's clock: one pairing code life (pairing.code.ttl_secs, one hour unless set) after issue, measured on that clock. The vault's clock does not advance while the server is stopped and resumes from its last saved reading when it starts, so it can read behind the host's clock."},
             "pin": pairing_pin_ref_schema(),
             "comm": comm_reach_schema()
         }

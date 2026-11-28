@@ -3,12 +3,21 @@
 //! reader reads it as its handle (`[secret sc12]`, owner ruling G04 = A),
 //! and a granted agent reads a value through that handle's reveal.
 
+use std::borrow::Cow;
+
 use serde::Serialize;
 use serde::de::DeserializeOwned;
+use serde_json::Value;
 
 use super::{Memory, MemoryResult};
 use crate::batch::secret_scan::LiftedKeys;
+use crate::claim::{
+    ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, PointRead, ScopedRead, ScopedReadResult,
+    decode_claim_body,
+};
+use crate::entity_id::EntityId;
 use crate::error::Error;
+use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::secret_custody::SecretSight;
 
 impl Memory<'_> {
@@ -100,23 +109,109 @@ impl Memory<'_> {
         scope: Option<&mut serde_json::Value>,
     ) -> MemoryResult<()> {
         let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
-        if !self.reads_lifted_keys_masked_in_txn(&txn)? {
-            return Ok(());
-        }
-        let mut texts = Vec::new();
-        claim_texts(value, &mut texts);
-        if let Some(scope) = scope.as_deref() {
-            claim_texts(scope, &mut texts);
-        }
-        let keys = LiftedKeys::of_in_txn(&self.vault.store, &txn, texts)?;
-        if !keys.is_empty() {
-            mask_claim_json(&keys, value);
-            if let Some(scope) = scope {
-                mask_claim_json(&keys, scope);
-            }
-        }
-        Ok(())
+        Ok(mask_lifted_claim_parts_in_txn(
+            &self.vault.store,
+            &txn,
+            self.secret_sight_in_txn(&txn)?,
+            value,
+            scope,
+            None,
+        )?)
     }
+}
+
+impl ScopedRead<'_> {
+    /// Reads one pack-section candidate under this lane and projects its two
+    /// display cells in the point read's own snapshot. The caller still
+    /// checks pack membership and any additional board scope.
+    pub fn read_pack_section_claim(
+        &self,
+        id: &EntityId,
+    ) -> crate::Result<ScopedReadResult<Option<(String, Value)>>> {
+        self.read_projected(&[PointRead::id(*id)], None, |txn, rows| {
+            let Some(row) = rows.into_iter().next().flatten() else {
+                return Ok(None);
+            };
+            let Some(body) = row.body.filter(|_| row.entity_type == ENTITY_TYPE_CLAIM) else {
+                return Ok(None);
+            };
+            let claim = decode_claim_body(&body, false)?;
+            if claim.lifecycle != ClaimLifecycleStatus::Active
+                || !matches!(
+                    claim.approval,
+                    ClaimApprovalStatus::Approved | ClaimApprovalStatus::Auto
+                )
+                || claim.stale
+            {
+                return Ok(None);
+            }
+            self.projected_claim_parts_in_txn(txn, &body, &claim)
+        })
+    }
+
+    /// The predicate and value a board serves from its admitted CLAIM.
+    /// Keep the whole-claim redaction before reading any projected part.
+    pub(crate) fn projected_claim_parts_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        body: &[u8],
+        claim: &ClaimBody,
+    ) -> crate::Result<Option<(String, Value)>> {
+        if crate::batch::export::claim_reads_as_secret(claim) {
+            let marker = "[redacted]".to_owned();
+            return Ok(Some((marker.clone(), Value::String(marker))));
+        }
+        let (mut predicate, value) = match self.released_claim_item_body_in(txn, body)? {
+            Some(Cow::Borrowed(_)) => (claim.predicate.clone(), claim.value.clone()),
+            Some(Cow::Owned(body)) => {
+                let claim = decode_claim_body(&body, true)?;
+                (claim.predicate, claim.value)
+            }
+            None => return Ok(None),
+        };
+        let mut value = crate::batch::export::served_messagepack_json(value);
+        mask_lifted_claim_parts_in_txn(
+            &self.vault().store,
+            txn,
+            self.actor_key().secret_sight(),
+            &mut value,
+            None,
+            Some(&mut predicate),
+        )?;
+        Ok(Some((predicate, value)))
+    }
+}
+
+fn mask_lifted_claim_parts_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    sight: SecretSight,
+    value: &mut serde_json::Value,
+    scope: Option<&mut serde_json::Value>,
+    predicate: Option<&mut String>,
+) -> crate::Result<()> {
+    if sight != SecretSight::Masked {
+        return Ok(());
+    }
+    let mut texts = Vec::new();
+    texts.extend(predicate.as_ref().map(|text| text.as_str()));
+    claim_texts(value, &mut texts);
+    if let Some(scope) = scope.as_deref() {
+        claim_texts(scope, &mut texts);
+    }
+    let keys = LiftedKeys::of_in_txn(store, txn, texts)?;
+    if !keys.is_empty() {
+        mask_claim_json(&keys, value);
+        if let Some(scope) = scope {
+            mask_claim_json(&keys, scope);
+        }
+        if let Some(predicate) = predicate
+            && let Some(masked) = keys.masked(predicate)
+        {
+            *predicate = masked;
+        }
+    }
+    Ok(())
 }
 
 /// Every string `value` holds, its object keys included: the texts a lifted

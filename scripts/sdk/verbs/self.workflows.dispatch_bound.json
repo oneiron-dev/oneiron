@@ -1,5 +1,6 @@
 {
   "name": "self.workflows.dispatch_bound",
+  "description": "Starts a saved workflow bound to a task owned by the leased agent and returns the same workflow run for the same intent key.",
   "input": "crate::task_verb::sdk::WorkflowBoundDispatchRequest",
   "output": "crate::task_verb::sdk::WorkflowRunView",
   "scope": "Write",

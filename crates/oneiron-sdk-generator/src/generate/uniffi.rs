@@ -52,10 +52,7 @@ pub(crate) const UNIFFI_RESULTS: &[(&str, &str)] = &[
         "crate::claim::ScopedReadResult<Vec<crate::memory::ClaimView>>",
         "ClaimViews",
     ),
-    (
-        "crate::claim::ScopedReadResult<Vec<crate::memory::EntityView>>",
-        "EntityViews",
-    ),
+    ("crate::memory::HydrateResult", "EntityViews"),
     (
         "crate::claim::ScopedReadResult<Option<crate::memory::EntityView>>",
         "EntityRead",

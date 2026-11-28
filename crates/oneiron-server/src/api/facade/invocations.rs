@@ -328,7 +328,14 @@ pub(crate) enum DoorClaim {
 /// name off the rows: a kept reply would hand an erased requester's id to a
 /// same-id retry after the erase, and an agent's reply would outlive its
 /// Grant. A same-id retry reads again and writes nothing.
-const UNKEPT_REPLY_VERBS: [&str; 18] = [
+/// An attempt's log tail (`vault.jobs.logs.tail`, pass 34 row Q3) answers
+/// bytes that stay on the attempt's machine: a kept reply would write up to
+/// a page of the log to this vault's invocation state, and would answer a
+/// same-id retry with its first ask's bytes after the stream moved on,
+/// without asking the machine again (review round 1 of #10466). A same-id
+/// retry finds its admission intent settled (`admission_doors::call_verb`)
+/// and is refused with none of those bytes; a new read asks the machine.
+const UNKEPT_REPLY_VERBS: [&str; 19] = [
     "vault.inquire",
     "vault.inquiry.edge.prepare_join",
     "vault.members.accept_with_inquiry_edge",
@@ -347,6 +354,7 @@ const UNKEPT_REPLY_VERBS: [&str; 18] = [
     oneiron::task_verb::sdk::MACHINE_STATUS_VERB,
     oneiron::task_verb::sdk::MACHINES_EXECUTION_GET_VERB,
     oneiron::job_history::JOB_HISTORY_VERB,
+    oneiron::work_order::LOGS_TAIL_VERB,
 ];
 
 /// Whether an invocation claim keeps `verb`'s answer for a later request

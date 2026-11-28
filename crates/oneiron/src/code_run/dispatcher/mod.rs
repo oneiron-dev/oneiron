@@ -25,6 +25,7 @@ mod program_step;
 mod read_worlds;
 mod reader_spawn;
 mod record_refs;
+mod recorded_producer;
 mod refusal_output;
 mod repo;
 mod repo_sources;
@@ -85,6 +86,8 @@ pub(crate) use self::program_step::{program_answer_digest_for_test, program_call
 pub(crate) use self::reader_spawn::{
     ReaderChildBinding, delegated_input, delegated_occurrence_input,
 };
+pub use self::recorded_producer::RECORDED_ANSWER_UNIDENTIFIED;
+pub(crate) use self::recorded_producer::RecordedProducer;
 pub use self::repo_sources::RepoRequestWitness;
 #[cfg(oneiron_test_support)]
 pub(crate) use self::repo_sources::repo_params_hash_for_test;

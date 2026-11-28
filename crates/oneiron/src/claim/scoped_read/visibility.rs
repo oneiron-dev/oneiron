@@ -265,6 +265,9 @@ impl<'v> ScopedRead<'v> {
         filter: &ResolvedRetrievalFilter,
         authority: &HeldAuthority,
     ) -> Result<bool> {
+        if !self.session_projects_admit(rtxn, id, raw)? {
+            return Ok(false);
+        }
         let asked = authority.grants().asked();
         let own = self.own_admission_in(rtxn, policy, id, raw, filter, authority, asked)?;
         if !own.admitted() {
@@ -290,6 +293,28 @@ impl<'v> ScopedRead<'v> {
                 );
                 false
             }))
+    }
+
+    /// Admit CLAIMs in the session's projects by body and NOTE, MESSAGE and TURN by birth stamp
+    /// in this lane's store (on a room history lane, every MESSAGE and TURN). Refuse unusable
+    /// placements; pass other kinds, all with no default. Runs first, for the row and its sources.
+    fn session_projects_admit(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        raw: &[u8],
+    ) -> Result<bool> {
+        let Some(projects) = self.actor_key.session_projects() else {
+            return Ok(true);
+        };
+        crate::federation::record_scope::session_projects_admit_row(
+            &self.store_read(),
+            rtxn,
+            *id,
+            raw,
+            projects,
+            self.actor_key.room_speech_by_room,
+        )
     }
 
     /// A summary, the reply copied from it and its merge header carry words
@@ -322,7 +347,13 @@ impl<'v> ScopedRead<'v> {
         // rebuilt on the owner's floor) judges each source as any reader
         // does: the shortcut below would carry a stamped claim's words in a
         // summary that the claim gate withholds on its own.
-        if self.actor_key.vault_owner_ref().is_some() && !self.actor_key.reads_homed_unnamed() {
+        // So does an owner key that carries an attached session's project default: the
+        // shortcut would carry another project's claim words in a summary
+        // (RECALL-SESSION-PROJECT).
+        if self.actor_key.vault_owner_ref().is_some()
+            && !self.actor_key.reads_homed_unnamed()
+            && self.actor_key.session_projects().is_none()
+        {
             // The owner reads every source but a private thread's turn,
             // which meets his own cut there (FIX 6410). A use-limited
             // source still withholds the derived row (FIX 1496 S8): C6
@@ -830,6 +861,11 @@ impl<'v> ScopedRead<'v> {
         authority: &HeldAuthority,
         asked: &AskedFilter,
     ) -> Result<bool> {
+        // A source's words reach what was written from it, so the session's project default
+        // meets each source as it meets the row (RECALL-SESSION-PROJECT).
+        if !self.session_projects_admit(rtxn, id, raw)? {
+            return Ok(false);
+        }
         Ok(self
             .own_admission_in(rtxn, policy, id, raw, filter, authority, asked)?
             .admitted())
