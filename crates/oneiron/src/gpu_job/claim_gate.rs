@@ -208,7 +208,8 @@ impl Vault {
 
     /// The job request of the unit claim under `claim`, while it stands `Claimed`, for its
     /// quote: job type `pinned_workload`, the claim's workload as the image, its reserved
-    /// seconds as the maximum, and inputs naming the machine and the claim (design 3.6). The
+    /// seconds as the maximum, and inputs naming the machine and the claim (design 3.6), and the
+    /// claim's result binding when it has one (row RSI-ARM-RESULT). The
     /// machine is the claim's pin, or else the first machine of its line on which the workload
     /// is approved for the claim's reserver, as the reserve judged it. `None` for a claim that
     /// is missing or no longer `Claimed`; inputs with no machine when no machine approves it,
@@ -265,6 +266,14 @@ impl Vault {
         });
         if let Some(machine) = machine {
             inputs["machine"] = serde_json::Value::String(machine.to_hex());
+        }
+        // The result the reserve admitted (row RSI-ARM-RESULT): the issuer lands the job's
+        // returnable outputs through it, as for any GPU job whose quote binds one.
+        if let Some(result) = stored.result {
+            inputs["result"] = serde_json::json!({
+                "artifact": result.artifact.to_hex(),
+                "task": result.task.to_hex(),
+            });
         }
         Ok(Some(GpuJobRequest {
             job_type: UNIT_JOB_TYPE.to_owned(),
@@ -379,7 +388,8 @@ impl Vault {
 }
 
 /// The first term of `quote` on `offer` that is not `claim`'s, read in `txn`: the job, the
-/// maximum, the workload, the offer (one the claim's line names) and the pinned machine.
+/// maximum, the workload, the offer (one the claim's line names), the pinned machine and the
+/// result binding.
 fn claim_term_mismatch(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -424,6 +434,18 @@ fn claim_term_mismatch(
         return Ok(Some(
             "the quote's machine is not the claim's pin or a machine of its line",
         ));
+    }
+    // The quote binds the result the reserve admitted for the claim, or none (row
+    // RSI-ARM-RESULT): a start never lands a unit's outputs anywhere else.
+    let bound = match quote.inputs.get("result").filter(|value| !value.is_null()) {
+        Some(value) => match serde_json::from_value::<super::GpuJobResultBinding>(value.clone()) {
+            Ok(binding) => Some(binding),
+            Err(_) => return Ok(Some("the quote's result does not read as a binding")),
+        },
+        None => None,
+    };
+    if bound != claim.result {
+        return Ok(Some("the quote's result is not the claim's"));
     }
     Ok(None)
 }

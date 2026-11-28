@@ -123,6 +123,11 @@ pub struct UnitClaim {
     pub machine: Option<EntityId>,
     pub code_sha: String,
     pub contract_sha256: String,
+    /// Where the unit's job lands its returnable outputs (row RSI-ARM-RESULT): the artifact
+    /// whose next version each becomes, pending Keep, and the task its made_by names, as the
+    /// job's quote binds them (`inputs.result`). `None` lands nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result: Option<crate::gpu_job::GpuJobResultBinding>,
     /// The workload pin's maximum: the job's quote and the machine's own limit.
     pub reserved_secs: u64,
     /// Where the reservation sits, in draw order; the units sum to `reserved_secs`.

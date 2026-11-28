@@ -24,7 +24,8 @@ use crate::memory::{
 };
 use crate::work_order::{
     AttemptRefused, AttemptToMake, Blocker, OrderCharge, OrderClass, OrderLimits, OrderStarter,
-    OrderState, OrderWishes, OrderedBy, WaitRule, WorkOrder, WorkOrderView, attempt_job_id,
+    OrderState, OrderWishes, OrderedBy, ResultBinding, WaitRule, WorkOrder, WorkOrderView,
+    attempt_job_id,
 };
 use crate::{EntityId, Vault};
 
@@ -95,6 +96,7 @@ pub fn unit_order_as(
         }
         WaitRule::Until { .. } | WaitRule::Open => {}
     }
+    super::unit_result::check_result_binding(memory, request.result.as_ref())?;
     let vault = memory.vault();
     vault.try_with_write_txn_grouped(|txn| {
         order_unit_in_txn(vault, txn, memory, owner, request, now_ms)
@@ -231,7 +233,11 @@ fn order_unit_in_txn(
         cancel: None,
         retry_not_before_ms: None,
         attempts: Vec::new(),
-        result: None,
+        // The order's result is the unit's: each attempt's reserve writes it onto its claim.
+        result: request.result.map(|binding| ResultBinding {
+            artifact: binding.artifact,
+            task: binding.task,
+        }),
         intent_key: Some(request.intent_key.clone()),
         after: None,
         group: None,
@@ -303,6 +309,12 @@ impl Vault {
             code_sha: attempt.pin.commit.clone(),
             contract_sha256: attempt.pin.contract_sha256.clone(),
             secs: order.request.maximum_secs,
+            result: order
+                .result
+                .map(|binding| crate::gpu_job::GpuJobResultBinding {
+                    artifact: binding.artifact,
+                    task: binding.task,
+                }),
             wait: WaitRule::No,
         };
         let reference = attempt.reference();

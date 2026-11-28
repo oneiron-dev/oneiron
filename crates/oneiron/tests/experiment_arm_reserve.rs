@@ -12,6 +12,9 @@
 //!   line-managed offer is refused; a released claim cannot start; a started unit's job is
 //!   cancelled through the unit door only.
 //! - The owner's write-off of a unit's live job ends its claim in the same write (pass 33, 8.4).
+//! - Row RSI-ARM-RESULT: a unit's result binding rides its claim into its job's quote (an
+//!   immediate unit and a waiting one), only to rows the caller reads, and its landed result's
+//!   report names the arm, the rung and the contract.
 //!
 //! The earlier tests change the claim through the start test door and start no GPU job. The
 //! start-gate tests call `Vault::start_claimed_gpu_job` with an in-memory connector that counts
@@ -450,6 +453,7 @@ impl Fixture {
             code_sha: COMMIT.to_owned(),
             contract_sha256: arm.contract.sha256.clone(),
             secs,
+            result: None,
             wait: WaitRule::No,
         }
     }
@@ -3160,4 +3164,343 @@ fn a_line_order_whose_agent_lost_its_lead_role_is_cancelled_authority_ended() {
     assert!(order.attempts.is_empty());
     assert!(fixture.claims(&arm, 1).is_empty());
     assert_eq!(h3_line_room(&fixture, arm.line, 0), before_room);
+}
+
+// Row RSI-ARM-RESULT: where a unit's returnable outputs land.
+
+use oneiron::blob_artifact::ArtifactCreateRequest;
+use oneiron::gpu_job::{GpuJobResultBinding, GpuJobResultFile};
+use oneiron::job_workload::WorkloadStarter;
+use oneiron::task_verb::TaskCreateSpec;
+use oneiron::work_order::ResultBinding;
+
+/// The text of the task a unit's result binding names.
+const RESULT_TASK_TEXT: &str = "Read the arm's verdict";
+/// The name of the artifact a unit's result binding names.
+const RESULT_ARTIFACT_NAME: &str = "verdict.txt";
+
+/// A task and an artifact the owner makes, as a unit's result binding.
+fn owner_result_binding(fixture: &Fixture) -> GpuJobResultBinding {
+    let human = fixture.vault.memory(fixture.owner, EdgeActorClass::Human);
+    let task = human
+        .tasks_create(&TaskCreateSpec::new(
+            rmpv::Value::from(RESULT_TASK_TEXT),
+            None,
+            None,
+            None,
+        ))
+        .expect("the owner creates a task")
+        .task_ref
+        .expect("a landed task");
+    let artifact = human
+        .artifacts_create(&ArtifactCreateRequest {
+            name: RESULT_ARTIFACT_NAME.to_owned(),
+            media_type: "text/plain".to_owned(),
+            content_base64: base64::Engine::encode(
+                &base64::engine::general_purpose::STANDARD,
+                b"no verdict yet",
+            ),
+            run_ref: None,
+            made_by: None,
+        })
+        .expect("the owner uploads the artifact")
+        .expect("the artifact's view")
+        .artifact_id;
+    GpuJobResultBinding { artifact, task }
+}
+
+/// `binding` as a quote's `inputs.result`.
+fn result_input(binding: GpuJobResultBinding) -> serde_json::Value {
+    serde_json::json!({
+        "artifact": binding.artifact.to_hex(),
+        "task": binding.task.to_hex(),
+    })
+}
+
+/// RSI-ARM-RESULT: a unit reserved with a result keeps it on its claim, and its job's quote
+/// binds it as `inputs.result`, where the issuer's landing reads it. A quote that binds no
+/// result is not the claim's: the start refuses it and gives the claim up.
+#[test]
+fn a_unit_reserved_with_a_result_quotes_it_and_starts_only_with_it() {
+    let fixture = fixture();
+    let lead = fixture.agent("lead");
+    let arm = fixture.lead_arm(lead, 0);
+    let binding = owner_result_binding(&fixture);
+    let mut ask = fixture.ask(&arm, "bound-unit", 60, Some(lead));
+    ask.result = Some(binding);
+    let view = fixture
+        .reserve(Some(lead), &ask, NOW_MS)
+        .expect("reserve with a result");
+    assert_eq!(only_claim(&fixture.claims(&arm, 1)).result, Some(binding));
+    let jobs = UnitJobs::new(None);
+    let (key, quote) = jobs.quote(&fixture, &ask, &view, NOW_MS);
+    assert_eq!(quote.inputs["result"], result_input(binding));
+
+    let mut unbound = quote.clone();
+    unbound
+        .inputs
+        .as_object_mut()
+        .expect("the quote's inputs")
+        .remove("result");
+    let refused = jobs.start(&fixture, lead, &key, &unbound, NOW_MS);
+    assert!(
+        matches!(
+            refused,
+            Err(GpuJobError::LineManaged(LineStartRefused::ClaimMismatch(_)))
+        ),
+        "{refused:?}"
+    );
+    assert_eq!(jobs.creates(), 0);
+
+    let next = UnitReserveRequest {
+        intent_key: "bound-unit-attempt-2".to_owned(),
+        attempt: 2,
+        ..ask.clone()
+    };
+    let view = fixture
+        .reserve(Some(lead), &next, NOW_MS)
+        .expect("the next attempt reserves");
+    let (key, quote) = jobs.quote(&fixture, &next, &view, NOW_MS);
+    let job = jobs
+        .start(&fixture, lead, &key, &quote, NOW_MS)
+        .expect("the claim's own quote starts");
+    assert_eq!(job.chunks.len(), 1);
+    assert_eq!(job.chunks[0].quote.inputs["result"], result_input(binding));
+    assert_eq!(jobs.creates(), 1);
+}
+
+/// RSI-ARM-RESULT: an agent binds a unit's result only to rows its own read lane resolves. The
+/// reserve and the waiting door refuse any other binding `result_binding_unreadable` and write
+/// nothing: no claim, no order. The refusal names no field of the rows the binding names: no
+/// artifact name and no task text.
+#[test]
+fn a_unit_result_on_a_row_the_agent_cannot_read_is_refused_and_writes_nothing() {
+    let fixture = fixture();
+    let lead = fixture.agent("lead");
+    let arm = fixture.lead_arm(lead, 0);
+    let readable = owner_result_binding(&fixture);
+    let mut ask = fixture.ask(&arm, "unreadable-unit", 60, Some(lead));
+    // No row has this id, so no lane resolves it.
+    ask.result = Some(GpuJobResultBinding {
+        artifact: EntityId::now(),
+        task: readable.task,
+    });
+    let reserved = fixture
+        .reserve(Some(lead), &ask, NOW_MS)
+        .expect_err("the reserve refuses the binding");
+    assert!(fixture.claims(&arm, 1).is_empty());
+
+    ask.wait = WaitRule::Open;
+    let (memory, owner) = fixture.caller(Some(lead));
+    let ordered = unit_order_as(&memory, owner, &ask, NOW_MS)
+        .expect_err("the waiting door refuses the binding");
+    for error in [&reserved, &ordered] {
+        assert_eq!(error.code, MEMORY_CODE_FORBIDDEN, "{error:?}");
+        assert!(
+            error.message.starts_with("result_binding_unreadable"),
+            "{error:?}"
+        );
+        let shown = format!("{error:?}");
+        assert!(
+            !shown.contains(RESULT_TASK_TEXT) && !shown.contains(RESULT_ARTIFACT_NAME),
+            "the refusal names a field of a bound row: {shown}"
+        );
+    }
+    assert!(
+        fixture
+            .vault
+            .work_orders()
+            .expect("read the work orders")
+            .is_empty()
+    );
+
+    ask.wait = WaitRule::No;
+    ask.result = Some(readable);
+    fixture
+        .reserve(Some(lead), &ask, NOW_MS)
+        .expect("a binding the agent reads reserves");
+}
+
+/// RSI-ARM-RESULT: a unit asked with no result keeps the ask digest a claim had before units
+/// could bind one, so a retry of a claim stored then still replays; a result is part of the ask,
+/// so the same attempt asked with one is another ask.
+#[test]
+fn a_unit_without_a_result_keeps_its_ask_digest_and_a_result_is_part_of_the_ask() {
+    #[derive(serde::Serialize)]
+    struct AskBeforeResults<'a> {
+        line: EntityId,
+        arm: EntityId,
+        rung: u8,
+        unit_key: &'a str,
+        attempt: u16,
+        purpose: UnitPurpose,
+        offer: &'a str,
+        workload: &'a str,
+        machine: Option<EntityId>,
+        code_sha: &'a str,
+        contract_sha256: &'a str,
+        secs: u64,
+    }
+    let fixture = fixture();
+    let lead = fixture.agent("lead");
+    let arm = fixture.lead_arm(lead, 0);
+    let ask = fixture.ask(&arm, "digest-unit", 60, Some(lead));
+    fixture
+        .reserve(Some(lead), &ask, NOW_MS)
+        .expect("reserve with no result");
+    let claims = fixture.claims(&arm, 1);
+    let claim = only_claim(&claims);
+    assert_eq!(claim.result, None);
+    let before = IntentAsk::new(
+        lead.actor,
+        ARMS_UNITS_RESERVE_VERB,
+        &ask.intent_key,
+        &AskBeforeResults {
+            line: ask.line,
+            arm: ask.arm,
+            rung: ask.rung,
+            unit_key: &ask.unit_key,
+            attempt: ask.attempt,
+            purpose: ask.purpose,
+            offer: &ask.offer,
+            workload: &ask.workload,
+            machine: ask.machine,
+            code_sha: &ask.code_sha,
+            contract_sha256: &ask.contract_sha256,
+            secs: ask.secs,
+        },
+    )
+    .expect("frame the ask as it was before results");
+    assert_eq!(claim.ask_digest, before.ask_digest());
+
+    let bound = UnitReserveRequest {
+        intent_key: "digest-unit-bound".to_owned(),
+        result: Some(owner_result_binding(&fixture)),
+        ..ask.clone()
+    };
+    refused_as(
+        fixture.reserve(Some(lead), &bound, NOW_MS),
+        MEMORY_CODE_INVALID_STATE,
+        "attempt_conflict",
+    );
+    let again = UnitReserveRequest {
+        intent_key: "digest-unit-again".to_owned(),
+        ..ask
+    };
+    assert!(
+        fixture
+            .reserve(Some(lead), &again, NOW_MS)
+            .expect("the same ask replays")
+            .replayed
+    );
+}
+
+/// RSI-ARM-RESULT on row H3's path: a waiting unit's order keeps the result, and its attempt's
+/// reserve writes it onto the attempt's claim, so the claim's job binds it.
+#[test]
+fn a_waiting_unit_carries_its_result_into_its_claim_and_job() {
+    let fixture = fixture();
+    let lead = fixture.agent("lead");
+    let arm = fixture.lead_arm(lead, 0);
+    let binding = owner_result_binding(&fixture);
+    let mut ask = fixture.ask(&arm, "bound-line-unit", 60, Some(lead));
+    ask.wait = WaitRule::Open;
+    ask.result = Some(binding);
+    let (memory, owner) = fixture.caller(Some(lead));
+    let ordered = unit_order_as(&memory, owner, &ask, NOW_MS).expect("order the bound unit");
+    assert_eq!(
+        ordered.order.result,
+        Some(ResultBinding {
+            artifact: binding.artifact,
+            task: binding.task,
+        })
+    );
+    let jobs = UnitJobs::new(None);
+    let host = H3Host {
+        vault: &fixture.vault,
+        jobs: &jobs,
+        now_ms: Cell::new(NOW_MS),
+        calls: Cell::new(0),
+        skip_start: Cell::new(false),
+    };
+    fixture
+        .vault
+        .work_order_pass(&host, NOW_MS)
+        .expect("the pass makes the attempt");
+    assert_eq!(host.calls.get(), 1);
+    let claims = fixture.claims(&arm, 1);
+    let claim = only_claim(&claims);
+    assert_eq!(claim.result, Some(binding));
+    assert_eq!(claim.state, ClaimState::Started);
+    let job = fixture
+        .vault
+        .gpu_job(&claim.id)
+        .expect("read the job")
+        .expect("the claim's job row");
+    assert_eq!(job.chunks[0].quote.inputs["result"], result_input(binding));
+}
+
+/// RSI-ARM-RESULT: a unit job's landed result names its unit. The proposal's report carries the
+/// arm, the rung, the unit key, the attempt and the contract the arm pinned (the referee digest,
+/// pass 32 3.6), read from the claim the job row names.
+#[test]
+fn a_landed_unit_result_names_its_arm_rung_and_contract() {
+    let fixture = fixture();
+    let lead = fixture.agent("lead");
+    let arm = fixture.lead_arm(lead, 0);
+    let binding = owner_result_binding(&fixture);
+    let mut ask = fixture.ask(&arm, "landed-unit", 60, None);
+    ask.result = Some(binding);
+    let view = fixture
+        .reserve(None, &ask, NOW_MS)
+        .expect("the owner reserves a bound unit");
+    let jobs = UnitJobs::new(None);
+    let (key, quote) = jobs.quote(&fixture, &ask, &view, NOW_MS);
+    let job = fixture
+        .vault
+        .start_claimed_gpu_job(
+            UnitJobStart {
+                actor: GpuJobActor::Owner(&fixture.owner_proof),
+                offer: &jobs.offer,
+                quote: &quote,
+            },
+            &key,
+            &jobs.permits,
+            &jobs.connector,
+            NOW_MS,
+        )
+        .expect("the owner starts the claim's job");
+    let file = GpuJobResultFile {
+        key: job.chunks[0].idempotency_key.clone(),
+        name: "verdict.txt".to_owned(),
+        sha256: "ab".repeat(32),
+        bytes: b"pass".to_vec(),
+    };
+    let landed = fixture
+        .vault
+        .propose_gpu_job_result(
+            job.id,
+            Some(WorkloadStarter::Owner(fixture.owner)),
+            &binding,
+            &file,
+            fixture.machine,
+            NOW_MS,
+        )
+        .expect("land the result")
+        .expect("the owner's lane holds it");
+    assert_eq!(landed.artifact_id, binding.artifact);
+    assert_eq!(
+        landed.summary["report"]["unit"],
+        serde_json::json!({
+            "arm": arm.id.to_hex(),
+            "rung": 1,
+            "unit_key": "landed-unit",
+            "attempt": 1,
+            "contract_sha256": arm.contract.sha256,
+        })
+    );
+    assert_eq!(
+        landed.summary["report"]["job"],
+        serde_json::json!(job.id.to_hex())
+    );
 }

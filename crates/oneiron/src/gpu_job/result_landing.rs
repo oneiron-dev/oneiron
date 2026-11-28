@@ -163,6 +163,28 @@ impl Vault {
         principal_lane(self, principal)?.all_refs_readable(&[binding.artifact, binding.task])
     }
 
+    /// The unit a line unit's job ran (row RSI-ARM-RESULT), for its landed result's report:
+    /// the arm, the rung, the unit key, the attempt and the contract the arm pinned (the
+    /// referee digest of pass 32, 3.6), from the claim the job row names (the job's id is the
+    /// claim's). `None` for a job no unit claim names.
+    fn gpu_job_result_unit(&self, job: EntityId) -> Result<Option<serde_json::Value>> {
+        let Some(key) = self.gpu_job(&job)?.and_then(|row| row.claim) else {
+            return Ok(None);
+        };
+        let txn = self.store.env.read_txn()?;
+        Ok(crate::gpu_line::claim_in_txn(self, &txn, &key)?
+            .filter(|claim| claim.id == job)
+            .map(|claim| {
+                json!({
+                    "arm": claim.arm.to_hex(),
+                    "rung": claim.rung,
+                    "unit_key": claim.unit_key,
+                    "attempt": claim.attempt,
+                    "contract_sha256": claim.contract_sha256,
+                })
+            }))
+    }
+
     /// One write of `file` by `writer`, the envelope built from it.
     fn propose_gpu_job_result_as(
         &self,
@@ -182,19 +204,22 @@ impl Vault {
             .get_blob_artifact(&binding.artifact)?
             .ok_or(Error::EntityNotFound)?
             .media_type;
+        let mut report = json!({
+            "job": job_hex,
+            "key": file.key,
+            "name": file.name,
+            "sha256": file.sha256,
+            "bytes": file.bytes.len(),
+        });
+        if let Some(unit) = self.gpu_job_result_unit(job)? {
+            report["unit"] = unit;
+        }
         let output = NativeOutput {
             run_ref: format!("gpu-job-{job_hex}-{params_hash}"),
             name: file.name.clone(),
             media_type,
             bytes: file.bytes.clone(),
-            report: json!({
-                "job": job_hex,
-                "key": file.key,
-                "name": file.name,
-                "sha256": file.sha256,
-                "bytes": file.bytes.len(),
-            })
-            .to_string(),
+            report: report.to_string(),
             made_by: Some(MadeBy {
                 inputs: writer
                     .starter_input

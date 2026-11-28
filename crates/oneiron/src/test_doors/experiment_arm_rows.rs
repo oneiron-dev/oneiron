@@ -17,6 +17,26 @@ pub fn put_arm(vault: &Vault, arm: &ExperimentArm) -> crate::Result<()> {
     vault.with_write_txn(|wtxn| crate::experiment_arm::put_arm_in_txn(vault, wtxn, arm))
 }
 
+/// The digest of `request`'s ask as `asker` frames it for `vault.arms.units.reserve`: the
+/// `ask_digest` its reserve stores on the claim (row RSI-ARM-RESULT: an ask with no result
+/// keeps main's digest).
+///
+/// # Errors
+///
+/// A blank intent key, or an ask that does not encode.
+pub fn unit_ask_digest(
+    asker: crate::EntityId,
+    request: &crate::experiment_arm::UnitReserveRequest,
+) -> Result<String, crate::gpu_line::IntentRefused> {
+    crate::gpu_line::IntentAsk::new(
+        asker,
+        crate::experiment_arm::ARMS_UNITS_RESERVE_VERB,
+        &request.intent_key,
+        &request.ask(),
+    )
+    .map(|ask| ask.ask_digest().to_owned())
+}
+
 /// Puts `claim` under its logical attempt as given, in one write.
 ///
 /// # Errors
