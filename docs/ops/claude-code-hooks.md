@@ -439,7 +439,9 @@ folder Claude Code runs in. Then:
   they give nothing.
 - A read that names its projects (`project_refs` on `vault.recall`,
   `vault.claims.list_filtered`, `vault.claims.read_filtered`) reads those,
-  within what the credential reads anyway.
+  within what the credential reads anyway. It reads the notes, messages and
+  turns placed in those projects too; a row with no usable placement is in
+  none of them.
 - Claims, notes, messages and turns carry a project. The notes and turns a
   session writes, including turns imported from its session log, carry the
   folder's bound project. Rows written with no folder, or before session
@@ -448,6 +450,10 @@ folder Claude Code runs in. Then:
   and turns whatever project they carry, since they were posted to every
   member; claims in a room still follow the folder. Conversations and other
   rows read as before.
+- A bound session's diary and sealed-pad reads (`self.memory.diary.query`,
+  `self.memory.diary.pinned`, `self.memory.pads.read`) serve only the
+  entries placed in the folder's project or below it. A handle with no folder
+  reads them as before.
 
 The binding selects; it grants nothing. The folder a tool call names comes from
 the client, so a client that names another folder only changes which of the
