@@ -95,6 +95,7 @@ pub fn install(request: &InstallRequest) -> Result<(), String> {
         node_file: request.node_file.clone(),
         engine_account: request.engine_account.clone(),
         job_account: settings.job_account.clone(),
+        slice: settings.job_cgroup.slice.clone(),
         state_dir: settings.state_dir.clone(),
         work_dir: settings.work_dir.clone(),
         protected,

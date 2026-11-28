@@ -178,6 +178,10 @@ pub struct ExecutionNodeSettings {
     /// are found by its UUID).
     #[serde(default)]
     pub device_files: BTreeMap<String, Vec<PathBuf>>,
+    /// The job units' slice and CPU weights (`[execution_node.job_cgroup]`),
+    /// checked as the table reads ([`super::job_cgroup`]).
+    #[serde(default)]
+    pub job_cgroup: super::job_cgroup::JobCgroupSettings,
     /// Whether the node obeys the owner's machine policy rows (pass 34 2.4, row P0) as well as
     /// this file, the stricter of the two applying. Default true; false keeps the node to this
     /// file alone.
