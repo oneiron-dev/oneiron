@@ -478,11 +478,48 @@ pub(in crate::code_run) fn lineage_for_run(bridge_calls: &[CodeRunBridgeCall]) -
     lineage
 }
 
+/// The verb of a recorded bridge call that returned a connector's reply into
+/// its step, which a `connector_result` fold folds (FIX 14541): a
+/// `connector.call`, or a `self.use` of a connector call, that returned the
+/// tool's reply or the connector's questions, as the run's tool-output
+/// lineage reads it, or a `connector.answer` whose answer did. `None` for
+/// every other call, and for one held, refused or failed.
+pub(crate) fn connector_reply_verb(call: &CodeRunBridgeCall) -> Option<&str> {
+    use crate::code_run::payload::decode_self_dispatch_outcome;
+    use crate::code_run::types::SelfDispatchOutcome;
+
+    if call.effect == SelfEffect::ConnectorAnswer {
+        let Ok(SelfDispatchOutcome::AgentVerb(answer)) =
+            decode_self_dispatch_outcome(&call.outcome)
+        else {
+            return None;
+        };
+        return carries_connector_reply(answer.output).then_some(call.effect.as_str());
+    }
+    if !agent_verb_returned_external_reply(call) {
+        return None;
+    }
+    super::agent_verb::recorded_call(call).map(|(verb, _)| verb)
+}
+
+/// Whether a `connector.call` reply carries the connector's own words: the
+/// tool's reply, or the questions it waits on.
+fn carries_connector_reply(reply: serde_json::Value) -> bool {
+    use crate::code_run::ConnectorCallReply;
+
+    matches!(
+        serde_json::from_value::<ConnectorCallReply>(reply),
+        Ok(ConnectorCallReply::Delivered {
+            result: Some(_),
+            ..
+        } | ConnectorCallReply::AwaitingInput { .. })
+    )
+}
+
 /// An SDK call's actual returned foreign bytes, not merely its verb name.
 /// A held call has no reply yet; failed/refused calls and other SDK verbs
 /// do not add tool-output lineage.
 fn agent_verb_returned_external_reply(call: &CodeRunBridgeCall) -> bool {
-    use crate::code_run::ConnectorCallReply;
     use crate::code_run::payload::decode_self_dispatch_outcome;
     use crate::code_run::types::SelfDispatchOutcome;
     use crate::secret_custody::SECRET_USE_CONNECTOR_CALL;
@@ -514,11 +551,5 @@ fn agent_verb_returned_external_reply(call: &CodeRunBridgeCall) -> bool {
         }
         _ => return false,
     };
-    matches!(
-        serde_json::from_value::<ConnectorCallReply>(reply),
-        Ok(ConnectorCallReply::Delivered {
-            result: Some(_),
-            ..
-        } | ConnectorCallReply::AwaitingInput { .. })
-    )
+    carries_connector_reply(reply)
 }

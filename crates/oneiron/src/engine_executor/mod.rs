@@ -49,7 +49,7 @@ pub use self::code_check::TypeFeedback;
 // step's is.
 pub(crate) use self::code_check::{CheckedDoor, LatestFeedback, RowsCheck};
 pub use self::compaction::{CompactionReport, CompactionSpawn, RunCompaction, WindowFullReason};
-pub(crate) use self::compaction_host::{ParkedKindFolds, parked_kind_folds};
+pub(crate) use self::compaction_host::{ParkedKindFolds, console_fold_stub, parked_kind_folds};
 pub use self::driver::EngineNativeExecutor;
 pub(crate) use self::host::ACT_GATES_COUNT_CALLABLE_ROWS;
 pub use self::no_model::NoModelBackend;

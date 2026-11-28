@@ -79,7 +79,7 @@ mod self_writer;
 mod stored_epoch;
 mod withdrawn;
 
-pub use fold_kinds::{FoldKind, FoldedOutput, FoldedSpeech};
+pub use fold_kinds::{FoldKind, FoldedConnectorCall, FoldedOutput, FoldedSpeech};
 pub use folds::{
     FoldCompactAsk, FoldCompactAsked, FoldCompactInput, FoldDescription, FoldLedger, FoldList,
     FoldMark, FoldMarkInput, FoldMarked, FoldPending, FoldRecord, FoldReply, FoldSpan, FoldUnfold,

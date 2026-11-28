@@ -27,6 +27,7 @@ pub use oneiron_store::compaction::gate::CompactionSuppression;
 pub use oneiron_store::compaction::gate::compaction_reply_schema;
 pub use oneiron_verb_wire::compaction::driver::CompactionWindowMessage;
 pub use oneiron_verb_wire::compaction::fold_kinds::FoldKind;
+pub use oneiron_verb_wire::compaction::fold_kinds::FoldedConnectorCall;
 pub use oneiron_verb_wire::compaction::fold_kinds::FoldedOutput;
 pub use oneiron_verb_wire::compaction::fold_kinds::FoldedSpeech;
 pub use oneiron_verb_wire::compaction::folds::FoldCompactInput;

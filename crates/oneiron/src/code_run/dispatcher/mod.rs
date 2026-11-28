@@ -62,6 +62,7 @@ use crate::{ClaimSource, Vault, WriteActor};
 use self::admission::{admit_recorded_answer, gate_rejection};
 #[cfg(oneiron_test_support)]
 pub(crate) use self::agent_verb::consent_request_digest_for_test;
+pub(crate) use self::agent_verb::is_connector_call_wait;
 pub(crate) use self::agent_verb::recorded_call as recorded_verb_call;
 #[cfg(oneiron_test_support)]
 pub(crate) use self::agent_verb::resumed_write_meets_recorded_row;
@@ -74,7 +75,9 @@ pub(crate) use self::emission::code_emission_record_id_for_test;
 #[cfg(test)]
 pub(super) use self::envelope::{SELF_PROVENANCE_CALL_KEY, edge_operation_gate_id};
 pub(super) use self::envelope::{SELF_PROVENANCE_SURFACE_KEY, lineage_for_run};
-pub(crate) use self::envelope::{check_write_gate_against_vault, envelope_run_ref};
+pub(crate) use self::envelope::{
+    check_write_gate_against_vault, connector_reply_verb, envelope_run_ref,
+};
 pub(crate) use self::executor_reply::{ExecutorReply, ExecutorReplyPublisher};
 use self::human_speech::HumanWaitDispatchTarget;
 #[cfg(oneiron_test_support)]

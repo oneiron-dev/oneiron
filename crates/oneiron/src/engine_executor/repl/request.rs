@@ -155,11 +155,11 @@ impl EngineNativeExecutor<'_> {
         if !epochs.is_empty() {
             self.admit_compaction_read()?;
         }
-        // A step whose output a fold by kind folded shows the fold's stub:
-        // its body is never read, held or counted against the window.
-        let folded_outputs = epochs
-            .folds
-            .kind_folded_steps(crate::compaction::FoldKind::ReplOutput);
+        // A step whose output a fold by kind folded (`repl_output`, or
+        // `connector_result` where the step took a connector's reply) shows
+        // the fold's stub: its body is never read, held or counted against
+        // the window.
+        let folded_outputs = epochs.folds.console_folded_steps();
         let views = {
             let share = &self.result_share;
             let watch = self.storage.limit_watch();
@@ -248,20 +248,26 @@ impl EngineNativeExecutor<'_> {
             let full = view.tier == OutputTier::Full;
             // ONE-1929 framing remains engine-authored. The stored program and
             // observation never change; only this model-facing projection does.
-            let folded = epochs
-                .folds
-                .kind_covering(crate::compaction::FoldKind::ReplOutput, seq as u64);
+            // The first console fold that landed over the step, of either
+            // kind, so the stub keeps its bytes when a later one lands.
+            let folded = epochs.folds.console_covering(seq as u64);
             let console = match folded {
                 // A fold by kind keeps the program and its say() messages;
                 // the console shows the fold's stub, which keeps the
                 // output's handles (ARCH-0067 §2.2, fold by kind). Every
                 // literal it keeps is masked at each render, so a value
-                // custody learns after the fold lands is masked too.
+                // custody learns after the fold lands is masked too. A
+                // connector result's stub names each connector call that
+                // replied, read from the run's record (FIX 14541).
                 Some(fold) => mask_known_text(
                     &self.storage,
-                    &fold
-                        .output_stub(seq as u64, noted.insert(fold.fold))
-                        .unwrap_or_default(),
+                    &crate::engine_executor::console_fold_stub(
+                        fold,
+                        record,
+                        seq as u64,
+                        noted.insert(fold.fold),
+                    )
+                    .unwrap_or_default(),
                 )?,
                 None => match view.tier {
                     OutputTier::Full | OutputTier::Overview => String::from_utf8(view.bytes)
@@ -331,7 +337,20 @@ impl EngineNativeExecutor<'_> {
             messages.extend(self.step_board_frames_message(record, seq as u64));
             messages.extend(self.step_signals_message(record, seq as u64));
             if let Some(output) = resumed.get(&(seq as u64)) {
-                messages.push(self.resumed_reply_message(record, seq as u64, output)?);
+                // A connector result folds the reply its parked connector
+                // call resumed with, whichever fold the console shows: it
+                // shows as its card.
+                let folded_by = epochs
+                    .folds
+                    .kind_covering(crate::compaction::FoldKind::ConnectorResult, seq as u64)
+                    .map(|fold| fold.fold);
+                messages.push(LlmMessage {
+                    role: LlmMessageRole::User,
+                    content: vec![ContentPart::Text {
+                        text: self.resumed_reply_text(record, seq as u64, output, folded_by)?,
+                        signature: None,
+                    }],
+                });
             }
         }
         messages.extend(self.fold_tail(&epochs, record, views.len())?);
@@ -445,22 +464,33 @@ impl EngineNativeExecutor<'_> {
     /// What follows a parked step's turn once its wait was answered: the
     /// reply inline within one reply's bound, else its card under `wait<s>`.
     /// A body that is not clean reaches the model as its card, which withholds
-    /// it.
-    pub(super) fn resumed_reply_message(
+    /// it. So does a connector call's reply that the `connector_result` fold
+    /// `folded_by` folded (FIX 14541); `self.unfold` brings it back inline.
+    pub(in crate::engine_executor) fn resumed_reply_text(
         &self,
         record: &CodeRunReplayRecord,
         seq: u64,
         output: &CodeRunRawOutput,
-    ) -> EngineExecutorResult<LlmMessage> {
+        folded_by: Option<u64>,
+    ) -> EngineExecutorResult<String> {
         let wait = parked_wait_at(&self.storage, record, seq)?.ok_or(Error::CorruptedIndex(
             "executor resumed reply without a wait",
         ))?;
-        let head = format!(
+        let mut head = format!(
             "The call parked at step {seq} ({}, wait {}) answered",
             wait.effect.as_str(),
             wait.wait_id.to_hex()
         );
-        let text = if output.raw_len <= RESULT_REPLY_INLINE_BYTES as u64
+        let folded_by = folded_by.filter(|_| crate::code_run::is_connector_call_wait(&wait));
+        if let Some(fold) = folded_by {
+            head.push_str(&format!(
+                " ⟨{} · {} folded⟩",
+                crate::compaction::fold_handle(fold),
+                crate::compaction::FoldKind::ConnectorResult.as_str()
+            ));
+        }
+        let text = if folded_by.is_none()
+            && output.raw_len <= RESULT_REPLY_INLINE_BYTES as u64
             && clean_for_context(&self.storage, Some(record.run_id), output)?
         {
             let body: serde_json::Value =
@@ -480,13 +510,7 @@ impl EngineNativeExecutor<'_> {
                 serde_json::to_string(&card)?
             )
         };
-        Ok(LlmMessage {
-            role: LlmMessageRole::User,
-            content: vec![ContentPart::Text {
-                text,
-                signature: None,
-            }],
-        })
+        Ok(text)
     }
 }
 
