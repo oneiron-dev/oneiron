@@ -155,6 +155,27 @@ impl Fixture {
         assert!(note_review_seen(&self.vault, note).expect("read the NOTE's review row"));
         (note, claim)
     }
+
+    fn signed_birth(&self, claim: EntityId) -> EntityId {
+        let mut births =
+            oneiron::test_doors::gate_receipt_unclear::machine_history_controls(&self.vault, claim)
+                .expect("read the CLAIM's machine history controls")
+                .into_iter()
+                .filter(|id| {
+                    self.vault
+                        .get_claim(id)
+                        .expect("read a machine history control")
+                        .is_some_and(|body| body.predicate == "machine.birth")
+                });
+        let birth = births
+            .next()
+            .expect("the NOTE review's promotion has no signed birth: it is not a MACHINE claim");
+        assert!(
+            births.next().is_none(),
+            "the NOTE review's promotion has more than one signed birth"
+        );
+        birth
+    }
 }
 
 /// A named PERSON for a synthetic CLAIM's subject.
@@ -233,6 +254,92 @@ fn an_old_claim_whose_note_was_hard_deleted_is_withdrawn() {
     assert!(
         f.vault.get_claim(&claim).expect("read the CLAIM").is_none(),
         "the backfill left an old CLAIM whose NOTE was deleted"
+    );
+}
+
+#[test]
+fn an_old_signed_claims_birth_gets_its_note_dependency() {
+    let f = Fixture::new();
+    let (note, claim) = f.review_new_note();
+    let birth = f.signed_birth(claim);
+    forget_note_claim_dependencies(&f.vault, claim).expect("strip the CLAIM's dependency");
+    forget_note_claim_dependencies(&f.vault, birth).expect("strip the signed birth's dependency");
+    reset_note_claim_dependency_backfill(&f.vault).expect("reset the backfill marker");
+    let f = f.reopen();
+    assert!(
+        f.vault
+            .get_claim(&birth)
+            .expect("read the signed birth")
+            .is_some(),
+        "the old CLAIM's signed birth does not read after the backfill"
+    );
+    assert!(f.vault.delete_entity(&note).expect("soft delete the NOTE"));
+    assert!(
+        f.vault.get_claim(&claim).expect("read the CLAIM").is_none(),
+        "the old CLAIM still reads after its NOTE's delete"
+    );
+    assert!(
+        f.vault
+            .get_claim(&birth)
+            .expect("read the signed birth")
+            .is_none(),
+        "the old CLAIM's signed birth still reads after its NOTE's delete"
+    );
+}
+
+#[test]
+fn an_old_signed_claim_whose_note_was_soft_deleted_loses_its_birth() {
+    let f = Fixture::new();
+    let (note, claim) = f.review_new_note();
+    let birth = f.signed_birth(claim);
+    forget_note_claim_dependencies(&f.vault, claim).expect("strip the CLAIM's dependency");
+    forget_note_claim_dependencies(&f.vault, birth).expect("strip the signed birth's dependency");
+    assert!(f.vault.delete_entity(&note).expect("soft delete the NOTE"));
+    assert!(
+        f.vault
+            .get_claim(&birth)
+            .expect("read the signed birth")
+            .is_some(),
+        "the signed birth does not read before the backfill"
+    );
+    reset_note_claim_dependency_backfill(&f.vault).expect("reset the backfill marker");
+    let f = f.reopen();
+    assert!(
+        f.vault
+            .get_claim(&birth)
+            .expect("read the signed birth")
+            .is_none(),
+        "the backfill left the signed birth of an old CLAIM whose NOTE was deleted"
+    );
+}
+
+#[test]
+fn an_old_signed_claim_whose_note_was_hard_deleted_loses_its_birth() {
+    let f = Fixture::new();
+    let (note, claim) = f.review_new_note();
+    let birth = f.signed_birth(claim);
+    forget_note_claim_dependencies(&f.vault, claim).expect("strip the CLAIM's dependency");
+    forget_note_claim_dependencies(&f.vault, birth).expect("strip the signed birth's dependency");
+    let deleted = f
+        .vault
+        .delete_entity_with_reason_as_owner(&f.proof, &note, DeleteReason::UserHardDelete)
+        .expect("the owner hard deletes the NOTE");
+    assert!(deleted.existed);
+    assert!(
+        f.vault
+            .get_claim(&birth)
+            .expect("read the signed birth")
+            .is_some(),
+        "the signed birth does not read before the backfill"
+    );
+    reset_note_claim_dependency_backfill(&f.vault).expect("reset the backfill marker");
+    let f = f.reopen();
+    assert!(
+        f.vault
+            .get_claim(&birth)
+            .expect("read the signed birth")
+            .is_none(),
+        "the backfill left the signed birth of an old CLAIM whose NOTE was deleted"
     );
 }
 

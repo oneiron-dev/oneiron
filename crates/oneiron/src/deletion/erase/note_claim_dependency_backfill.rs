@@ -14,12 +14,14 @@
 //! walk does for a CLAIM written after N1 (Engine ANSWER
 //! STALE-SOURCE-OLD-ROWS = A); the registration refuses a stale source, so
 //! linking one would fail the open.
+//! A signed CLAIM's birth copy is linked and withdrawn with it.
 //!
 //! Marker [`NOTE_CLAIM_DEPENDENCY_BACKFILL`]: `()` key, Raw value. In
 //! progress the value is tag `1`, the last visited CLAIM id (16 bytes) and
 //! the eight counters (each u64 BE); complete it is tag `2` and the eight
 //! counters. Counters in order: scanned, linked, withdrawn, undecodable,
 //! missing_without_marker, deleted_ref_type_unknown, archived, stale_note.
+//! A signed history that does not resolve also counts as undecodable.
 //! A marker value that does not decode restarts the pass; its effects are
 //! idempotent.
 
@@ -265,10 +267,39 @@ impl Vault {
         }
     }
 
+    /// The signed birth the trusted pin names for a MACHINE CLAIM, or `None`
+    /// for an unsigned CLAIM. A signed history that does not resolve counts as
+    /// undecodable and returns `None` rather than failing the open.
+    fn signed_birth_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        claim: &EntityId,
+        counts: &mut BackfillCounts,
+    ) -> Result<Option<EntityId>> {
+        if self
+            .store
+            .vault_meta
+            .get(txn, &crate::claim::history_projection::pin_key(*claim))?
+            .is_none()
+        {
+            return Ok(None);
+        }
+        match crate::claim::history_projection::machine_history_rows(&self.store, txn, *claim)
+            .and_then(|rows| rows.birth.event_id())
+        {
+            Ok(id) => Ok(Some(id)),
+            Err(_) => {
+                counts.undecodable += 1;
+                Ok(None)
+            }
+        }
+    }
+
     /// Visits one CLAIM: links each live NOTE ref, or withdraws the CLAIM
-    /// when any NOTE ref was removed. A header-only shell, an already-stale
-    /// CLAIM and a CLAIM with no consolidation evidence are skipped; a body
-    /// or envelope that does not decode is counted undecodable.
+    /// when any NOTE ref was removed, with the signed birth copy in either case.
+    /// A header-only shell, an already-stale CLAIM and a CLAIM with no
+    /// consolidation evidence are skipped; a body or envelope that does not
+    /// decode is counted undecodable.
     fn backfill_one_claim_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -314,6 +345,11 @@ impl Vault {
                 NoteRef::Other => {}
             }
         }
+        let birth = if withdraw || !live_notes.is_empty() {
+            self.signed_birth_in_txn(&*wtxn, claim, counts)?
+        } else {
+            None
+        };
         if withdraw {
             let write = crate::secret_custody::CustodyWrite::of(self);
             crate::ports::withdraw_dependent_for_backfill_in_txn(
@@ -322,11 +358,24 @@ impl Vault {
                 claim,
                 &CarriedWorlds::default(),
             )?;
+            if let Some(birth) = birth
+                && !crate::ports::stale_in_txn(&self.store, wtxn, &birth)?
+            {
+                crate::ports::withdraw_dependent_for_backfill_in_txn(
+                    &write,
+                    wtxn,
+                    &birth,
+                    &CarriedWorlds::default(),
+                )?;
+            }
             counts.withdrawn += 1;
             return Ok(());
         }
         for note in &live_notes {
             crate::ports::record_derived_edge_in_txn(&self.store, wtxn, claim, note)?;
+            if let Some(birth) = birth {
+                crate::ports::record_derived_edge_in_txn(&self.store, wtxn, &birth, note)?;
+            }
             counts.linked += 1;
         }
         Ok(())
