@@ -284,7 +284,9 @@ pub(super) fn walk_edges(
                     rtxn,
                     &edge.target,
                     corpus_scope,
-                )? {
+                )
+                .map(|_| true)?
+                {
                     continue;
                 }
                 match candidates.entry(edge.target) {
