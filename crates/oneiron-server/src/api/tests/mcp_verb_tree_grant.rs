@@ -1083,3 +1083,82 @@ async fn owner_preflight_keeps_agent_exception_and_owner_grade_separate() {
         &[],
     );
 }
+
+/// Red: let the non-owner path pass `NoteKindAudience::Owner` to the projection.
+#[tokio::test]
+async fn note_kind_discovery_lists_installed_kinds_to_the_owner_only() {
+    use crate::api::mcp_gateway::mcp_discovery_view;
+    use oneiron::note::{ContextDefault, ExtractionDefault, NoteKindDescriptor, RetentionDefault};
+
+    let (_dir, server) = test_server();
+    let owner_ref = server.vault().ensure_embedded_owner_actor().unwrap();
+    let installed = "tree-private/therapy";
+    server
+        .vault()
+        .register_note_kind(&NoteKindDescriptor {
+            pack: "tree-private".to_owned(),
+            kind: installed.to_owned(),
+            extraction: ExtractionDefault::Disabled,
+            context: ContextDefault::OwnerOnly,
+            retention: RetentionDefault::Durable,
+            archive_after_days: None,
+        })
+        .unwrap();
+    register_mcp_actor(&server, "tree-kind-owner", owner_ref, EdgeActorClass::Human).await;
+    let owner = mcp_test_context(&server, "tree-kind-owner", "tree-kind-owner-run").await;
+    let agent = attenuated_context(
+        &server,
+        "tree-kind-agent",
+        seeded_test_entity_id(0x6050),
+        EdgeActorClass::Agent,
+        &["core:read", "core:write"],
+        None,
+        None,
+    )
+    .await;
+
+    for (actor, sees_installed) in [(&owner, true), (&agent, false)] {
+        let view = mcp_discovery_view(&server, actor, RunAuthor::Caller).unwrap();
+        let create = view
+            .expand("vault.notes.create")
+            .expect("the caller can create notes");
+        let kinds = create
+            .lines()
+            .find(|line| line.contains("kind is one of"))
+            .unwrap();
+        assert!(kinds.contains("\"research\""), "{create}");
+        assert_eq!(kinds.contains(installed), sees_installed, "{create}");
+        assert_eq!(create.contains(installed), sees_installed, "{create}");
+    }
+}
+
+/// Red: bypass the `mcp_admit_scoped_verb` gate in discovery (it checks `BoundName`).
+#[tokio::test]
+async fn bound_credential_discovery_view_admits_only_its_rows() {
+    use crate::api::mcp_gateway::mcp_discovery_view;
+
+    let (_dir, server) = test_server();
+    register_bound_verb_mcp_actor(
+        &server,
+        "tree-discovery-bound",
+        seeded_test_entity_id(0x6051),
+        &["execute", "vault.recall"],
+    )
+    .await;
+    let actor = mcp_test_context(&server, "tree-discovery-bound", "tree-discovery-bound-run").await;
+    let view = mcp_discovery_view(&server, &actor, RunAuthor::Caller).unwrap();
+    let recall = view.expand("vault.recall").unwrap();
+    assert!(recall.starts_with("vault.recall("), "{recall}");
+    let branch = view.expand("vault").unwrap();
+    assert_eq!(branch.lines().count(), 2, "{branch}");
+    assert_eq!(
+        branch.lines().next(),
+        Some("vault · 1 verbs · a line per child")
+    );
+    let omitted = view.expand("vault.notes.create").unwrap_err();
+    assert_eq!(omitted, view.expand("not.a.real.verb").unwrap_err());
+    assert_eq!(
+        view.search("vault.notes.create", None, None),
+        view.search("not.a.real.verb", None, None),
+    );
+}
