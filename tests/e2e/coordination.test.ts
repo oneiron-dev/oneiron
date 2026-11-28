@@ -1683,7 +1683,7 @@ function coordination07Asked(plan: FacadeResult<"vault.agents.spawn">["plan"]): 
 }
 /* COORDINATION-07 promise: one task type, placed once at spawn with its node and tree version, drives the team plan;
  *   an unsure placement is the root; the plan, the launched agents and the resolved team carry that stamp, and no
- *   consumer reports another; a pinned width and model are kept under the hard cap and recorded beside what was
+ *   consumer reports another; a pinned width and model are kept, with the hard cap, and recorded beside what was
  *   resolved; a keyed replay places and launches nothing again, and one key never carries another ask.
  * Doors: typed HTTP facade (skill hub import, vault.skills.fork, vault.task_types.pin/promote/get,
  *   vault.settings.learning.put, vault.agents.create, vault.agents.spawn, vault.agents.spawn.get); ScriptedProviders
@@ -1692,7 +1692,11 @@ function coordination07Asked(plan: FacadeResult<"vault.agents.spawn">["plan"]): 
  *   fixture-worker@coordination-v1 is coord07worker/fixture-worker@coordination-v1 on the scripted worker.
  * Placement counts (PLAN 24 Nov 22:42, not contested): placement climbs only as far as it must (ARCH-0079 Fig. 3),
  *   so the rule rung places the keyword-certain need with no model call and only the uncertain need asks the Big
- *   rung, once. Each new spawn is placed once (one stamp); the keyed replay asks nothing.
+ *   rung, once per new spawn. Each new spawn is placed once (one stamp). Spawn 3 is on the uncertain need, so a
+ *   second placement on its keyed replay would be a model call the case counts; the replay asks nothing.
+ * Not proved here: that the pinned plan fits under its cap. Before any spend calibration the per-agent prior projects
+ *   more than the cap for width two, and the planner keeps the pins over budget (COORDINATION-07-PINNED-PLAN-FIT-UNPROVED);
+ *   the case proves the cap is kept as asked.
  * Unproved (FIX rows filed with this case): the seat-route stamp: a run's seat is born only on a model with a seat
  *   description row for the host's [models.decisions.seat] facet (llm/seat.rs), and no public door writes one
  *   (SEAT-DESCRIPTION-ROW-NO-PUBLIC-DOOR), so every run here reads as not seated, with no stamp. The critic stamp:
@@ -1701,7 +1705,7 @@ function coordination07Asked(plan: FacadeResult<"vault.agents.spawn">["plan"]): 
  *   view: it reads the team receipt the leader's own self.team.record writes, and a scripted provider cannot tell the
  *   leader's code-mode turn from its member's (one model, generated prompts) (COORDINATION-07-LEARNING-VIEW-UNPROVED).
  */
-suite.test(test, "COORDINATION-07", "One placed task type drives the team plan: placed once, unsure on the root, the plan, launched agents and resolved team on that stamp, pinned width and model kept under the hard cap, and a keyed replay places nothing again", async () => {
+suite.test(test, "COORDINATION-07", "One placed task type drives the team plan: placed once, unsure on the root, the plan, launched agents and resolved team on that stamp, pinned width and model kept with the hard cap, and a keyed replay places nothing again", async () => {
   const c = await coordination07Scenario();
   const tree = { version: c.inputs.tree.version, root: coordination07Node(c.inputs.tree.root) };
   const certain = c.inputs.placementCases.find(row => coordination07Node(row.expectedNode) !== tree.root);
@@ -1829,23 +1833,31 @@ agent = "${agentRef}"
     expect(coordination07DeciderCalls(providers)).toHaveLength(c.expected.placementCallsPerNewSpawn);
     expect(coordination07DeciderCalls(providers)).toEqual(["coordination07-place-uncertain"]);
 
-    // Spawn 3: a NEW intent with the width and the fixture model pinned. The planner keeps both, under the cap.
+    // Spawn 3: a NEW intent on the uncertain need, with the width and the fixture model pinned. Its placement asks
+    // the Big rung once more and lands on the root again, so a second placement on its replay would be a third call.
+    // The planner keeps both pins and the asked cap.
+    providers.enqueue({ id: "coordination07-place-pinned", origin: "decider", role: "checker", purpose: "task-type placement",
+      request: COORDINATION07_DECIDE,
+      response: openaiText("coordination07-place-pinned", "coord07-decider",
+        JSON.stringify({ answer: c.inputs.tree.seedTypes.find(seed => seed !== certainStamp.node_id), probability: 0.2 }),
+        { inputTokens: 256, outputTokens: 16 }) });
     providers.enqueue({ id: "coordination07-team-start", origin: "worker", role: "generative_reasoner", purpose: "pattern launch start",
       request: { method: "POST", path: "/v1/chat/completions", model: model.name, fields: { stream: false }, system: skills.ceoSkillMd },
       response: openaiText("coordination07-team-start", model.name, JSON.stringify({
         leader_briefing: "Decide the checklist after the member's advice.",
         member_briefings: ["Advise on the checklist's order."], axis: "converge",
       }), { inputTokens: 512, outputTokens: 64 }) });
-    const pinnedAsk = { ...base, intent_key: "coordination-07-pinned", need: certain.need,
+    const pinnedAsk = { ...base, intent_key: "coordination-07-pinned", need: uncertain.need,
       width: c.inputs.pinnedSpawn.width, model: { mode: "pin" as const, value: model.id } };
     expect(c.inputs.pinnedSpawn.newIntent).toBe(true);
     const third = await owner.call("vault.agents.spawn", pinnedAsk);
     expect(third.refusal ?? null).toBeNull();
     expect(third.phase).toBe("launched");
-    expect(third.placed).toEqual(certainStamp);
-    expect(coordination07DeciderCalls(providers)).toEqual(["coordination07-place-uncertain"]);
+    expect(third.placed).toEqual(rootStamp);
+    const placements = ["coordination07-place-uncertain", "coordination07-place-pinned"];
+    expect(coordination07DeciderCalls(providers)).toEqual(placements);
     expect(coordination07LaunchCalls(providers)).toEqual(["coordination07-team-start"]);
-    expect(third.plan?.type_ref).toEqual(certainStamp);
+    expect(third.plan?.type_ref).toEqual(rootStamp);
     expect(third.plan?.width).toBe(c.expected.pinnedWidth);
     expect(third.plan?.model).toBe(model.id);
     expect(third.plan?.pattern).toBe(COORDINATION07_CEO_PATTERN.pattern);
@@ -1854,7 +1866,8 @@ agent = "${agentRef}"
       model: { mode: "pin", value: model.id }, width: c.inputs.pinnedSpawn.width, pattern: null,
       budget_cap_units: { mode: "pin", value: cap },
     });
-    // The cap is the asked cap: a pin and a seed never widen a budget.
+    // The cap is the asked cap: a pin and a seed never widen a budget. This proves the cap is kept, not that the
+    // pinned plan fits under it (see "Not proved here").
     expect(c.expected.budgetWidens).toBe(false);
     expect(third.plan?.hard_cap_units).toBe(cap);
     expect(third.member_attempts).toHaveLength(c.expected.pinnedWidth - 1);
@@ -1863,7 +1876,8 @@ agent = "${agentRef}"
     // The keyed replay answers what it kept: no second placement, no second team start.
     const replay = await owner.call("vault.agents.spawn", pinnedAsk);
     expect(replay).toEqual(third);
-    expect(coordination07DeciderCalls(providers)).toHaveLength(1 + c.expected.placementCallsOnReplay);
+    expect(coordination07DeciderCalls(providers)).toHaveLength(placements.length + c.expected.placementCallsOnReplay);
+    expect(coordination07DeciderCalls(providers)).toEqual(placements);
     expect(coordination07LaunchCalls(providers)).toEqual(["coordination07-team-start"]);
     // One key never carries another ask.
     await coordination04Refused(owner.call("vault.agents.spawn", { ...pinnedAsk, width: { mode: "pin", value: c.expected.pinnedWidth + 1 } }),
@@ -1891,14 +1905,15 @@ agent = "${agentRef}"
     // leader_loaded): the plan's pattern and width in distinct launched agents, every stamp the dispatch's.
     const team = await awaitPublic(() => owner.call("vault.agents.spawn.get", { spawn_ref: third.root_attempt! }),
       seen => seen.resolved !== null && seen.resolved !== undefined, { label: "COORDINATION-07 resolved team" });
-    expect(team.type_ref).toEqual(certainStamp);
+    expect(team.type_ref).toEqual(rootStamp);
     expect(team.plan).toEqual(third.plan);
     expect(team.launched.map(row => row.attempt_ref)).toEqual([third.root_attempt, ...third.member_attempts]);
-    expect(team.launched.map(row => row.type_ref)).toEqual(team.launched.map(() => certainStamp));
+    expect(team.launched.map(row => row.type_ref)).toEqual(team.launched.map(() => rootStamp));
     expect(team.resolved).toMatchObject({
-      type_ref: certainStamp, pattern: COORDINATION07_CEO_PATTERN.pattern, width: c.expected.pinnedWidth, model: model.id,
+      type_ref: rootStamp, pattern: COORDINATION07_CEO_PATTERN.pattern, width: c.expected.pinnedWidth, model: model.id,
       root_attempt_ref: third.root_attempt, member_attempt_refs: third.member_attempts, team_ref: third.team_ref,
     });
+    // The binding carries no stamp of its own (team/doors.rs TeamBindingView): it names the team.
     expect(team.binding?.team_ref).toBe(third.team_ref);
     expect(team.binding?.pattern).toBe(COORDINATION07_CEO_PATTERN.pattern);
     expect(team.binding?.member_attempt_refs).toEqual(third.member_attempts);
