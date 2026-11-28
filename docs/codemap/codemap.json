@@ -1369,7 +1369,7 @@
      "path": "src/agent_dispatch/mod.rs",
      "purpose": "`dispatch(agent)` — AGENT-3 (ONE-1445, OF-334) over the OF-193 durable runner substrate",
      "surface": {
-      "crate-vis": 37,
+      "crate-vis": 38,
       "mod": 2,
       "re-export": 34
      }
@@ -2178,7 +2178,7 @@
      "path": "src/agent_dispatch/workflow.rs",
      "purpose": "Atomic saved-workflow admission",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -2200,6 +2200,7 @@
      "path": "src/agent_dispatch/workflow/model_context.rs",
      "purpose": "A workflow step's selected memory and chat, and the results of the sibling tasks it names (FIX 7742), as…",
      "surface": {
+      "crate-vis": 4,
       "fn": 7,
       "struct": 1
      }
@@ -27662,7 +27663,7 @@
      "path": "src/context_board/mod.rs",
      "purpose": "Typed Context Board render projections",
      "surface": {
-      "crate-vis": 22,
+      "crate-vis": 23,
       "mod": 3,
       "re-export": 30
      }
@@ -70602,6 +70603,16 @@
     },
     {
      "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/ports/dependent_walk/tests/claim_source.rs",
+     "purpose": "The redaction door's source for the every-door walk test: a CLAIM with a two-field value map, and the…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/ports/document_fields.rs",
@@ -100527,7 +100538,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 411,
+      "mod": 412,
       "re-export": 3
      }
     },
@@ -100977,7 +100988,7 @@
      "path": "src/test_doors/proactivity_digest_index.rs",
      "purpose": "Doors for `tests/digest_erase_scrubs_stored_copies.rs` (PROACTIVITY-DIGEST-COPY-ERASURE)",
      "surface": {
-      "fn": 9
+      "fn": 10
      }
     },
     {
@@ -102330,6 +102341,16 @@
       "const": 1,
       "fn": 4,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/workflow_context_rows.rs",
+     "purpose": "Open the workflow model-context row and section builders so integration tests can check their prompt text…",
+     "surface": {
+      "fn": 3
      }
     },
     {
@@ -119963,6 +119984,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/redaction_withdraws_dependents.rs",
+     "purpose": "CLAIM-REDACTION-SKIPS-DERIVED-COPIES: a value redaction withdraws the CLAIMs derived from the redacted one…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -123490,6 +123519,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/workflow_context_rows_fenced.rs",
+     "purpose": "FIX [WORKFLOW-CONTEXT-ROWS-UNFENCED]: selected workflow rows stay inside their model-context section, with…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/workspace_connector_routes.rs",
      "purpose": "The workspace connector core (L3-17, PR 1): `google.sheets` is one module on it, and keeps its four tools…",
      "surface": {}
@@ -125321,7 +125358,7 @@
     },
     "ports": {
      "entry": "crates/oneiron/src/ports/mod.rs",
-     "files": 55,
+     "files": 56,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -125969,7 +126006,7 @@
     },
     "test_doors": {
      "entry": "crates/oneiron/src/test_doors/mod.rs",
-     "files": 424,
+     "files": 425,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -126236,8 +126273,8 @@
    },
    "over_bar": 276,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8670,
-   "test_files": 2364
+   "source_files": 8671,
+   "test_files": 2367
   },
   "oneiron-agent-runtime": {
    "files": [
