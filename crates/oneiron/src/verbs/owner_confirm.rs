@@ -287,7 +287,8 @@ pub(crate) fn admit(
         }
         let stored: Option<OwnerConfirmStored> =
             OWNER_CONFIRMS.get(&vault.store, txn, &(caller_id, confirm))?;
-        let live = matches!(&stored, Some(kept) if kept.verb == verb && kept.expires_at.is_none_or(|at| at >= now));
+        // A kept row is dead from its `expires_at` second on (UC-12).
+        let live = matches!(&stored, Some(kept) if kept.verb == verb && kept.expires_at.is_none_or(|at| !oneiron_store::expiry::is_expired(now, at)));
         if !live {
             return Err(refused());
         }
@@ -319,7 +320,10 @@ fn retain(
         verb: verb.to_owned(),
         issued_at: now,
         expires_at: match row.keep {
-            PreviewKeep::Ttl => Some(now + OWNER_CONFIRM_TTL_SECS),
+            PreviewKeep::Ttl => Some(oneiron_store::expiry::expires_at_saturating(
+                now,
+                OWNER_CONFIRM_TTL_SECS,
+            )),
             PreviewKeep::UntilUsed => None,
         },
     };
@@ -335,7 +339,10 @@ fn retain(
             let mut expired = Vec::new();
             for entry in OWNER_CONFIRMS.iter_from(&vault.store, txn, &[])? {
                 let (key, kept) = entry?;
-                if kept.expires_at.is_some_and(|at| at < now) {
+                if kept
+                    .expires_at
+                    .is_some_and(|at| oneiron_store::expiry::is_expired(now, at))
+                {
                     expired.push(key);
                 }
             }
