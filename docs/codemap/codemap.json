@@ -58052,7 +58052,7 @@
      "path": "src/memory/claims/commit/preferences.rs",
      "purpose": "Stated-preference matching: the prior-claim lookup and preference conflicts",
      "surface": {
-      "crate-vis": 4
+      "crate-vis": 5
      }
     },
     {
@@ -58133,7 +58133,7 @@
      "purpose": "Claim lifecycle doors: commit, upsert, propose, retract and the deletion gates",
      "surface": {
       "crate-vis": 6,
-      "fn": 6
+      "fn": 7
      }
     },
     {
@@ -58151,7 +58151,7 @@
       "const": 1,
       "crate-vis": 6,
       "enum": 1,
-      "re-export": 9,
+      "re-export": 10,
       "struct": 3
      }
     },
@@ -59426,7 +59426,7 @@
      "surface": {
       "crate-vis": 49,
       "mod": 42,
-      "re-export": 77
+      "re-export": 79
      }
     },
     {
@@ -60000,7 +60000,8 @@
       "ClaimView",
       "HeldMark",
       "LexicalHit",
-      "NeighborHit"
+      "NeighborHit",
+      "PendingCorrection"
      ],
      "path": "src/memory/reads.rs",
      "purpose": "Entity/claim read surface plus BM25 and neighbor queries",
@@ -60008,7 +60009,7 @@
       "crate-vis": 13,
       "fn": 11,
       "re-export": 2,
-      "struct": 4
+      "struct": 5
      }
     },
     {
@@ -113383,6 +113384,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/claim_corrects_path.rs",
+     "purpose": "An agent corrects its own claim, the old claim names the correction, and its retract waits",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -126363,7 +126372,7 @@
    "over_bar": 276,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 8675,
-   "test_files": 2373
+   "test_files": 2374
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -216700,6 +216709,7 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "ClaimCorrectionInput",
       "ClaimInput"
      ],
      "path": "src/memory/claims/mod.rs",
@@ -216707,7 +216717,7 @@
      "surface": {
       "mod": 1,
       "re-export": 11,
-      "struct": 1
+      "struct": 2
      }
     },
     {
