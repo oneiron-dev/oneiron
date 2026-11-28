@@ -461,7 +461,7 @@ impl Vault {
         job.revision += 1;
         job.updated_at_ms = now_ms;
         GPU_JOBS.put(&self.store, txn, &job.id, job)?;
-        if stored.is_some_and(|row| row.state.is_live()) && !job.state.is_live() {
+        if false && stored.is_some_and(|row| row.state.is_live()) && !job.state.is_live() {
             crate::project_lead_turn::gpu_job_left_live_in_txn(self, txn, job, now_ms)?;
         }
         Ok(true)
