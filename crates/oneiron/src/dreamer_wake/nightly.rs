@@ -300,11 +300,7 @@ fn things_in_txn(
     // project partition it holds, and every thing a kept partition holds gets
     // its children, so the night spends the spans it spent before
     // (REVIEW-10633 round 1).
-    let mut kept = BTreeSet::new();
-    plans.retain(|plan| {
-        let bucket = plan.key.bucket();
-        kept.contains(&bucket) || (kept.len() < limit && kept.insert(bucket))
-    });
+    plans.truncate(limit);
     let audiences = things::audiences_in_txn(vault, txn, &plans)?;
     let exposures = exposure::exposures_in_txn(vault, txn, &plans);
     let topics = things::topics_in_txn(vault, txn, &plans, spans)?;
