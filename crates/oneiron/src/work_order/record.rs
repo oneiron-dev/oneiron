@@ -78,7 +78,7 @@ pub struct ResultBinding {
     /// The `application/json` artifact that takes the attempt's handoff manifest (row
     /// RSI-ARTIFACT-HANDOFF); `None` lands none. Left out of the encoding when `None`, so a
     /// binding without it encodes as before.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub manifest: Option<EntityId>,
 }
 
