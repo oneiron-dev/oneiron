@@ -18,8 +18,8 @@ use std::sync::{Arc, mpsc};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::gpu_job::{
     GpuConnectorError, GpuEndReason, GpuJobActor, GpuJobConnector, GpuJobEnd, GpuJobError,
-    GpuJobSignal, GpuJobSpec, GpuJobState, GpuResourceRef, GpuResourceStatus, GpuTermination,
-    MeterVerdict,
+    GpuJobSignal, GpuJobSpec, GpuJobState, GpuJobStatus, GpuResourceRef, GpuResourceStatus,
+    GpuTermination, MeterVerdict,
 };
 use oneiron::job_dispatch::{DispatchClose, DispatchPhase, JobObservation};
 use oneiron::job_workload::{WorkloadCaller, WorkloadRef, WorkloadStartRefusal};
@@ -34,7 +34,7 @@ use oneiron_server::gpu_execution_node::wire::{JobEnd, JobState, SignedJobReceip
 use oneiron_server::server::SyncServer;
 use oneiron_server::test_doors::gpu_backend::gpu_jobs_section;
 use serde_json::json;
-use vault_machine_rig::{FAR_EXPIRY_MS, make_connector, settings, with_rig};
+use vault_machine_rig::{FAR_EXPIRY_MS, make_connector, offer, settings, with_rig, with_rig_offer};
 
 fn revoke(vault: &Vault, owner: &AuthenticatedOwner, workload: &str, now_ms: u64) {
     let revoked = vault
@@ -335,10 +335,10 @@ fn a_job_that_never_started_settles_nothing_and_its_dispatch_keeps_the_nodes_rea
         let refused = rig.start_job(&workload);
         assert_eq!(
             refused.job.state,
-            GpuJobState::Held {
-                reason: "not_available_to_this_caller".to_owned()
+            GpuJobState::Ended {
+                reason: GpuEndReason::NeverStarted,
             },
-            "the job's reason does not disclose what the machine said (section 6; review round 1 of #10414)",
+            "the job records the refusal without disclosing what the machine said",
         );
         assert_eq!(
             refused.settled(),
@@ -396,6 +396,142 @@ fn a_job_that_never_started_settles_nothing_and_its_dispatch_keeps_the_nodes_rea
                 reason: "commit_missing".to_owned()
             },
             "the observation keeps the launch refusal's reason",
+        );
+    });
+}
+
+#[test]
+fn a_launch_refused_key_settles_no_overhead_and_reads_never_started() {
+    let mut offer = offer();
+    offer.rounding_secs = 1;
+    with_rig_offer(offer, |rig| {
+        let workload = rig.approve("launch-refused-with-overhead", FAR_EXPIRY_MS);
+        let run = rig.start_job(&workload);
+        assert_eq!(
+            run.job.chunk().expect("quoted chunk").quote.overhead_secs,
+            1
+        );
+        rig.node.advance(
+            run.key(),
+            JobState::Ended,
+            None,
+            Some(JobEnd::LaunchRefused {
+                reason: "work_dir_unsafe".to_owned(),
+            }),
+            false,
+        );
+        let job = rig.settle(&run);
+        let observation = rig.observation(&run);
+        assert!(!observation.started);
+        assert_eq!(
+            observation.terminal.expect("confirmed launch refusal").end,
+            GpuJobEnd::LaunchRefused {
+                reason: "work_dir_unsafe".to_owned(),
+            },
+        );
+        assert_eq!(
+            job.state,
+            GpuJobState::Ended {
+                reason: GpuEndReason::NeverStarted,
+            },
+        );
+        let chunk = job.chunk().expect("settled chunk");
+        assert_eq!(chunk.billed_secs, Some(0));
+        assert_eq!(chunk.settled_units, Some(0));
+        assert_eq!(chunk.unbilled_secs, 0);
+        assert_eq!(run.settled(), vec![0]);
+        let status = GpuJobStatus::from(&job);
+        assert_eq!(status.state, "ended");
+        assert_eq!(status.end_reason.as_deref(), Some("never_started"));
+    });
+}
+
+#[test]
+fn a_node_refused_submit_ends_the_job_never_started() {
+    with_rig(|rig| {
+        let workload = rig.approve("node-refused-submit", FAR_EXPIRY_MS);
+        rig.node.refuse_submits(Some("node_drained"));
+        let run = rig.start_job(&workload);
+        let expected = GpuJobState::Ended {
+            reason: GpuEndReason::NeverStarted,
+        };
+        assert_eq!(run.job.state, expected);
+        let job = rig.job(&run);
+        assert_eq!(job.state, expected);
+        let status = GpuJobStatus::from(&job);
+        assert_eq!(status.state, "ended");
+        assert_eq!(status.end_reason.as_deref(), Some("never_started"));
+        assert_eq!(status.held_reason, None);
+        let dispatch = rig.dispatch(&run);
+        assert_eq!(dispatch.phase, DispatchPhase::Closed);
+        assert_eq!(
+            dispatch.closed,
+            Some(DispatchClose::NodeRefused {
+                reason: "node_drained".to_owned(),
+            }),
+        );
+        assert_eq!(run.settled(), vec![0]);
+        let cancelled = rig.vault().cancel_gpu_job(
+            GpuJobActor::Owner(&rig.owner),
+            &job.id,
+            &rig.permits,
+            &rig.connector,
+            rig.clock.now_ms(),
+        );
+        assert!(matches!(cancelled, Err(GpuJobError::Ended)));
+    });
+}
+
+/// A cancel that withdrew a key before it ran still reads as the customer's cancel, not as
+/// never started, and settles no overhead (Engine 27 Nov 08:20, LE-2 = A).
+#[test]
+fn a_cancel_that_withdrew_a_key_reads_cancelled_and_settles_no_overhead() {
+    let mut offer = offer();
+    offer.rounding_secs = 1;
+    with_rig_offer(offer, |rig| {
+        let workload = rig.approve("cancel-withdrawn", FAR_EXPIRY_MS);
+        let run = rig.start_job(&workload);
+        assert_eq!(
+            run.job.chunk().expect("quoted chunk").quote.overhead_secs,
+            1
+        );
+        rig.node.advance(
+            run.key(),
+            JobState::Ended,
+            None,
+            Some(JobEnd::Withdrawn),
+            false,
+        );
+        rig.vault()
+            .cancel_gpu_job(
+                GpuJobActor::Owner(&rig.owner),
+                &run.job.id,
+                &rig.permits,
+                &rig.connector,
+                rig.clock.now_ms(),
+            )
+            .expect("the cancel of a live job is taken");
+        let job = rig.settle(&run);
+        assert_eq!(
+            rig.observation(&run)
+                .terminal
+                .expect("confirmed withdrawal")
+                .end,
+            GpuJobEnd::Withdrawn,
+        );
+        assert_eq!(
+            job.state,
+            GpuJobState::Ended {
+                reason: GpuEndReason::Cancelled,
+            },
+            "a cancel that withdrew the key reads as the cancel"
+        );
+        let chunk = job.chunk().expect("settled chunk");
+        assert_eq!(chunk.settled_units, Some(0));
+        assert_eq!(run.settled(), vec![0]);
+        assert_eq!(
+            GpuJobStatus::from(&job).end_reason.as_deref(),
+            Some("cancelled")
         );
     });
 }

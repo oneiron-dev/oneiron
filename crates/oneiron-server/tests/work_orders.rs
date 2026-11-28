@@ -51,6 +51,8 @@ use oneiron_server::config::SyncServerConfig;
 use oneiron_server::config::gpu_jobs::{AtMaximum, GpuOfferSettings};
 use oneiron_server::gpu_execution_node::ExecutionNodeSettings;
 use oneiron_server::gpu_execution_node::issuer::{VAULT_MACHINE_BACKEND, job_refusal_code};
+#[cfg(target_os = "linux")]
+use oneiron_server::gpu_execution_node::jobs::journal_file::JournalWriterLock;
 use oneiron_server::gpu_execution_node::wire::{JOB_ALPN, JobAnswer, JobRefusal, JobState};
 use oneiron_server::test_doors::gpu_backend::{
     gpu_jobs_section, grant_gpu_allocation, register_gpu_backend,
@@ -335,6 +337,8 @@ fn setup() -> (tempfile::TempDir, HttpFixture) {
 struct Rack {
     http: HttpFixture,
     mesh: Machines,
+    #[cfg(target_os = "linux")]
+    _writer: JournalWriterLock,
     _files: NodeFiles,
     machine: EntityId,
     template_digest: String,
@@ -343,6 +347,10 @@ struct Rack {
 impl Rack {
     async fn start() -> Self {
         let files = NodeFiles::new().expect("temporary node files");
+        // The fake paid backend never launches on the node. Hold the journal lock
+        // so the mesh offer answers without a job service probing the test host.
+        #[cfg(target_os = "linux")]
+        let writer = JournalWriterLock::take(&files.state_dir(1)).expect("hold the node journal");
         let mesh = Machines::start_with(2, |index, machines| {
             if index == 0 {
                 SyncServerConfig {
@@ -377,6 +385,8 @@ impl Rack {
         Self {
             http,
             mesh,
+            #[cfg(target_os = "linux")]
+            _writer: writer,
             _files: files,
             machine,
             template_digest,

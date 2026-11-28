@@ -5,7 +5,7 @@
       {
         "type": "command",
         "timeoutSec": 15,
-        "bash": "oneiron hook --host copilot session-start --credential-file \"$HOME/.config/oneiron/copilot-hooks.cred\""
+        "bash": "oneiron hook --host copilot session-start --credential-file \"$HOME/.config/oneiron/copilot-hooks.cred\" --query \" \""
       }
     ],
     "PreCompact": [

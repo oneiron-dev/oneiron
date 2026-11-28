@@ -719,7 +719,7 @@ pub(crate) fn offer() -> GpuOffer {
 }
 
 impl Rig {
-    pub(crate) async fn start() -> Self {
+    async fn start(offer: GpuOffer) -> Self {
         let mesh = Machines::start_granted(2, &[JOB_ALPN, JOB_STATUS_ALPN])
             .await
             .expect("two machines with both job protocol grants");
@@ -741,7 +741,7 @@ impl Rig {
             mesh,
             issuer,
             owner,
-            offer: offer(),
+            offer,
             permits: GpuJobPermits::new(),
             signers,
             clock,
@@ -755,6 +755,17 @@ impl Rig {
     }
 
     pub(crate) fn approve(&self, tag: &str, expires_at_ms: u64) -> String {
+        self.approve_for_starters(tag, expires_at_ms, Vec::new())
+    }
+
+    /// [`Self::approve`] for the Grants (hex ids) in `starters`; with none, the owner alone
+    /// starts it, since the owner pins it under no Grant.
+    pub(crate) fn approve_for_starters(
+        &self,
+        tag: &str,
+        expires_at_ms: u64,
+        starters: Vec<String>,
+    ) -> String {
         let request: WorkloadPinRequest = serde_json::from_value(json!({
             "pin": {
                 "template": TEMPLATE,
@@ -800,7 +811,7 @@ impl Rig {
                 &WorkloadApproveRequest {
                     workload: digest.clone(),
                     machines: vec![self.node.machine.to_hex()],
-                    starters: Vec::new(),
+                    starters,
                     expires_at_ms,
                 },
                 now,
@@ -826,17 +837,35 @@ impl Rig {
         inputs: serde_json::Value,
         connector: &dyn GpuJobConnector,
     ) -> JobRun {
-        self.start_job_on(&self.offer, workload, inputs, connector)
+        self.start_job_as(GpuJobActor::Owner(&self.owner), workload, inputs, connector)
+    }
+
+    /// [`Self::start_job_with_inputs`] started by `actor`.
+    pub(crate) fn start_job_as(
+        &self,
+        actor: GpuJobActor<'_>,
+        workload: &str,
+        inputs: serde_json::Value,
+        connector: &dyn GpuJobConnector,
+    ) -> JobRun {
+        self.start_job_on(actor, &self.offer, workload, inputs, connector)
     }
 
     /// A session (row W1): the rig's offer, renewing at the maximum.
     pub(crate) fn start_session(&self, workload: &str) -> JobRun {
         let inputs = json!({"machine": self.node.machine.to_hex()});
-        self.start_job_on(&session_offer(), workload, inputs, &self.connector)
+        self.start_job_on(
+            GpuJobActor::Owner(&self.owner),
+            &session_offer(),
+            workload,
+            inputs,
+            &self.connector,
+        )
     }
 
     fn start_job_on(
         &self,
+        actor: GpuJobActor<'_>,
         offer: &GpuOffer,
         workload: &str,
         inputs: serde_json::Value,
@@ -873,7 +902,7 @@ impl Rig {
             .vault()
             .start_gpu_job(
                 GpuJobStart {
-                    actor: GpuJobActor::Owner(&self.owner),
+                    actor,
                     offer,
                     quote: &quote,
                     resume: None,
@@ -883,7 +912,7 @@ impl Rig {
                 connector,
                 now,
             )
-            .expect("start the quoted workload as owner");
+            .expect("start the quoted workload");
         JobRun {
             job,
             admission,
@@ -982,8 +1011,13 @@ impl Rig {
 }
 
 pub(crate) fn with_rig(test: impl FnOnce(&Rig) + Send + 'static) {
+    with_rig_offer(offer(), test);
+}
+
+/// Runs the scripted node rig with the test's offer instead of the default offer.
+pub(crate) fn with_rig_offer(offer: GpuOffer, test: impl FnOnce(&Rig) + Send + 'static) {
     run_on_engine_stack("vault-machine-connector", || async move {
-        let rig = Rig::start().await;
+        let rig = Rig::start(offer).await;
         tokio::task::block_in_place(|| test(&rig));
         rig.mesh.stop().await;
     });

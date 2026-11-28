@@ -448,6 +448,31 @@ impl Vault {
             None
         };
         PACK_INSTALL.put(&self.store, txn, &source.manifest.name, &receipt)?;
+        // A table of setting defaults is proposed in the install's own write, so the owner's yes
+        // names exactly the bytes this receipt installed, and an update proposes again (pass 34,
+        // 3.2; row L1). An update whose source carries no table closes the waiting proposal.
+        // The keys that move here are only those an owner's yes from another machine already
+        // accepted; an install runs no setting after-commit hook for them
+        // ([INSTALL-PACK-DEFAULTS-AFTER-COMMIT]).
+        match source.setting_defaults() {
+            Some(table)
+                if super::setting_defaults_pack::install_may_carry_presets(
+                    &source.manifest.name,
+                    &receipt,
+                ) =>
+            {
+                crate::setting::propose_installed_pack_defaults_in_txn(
+                    self,
+                    txn,
+                    (
+                        source.manifest.name.as_str(),
+                        source.manifest.version.as_str(),
+                    ),
+                    &table.defaults,
+                )?;
+            }
+            _ => crate::setting::close_pack_proposal_in_txn(self, txn, &source.manifest.name)?,
+        }
         if model_catalog {
             self.activate_installed_model_catalog_in_txn(
                 txn,

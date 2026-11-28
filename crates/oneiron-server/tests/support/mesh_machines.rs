@@ -28,6 +28,7 @@ use oneiron::authority::{
     MeshEnrolmentAsk, MeshMachineAddress, PairingPrincipal, pairing_binding_transcript_pinned,
 };
 use oneiron::federation::Scope;
+use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller};
 use oneiron::sync::mesh_path::{
     MESH_PATH_RECEIPTS_READ_MAX, MeshPathDirection, MeshPathReceipt, SYNC_ALPN,
 };
@@ -192,6 +193,61 @@ impl Home {
                 true,
             )
             .map_err(at("the home grants the device a protocol"))?;
+        Ok(())
+    }
+
+    /// H's owner lowers the mesh pairing lifetime (`mesh.grant.max_ttl_secs`)
+    /// to `secs`: each later enrolment pairs its machine for that long.
+    pub(crate) fn limit_pairings(&self, secs: u64) -> TestResult {
+        let outcome = self
+            .vault
+            .set_setting(
+                SettingCaller::Owner(&self.owner),
+                SetSetting::vault_value("mesh.grant.max_ttl_secs", serde_json::json!(secs)),
+            )
+            .map_err(at("the owner lowers the mesh pairing lifetime"))?;
+        if !matches!(outcome, SetSettingOutcome::Applied { .. }) {
+            return Err(
+                format!("FIXTURE: the pairing lifetime did not change: {outcome:?}").into(),
+            );
+        }
+        Ok(())
+    }
+
+    /// When the pairing H minted for `device`'s binding expires, in H's fold.
+    pub(crate) fn pairing_expiry(&self, device: &Device) -> TestResult<u64> {
+        let fold = self
+            .vault
+            .authority_fold()
+            .map_err(at("the home's authority fold"))?;
+        let pairing = fold
+            .slips
+            .mints
+            .get(&device.mesh_pairing)
+            .ok_or("FIXTURE: the home's fold holds the device's pairing")?;
+        Ok(pairing.action.claims.expires_at)
+    }
+
+    /// H signs one more act into its authority log once its own clock reads
+    /// `not_before` or later: it revokes a slip it never minted, which
+    /// touches no machine of the test.
+    pub(crate) fn sign_act_from(&self, not_before: u64) -> TestResult {
+        while self
+            .vault
+            .capability_slip_now()
+            .map_err(at("read the home's clock"))?
+            < not_before
+        {
+            // testkit-lint: allow(sleep) H's clock must reach `not_before`: the condition the caller's test sets up
+            std::thread::sleep(Duration::from_millis(200));
+        }
+        let appended = self
+            .vault
+            .revoke_capability_slip_once(&test_host_issuer(), [0x5a; 32])
+            .map_err(at("the home signs a later act"))?;
+        if !appended {
+            return Err("FIXTURE: the home's later act appended no row".into());
+        }
         Ok(())
     }
 

@@ -81,18 +81,19 @@ async fn run(program: &str, check: Option<Arc<FeedbackCheck>>) -> Run {
         oneiron::EdgeActorClass::Human,
     )
     .await;
+    // No MCP tool starts a task run anymore: the kept task handler enters it, rendering
+    // the old task shape (FIX EXECUTE-CALLER-CODE).
     let mut replies = Vec::new();
-    for request in ["first", "second"] {
-        let args = mcp_merge_args(
-            mcp_endpoint_envelope(actor, "write_memory"),
-            json!({"run_ref": "feedback-check", "task": "run the synthetic program"}),
+    for _request in ["first", "second"] {
+        replies.push(
+            execute_task_run_for_test(
+                &mode.server,
+                credential,
+                "feedback-check",
+                "run the synthetic program",
+            )
+            .await,
         );
-        let (_, body) = route_json(
-            mode.server.clone(),
-            mcp_endpoint_call_request("/mcp", credential, request, "execute_code", args),
-        )
-        .await;
-        replies.push(body);
     }
     let second = replies.pop().unwrap();
     let first = replies.pop().unwrap();

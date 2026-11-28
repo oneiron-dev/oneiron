@@ -97,7 +97,7 @@ The capabilities in `scripts/codemap/capability_aliases.md`, one row each: its s
 | Send a model request without exposing the key | credential broker; provider key isolation; brokered model call; inject provider auth | `crates/oneiron-broker/src/lib.rs` (s) | ARCH-0069; FIX 6103 | Holds a key for one admitted model call and attaches authentication before sending; it is not the durable secret store or a general network proxy. |
 | Connect an MCP client by signing in | MCP OAuth; OAuth authorization; OAuth authorisation; external client sign-in | `crates/oneiron-server/src/api/oauth_server/mod.rs` (m); `crates/oneiron/src/authority/oauth_server/mod.rs` (s) | ARCH-0028; FIX 4902; FIX 22142; FIX 22226 | Registers or recognizes a client, asks the owner and issues scoped tokens; it is not device pairing or OAuth to a downstream connector. |
 | List the tools Oneiron exposes over MCP | MCP tool surface; tools list; tool-first mode; primary MCP mode | `crates/oneiron-server/src/mcp/surface.rs` (m) | — | Registers the primary and tool-first catalogues and their bindings; listing a tool does not grant the caller permission to use it. |
-| Add a verb to the SDK table | SDK verb definition; verb table; generated verb bindings; typed verb schema | `crates/oneiron-sdk-generator/src/verb_table.rs` (s); `crates/oneiron-sdk-generator/src/lib.rs` (s); `scripts/sdk/README.md` (outside the map) | ARCH-0082 | Reads the JSON verb definitions and generates their projections; editing one generated SDK client does not change the source of truth. |
+| Add a verb to the SDK table | SDK verb definition; verb table; generated verb bindings; typed verb schema | `crates/oneiron-sdk-generator/src/verb_table.rs` (m); `crates/oneiron-sdk-generator/src/lib.rs` (s); `scripts/sdk/README.md` (outside the map) | ARCH-0082 | Reads the JSON verb definitions and generates their projections; editing one generated SDK client does not change the source of truth. |
 | Call a typed engine verb over HTTP | public memory API; facade endpoint; invoke a typed verb; HTTP SDK door | `crates/oneiron-server/src/api/routes.rs` (m); `crates/oneiron-server/src/api/facade/invoke.rs` (m) | — | Routes a typed facade row on a scoped caller, optionally inside a room turn; it is not a generic write endpoint. |
 | Retry the same verb call safely | idempotent invocation; duplicate request; invocation ID; request deduplication | `crates/oneiron-server/src/api/facade/invocations.rs` (m) | OF-580; FIX 11889 | Claims the client-named invocation and returns the same call's reply on retry; an ID reused for a different call is refused. |
 | Open a vault in an SDK or connect to a server | embedded vault client; remote SDK; local versus remote SDK; in-process transport | `crates/oneiron-remote/src/lib.rs` (m) | OF-237; FIX 647; FIX 4730 | Selects an embedded or remote backend behind the same client and dispatcher; the language bindings do not implement separate engine semantics. |
@@ -251,6 +251,7 @@ Every top-level module of every mapped crate: its purpose, its entry file (its d
 | Inquiry: a company vault asks a member's vault (federation.md #inquiry, ARCH-0082 #inquiry; owner… | `crates/oneiron/src/inquiry/mod.rs` | m | ARCH-0082 |
 | Interlocutor resolution substrate (OF-365 ILD-1) | `crates/oneiron/src/interlocutor.rs` | L | OF-365 |
 | The issuer's side of a job that one of the vault's machines runs (pass 33 section 8, the `vault_machine`… | `crates/oneiron/src/job_dispatch/mod.rs` | m | — |
+| `vault.jobs.history` (design pass 34 section 5 and row Q2; the scheduler comparison's gap 2, "one view of… | `crates/oneiron/src/job_history/mod.rs` | m | — |
 | Pinned workloads that one of the vault's machines runs for another (pass 33, `33-exec-node/DESIGN.md`): the… | `crates/oneiron/src/job_workload/mod.rs` | m | — |
 | The `learning.*` measured-state family (ARCH-0003 #learning, ARCH-0079 #scoring): everything the vault… | `crates/oneiron/src/learning/mod.rs` | m | ARCH-0003, ARCH-0079 |
 | Learned settings (ARCH-0003 #learning-settings): the catalog of learned knobs, the owner's seed and pin rows… | `crates/oneiron/src/learning_setting.rs` | m | ARCH-0003 |
@@ -327,6 +328,7 @@ Every top-level module of every mapped crate: its purpose, its entry file (its d
 | GATE-14 layer 1 (ONE-1394): deterministic detectors and the typed `DiagnosticEvent` maintenance entity | `crates/oneiron/src/self_heal/mod.rs` | m | — |
 | Context-pack serialization | `crates/oneiron/src/serialize/mod.rs` | L | — |
 | RT-03 (ONE-1685) SESSION lifecycle substrate — the durable mechanism the in-process driver's session policy… | `crates/oneiron/src/session_lifecycle.rs` | L | ARCH-0002, ARCH-0026, OF-536 |
+| The PROJECT an attached agent session's folder selects (rows RECALL-SESSION-PROJECT and… | `crates/oneiron/src/session_project.rs` | m | — |
 | The Setting primitive (DESIGN 15-setting-primitive, stage 0.1): one kind of stored choice in place of a… | `crates/oneiron/src/setting/mod.rs` | L | — |
 | The client's customization profile and the world-destination helpers | `crates/oneiron/src/settings.rs` | m | — |
 | Revocable brief read grants | `crates/oneiron/src/share.rs` | L | — |
@@ -779,7 +781,7 @@ Every top-level module of every mapped crate: its purpose, its entry file (its d
 | Moved from `crates/oneiron/src/linkedin_connector/mod.rs` (lib split R1: record types below the lib) | `crates/oneiron-records/src/linkedin_connector/mod.rs` | s | — |
 | Moved from `crates/oneiron/src/linkedin_lead_preload.rs` (lib split R1: record types below the lib) | `crates/oneiron-records/src/linkedin_lead_preload.rs` | s | — |
 | — | `crates/oneiron-records/src/llm/mod.rs` | s | — |
-| — | `crates/oneiron-records/src/memory/mod.rs` | s | — |
+| — | `crates/oneiron-records/src/memory/mod.rs` | m | — |
 | — | `crates/oneiron-records/src/merge_queue/mod.rs` | s | — |
 | — | `crates/oneiron-records/src/note/mod.rs` | s | — |
 | — | `crates/oneiron-records/src/off_record/mod.rs` | s | — |
@@ -871,7 +873,8 @@ Every top-level module of every mapped crate: its purpose, its entry file (its d
 | The projection rules and refusals a verb author depends on, checked on the generator's real outputs: on the… | `crates/oneiron-sdk-generator/src/projection_rules.rs` | m | — |
 | The Python-behaviour helpers: Python's values, `json`, `str` methods, builtins and the regular expressions… | `crates/oneiron-sdk-generator/src/py/mod.rs` | m | — |
 | The UniFFI records and enums for the facade rows' wire types (OF-237), projected from the one facade type… | `crates/oneiron-sdk-generator/src/uniffi_types.rs` | XL | OF-237 |
-| The verb table, one JSON file per verb under `scripts/sdk/verbs/`, named by its verb, read in file-name order | `crates/oneiron-sdk-generator/src/verb_table.rs` | s | — |
+| The verb table, one JSON file per verb under `scripts/sdk/verbs/`, named by its verb, read in file-name order | `crates/oneiron-sdk-generator/src/verb_table.rs` | m | — |
+| The verb-tree index (`verb_tree_index.json`): the code-mode verbs, their types, the family lines, the vault… | `crates/oneiron-sdk-generator/src/verb_tree_index.rs` | m | — |
 | Frozen orchestration-facing contract for the seal engine (ONE-1837 §4/§5) | `crates/oneiron-seal/src/api.rs` | m | — |
 | Shared output buffers; native accounting constructors are feature-gated | `crates/oneiron-seal/src/buffers.rs` | m | — |
 | Stable seal error classes and codes (ONE-1837 §6) | `crates/oneiron-seal/src/error.rs` | s | — |
@@ -909,7 +912,7 @@ Every top-level module of every mapped crate: its purpose, its entry file (its d
 | Typed judgments over graph units (ARCH-0076, OF-506): the host's decision ladder answers a graph question | `crates/oneiron-server/src/decision_graph/mod.rs` | m | ARCH-0076, OF-506, OF-516 |
 | The host's decision ladder (ARCH-0076): built once at serve start and lent to every caller that asks a typed… | `crates/oneiron-server/src/decision_host/mod.rs` | L | ARCH-0076 |
 | `ai.verdict` (ARCH-0076): a caller's own typed question through the host's decision ladder | `crates/oneiron-server/src/decision_verdict.rs` | L | ARCH-0076, OF-523 |
-| Release checks for a payload a caller was served earlier and is sent again (DEC-0005): a payload naming a… | `crates/oneiron-server/src/device_local.rs` | s | — |
+| Release checks for a payload a caller was served earlier and is sent again (DEC-0005): a payload naming a… | `crates/oneiron-server/src/device_local.rs` | m | — |
 | The device side of sync (ARCH-0023b): a machine that is not the home dials its home and keeps its vault in… | `crates/oneiron-server/src/device_sync.rs` | m | ARCH-0023b, OF-575 |
 | The machine's memory as the document engine's resource port (Rule 5; FIX 8569, 8574, 8596, 8598, 9617) | `crates/oneiron-server/src/document_memory.rs` | s | — |
 | The engine inside an app's own process (OF-237): [`serve_embedded`] serves a vault the app already opened… | `crates/oneiron-server/src/embedded.rs` | m | OF-237 |
@@ -919,7 +922,7 @@ Every top-level module of every mapped crate: its purpose, its entry file (its d
 | The in-vault text filter over this server's Oneironer tagger (OF-420): what the feedback doors run every… | `crates/oneiron-server/src/feedback_redaction.rs` | s | OF-420 |
 | The host's intake of local folders (OF-554, FIX 6942): the confined walk, the notes reader, a Files source's… | `crates/oneiron-server/src/files_intake/mod.rs` | m | OF-554 |
 | A vault machine that runs pinned workloads for the vault's issuer (pass 33, `33-exec-node/DESIGN.md`): the… | `crates/oneiron-server/src/gpu_execution_node/mod.rs` | L | — |
-| The host side of customer GPU jobs (CROSS-ARCH-0023 lifecycle, C2; row L10-31) | `crates/oneiron-server/src/gpu_host.rs` | s | CROSS-ARCH-0023 |
+| The host side of customer GPU jobs (CROSS-ARCH-0023 lifecycle, C2; row L10-31) | `crates/oneiron-server/src/gpu_host.rs` | m | CROSS-ARCH-0023 |
 | WebSocket upgrade handler and connection lifecycle | `crates/oneiron-server/src/handler/mod.rs` | L | ARCH-0023 |
 | This host's MACRO home candidacy (FIX 4898; ARCH-0026: "Election order is cloud node when attached, then an… | `crates/oneiron-server/src/home_candidacy.rs` | s | ARCH-0026 |
 | The hook `ai.verdict` decisions one thread collects while it runs its row's hooks (FIX 8042): a browser… | `crates/oneiron-server/src/hook_decisions.rs` | s | — |
@@ -973,6 +976,7 @@ Every top-level module of every mapped crate: its purpose, its entry file (its d
 | The health check past a threshold (OF-520, ARCH-0044 C5) | `crates/oneiron-server/src/wire_health.rs` | m | ARCH-0044, ARCH-0064a, ARCH-0076, OF-520 |
 | RC42 observation-only wire counters | `crates/oneiron-server/src/wire_telemetry.rs` | L | — |
 | The issuer's side of the work-order loop (pass 34, section 0; Engine ruling EM-22 = A): what the engine's… | `crates/oneiron-server/src/work_order_host.rs` | m | — |
+| A folder's workspace identity (RECALL-SESSION-PROJECT; Engine ANSWER RECALL-SESSION-PROJECT-INTENT, 26 Nov… | `crates/oneiron-server/src/workspace_identity.rs` | m | — |
 | The host's precision recalculator (ARCH-0075 xlsx row; FIX 2462, OF-505 = A): LibreOffice Calc headless… | `crates/oneiron-server/src/xlsx_recalc.rs` | m | ARCH-0075, OF-505 |
 | Which stored row a read takes its value from: one order for every key | `crates/oneiron-setting-contract/src/decide.rs` | m | — |
 | The stored key of one setting row: `name 0x00 item 0x00 mode scope` | `crates/oneiron-setting-contract/src/key.rs` | s | — |

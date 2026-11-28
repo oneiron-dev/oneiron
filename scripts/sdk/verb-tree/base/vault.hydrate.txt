@@ -1,0 +1,9 @@
+vault.hydrate({ refs: string[] })
+  -> { value: [{ short_ref, kind, learned_at, body }], missing: [{ ref, reason }] }
+  Past 512 KiB of JSON: a StoredResult card. If !("value" in r), read records: await r.query({ path: "$.value[*]" }).
+  Whole records by short id, many in one call. A ref it cannot show is listed in missing; the rest still come
+  back. A claim's body holds predicate, subject_ref, value, confidence, source and lifecycle.
+  A ref short_id@source_revision_ref reads the revision recall read.
+  e.g. await vault.hydrate({
+    refs: items.map(i => i.source_revision_ref ? `${i.short_id}@${i.source_revision_ref}` : i.short_id)
+  })

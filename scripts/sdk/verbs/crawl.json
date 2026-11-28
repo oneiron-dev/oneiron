@@ -15,5 +15,6 @@
   },
   "section": false,
   "openapi": true,
-  "host_door_proof": "facade_actor"
+  "host_door_proof": "facade_actor",
+  "caller_code": "refused"
 }

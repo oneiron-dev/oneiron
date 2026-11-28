@@ -139,6 +139,10 @@ pub(crate) struct PinnedModel {
     /// its shipped settings ([`super::evidence::RunProfile`]); `None` keeps
     /// the engine's default.
     pub(crate) evidence: Option<VectorEvidenceFloors>,
+    /// The relevance bar measured in this model's space for recall lines keyed on a
+    /// session's work, a raw cosine, under the same profile (RECALL-CARRIER-THRESHOLD); `None`
+    /// keeps the vault's `measured` bar quiet.
+    pub(crate) recall_bar: Option<f32>,
 }
 
 /// The shipped defaults: the current one first, then the earlier one, which
@@ -156,12 +160,17 @@ pub(crate) const PINNED_MODELS: [PinnedModel; 2] = [
             floor: 0.15,
             strong: 0.25,
         }),
+        // The Orchestrator's recall A/B (2026-11-26, arm R2; RECALL-AB-THRESHOLD-DATA): the
+        // lines its Claude session used, keyed on the work, scored 0.545 to 0.610, and the best
+        // trap 0.390; 0.52 keeps them all and passes no trap of the seeded grid.
+        recall_bar: Some(0.52),
     },
     PinnedModel {
         repo: "microsoft/harrier-oss-v1-0.6b",
         revision: "f9b9dc8d367d443f2479d27aa5d8d2850c0774ee",
         files: &HARRIER_06_FILES,
         evidence: None,
+        recall_bar: None,
     },
 ];
 

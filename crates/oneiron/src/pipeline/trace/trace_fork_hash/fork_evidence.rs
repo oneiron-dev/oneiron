@@ -115,6 +115,14 @@ pub(in crate::pipeline) fn retrieval_trace_fork_hash(
         fork_hash_f32(&mut hasher, kind_floors.floor);
         fork_hash_f32(&mut hasher, kind_floors.strong);
     }
+    // retrieval.vector_evidence: the owner's floors for the run's space judge
+    // every kind there. Hashed only when set, so a run with no owner row
+    // keeps the fork key it had.
+    if let Some(owner) = floors.owner.get(space) {
+        fork_hash_str(&mut hasher, "owner-vector-evidence");
+        fork_hash_f32(&mut hasher, owner.floor);
+        fork_hash_f32(&mut hasher, owner.strong);
+    }
     fork_hash_str(&mut hasher, builder.turn_fold.as_str());
     fork_hash_rerank(&mut hasher, builder.rerank.as_ref(), rerank_query);
     fork_hash_opt_str(&mut hasher, builder.skill_executor.as_deref());

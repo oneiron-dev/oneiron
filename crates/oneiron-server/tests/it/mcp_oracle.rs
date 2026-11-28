@@ -127,7 +127,7 @@ use oneiron::{
 };
 use oneiron_server::mcp::{
     CodeRunLimits, McpCodeExecutionHost, McpCodeExecutionRequest, McpCodeModeProvider,
-    McpConnectorScope, McpEngineNativeCodeHost, McpResolvedActor, mcp_code_run_id,
+    McpCodeRunInput, McpConnectorScope, McpEngineNativeCodeHost, McpResolvedActor, mcp_code_run_id,
 };
 
 fn oracle_vault_config() -> VaultConfig {
@@ -256,6 +256,7 @@ impl McpCodeModeProvider for OracleCodeProvider {
         Ok(EngineExecutorConfig {
             run_id,
             task: task.to_owned(),
+            caller_source_digest: None,
             // ONE-1929: the executor wire teaching comes from the DEPLOYED
             // prompt package, so every run input must carry its root.
             prompt_package_root: oneiron::prompt::workspace_test_prompt_package_root()
@@ -324,6 +325,7 @@ impl oneiron::code_run::AgentVerbDoor for OracleNoVerbs {
         Ok(Err(oneiron::code_run::AgentVerbRefusal {
             code: oneiron::code_run::AGENT_VERB_DOOR_UNBOUND.to_owned(),
             hook_notice: None,
+            reason_codes: Vec::new(),
         }))
     }
 
@@ -370,12 +372,13 @@ async fn injected_host_execute_code() -> InjectedHostRun {
             vault: Arc::clone(&vault),
             actor: &resolved,
             run_ref,
-            task,
+            input: McpCodeRunInput::Task(task),
             run_id,
             verbs: Arc::new(OracleNoVerbs),
             off_record_session: None,
             consent_origin: None,
             brief: None,
+            run_end: None,
         })
         .await
         .expect("the durable run enters");
@@ -387,12 +390,13 @@ async fn injected_host_execute_code() -> InjectedHostRun {
             vault: Arc::clone(&vault),
             actor: &resolved,
             run_ref,
-            task,
+            input: McpCodeRunInput::Task(task),
             run_id,
             verbs: Arc::new(OracleNoVerbs),
             off_record_session: None,
             consent_origin: None,
             brief: None,
+            run_end: None,
         })
         .await
         .expect("the persisted run re-enters");

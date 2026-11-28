@@ -136,6 +136,13 @@ impl IntentAsk {
         })
     }
 
+    /// The digest of the ask, without its intent key: what a door's logical
+    /// key compares when another intent key names the same thing.
+    #[must_use]
+    pub fn ask_digest(&self) -> &str {
+        &self.ask_digest
+    }
+
     /// Where this ask stands under its key, read in the door's write
     /// transaction before anything is written.
     ///
@@ -194,6 +201,13 @@ fn intent_row_key(asker: &EntityId, verb: &str, intent_key: &str) -> [u8; 32] {
     hasher.update(&(intent_key.len() as u64).to_be_bytes());
     hasher.update(intent_key.as_bytes());
     *hasher.finalize().as_bytes()
+}
+
+/// The asker a stored `LANE_ECONOMY_INTENT` value names, whose erase drops the row
+/// ([`erase_intent_asker_in_txn`]): the record the whole-vault export reads it to be about.
+/// `None` for bytes that do not read as an intent.
+pub(crate) fn intent_row_asker(value: &[u8]) -> Option<EntityId> {
+    INTENTS.decode_value(value).ok().map(|row| row.asker)
 }
 
 /// Drops every intent the erased actor asked (the side table's actor

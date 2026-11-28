@@ -296,8 +296,14 @@ impl Served {
                 served.versions.insert(name.into(), version.into());
             }
         }
+        // The task form (the engine's model writes each program from the task's words) has no MCP tool since
+        // FIX EXECUTE-CALLER-CODE PR D: `execute` runs the caller's own code. Until the task form has an entry
+        // again, the served CUA bench stops here.
         if !served.versions.contains_key("execute_code") {
-            return Err("execute_code_unavailable".into());
+            return Err(
+                "task_form_unavailable: no MCP tool runs a task since EXECUTE-CALLER-CODE PR D"
+                    .into(),
+            );
         }
         Ok(served)
     }

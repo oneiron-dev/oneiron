@@ -8,5 +8,6 @@
   "act_class": "read",
   "mcp_fields": {},
   "mcp_scope": "unrestricted",
-  "section": false
+  "section": false,
+  "caller_code": "refused"
 }

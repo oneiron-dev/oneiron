@@ -46,12 +46,19 @@ mod accept_checks;
 use accept_checks::{CheckedAccept, checked_accept_in_txn, head_defaults_digest};
 mod door;
 pub(super) use door::project_pack_in_txn;
+mod installed;
+pub(crate) use installed::{
+    close_pack_proposal_in_txn, pack_defaults_from_json, propose_installed_pack_defaults_in_txn,
+};
 mod layer;
 pub(super) use layer::{
     LayerDefault, birth_pack_row_in_txn, fold_layer, layer_default_in_txn, pack_head_act_in_txn,
     packs_holding_in_txn, proposed_defaults_in_txn, yes_landing_tables_in_txn,
 };
-use layer::{append_head_with_table_in_txn, layer_rows_in_txn, quarantine_in_txn, shipped_table};
+use layer::{
+    LayerRow, append_head_with_table_in_txn, layer_rows_in_txn, newest_yes_pack, quarantine_in_txn,
+    shipped_table,
+};
 
 use serde::{Deserialize, Serialize};
 

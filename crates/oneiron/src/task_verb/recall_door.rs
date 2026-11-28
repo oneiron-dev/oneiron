@@ -124,10 +124,23 @@ pub fn recall_at_door_seeded(
     // The caller's own filter binds this recall's handle once (FIX 3977):
     // its cut, ready, paid and final packs and every lane they read meet it.
     let memory = memory.with_read_filter(input.filter.as_ref());
+    // A push is judged by the owner's bar as it stands at each call, so it is no operation a
+    // caller replays (RECALL-CARRIER-THRESHOLD).
+    if input.operation_id.is_some() && input.bar.is_some() {
+        return Err(crate::memory::MemoryError::bad_request(
+            "a recall under an operation id takes no bar",
+        ));
+    }
+    // The caller's own held claims that match the query, under the recall's
+    // own selection, go beside the pack, never into its items, render or kept
+    // answer, and never on a push (AGENT-TRIAL-OWN-HELD-WRITES-HIDDEN).
+    let push = input.bar.as_ref().is_some_and(|bar| bar.source.pushes());
+    let query = input.query.clone();
+    let scope = input.scope.clone().unwrap_or_default();
     // Under a caller's operation id the first answer is kept by identity and
     // each later call of the same request replays it under the current read
     // (RESEARCH-0363 p5); see `crate::memory::recall_replay`.
-    match input.operation_id.clone() {
+    let mut pack = match input.operation_id.clone() {
         Some(operation) => crate::memory::recall_replay::recall_under_operation(
             &memory,
             &operation,
@@ -135,7 +148,13 @@ pub fn recall_at_door_seeded(
             |input| recall_with_whole_limit(&memory, input, embed, door),
         ),
         None => recall_with_whole_limit(&memory, input, embed, door),
+    }?;
+    if !push && !pack.narrowing.applied.deny_all {
+        // The stale selector the recall applied, under the actor ceiling.
+        let include_stale = pack.narrowing.applied.include_stale;
+        pack.held = memory.own_held_for_recall(&query, &scope, include_stale)?;
     }
+    Ok(pack)
 }
 
 /// [`recall_at_door`] for the whole requested limit.
@@ -154,6 +173,11 @@ fn recall_with_whole_limit(
     let scope = input.scope.clone().unwrap_or_default();
     let limit = input.limit.unwrap_or(VAULT_RECALL_LIMIT_DEFAULT);
     crate::memory::caps::check_limit_nonzero(limit)?;
+    // A push answers at most `PUSH_LINES` lines, whatever its limit (RECALL-CARRIER-THRESHOLD).
+    let limit = match &input.bar {
+        Some(bar) if bar.source.pushes() => limit.min(crate::memory::PUSH_LINES),
+        _ => limit,
+    };
     // Refused before the query embeds, as every free check is.
     let query_affect = input
         .query_affect
@@ -177,6 +201,7 @@ fn recall_with_whole_limit(
             query_affect,
             reranker: host.map(|_| &preflight as &dyn crate::rerank::Reranker),
             rerank_unavailable: unreranked,
+            bar: input.bar.as_ref(),
             ..Default::default()
         },
     )?;
@@ -224,9 +249,22 @@ fn recall_with_whole_limit(
         return Ok(fallback.clone());
     }
     let vectors = embed(&input.query)?;
-    let embedding = vectors.text_index.as_deref();
+    // A light or call recall's query embeds only for the owner's bar (the server door embeds
+    // a barred recall at any effort): the bar compares cosines with it, and no retrieval
+    // channel searches it, so light and call retrieval stay lexical as without a bar
+    // (REVIEW-10567 round 2).
+    let bar_only = input.bar.is_some() && effort == crate::memory::Effort::Light;
+    let (embedding, bar_query_vector) = if bar_only {
+        (None, vectors.text_index.as_deref())
+    } else {
+        (vectors.text_index.as_deref(), None)
+    };
     let mut media_memory = crate::host_memory::MachineMemory::process().empty_lease();
-    let media = vectors.media_seeds();
+    let media = if bar_only {
+        Vec::new()
+    } else {
+        vectors.media_seeds()
+    };
     media_memory.materialized(
         0,
         (media.capacity() as u64).saturating_mul(std::mem::size_of::<
@@ -251,12 +289,14 @@ fn recall_with_whole_limit(
             &crate::retrieval_depth::RecallExecution {
                 deadline: deadline.as_ref(),
                 embedding,
+                bar_query_vector,
                 media: &media,
                 as_of: input.as_of,
                 query_affect,
                 door_fallback: fallback.as_ref(),
                 rerank_unavailable: true,
                 render_budget,
+                bar: input.bar.as_ref(),
                 ..Default::default()
             },
             &pin,
@@ -324,7 +364,9 @@ fn recall_with_whole_limit(
                 hyde: door.hyde,
                 deadline: deadline.as_ref(),
                 telemetry: input.telemetry.as_ref(),
+                bar: input.bar.as_ref(),
                 embedding,
+                bar_query_vector,
                 media: &media,
                 as_of: input.as_of,
                 query_affect,

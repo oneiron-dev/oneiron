@@ -22,10 +22,15 @@ mod authority_clock;
 mod diary;
 mod gpu_jobs;
 mod gpu_lines;
+mod job_history;
 mod job_workloads;
 mod machine_execution;
 mod machine_status;
 mod media;
+// The integration tests' door to the media doors on a code-mode run's line
+// (FIX CODE-MODE-LENDING-W1).
+#[cfg(oneiron_test_support)]
+mod media_line_door;
 mod packs;
 mod planner_card;
 mod proactivity;
@@ -42,10 +47,13 @@ pub(crate) use self::authority_clock::*;
 pub(crate) use self::diary::*;
 pub(crate) use self::gpu_jobs::*;
 pub(crate) use self::gpu_lines::*;
+pub(crate) use self::job_history::*;
 pub(crate) use self::job_workloads::*;
 pub(crate) use self::machine_execution::*;
 pub(crate) use self::machine_status::*;
 pub(crate) use self::media::*;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::media_line_door::media_door_on_run_line_for_test;
 pub(crate) use self::packs::*;
 pub(crate) use self::planner_card::*;
 pub(crate) use self::proactivity::*;
@@ -148,6 +156,7 @@ pub(crate) use super::outbox_diverged_doors::*;
 pub(crate) use super::sandbox_provider_doors::*;
 pub(crate) use super::snapshot_read_settings_doors::*;
 pub(crate) use super::web_connector_doors::*;
+pub(crate) use super::workspace_project_doors::*;
 pub(crate) use super::world_vectors_doors::*;
 // The owner's committed-run reads (DOOR-141 A/B), likewise.
 pub(crate) use super::run_read_doors::*;

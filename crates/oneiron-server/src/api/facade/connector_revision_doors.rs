@@ -60,21 +60,26 @@ pub(crate) async fn vault_connectors_slates_scope_outcome(
     (answer, rows)
 }
 
-/// `vault.connectors.slates.revision_offers`: it reads keys, grants and
-/// slates across every waiting revision, so its rows are not known.
+/// `vault.connectors.slates.revision_offers`: it lists the key each listed
+/// scope offer's standing check read, and the catalog key and each
+/// dependent key of each listed issuer revision. Bindings, consent grants,
+/// slates and signals are side tables and list nothing.
 pub(crate) async fn vault_connectors_slates_revision_offers(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: ConnectorSlateRevisionOffersRequest,
-) -> MaybeListed<ConnectorSlateRevisionOffersView> {
+) -> Listed<ConnectorSlateRevisionOffersView> {
     let answer = as_owner(
         server,
         auth,
         "vault.connectors.slates.revision_offers",
-        move |vault, owner| sdk::connector_slate_revision_offers(vault, owner, input),
+        move |vault, owner| sdk::connector_slate_revision_offers_listed(vault, owner, input),
     )
     .await;
-    (answer, None)
+    match answer {
+        Ok((view, rows)) => (Ok(view), rows),
+        Err(error) => (Err(error), Vec::new()),
+    }
 }
 
 /// `vault.connectors.slates.defer_revision`: it reads the signal and its

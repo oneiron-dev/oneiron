@@ -304,6 +304,10 @@ pub(crate) enum DoorClaim {
 /// a same-id retry runs the door again, role first, and its intent key or the
 /// ask's logical key then replays the write already made (review round 2 of
 /// #10400).
+/// A unit's reserve and cancel (`vault.arms.units.reserve`, `.cancel`) answer
+/// the claim, and each door judges the caller's role on the line before any
+/// replay: a same-id retry runs the door again, role first, and the intent
+/// or logical key then answers the claim already written.
 /// The pinned workload reads (review round 2 of #10412) answer only what
 /// their caller may read now: a starter stops seeing a workload once its
 /// approval is revoked or expired, and a kept reply carries no workload a
@@ -319,7 +323,19 @@ pub(crate) enum DoorClaim {
 /// would write those answers to this vault's invocation state and replay
 /// them after the node went offline or changed its offer. A same-id retry
 /// asks the machines again.
-const UNKEPT_REPLY_VERBS: [&str; 15] = [
+/// The jobs' history (`vault.jobs.history`, review round 1 of #10419) names
+/// who started or reserved each attempt, and an actor's erase takes that
+/// name off the rows: a kept reply would hand an erased requester's id to a
+/// same-id retry after the erase, and an agent's reply would outlive its
+/// Grant. A same-id retry reads again and writes nothing.
+/// An attempt's log tail (`vault.jobs.logs.tail`, pass 34 row Q3) answers
+/// bytes that stay on the attempt's machine: a kept reply would write up to
+/// a page of the log to this vault's invocation state, and would answer a
+/// same-id retry with its first ask's bytes after the stream moved on,
+/// without asking the machine again (review round 1 of #10466). A same-id
+/// retry finds its admission intent settled (`admission_doors::call_verb`)
+/// and is refused with none of those bytes; a new read asks the machine.
+const UNKEPT_REPLY_VERBS: [&str; 19] = [
     "vault.inquire",
     "vault.inquiry.edge.prepare_join",
     "vault.members.accept_with_inquiry_edge",
@@ -329,12 +345,16 @@ const UNKEPT_REPLY_VERBS: [&str; 15] = [
     oneiron::experiment_arm::ARMS_LIST_VERB,
     oneiron::experiment_arm::ARMS_ADMIT_VERB,
     oneiron::experiment_arm::ARMS_FORECAST_VERB,
+    oneiron::experiment_arm::ARMS_UNITS_RESERVE_VERB,
+    oneiron::experiment_arm::ARMS_UNITS_CANCEL_VERB,
     oneiron::gpu_line::VAULT_GPU_LINES_GET,
     oneiron::gpu_line::VAULT_GPU_LINES_FAMILIES_ADMIT,
     "vault.jobs.workloads.get",
     "vault.jobs.workloads.list",
     oneiron::task_verb::sdk::MACHINE_STATUS_VERB,
     oneiron::task_verb::sdk::MACHINES_EXECUTION_GET_VERB,
+    oneiron::job_history::JOB_HISTORY_VERB,
+    oneiron::work_order::LOGS_TAIL_VERB,
 ];
 
 /// Whether an invocation claim keeps `verb`'s answer for a later request

@@ -224,6 +224,7 @@ pub(in crate::api::mcp_gateway) fn admitted_context(
         drain: None,
         forwarded: None,
         client_surface: None,
+        session_workspace: None,
         signing_request_transport: None,
     })
 }
@@ -312,7 +313,11 @@ pub(crate) fn ensure_mcp_actor_matches(
     args: &McpValidatedToolArgs,
     resolved: &McpResolvedActor,
 ) -> Result<(), McpGatewayError> {
-    let actor = mcp_validated_actor(args);
+    let Some(actor) = mcp_validated_actor(args) else {
+        // `execute` and `resume` carry no actor block: the call runs as the
+        // credential's own actor, with nothing to compare (FIX EXECUTE-CALLER-CODE).
+        return Ok(());
+    };
     if actor.actor_ref != resolved.actor_ref.to_hex() {
         return Err(McpGatewayError::new(
             -32602,
@@ -377,12 +382,13 @@ pub(crate) fn ensure_mcp_actor_matches(
     Ok(())
 }
 
-pub(crate) fn mcp_validated_actor(args: &McpValidatedToolArgs) -> &McpActorMetadata {
+pub(crate) fn mcp_validated_actor(args: &McpValidatedToolArgs) -> Option<&McpActorMetadata> {
     match args {
-        McpValidatedToolArgs::Setup(args) => &args.actor,
-        McpValidatedToolArgs::ExecuteCode(args) => &args.actor,
-        McpValidatedToolArgs::ReadResult(args) => &args.actor,
-        McpValidatedToolArgs::InvokeAction(args) => &args.actor,
-        McpValidatedToolArgs::Verb(args) => &args.payload.actor,
+        McpValidatedToolArgs::Setup(args) => Some(&args.actor),
+        // No actor block travels on these tools; the resolved credential is
+        // the actor.
+        McpValidatedToolArgs::Execute(_) | McpValidatedToolArgs::Resume(_) => None,
+        McpValidatedToolArgs::InvokeAction(args) => Some(&args.actor),
+        McpValidatedToolArgs::Verb(args) => Some(&args.payload.actor),
     }
 }

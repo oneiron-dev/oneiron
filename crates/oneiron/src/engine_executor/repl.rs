@@ -2,8 +2,8 @@
 //! Entry: `EngineNativeExecutor::run`.
 //! `EngineNativeExecutor` is defined by `driver`; children own persistence, speech and requests.
 
-mod deadline;
-mod persistence;
+pub(super) mod deadline;
+pub(super) mod persistence;
 mod request;
 mod speech;
 mod turn;
@@ -24,7 +24,8 @@ use super::record::{
     LoadedReplayRecord, PromptBinding, REPLAY_METADATA_SCHEMA_VERSION, StepResultDigests,
     code_consent_evidence, completed_step_count, load_terminal_status, parked_wait, parked_wait_at,
     prepared_step_state_hash, previous_state_hash, record_caller_task, record_config_marker,
-    record_terminal_output, validate_executor_config_marker, verify_code_consent_park, wait_key,
+    record_terminal_output, refuse_caller_source_as_task, validate_executor_config_marker,
+    verify_code_consent_park, wait_key,
 };
 use super::store::{
     COMPACTION_OBSERVATION_WINDOW_BYTES, IMPLICIT_SPEECH_TEXT_BYTES, ImplicitSpeechIntent,
@@ -54,7 +55,6 @@ use crate::compaction::output::{OutputAffordance, OutputRef, OutputTier, OutputW
 use crate::limit_ask::EngineLimit;
 use crate::off_record::ExecutorUtterance;
 use crate::prompt::resolve_engine_executor_wire_prompt;
-use crate::runtime_hooks::VerbHookStop;
 use crate::{
     CallClass, CallEnvelope, CallPurpose, ContentPart, DeterministicFallback, EntityId, Error,
     LlmMessage, LlmMessageRole, LlmRequest, LlmResponse, ModelId, ResponseFormat, TierPrecedence,
@@ -68,7 +68,22 @@ impl EngineNativeExecutor<'_> {
         config: &EngineExecutorConfig,
     ) -> EngineExecutorResult<EngineExecutorOutcome> {
         self.verify_storage_dispatcher_binding()?;
+        // Refuse the source mode before resolving a task seat or prompt (FIX EXECUTE-CALLER-CODE).
+        if let Some(record) = self.storage.get_code_run_replay_record(&config.run_id)? {
+            refuse_caller_source_as_task(&record)?;
+        }
         config.validate()?;
+        if config.caller_source_digest.is_some() {
+            return Err(Error::InvalidConfig(
+                "engine executor caller-source run cannot resume as a task run".to_owned(),
+            )
+            .into());
+        }
+        if self.task_model.is_none() {
+            return Err(
+                Error::InvalidConfig("the task executor has no model backend".to_owned()).into(),
+            );
+        }
         // The entry's capture epoch of the run's read-world ledger (FIX 6130),
         // for the task this entry runs (FIX 7087).
         let gated = self.gated_write;
@@ -85,6 +100,7 @@ impl EngineNativeExecutor<'_> {
             config,
             &wire_prompt.stamp.resolved_fingerprint,
             continuation.as_ref(),
+            None,
         )?;
         // A terminal replay still owes typed restore even when no new model
         // request is assembled during this attempt.
@@ -175,10 +191,10 @@ impl EngineNativeExecutor<'_> {
                     .generate_step_program(
                         config,
                         &mut record,
-                        &wire_prompt.text,
-                        &wire_prompt.stamp.resolved_fingerprint,
+                        &wire_prompt,
                         continuation.as_ref(),
                         completed_steps,
+                        expected_generation,
                     )
                     .await?
                 {
@@ -796,20 +812,4 @@ impl EngineNativeExecutor<'_> {
 
 fn answering_model(response: &LlmResponse) -> Option<ModelId> {
     ModelId::new(response.usage.served_model_id()?).ok()
-}
-
-/// The wait a turn hook's ask parks the run on, as a call's ask parks the
-/// call (`code_run::dispatcher::verb_hooks`): the ask's group, its prompt
-/// naming the turn's invocation, whose next try takes the answer. `None` for
-/// a skip, a hidden result, or an ask with no group: the turn ends there.
-fn turn_hook_wait(stop: &VerbHookStop) -> Option<SelfDurableWait> {
-    let VerbHookStop::Pending { invocation, ask } = stop else {
-        return None;
-    };
-    Some(SelfDurableWait {
-        wait_id: EntityId::from_hex(ask).ok()?,
-        effect: SelfEffect::TasksWait,
-        reason: SelfDurableWaitReason::PeerResult,
-        prompt: Some(format!("verb_hook:{invocation}")),
-    })
 }

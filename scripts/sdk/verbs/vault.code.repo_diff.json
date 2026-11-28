@@ -23,5 +23,6 @@
       "ts": "/** Every file changed between two trees of a repository, unit by unit, with the operations that wrote each. */",
       "py": "Every file changed between two trees of a repository, unit by unit, with the operations that wrote each."
     }
-  }
+  },
+  "caller_code": "refused"
 }

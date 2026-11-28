@@ -159,7 +159,9 @@ pub fn node_view(answer: Result<JobAnswer, NodeCallError>, asked_at_ms: u64) -> 
     }
 }
 
-fn node_answer(node: NodeAnswer) -> MachineNodeAnswer {
+/// The one view of a node's `Node` answer: what `vault.machines.status` shows, and what the
+/// work-order loop's machine facts are read from (`work_order_host.rs` `facts_of_answer`).
+pub(crate) fn node_answer(node: NodeAnswer) -> MachineNodeAnswer {
     MachineNodeAnswer {
         enabled: node.enabled,
         paused: node.paused,

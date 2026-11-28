@@ -1,4 +1,4 @@
-//! A served MCP `execute_code` run a restart left parked on a code consent
+//! A served MCP `execute` run a restart left parked on a code consent
 //! wait, entered again for its original caller (FIX 4606).
 //!
 //! The registry of parked runs is memory, and so is the MCP actor registry,
@@ -154,7 +154,7 @@ impl McpCodeRunContinuation {
     /// fresh auth comes from the very instrument the wait kept
     /// ([`crate::code_consent_host::kept_instrument_auth`]), placed where it
     /// sat and toward the machine its connection proved. Its door is then
-    /// built again, must name the same run, and `execute_code`'s own gate
+    /// built again, must name the same run, and `execute`'s own gate
     /// must admit it. Blocking: it locks the MCP actor registry, so call it
     /// on a blocking worker.
     ///
@@ -202,7 +202,7 @@ impl McpCodeRunContinuation {
             session: origin.session.map(RequestSession::of_id),
             room_turn: origin.room_turn,
         };
-        let (caller, registration) = match &reference.door {
+        let (mut caller, registration) = match &reference.door {
             VerbAskDoor::Mcp {
                 connection,
                 ceiling,
@@ -223,6 +223,7 @@ impl McpCodeRunContinuation {
             // A facade's door is no MCP caller's.
             VerbAskDoor::Facade { .. } => return Err(VerbAskRefusal::ContextUnavailable),
         };
+        caller.session_workspace = reference.session_workspace.clone();
         if crate::mcp::mcp_code_run_id(&origin.handle, &caller) != run.key.run {
             return Err(VerbAskRefusal::ContextUnavailable);
         }
@@ -235,9 +236,9 @@ impl McpCodeRunContinuation {
                 .err()
                 .unwrap_or(VerbAskRefusal::ScopeRefused)
         })?;
+        // Re-entry reads the held input again under this caller's rebuilt door.
         Ok(Self {
             run_ref: origin.handle.clone(),
-            task: run.task,
             wait: run.key,
             generation: run.generation,
             caller,

@@ -84,10 +84,16 @@ async fn transport_row(
         return Err(invalid());
     }
     let auth = actor.auth.as_ref().ok_or_else(invalid)?;
+    // The typed decode runs before the input check, as a generated host
+    // door's does, so a field of the wrong shape is refused naming what was
+    // wrong in reason codes (FIX CODE-MODE-DENIAL-REASONS; review round 2 of
+    // #10553: the check refused it with none). The check, the hosted
+    // operator's refusal and the owner proof still run after it, in order.
+    let part: HookTranscriptPartRequest = serde::Deserialize::deserialize(&input)
+        .map_err(|error| McpGatewayError::typed_input_refused(&error))?;
     oneiron::task_verb::sdk::validate_input(tool, &input).map_err(mcp_facade_error)?;
     crate::api::facade::facade_transport_admits(server, auth, tool)
         .map_err(|refusal| mcp_facade_error(refusal.into_memory_error()))?;
-    let part: HookTranscriptPartRequest = serde_json::from_value(input).map_err(|_| invalid())?;
     let (landing, request) =
         match stage_hook_transcript_part(server, auth, &part).map_err(mcp_facade_error)? {
             // Derived from no row: `served` lists none.

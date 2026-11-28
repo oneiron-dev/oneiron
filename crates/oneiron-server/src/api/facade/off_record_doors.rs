@@ -675,7 +675,9 @@ fn run_refusal(error: &McpCodeExecutionError) -> MemoryError {
             MEMORY_CODE_INVALID_STATE,
             "Check that the session is live and off record, then call again.",
         ),
-        McpCodeExecutionError::Run(_) | McpCodeExecutionError::ResumeDivergence(_) => (
+        McpCodeExecutionError::Run(_)
+        | McpCodeExecutionError::ResumeDivergence(_)
+        | McpCodeExecutionError::RunRefReused => (
             MEMORY_CODE_INTERNAL,
             "Call again with the same run_ref; the run goes on from its last step.",
         ),
@@ -683,6 +685,17 @@ fn run_refusal(error: &McpCodeExecutionError) -> MemoryError {
         // answer it (FIX OFF-RECORD-RUN-POLICY-REFUSAL-500): calling again
         // meets it again.
         McpCodeExecutionError::Refused(refusal) => return (**refusal).clone(),
+        // An MCP Task run only (FIX CODE-MODE-LENDING-W6): a session run's
+        // entry never answers it, but the match is exhaustive, so it keeps
+        // its own refusal rather than a retry suggestion a re-entry would
+        // meet again.
+        McpCodeExecutionError::WindowOutgrown => {
+            return MemoryError::new(
+                MEMORY_CODE_MODEL_UNAVAILABLE,
+                error.to_string(),
+                &["Start the run again."],
+            );
+        }
     };
     MemoryError::new(code, error.to_string(), &[suggestion])
 }

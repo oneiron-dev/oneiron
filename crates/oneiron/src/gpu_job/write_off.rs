@@ -4,9 +4,12 @@
 //! zero. The write-off is final. A receipt that arrives later is evidence only: it never
 //! settles the job again. It says nothing about a process, and it never lets the key start
 //! again. When a work order made the job, the same write ends the order's attempt
-//! `written_off` (pass 34, Q1), so the order starts nothing more on its own.
+//! `written_off` (pass 34, Q1), so the order starts nothing more on its own. When the job is a
+//! line unit's, the same write ends its claim written off by this owner, so no hold stays open
+//! (pass 33, 8.4).
 
 use crate::consent::AuthenticatedOwner;
+use crate::gpu_line::{UnitEndReport, settle_unit_in_txn};
 use crate::llm::run_admission::CallOutcome;
 use crate::{EntityId, Vault};
 
@@ -50,7 +53,7 @@ impl Vault {
             let Some(mut job) = GPU_JOBS.get(&self.store, txn, id)? else {
                 return Ok(Err(GpuJobError::NotFound));
             };
-            owner.revalidate_in_txn(self, txn)?;
+            let by = owner.revalidate_in_txn(self, txn)?;
             if !job.state.is_live() {
                 return Ok(Err(GpuJobError::Ended));
             }
@@ -84,6 +87,12 @@ impl Vault {
                 reason: GpuEndReason::Unconfirmed,
             };
             self.put_gpu_job_in_txn(txn, &mut job, now_ms)?;
+            // A unit's job holds no permit: its claim is its hold, and it ends in this write.
+            // A claim that already ended keeps its terminal.
+            if let Some(claim) = &job.claim {
+                let report = UnitEndReport::WrittenOff { by };
+                let _ = settle_unit_in_txn(self, txn, claim, &job.id, &report, now_ms)?;
+            }
             // A job no order made leaves every order alone.
             self.order_attempt_written_off_in_txn(txn, id, now_ms)?;
             Ok(Ok(job))

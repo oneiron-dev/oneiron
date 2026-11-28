@@ -43,11 +43,10 @@ impl EngineNativeExecutor<'_> {
     /// Their implicit selection and terminal recovery are skipped; explicit
     /// speech still goes through the child's read-only door.
     ///
-    /// A canonical run whose actor the witness gate would not allow a
-    /// companion MESSAGE (a read-only or propose-only agent, FIX 23049)
-    /// selects `ImplicitSpeechIntent::ResultOnly`: the run completes, its
-    /// answer stays in the run's result, and no witness is attempted, now or
-    /// on recovery.
+    /// A canonical run whose witness gate or bound door does not admit a
+    /// companion MESSAGE selects `ImplicitSpeechIntent::ResultOnly`: the run
+    /// completes, its answer stays in the run's result, and no witness is
+    /// attempted, now or on recovery.
     ///
     /// # How much is said
     ///
@@ -71,9 +70,11 @@ impl EngineNativeExecutor<'_> {
             return Ok(None);
         };
         // Only own-run output is optional: an actor whose companion MESSAGE
-        // the witness gate would not allow keeps its answer in the run's
-        // result. Room speech and every explicit speech or memory effect keep
-        // their ordinary write doors.
+        // the witness gate would not allow (FIX 23049) keeps its answer in the
+        // run's result. So does a run whose bound door refuses its bubble,
+        // such as a Read-only credential at the MCP door
+        // (FIX CODE-MODE-LENDING-W7). Room speech and every explicit speech
+        // or memory effect keep their ordinary write doors.
         if let crate::code_run::ExecutorStorage::Canonical(vault) = &self.storage {
             let txn = vault.store.env.read_txn().map_err(Error::from)?;
             if !crate::gate::code_run_answer_may_witness(
@@ -81,6 +82,16 @@ impl EngineNativeExecutor<'_> {
                 &txn,
                 self.gated_write.actor(),
             )? {
+                return Ok(Some(ImplicitSpeechIntent::ResultOnly));
+            }
+            drop(txn);
+            let admission = self.storage.answered(|| {
+                self.gated_write
+                    .admit_run_call(crate::code_run::RunCall::Bridge(
+                        crate::code_run::SelfEffect::Speak,
+                    ))
+            })?;
+            if admission.is_err() {
                 return Ok(Some(ImplicitSpeechIntent::ResultOnly));
             }
         }
@@ -203,18 +214,23 @@ impl EngineNativeExecutor<'_> {
             return Ok(());
         }
         // The bubble is the run's own `self.speak`: a bound door rules on it
-        // as on any other, answered as a call is. A refused bubble stays a
-        // checkpointed intent that a later admitted retry delivers.
-        self.storage
-            .answered(|| {
-                self.gated_write
-                    .admit_run_call(crate::code_run::RunCall::Bridge(
-                        crate::code_run::SelfEffect::Speak,
-                    ))
-            })?
-            .map_err(|refusal| super::types::EngineExecutorError::HostRefused {
-                code: refusal.code,
-            })?;
+        // as on any other, answered as a call is. Refused room speech stays a
+        // checkpointed intent that a later admitted retry delivers. Refused
+        // own-run output stays in the result only.
+        if let Err(refusal) = self.storage.answered(|| {
+            self.gated_write
+                .admit_run_call(crate::code_run::RunCall::Bridge(
+                    crate::code_run::SelfEffect::Speak,
+                ))
+        })? {
+            if matches!(
+                &self.storage,
+                crate::code_run::ExecutorStorage::Canonical(_)
+            ) {
+                return Ok(());
+            }
+            return Err(super::types::EngineExecutorError::HostRefused { code: refusal.code });
+        }
         let occurred_at = config
             .determinism
             .frozen_unix_ms

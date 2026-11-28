@@ -17,6 +17,7 @@
 //! [`GpuJobPermits`].
 use serde::{Deserialize, Serialize};
 
+use crate::gpu_line::ClaimKey;
 use crate::llm::run_admission::{
     CheckpointRef, JobMaximum, JobSignal, JobStartRefused, LeaseUnit, MaximumStop, ResumeRefused,
     RunDenied,
@@ -26,6 +27,7 @@ use crate::{EntityId, Vault};
 
 mod allowance;
 mod caller;
+mod claim_gate;
 mod connector;
 mod node_view;
 mod offer;
@@ -42,6 +44,7 @@ mod write_off;
 pub use allowance::GpuJobAllowance;
 pub(crate) use allowance::erase_allowance_actor_in_txn;
 pub use caller::{GpuJobActor, GpuJobAgent, GpuJobVerb};
+pub use claim_gate::{LineStartRefused, UNIT_JOB_TYPE, UnitJobStart};
 pub use connector::{
     GpuConnectorError, GpuJobConnector, GpuJobEnd, GpuJobOutput, GpuJobSignal, GpuJobSpec,
     GpuJobTerminal, GpuResourceRef, GpuResourceStatus, GpuTermination, MeterVerdict,
@@ -117,6 +120,10 @@ pub enum GpuJobError {
     /// per-job maximum, or on a job it did not start.
     #[error(transparent)]
     Caller(crate::memory::MemoryError),
+    /// The start gate's line half refused: a start on a line-managed offer
+    /// outside its unit claim, or a claim that does not admit this start.
+    #[error(transparent)]
+    LineManaged(LineStartRefused),
     /// The work order an attempt belongs to refused it in the start's own
     /// read or write: it changed, its authority ended, or a blocker stands.
     #[error(transparent)]
@@ -153,6 +160,7 @@ impl From<GpuJobError> for crate::memory::MemoryError {
             | GpuJobError::QuoteUsed
             | GpuJobError::ResumeTermsChanged
             | GpuJobError::AdmissionMismatch
+            | GpuJobError::LineManaged(_)
             | GpuJobError::Ended => MEMORY_CODE_INVALID_STATE,
             GpuJobError::Denied(_) => MEMORY_CODE_BUDGET_SPENT,
             GpuJobError::NotFound => MEMORY_CODE_NOT_FOUND,
@@ -190,6 +198,12 @@ pub enum GpuEndReason {
     /// The owner wrote the job off: its end could not be confirmed, and it settled zero (pass 33
     /// row R4, door 10).
     Unconfirmed,
+    /// The backend ended the job at its maximum seconds, with or without a checkpoint (pass 33,
+    /// 8.6): never a natural exit, and never `AtMaximum`, whose stop offers a resume.
+    TimeLimit,
+    /// The chunk's machine never started it: it refused the key at submit or at launch, or
+    /// withdrew it (its node part says which). Nothing ran and nothing was billed.
+    NeverStarted,
 }
 
 /// Where a job stands.
@@ -301,6 +315,20 @@ pub struct GpuJob {
     /// the job ends, so no other renewal follows it.
     #[serde(default)]
     pub renewal: Option<GpuChunk>,
+    /// The unit claim of a GPU line this job is the one job of; `None` for a
+    /// job on an offer no line names (design pass 32 r2, 5.3). A start
+    /// writes it with the claim's start; the take-up and the end read it.
+    #[serde(default)]
+    pub claim: Option<ClaimKey>,
+    /// The host backend that runs the job's chunks, by its registry name, as
+    /// the offer named it at the start or the last resume
+    /// ([`GpuOffer::backend`]). A job keeps its backend (design pass 33, 8.1):
+    /// the host's worker and cancel reach its resource through this name
+    /// whether or not the offer is still posted. `None` on a row written
+    /// before it and for an offer bound to no backend by name; the host then
+    /// reaches the job through its offer as posted.
+    #[serde(default)]
+    pub backend: Option<String>,
 }
 
 impl GpuJob {
@@ -445,6 +473,15 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         GPU_JOBS
             .iter_from(&self.store, &txn, &[])?
+            .map(|row| row.map(|(_, job)| job))
+            .collect()
+    }
+
+    /// Every GPU job of this vault, in the caller's read transaction: for a read that joins the
+    /// jobs to other rows of one snapshot (`vault.jobs.history`).
+    pub(crate) fn gpu_jobs_in_txn(&self, txn: &heed::RoTxn<'_>) -> crate::Result<Vec<GpuJob>> {
+        GPU_JOBS
+            .iter_from(&self.store, txn, &[])?
             .map(|row| row.map(|(_, job)| job))
             .collect()
     }

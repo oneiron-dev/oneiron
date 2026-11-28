@@ -1,5 +1,6 @@
 {
   "name": "vault.decisions.asks.confirm_grant",
+  "description": "Confirms the standing grant drafted on a decision ask as the vault owner and records its rule, notice, and undo.",
   "input": "crate::receipt::DecisionAskConfirmGrantRequest",
   "output": "crate::llm::decision::DecisionAsk",
   "call": "crate::task_verb::sdk::host_only(memory, \"vault.decisions.asks.confirm_grant\", &input)?",

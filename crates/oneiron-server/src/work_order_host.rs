@@ -6,8 +6,11 @@
 //! writes its attempt entry beside the job.
 //!
 //! The pass runs on the built job worker (`gpu_host.rs`, OPUS-LE-FLEET's file), on its tick and
-//! on each wake: one worker.
+//! on each wake: one worker. Its readiness read is the child module `readiness_read`.
 
+mod readiness_read;
+
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use oneiron::EntityId;
@@ -21,12 +24,21 @@ use oneiron::work_order::{
     OrderAttemptRef, OrderCharge, OrderHost, PassReport, Room, TemplateFact, WorkOrder,
 };
 
-use crate::gpu_execution_node::issuer::{JobNodeClient, NodeCallError, not_the_issuer};
-use crate::gpu_execution_node::wire::{
-    JobAnswer, JobRefusal, JobRequest, JobStatusAnswer, JobStatusRequest, NodeAnswer,
+use crate::gpu_execution_node::issuer::node_status::node_answer;
+use crate::gpu_execution_node::issuer::{
+    JobNodeClient, NodeCallError, VAULT_MACHINE_BACKEND, not_the_issuer,
 };
-use crate::gpu_host::{GpuHostError, job_admission, offer_with_backend};
+use crate::gpu_execution_node::wire::{
+    JobAnswer, JobRefusal, JobRequest, JobStatusAnswer, JobStatusRequest, LogTailRequest,
+    NodeAnswer,
+};
+use crate::gpu_host::{GpuHostError, job_admission, job_backend, offer_with_backend};
 use crate::server::SyncServer;
+
+use readiness_read::mesh_bound;
+pub(crate) use readiness_read::run_readiness_read;
+#[cfg(oneiron_test_support)]
+pub(crate) use readiness_read::worker_pass_asks;
 
 /// Bytes in a MiB.
 const MIB: u64 = 1024 * 1024;
@@ -89,17 +101,21 @@ pub fn facts_of_answer(machine: EntityId, answer: Option<&JobAnswer>, now_ms: u6
     facts
 }
 
+/// The facts `node` gives, read through the one view of a node's `Node` answer
+/// ([`node_answer`], the one `vault.machines.status` shows): the loop reads no field of the wire
+/// answer itself.
 fn fill_from_node(facts: &mut MachineFacts, node: &NodeAnswer, now_ms: u64) {
+    let node = node_answer(node.clone());
     facts.reach = MachineReach::Answered { at_ms: now_ms };
     facts.enabled = node.enabled;
-    facts.paused.clone_from(&node.paused);
-    facts.drained.clone_from(&node.drained);
+    facts.paused = node.paused;
+    facts.drained = node.drained;
     facts.templates = Some(
         node.templates
-            .iter()
+            .into_iter()
             .map(|template| TemplateFact {
-                name: template.name.clone(),
-                digest: template.digest.clone(),
+                name: template.name,
+                digest: template.digest,
             })
             .collect(),
     );
@@ -116,6 +132,13 @@ pub(crate) struct ServerOrderHost<'a> {
     server: &'a SyncServer,
     nodes: &'a dyn JobNodeClient,
     now_ms: u64,
+    /// Whether this host is the job worker's own pass, which acts on each `Node` answer's
+    /// readiness fact. A placement preview (`vault.machines.place`) and the order door's
+    /// immediate pass only read it.
+    observe: bool,
+    /// The issuer's clock, which dates each `Node` request the worker's pass sends when it is
+    /// sent (REVIEW-10544 round 2 P1).
+    clock: &'a dyn Fn() -> u64,
 }
 
 impl<'a> ServerOrderHost<'a> {
@@ -124,6 +147,21 @@ impl<'a> ServerOrderHost<'a> {
             server,
             nodes,
             now_ms,
+            observe: false,
+            clock: &crate::gpu_host::now_ms,
+        }
+    }
+
+    /// This host as the job worker's pass: it acts on the readiness facts it reads, on the
+    /// vault's issuer of vault machine jobs only (`[gpu_jobs.vault_machine] issuer` names this
+    /// install's MACHINE). Another replica that dispatches an offer to the same node reads its
+    /// answers and acts on none: neither clears the issuer's drain nor queues the owner's ask
+    /// (REVIEW-10518 round 2 P1).
+    pub(crate) fn observing(self) -> Self {
+        let issuer = not_the_issuer(self.server, VAULT_MACHINE_BACKEND).is_ok();
+        Self {
+            observe: issuer,
+            ..self
         }
     }
 
@@ -161,12 +199,24 @@ impl OrderHost for ServerOrderHost<'_> {
         }
     }
 
+    /// Each machine's `Node` answer, as the pass's facts. On the worker's pass, the answer's
+    /// readiness fact is acted on first ([`OrderLoop::ask_node_observing`]): a passed check
+    /// clears the issuer's drain before the pass places, and a run of failed checks reaches the
+    /// owner (CG-2 row 9). Each request is dated when it is sent. Before the mesh listener is
+    /// bound no request can start, so none is recorded then.
     fn machine_facts(&self, machines: &[EntityId]) -> Vec<MachineFacts> {
+        let orders = self.server.gpu_jobs.orders();
+        let observe = self.observe && mesh_bound(self.server);
         machines
             .iter()
             .map(|machine| {
-                let answer = self.nodes.job(*machine, &JobRequest::Node).ok();
-                facts_of_answer(*machine, answer.as_ref(), self.now_ms)
+                let answer = if observe {
+                    let at_ms = (self.clock)();
+                    orders.ask_node_observing(&self.server.vault, self.nodes, *machine, at_ms)
+                } else {
+                    self.nodes.job(*machine, &JobRequest::Node)
+                };
+                facts_of_answer(*machine, answer.ok().as_ref(), self.now_ms)
             })
             .collect()
     }
@@ -262,8 +312,7 @@ impl OrderHost for ServerOrderHost<'_> {
             .gpu_job(job)
             .map_err(|error| error.to_string())?
             .ok_or("the attempt's job is not on this issuer")?;
-        let (_, connector) = offer_with_backend(self.server, &job_row.offer.name)
-            .map_err(|error| error.to_string())?;
+        let connector = job_backend(self.server, &job_row).map_err(|error| error.to_string())?;
         self.server
             .vault
             .cancel_gpu_job(
@@ -283,68 +332,74 @@ impl OrderHost for ServerOrderHost<'_> {
     /// ceiling first. Every model rung blocks on the runtime; the pass runs on a blocking
     /// thread.
     fn decide(&self, ask: &SlotAsk) -> DeciderReply {
-        let admitted = self
-            .server
-            .gpu_jobs
-            .orders()
-            .asks
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .admit(ask.slot, ask.grant, ask.max_asks_per_hour, self.now_ms);
-        if !admitted {
-            return DeciderReply::Ceiling;
-        }
-        let request = match slot_verdict_request(ask) {
-            Ok(request) => request,
-            Err(why) => {
-                return DeciderReply::Failed {
-                    why: why.to_owned(),
-                    receipt: None,
-                };
-            }
-        };
-        let memory = self.server.vault.memory(ask.agent, ask.class);
-        let mut evidence_read = Vec::new();
-        let answered = crate::decision_verdict::run_verdict_reasoned(
-            self.server,
-            ask.agent,
-            ask.class,
-            &memory,
-            None,
-            None,
-            &request,
-            None,
-            &mut evidence_read,
-            None,
-        );
-        match answered {
-            Err(error) if error.code == MEMORY_CODE_MODEL_UNAVAILABLE => DeciderReply::NoModel,
-            Err(error) => DeciderReply::Failed {
-                why: error.to_string(),
+        decide_slot_ask(self.server, ask, self.now_ms)
+    }
+}
+
+/// A slot's decider (row P1; an agent run's PLACE, row P4), asked through `server`'s decision
+/// ladder as one `ai.verdict` read of the decider's agent: a Choice over the options, inside the
+/// slot's deadline, metered on that agent's own read line. Counted against the slot's hourly
+/// ceiling at `now_ms` first. Every model rung blocks on the runtime, so the caller runs on a
+/// blocking thread.
+pub(crate) fn decide_slot_ask(server: &SyncServer, ask: &SlotAsk, now_ms: u64) -> DeciderReply {
+    let admitted = server
+        .gpu_jobs
+        .orders()
+        .asks
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .admit(ask.slot, ask.grant, ask.max_asks_per_hour, now_ms);
+    if !admitted {
+        return DeciderReply::Ceiling;
+    }
+    let request = match slot_verdict_request(ask) {
+        Ok(request) => request,
+        Err(why) => {
+            return DeciderReply::Failed {
+                why: why.to_owned(),
                 receipt: None,
-            },
-            Ok((verdict, no_answer)) => {
-                let receipt = decider_receipt(&verdict);
-                match (verdict.answer, no_answer) {
-                    (DecisionAnswer::Choice(label), _) => DeciderReply::Answered { label, receipt },
-                    (DecisionAnswer::Abstain, Some(HumanAskReason::ProviderUnavailable))
-                        if no_model_read(&verdict.receipt.providers) =>
-                    {
-                        DeciderReply::NoModel
-                    }
-                    (DecisionAnswer::Abstain, Some(HumanAskReason::Deadline)) => {
-                        DeciderReply::Silent {
-                            receipt: Some(receipt),
-                        }
-                    }
-                    (DecisionAnswer::Abstain, _) => DeciderReply::Abstained {
-                        receipt: Some(receipt),
-                    },
-                    (_, _) => DeciderReply::Failed {
-                        why: "the decider's read gave no choice".to_owned(),
-                        receipt: Some(receipt),
-                    },
+            };
+        }
+    };
+    let memory = server.vault.memory(ask.agent, ask.class);
+    let mut evidence_read = Vec::new();
+    let answered = crate::decision_verdict::run_verdict_reasoned(
+        server,
+        ask.agent,
+        ask.class,
+        &memory,
+        None,
+        None,
+        &request,
+        None,
+        &mut evidence_read,
+        None,
+    );
+    match answered {
+        Err(error) if error.code == MEMORY_CODE_MODEL_UNAVAILABLE => DeciderReply::NoModel,
+        Err(error) => DeciderReply::Failed {
+            why: error.to_string(),
+            receipt: None,
+        },
+        Ok((verdict, no_answer)) => {
+            let receipt = decider_receipt(&verdict);
+            match (verdict.answer, no_answer) {
+                (DecisionAnswer::Choice(label), _) => DeciderReply::Answered { label, receipt },
+                (DecisionAnswer::Abstain, Some(HumanAskReason::ProviderUnavailable))
+                    if no_model_read(&verdict.receipt.providers) =>
+                {
+                    DeciderReply::NoModel
                 }
+                (DecisionAnswer::Abstain, Some(HumanAskReason::Deadline)) => DeciderReply::Silent {
+                    receipt: Some(receipt),
+                },
+                (DecisionAnswer::Abstain, _) => DeciderReply::Abstained {
+                    receipt: Some(receipt),
+                },
+                (_, _) => DeciderReply::Failed {
+                    why: "the decider's read gave no choice".to_owned(),
+                    receipt: Some(receipt),
+                },
             }
         }
     }
@@ -409,7 +464,9 @@ pub fn dispatches_offer(server: &SyncServer, name: &str) -> Result<(), Blocker> 
 }
 
 /// One pass of the loop on this server at `now_ms`, with node calls through `nodes`. Orders
-/// charged to an offer this server does not dispatch are left to the issuer.
+/// charged to an offer this server does not dispatch are left to the issuer. Only the job
+/// worker's pass (`observe`) acts on the readiness facts it reads. The order door's immediate
+/// pass only reads them.
 ///
 /// # Errors
 ///
@@ -418,10 +475,11 @@ pub(crate) fn order_pass(
     server: &Arc<SyncServer>,
     nodes: &dyn JobNodeClient,
     now_ms: u64,
+    observe: bool,
 ) -> oneiron::Result<PassReport> {
-    server
-        .vault
-        .work_order_pass(&ServerOrderHost::new(server, nodes, now_ms), now_ms)
+    let host = ServerOrderHost::new(server, nodes, now_ms);
+    let host = if observe { host.observing() } else { host };
+    server.vault.work_order_pass(&host, now_ms)
 }
 
 /// The loop's state on this server: the wake its events send, the one-pass-at-a-time lock, and
@@ -434,6 +492,12 @@ pub(crate) struct OrderLoop {
     /// The slot deciders' asks this hour (row P1): the ceiling `policy.slots.max_asks_per_hour`
     /// counts them here, so an issuer that restarts opens a new window.
     asks: Mutex<SlotAskWindow>,
+    /// The worker's readings of each machine's readiness fact, by its pass and by its scheduled
+    /// read: the last sample and the clear baseline of each machine read in the last
+    /// `ReadinessReads::IDLE_MS`, and the last ask of each machine the read may ask (CG-2 row 9).
+    readiness: Mutex<crate::gpu_execution_node::issuer::guard::ReadinessReads>,
+    /// Whether the worker's scheduled readiness read runs now: one runs at a time.
+    reading: Arc<AtomicBool>,
 }
 
 impl std::fmt::Debug for OrderLoop {
@@ -472,6 +536,15 @@ impl OrderLoop {
     pub(crate) fn use_nodes(&self, nodes: Arc<dyn JobNodeClient>) -> bool {
         self.nodes.set(nodes).is_ok()
     }
+}
+
+/// Whether the job worker's pass on `server` acts on the readiness facts it reads
+/// ([`ServerOrderHost::observing`]), for `tests/issuer_readiness_drain.rs`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn worker_pass_observes(server: &SyncServer) -> bool {
+    ServerOrderHost::new(server, &NoNodes, 0)
+        .observing()
+        .observe
 }
 
 /// A node client for a server that cannot call nodes (no mesh, or no runtime): every machine
@@ -516,8 +589,8 @@ fn node_client(_server: &Arc<SyncServer>) -> Option<Arc<dyn JobNodeClient>> {
     None
 }
 
-/// One pass of the loop at `now_ms` under the loop's lock, so a door's pass and the worker's
-/// never run at once.
+/// The order door's immediate pass at `now_ms`, under the loop's lock. It reads each machine's
+/// readiness fact and acts on none; the worker's next pass does.
 ///
 /// # Errors
 ///
@@ -526,18 +599,29 @@ pub(crate) fn locked_order_pass(
     server: &Arc<SyncServer>,
     now_ms: u64,
 ) -> oneiron::Result<PassReport> {
+    locked_pass(server, now_ms, false)
+}
+
+/// One pass of the loop at `now_ms` under the loop's lock, so that a door's pass and the
+/// worker's never run at once. `observe` as in [`order_pass`].
+fn locked_pass(
+    server: &Arc<SyncServer>,
+    now_ms: u64,
+    observe: bool,
+) -> oneiron::Result<PassReport> {
     let orders = server.gpu_jobs.orders();
     let _pass = orders
         .pass
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let nodes = orders.nodes(server);
-    order_pass(server, nodes.as_ref(), now_ms)
+    order_pass(server, nodes.as_ref(), now_ms, observe)
 }
 
-/// The worker's pass (hunk H2 calls it on each tick and wake): one pass, its failure logged.
+/// The worker's pass (hunk H2 calls it on each tick and wake): one pass, its failure logged. It
+/// is the one pass that acts on the readiness facts it reads.
 pub(crate) fn run_order_pass(server: &Arc<SyncServer>, now_ms: u64) {
-    match locked_order_pass(server, now_ms) {
+    match locked_pass(server, now_ms, true) {
         Ok(report) => {
             for (order, n, machine) in &report.made {
                 tracing::info!(
@@ -550,6 +634,17 @@ pub(crate) fn run_order_pass(server: &Arc<SyncServer>, now_ms: u64) {
         }
         Err(error) => tracing::warn!(error = %error, "work order pass failed"),
     }
+}
+
+/// One `Tail` of a key's log on `machine` through the node client the loop calls through
+/// (`vault.jobs.logs.tail`, pass 34 7.2). It blocks on the node: call it off the runtime.
+pub(crate) fn tail_on_machine(
+    server: &Arc<SyncServer>,
+    machine: EntityId,
+    request: LogTailRequest,
+) -> Result<JobStatusAnswer, NodeCallError> {
+    let nodes = server.gpu_jobs.orders().nodes(server);
+    nodes.job_status(machine, &JobStatusRequest::Tail(request))
 }
 
 /// The facts of `machines` as this server's node client reads them now.

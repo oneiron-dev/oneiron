@@ -43,11 +43,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/codec/weave_reports.rs` | src | s | 2 crate-vis | — | Owned claim JSON in live and saved Weave sections |
 | `src/codec/wire_json.rs` | src | s | — | — | Consuming output conversion for an opaque JSON leaf |
 | `src/contract.rs` | src | s | 1 fn · 2 const | — | The crate-private verb export macro |
-| `src/dto.rs` | src | L | 56 struct · 14 enum | AdmitImportedClaimInput, BlobArtifactInput, BlobVersionAppendOutcome, BlobVersionView, CheckInDecision, CitedMessage, ClaimInput, ClaimListFilter +62 | The typed UniFFI records of the SDK surface |
+| `src/dto.rs` | src | L | 59 struct · 15 enum | AdmitImportedClaimInput, BlobArtifactInput, BlobVersionAppendOutcome, BlobVersionView, CheckInDecision, CitedMessage, ClaimInput, ClaimListFilter +66 | The typed UniFFI records of the SDK surface |
 | `src/embedded_engine.rs` | src | m | 6 struct · 1 trait · 14 fn | AppHostCallbacks, EmbeddedEngine, EngineConnection, EngineHeader, EngineLimits, EngineReply, EngineRequest | The embedded engine (OF-237): the full server `oneiron serve` runs, inside the app's own process, over the… |
 | `src/error.rs` | src | s | 1 enum | OneironError | The single exported error type for the UniFFI head-contract surface |
 | `src/host_root.rs` | src | s | 1 struct · 2 fn | HostRootProfile | `Oneiron.open_with_host_root` (FIX 4730): `Oneiron.open`, then this install's own machine profile from the… |
-| `src/lib.rs` | src | m | 1 struct · 13 fn · 1 const · 8 re-export | Oneiron | The UniFFI binding of the Oneiron SDK: the shared Rust client, language-bound |
+| `src/lib.rs` | src | m | 1 struct · 13 fn · 1 const · 9 re-export | Oneiron | The UniFFI binding of the Oneiron SDK: the shared Rust client, language-bound |
 | `src/native_limit_questions.rs` | src | s | 1 struct · 1 fn | NativeLimitQuestion | `Oneiron::native_limit_questions`: the engine `[limits]` rows this client's own vault crossed, served from… |
 | `src/pairing.rs` | src | s | 6 struct · 3 enum | CheckpointPin, CheckpointPinBinding, CheckpointPinKey, CheckpointPinPolicy, CheckpointPinPosture, CheckpointPinRoot, CheckpointPinSignature, CheckpointPinSuite +1 | The checkpoint pin `pair` returns (OF-469, FIX 3376), lifted whole from… |
 | `src/receipt_page.rs` | src | s | 2 struct · 1 enum | FacadeActorAttribution, FacadeActorAttributionKind, FacadeReceiptPage | `vault.receipts`'s page as UniFFI crosses it (FIX 10186): the receipts as [`FacadeReceipt`] records, the… |

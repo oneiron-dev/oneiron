@@ -22,7 +22,7 @@ const MACHINE_CONNECTION_DOMAIN: &[u8] = b"oneiron/machine-proof/v1\0";
 /// The request header a machine names itself in, beside the slip proof.
 pub const MACHINE_PROOF_HEADER: &str = "x-oneiron-machine";
 /// An empty MessagePack map: a MACHINE row the enrolment had to create.
-const EMPTY_MACHINE_BODY: &[u8] = &[0x80];
+pub(super) const EMPTY_MACHINE_BODY: &[u8] = &[0x80];
 const REQUEST_CODE_CONTEXT: &str = "oneiron/machine-request-code/v1";
 
 /// The role the install that serves a vault takes when no profile of its own

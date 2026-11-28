@@ -1,5 +1,6 @@
 {
   "name": "summarize",
+  "description": "Summarizes a bound group by returning a cached summary card or starting or reusing a summary job, with an option to return the job status without waiting.",
   "input": "crate::code_run::SummarizeInput",
   "scope": "Write",
   "act_class": "spawn",

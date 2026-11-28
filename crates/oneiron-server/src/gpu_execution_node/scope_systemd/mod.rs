@@ -13,7 +13,10 @@
 //!   control socket): checks the caller and the instance name, then starts
 //!   or stops that one job unit.
 //! - the engine ([`systemd_unit`]): R3a's [`JobUnit`] over the control socket
-//!   and `systemctl show`, and the machine's capability report.
+//!   and `systemctl show`, and the machine's capability report; its GPU
+//!   probe reads the cards through the same socket, as the job account
+//!   ([`device_query`]), since after the device hand-over only the job
+//!   account's group opens them.
 //! - the unit's own steps, fixed in the template:
 //!   - `oneiron job-prepare <id>` ([`prepare`], root, `ExecStartPre=+`):
 //!     checks `launch.json` against the root-owned node file, sets this job's
@@ -64,6 +67,7 @@ pub mod capabilities;
 pub mod control;
 pub mod cutoff;
 pub mod device_files;
+pub mod device_query;
 pub mod ended;
 pub mod exchange;
 pub mod exec;

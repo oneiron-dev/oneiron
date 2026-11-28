@@ -3,20 +3,35 @@
 //!
 //! - With a quote that binds a result (`inputs.result { artifact, task }`), each returnable
 //!   output the node hashed is fetched, checked against the signed sha256 and length, and
-//!   proposed as the artifact's next version through the starter's lane, pending Keep
+//!   proposed as the artifact's next version, pending Keep
 //!   ([`Vault::propose_gpu_job_result`]). An output the vault refuses, the node will not serve,
 //!   or whose bytes do not match is recorded as refused and never asked again.
-//! - Without one, nothing is fetched.
+//! - Without one, or for a key whose workload never started, nothing is fetched.
 //!
 //! Either way the node is then told it may clean the payload (`Ack`), once no output is owed.
 //! A fetch or an acknowledgement that did not arrive is asked again at the next housekeeping
 //! pass. `JOB_RETURN` keeps what landed, what never will, and the acknowledgement.
+//!
+//! Whose lane a landing waits in (RESULT-LANDING-LAPSED-STARTER = A, Engine 25 Nov 23:19):
+//! - A job a revoke ended lands nothing (ARCH-0075: the host drops work after a revoke): one
+//!   the node ended for a revoke it saw itself (its end is `Revoked`), whatever the issuer's
+//!   close says, and one the issuer stopped for a revoke (closed `DispatchClose::Revoked`, the
+//!   node's end `Stopped`). The issuer closes a key `Revoked` only while the node has not ended
+//!   it, so a job that had already ended, also one a stop at the box ended, keeps its result.
+//!   Each returnable output is recorded refused `job_revoked`, unfetched.
+//! - Any other ended key returns its result, also one that ended by itself before the issuer
+//!   saw the revoke, and also when the starter stopped standing after the end (ARCH-0046: a
+//!   paid result still returns). The landing judges the starter the chunk's signed submit
+//!   names, that exact Grant; once it no longer stands, the issuer writes the proposal in the
+//!   owner's lane, and Keep stays the owner's act. While no owner's lane is resolved (a shared
+//!   vault whose granting owner left), the result stays owed, unfetched, and the node keeps it.
 
 use std::sync::Arc;
 
-use oneiron::gpu_job::{GpuJobResultBinding, GpuJobResultFile};
-use oneiron::job_dispatch::JobDispatch;
+use oneiron::gpu_job::{GpuJob, GpuJobResultBinding, GpuJobResultFile};
 use oneiron::job_dispatch::machine_records::{JobReturn, ReturnRefusal};
+use oneiron::job_dispatch::{DispatchClose, JobDispatch};
+use oneiron::job_workload::WorkloadStarter;
 use oneiron::machine_signature::MachineSignatures;
 use oneiron::{EntityId, Vault};
 use sha2::{Digest, Sha256};
@@ -24,8 +39,8 @@ use sha2::{Digest, Sha256};
 use super::clock::IssuerClock;
 use super::node_client::JobNodeClient;
 use crate::gpu_execution_node::wire::{
-    JobReceipt, JobState, JobStatusAnswer, JobStatusRequest, OutputDigest, OutputsState,
-    SignedJobReceipt,
+    JobEnd, JobReceipt, JobState, JobStatusAnswer, JobStatusRequest, OutputDigest, OutputsState,
+    SignedJobReceipt, SignedJobSubmit, Starter,
 };
 
 /// The parts one return needs: the issuer's store, its node calls, the key that checks a
@@ -38,6 +53,9 @@ pub struct ResultReturns {
     pub signer: Arc<dyn MachineSignatures>,
     pub clock: Arc<dyn IssuerClock>,
 }
+
+/// Why each output of a job a revoke stopped was refused, unfetched.
+const JOB_REVOKED: &str = "job_revoked";
 
 /// How far one pass over a key's outputs came.
 enum Outputs {
@@ -139,17 +157,35 @@ impl ResultReturns {
         let outputs = match &ended.outputs {
             OutputsState::Hashed(outputs) => outputs.clone(),
             OutputsState::Failed { .. } => return Outputs::Decided,
+            // A key whose workload never started has no outputs the node will ever hash (it
+            // hashes them only after a run's release), and the node takes its Ack at once.
+            OutputsState::Pending if !ended.started => return Outputs::Decided,
             OutputsState::Pending => match self.newest_outputs(row) {
                 Some(outputs) => outputs,
                 None => return Outputs::Owed,
             },
         };
+        // A revoke drops only work it ended: the node's own revoke, or the issuer's stop for
+        // one. A key the node had ended before the issuer saw the revoke is never closed
+        // `Revoked` (the connector's status asks the node first), so its `Stopped` end is
+        // another stop's and keeps its result.
+        let revoked = match ended.end {
+            Some(JobEnd::Revoked) => true,
+            Some(JobEnd::Stopped) => matches!(row.closed, Some(DispatchClose::Revoked { .. })),
+            _ => false,
+        };
+        let starter = submit_starter(row, &job);
         let mut state = Outputs::Decided;
         for output in outputs
             .iter()
             .filter(|output| output.returnable && !owed.is_decided(&output.name))
         {
-            match self.land_one(row, &job, &binding, output) {
+            let landed = if revoked {
+                Some(Err(JOB_REVOKED.to_owned()))
+            } else {
+                self.land_one(row, &job, starter, &binding, output)
+            };
+            match landed {
                 Some(Ok(())) => self.decide(row, |owed| owed.landed.push(output.name.clone())),
                 Some(Err(why)) => self.decide(row, |owed| {
                     owed.refused.push(ReturnRefusal {
@@ -163,15 +199,31 @@ impl ResultReturns {
         state
     }
 
-    /// Fetches `output`, checks it, and proposes it. `None`: the fetch did not arrive, asked
-    /// again. `Some(Err(why))`: it never lands.
+    /// Fetches `output`, checks it, and proposes it. `None`: the fetch did not arrive, or no
+    /// lane can hold the result yet; asked again. `Some(Err(why))`: it never lands.
     fn land_one(
         &self,
         row: &JobDispatch,
-        job: &oneiron::gpu_job::GpuJob,
+        job: &GpuJob,
+        starter: Option<WorkloadStarter>,
         binding: &GpuJobResultBinding,
         output: &OutputDigest,
     ) -> Option<Result<(), String>> {
+        // No byte is fetched for a result no lane can hold yet: it stays owed.
+        match self
+            .vault
+            .gpu_job_result_lane_resolves(job.id, starter, self.issuer)
+        {
+            Ok(true) => {}
+            Ok(false) => {
+                tracing::info!(key = %row.key, "vault_machine: no owner's lane holds the result of a starter that lapsed yet; it stays owed");
+                return None;
+            }
+            Err(error) => {
+                tracing::warn!(key = %row.key, %error, "vault_machine: the result's lane not read; it stays owed");
+                return None;
+            }
+        }
         let answer = self.client.job_status(
             row.machine,
             &JobStatusRequest::Fetch {
@@ -205,16 +257,23 @@ impl ResultReturns {
             sha256: digest,
             bytes,
         };
-        Some(
-            self.vault
-                .propose_gpu_job_result(job, binding, &file, self.clock.now_ms())
-                .map(drop)
-                .map_err(|error| format!("proposal_refused: {error}")),
-        )
+        match self.vault.propose_gpu_job_result(
+            job.id,
+            starter,
+            binding,
+            &file,
+            self.issuer,
+            self.clock.now_ms(),
+        ) {
+            Ok(Some(_)) => Some(Ok(())),
+            Ok(None) => None,
+            Err(error) => Some(Err(format!("proposal_refused: {error}"))),
+        }
     }
 
     /// The outputs of the node's newest receipt of `row`'s key, once it hashed them and its
-    /// receipt checks; `None` while it has not, or did not answer.
+    /// receipt checks: none when its hashing failed, so nothing is fetched and the return ends,
+    /// as for a stored `Failed` receipt. `None` while it has not, or did not answer.
     fn newest_outputs(&self, row: &JobDispatch) -> Option<Vec<OutputDigest>> {
         let answer = self
             .client
@@ -235,6 +294,7 @@ impl ResultReturns {
             && signed.verify(self.signer.as_ref()).is_ok();
         match &signed.receipt.outputs {
             OutputsState::Hashed(outputs) if checked => Some(outputs.clone()),
+            OutputsState::Failed { .. } if checked => Some(Vec::new()),
             _ => None,
         }
     }
@@ -275,5 +335,15 @@ impl ResultReturns {
                 tracing::debug!(key = %row.key, %error, "vault_machine: the acknowledgement did not arrive; asked again at the next pass");
             }
         }
+    }
+}
+
+/// The starter `row`'s signed submit names, as the issuer's checks read it: that exact Grant, or
+/// the owner who started `job`. `None` when the submit does not decode.
+fn submit_starter(row: &JobDispatch, job: &GpuJob) -> Option<WorkloadStarter> {
+    let signed = oneiron_organ_protocol::from_slice::<SignedJobSubmit>(&row.submit).ok()?;
+    match signed.submit.starter {
+        Starter::Grant { grant } => Some(WorkloadStarter::Grant(grant)),
+        Starter::Owner => job.started_by.map(WorkloadStarter::Owner),
     }
 }

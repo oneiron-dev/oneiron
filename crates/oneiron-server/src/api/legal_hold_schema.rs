@@ -7,7 +7,6 @@ use utoipa::ToSchema;
 #[serde(rename_all = "snake_case")]
 #[expect(dead_code, reason = "OpenAPI mirror of the engine legal-hold state")]
 pub(crate) enum LegalHoldStateSchema {
-    RetainedForLaw,
     UseRestricted,
 }
 
@@ -50,7 +49,7 @@ pub(crate) fn legal_hold_notice_schema() -> Value {
         "properties": {
             "state": {
                 "type": "string",
-                "enum": ["retained_for_law", "use_restricted"],
+                "enum": ["use_restricted"],
             },
             "bound": {
                 "type": "object",

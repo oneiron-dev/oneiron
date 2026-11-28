@@ -45,7 +45,7 @@ use crate::authority::OwnerActKind;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::memory::{MEMORY_CODE_BAD_REQUEST, MemoryError, MemoryResult};
+use crate::memory::{MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 
 /// The most bytes the logs of one call inflate to, together: the server's
 /// own request floor.
@@ -86,6 +86,12 @@ const ERR_SUBAGENT_TWICE: &str = "two subagent logs have the same stem";
 
 /// More subagent logs than one call carries.
 const ERR_SUBAGENTS_MANY: &str = "the hook transcript carries more than 256 subagent logs";
+
+const HOOK_TRANSCRIPT_MAX_FOLDER_DIGESTS: usize = 2;
+const ERR_FOLDER_DIGESTS_MANY: &str =
+    "a hook transcript names its session's folder in at most two digests";
+const ERR_FOLDER_DIGEST: &str =
+    "a hook transcript's folder digest is blake3: and 64 lowercase hex digits";
 
 /// Logs past the inflated cap.
 const ERR_PAST_CAP: &str = "the hook transcript's logs inflate past 64 MiB (HOOK_TRANSCRIPT_MAX_BYTES): nothing was imported";
@@ -133,6 +139,13 @@ pub struct HookTranscriptImportRequest {
     /// written before other sources were taken reads as it did.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<HookTranscriptSource>,
+    /// The session's folder, as the machine the session ran on names an attached session's
+    /// folder (`blake3:` and 64 lowercase hex digits each, its own checkout's first; at most
+    /// two). The session's TURNs and MESSAGEs land in the project that folder is bound to in
+    /// this vault, as the local import lands a log read in that folder; absent or empty, at the
+    /// default project, as a request written before folders were sent lands.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub folder_digests: Vec<String>,
 }
 
 /// The import a hook transcript's logs are read by: the `oneiron import`
@@ -160,6 +173,18 @@ impl HookTranscriptSource {
             Self::Codex => HistorySource::Codex,
             Self::HookTranscript => HistorySource::HookTranscript,
         }
+    }
+
+    /// The conversation import names for the session id a hook reports.
+    pub(crate) fn session_conversation(harness: &str, session: &str) -> Result<Option<EntityId>> {
+        let (source, native_id) = match harness {
+            "claude-code" => (Self::ClaudeCode, std::borrow::Cow::Borrowed(session)),
+            "codex" => (Self::Codex, std::borrow::Cow::Borrowed(session)),
+            "cursor" => (Self::HookTranscript, format!("cursor:{session}").into()),
+            "copilot" => (Self::HookTranscript, format!("copilot:{session}").into()),
+            _ => return Ok(None),
+        };
+        conversation_id(source.history_source(), &native_id).map(Some)
     }
 }
 
@@ -333,19 +358,27 @@ impl Vault {
     /// get the call's inbox row and Dreamer planning at the call's import
     /// second, as a whole call's would.
     ///
+    /// The session lands in its folder's bound project, read once for the whole
+    /// call (FIX SESSION-PROJECT-HOOK-TRANSCRIPT-PLACEMENT). A granted agent's
+    /// `presented` transport credential must cover that project; otherwise the
+    /// hand-over is refused before any log is read (E-AGENT = (a)).
+    ///
     /// # Errors
     ///
-    /// A caller the door refuses; a request that fails its checks, a log
-    /// that is not gzip in standard base64, and logs that inflate past
-    /// [`HOOK_TRANSCRIPT_MAX_BYTES`], with nothing landed; a session log
-    /// whose CONVERSATION is absent after the import (no message kept);
-    /// every error [`Self::import_history`] has.
+    /// A caller the door refuses; a granted agent without a credential that
+    /// covers the bound project; malformed or too many folder digests; a request
+    /// that fails its other checks, a log that is not gzip in standard base64, and
+    /// logs that inflate past [`HOOK_TRANSCRIPT_MAX_BYTES`], with nothing landed;
+    /// a session log whose CONVERSATION is absent after the import (no message
+    /// kept); every error [`Self::import_history`] has.
     pub fn import_hook_transcript(
         &self,
         caller: HistoryImportCaller<'_>,
+        presented: Option<&crate::authority::VerifiedSlip>,
         input: &HookTranscriptImportRequest,
     ) -> MemoryResult<HookTranscriptImportView> {
         caller.owner(self)?;
+        let placement = self.hook_transcript_placement(caller, presented, &input.folder_digests)?;
         let kind = input.source.unwrap_or_default();
         let source = kind.history_source();
         let mut conversations: Vec<HistoryConversation> = Vec::new();
@@ -366,7 +399,14 @@ impl Vault {
         let mut views = Vec::with_capacity(conversations.len());
         let mut refusal = None;
         for conversation in &conversations {
-            match self.import_history_as(caller, source, conversation, imported_at, None) {
+            match self.import_history_placed_as(
+                caller,
+                source,
+                conversation,
+                imported_at,
+                None,
+                placement,
+            ) {
                 Ok(report) => {
                     landed |= report.new > 0 || report.changed > 0;
                     views.push(report);
@@ -410,11 +450,85 @@ impl Vault {
         })
     }
 
+    /// The project a hand-over's TURNs and MESSAGEs land in: the one `folder_digests`, the
+    /// sender's session folder, is bound to here, read once, so every conversation of the call
+    /// lands in the project its admission judged. `None` (the default project): no digests, an
+    /// unbound folder, a project gone, or the default project itself. An agent's presented
+    /// credential must cover a bound project by the rule its own session-folder writes meet
+    /// ([`Vault::credential_admits_project_placement_in_txn`]; Engine ANSWER
+    /// HOOK-TRANSCRIPT-PLACEMENT-BEFORE-B, E-AGENT = (a)); else the whole hand-over is refused
+    /// before any log is read, and nothing lands at the root instead.
+    fn hook_transcript_placement(
+        &self,
+        caller: HistoryImportCaller<'_>,
+        presented: Option<&crate::authority::VerifiedSlip>,
+        folder_digests: &[String],
+    ) -> MemoryResult<Option<EntityId>> {
+        if folder_digests.len() > HOOK_TRANSCRIPT_MAX_FOLDER_DIGESTS {
+            return Err(MemoryError::bad_request(ERR_FOLDER_DIGESTS_MANY));
+        }
+        if folder_digests
+            .iter()
+            .any(|d| !crate::session_project::is_digest_text(d))
+        {
+            return Err(MemoryError::bad_request(ERR_FOLDER_DIGEST));
+        }
+        if folder_digests.is_empty() {
+            return Ok(None);
+        }
+        let txn = self.store.env.read_txn().map_err(crate::Error::from)?;
+        let Some(project) =
+            crate::session_project::workspace_project_in_txn(self, &txn, folder_digests)?
+                .filter(|project| *project != crate::claim::default_project_id())
+        else {
+            return Ok(None);
+        };
+        if let HistoryImportCaller::GrantedAgent(agent) = caller
+            && !self
+                .credential_admits_project_placement_in_txn(&txn, agent, presented, true, project)?
+        {
+            return Err(hand_over_placement_refused(project, presented));
+        }
+        Ok(Some(project))
+    }
+
     /// Whether the CONVERSATION `id` is present, as `vault.runners.continue`
     /// asks of the one it takes, in a read snapshot of its own.
     fn transcript_conversation_present(&self, id: &EntityId) -> Result<bool> {
         let txn = self.store.env.read_txn()?;
         crate::ports::EntityStoreRead::port_entity_present(&self.store, &txn, id)
+    }
+}
+
+/// A refused hand-over names the project and credential, never a token.
+fn hand_over_placement_refused(
+    project: EntityId,
+    presented: Option<&crate::authority::VerifiedSlip>,
+) -> MemoryError {
+    let hint = "Hand the log over under a credential whose audience covers that project (a Grant that covers it), or have the owner hand the log over.";
+    let project = project.to_hex();
+    match presented {
+        Some(proof) => {
+            let credential = if proof.claims().slip_id != [0; 32] {
+                crate::entity_id::bytes_to_hex_lower(&proof.claims().slip_id)
+            } else {
+                proof.claims().holder_ref.clone()
+            };
+            MemoryError::new(
+                MEMORY_CODE_FORBIDDEN,
+                format!(
+                    "the hand-over's session folder is bound to project {project}, which the agent's credential {credential} does not cover"
+                ),
+                &[hint],
+            )
+        }
+        None => MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            format!(
+                "the hand-over's session folder is bound to project {project}, and the agent presented no credential whose audience covers it"
+            ),
+            &[hint],
+        ),
     }
 }
 

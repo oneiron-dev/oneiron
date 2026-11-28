@@ -241,11 +241,10 @@ async fn mcp_setup_returns_keyframe_grammar_instructions_and_no_carrier() {
 /// An unverified fixture host cannot enable execution. Both endpoints refuse
 /// before creating a run, under full and narrowed credentials alike. The real
 /// QuickJS-host test separately proves verified production registration.
-/// Since DOOR-070 (b7e35a2c505, #3044) `execute_code` on tool-first is the
-/// generated foreign-code verb: it is listed there, and its input refuses
-/// this durable-task shape before any run.
+/// Neither endpoint lists the tools, and the Foreign row keeps no tool-first
+/// verb (FIX EXECUTE-CALLER-CODE).
 #[tokio::test]
-async fn mcp_direct_execute_code_requires_verified_host_before_any_run() {
+async fn mcp_direct_execute_requires_verified_host_before_any_run() {
     bind_mcp_test_code_host();
     let (_dir, server) = auth_test_server();
     let wide_actor = seeded_test_entity_id(0x1704_0041);
@@ -260,23 +259,11 @@ async fn mcp_direct_execute_code_requires_verified_host_before_any_run() {
 
     let entered_before = mcp_fixture_code_runs();
     let code_args = json!({
+        "code": "return 1;",
         "run_ref": "one-1704-run",
-        "page": { "limit": 4 },
-        "task": "search memory for the launch plan, then park an outbound effect",
     });
 
-    for (label, credential, envelope) in [
-        (
-            "vault-wide",
-            wide,
-            mcp_endpoint_envelope(wide_actor, "run_code"),
-        ),
-        (
-            "narrowed",
-            narrow,
-            mcp_scoped_envelope(narrow_actor, "run_code", &narrow_scope),
-        ),
-    ] {
+    for (label, credential) in [("vault-wide", wide), ("narrowed", narrow)] {
         for path in ["/mcp", MCP_TOOL_FIRST_PATH] {
             let body = mcp_refusal(
                 &server,
@@ -284,21 +271,17 @@ async fn mcp_direct_execute_code_requires_verified_host_before_any_run() {
                     path,
                     credential,
                     &format!("code-{label}"),
-                    "execute_code",
-                    mcp_merge_args(envelope.clone(), code_args.clone()),
+                    "execute",
+                    code_args.clone(),
                 ),
             )
             .await;
-            if path == MCP_TOOL_FIRST_PATH {
-                assert_mcp_structured_error(&body, "tool_args_invalid");
-            } else {
-                assert_mcp_structured_error(&body, "code_host_unbound");
-                assert_eq!(
-                    body["error"]["data"]["field"],
-                    Value::from("name"),
-                    "{label} on {path}: {body:?}"
-                );
-            }
+            assert_mcp_structured_error(&body, "code_host_unbound");
+            assert_eq!(
+                body["error"]["data"]["field"],
+                Value::from("name"),
+                "{label} on {path}: {body:?}"
+            );
             // Nothing a run would have published reaches the wire: no run
             // handle, no resume block, no terminal claim, no durable wait.
             let serialized = serde_json::to_string(&body).expect("refusal serializes");
@@ -318,21 +301,22 @@ async fn mcp_direct_execute_code_requires_verified_host_before_any_run() {
         "zero runs were created: the bound host was never entered",
     );
 
-    // The primary endpoint does not list the tool; tool-first lists the
-    // generated verb of that name.
-    for (path, listed) in [("/mcp", false), (MCP_TOOL_FIRST_PATH, true)] {
+    // Neither endpoint lists the execution tools without a verified host, and no
+    // retired name remains anywhere.
+    for path in ["/mcp", MCP_TOOL_FIRST_PATH] {
         let (_, listing) =
             route_json(server.clone(), mcp_list_request(path, wide, "code-list")).await;
-        assert_eq!(
-            mcp_listed_tool_names(&listing).contains(&"execute_code"),
-            listed,
-            "{path}: {listing:?}"
-        );
+        for name in ["execute", "resume", "execute_code", "read_result"] {
+            assert!(
+                !mcp_listed_tool_names(&listing).contains(&name),
+                "{path}: {listing:?}"
+            );
+        }
     }
 }
 
 /// ONE-1704 B3: narrowed admission is fail-closed on the world and facet axes
-/// INDEPENDENTLY for `execute_code`, and a vault-wide credential is untouched.
+/// INDEPENDENTLY for `execute`, and a vault-wide credential is untouched.
 /// `tasks.create` carries the scope instead: on each axis alone it lands, and
 /// its TASK is born at that axis (ARCH-0067 §5).
 #[tokio::test]
@@ -440,18 +424,15 @@ async fn mcp_narrowed_admission_refuses_unscoped_execution_on_each_axis() {
         "a vault-wide credential must clear the admission: {wide_create:?}"
     );
 
-    // The same admission refuses `execute_code` on each axis on its own. The
+    // The same admission refuses `execute` on each axis on its own. The
     // wire never reaches this — B2 refuses the name first — so the admission
     // itself is exercised directly, which is the door a future scoped-positive
     // program would have to open.
     let args = crate::mcp::validate_mcp_endpoint_tool_args(
-        crate::mcp::McpEndpointTool::ExecuteCode,
-        mcp_merge_args(
-            mcp_scoped_envelope(actor_ref, "run_code", &world_only),
-            json!({ "run_ref": "axis-run", "task": "read the board" }),
-        ),
+        crate::mcp::McpEndpointTool::Execute,
+        json!({ "code": "return 1;", "run_ref": "axis-run" }),
     )
-    .expect("the retired argument shape still decodes");
+    .expect("the execute argument shape decodes");
     for (label, credential, scope) in [
         ("world-only", "one-1704-world-only", &world_only),
         ("facet-only", "one-1704-facet-only", &facet_only),

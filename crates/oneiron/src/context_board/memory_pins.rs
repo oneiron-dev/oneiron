@@ -5,8 +5,10 @@ use super::memories_projection::{
 };
 use super::self_brief::BriefWorkingHandle;
 use crate::Result;
-use crate::claim::{PointRead, ScopedRead, ScopedReadReceipt, decode_claim_body};
+use crate::batch::secret_scan::LiftedKeys;
+use crate::claim::{ClaimBody, PointRead, ScopedRead, ScopedReadReceipt, decode_claim_body};
 use crate::ports::ShortIdStoreRead;
+use crate::secret_custody::SecretSight;
 impl MemoriesSection {
     /// Pins are engine-issued short references already selected by the caller.
     /// Each read still resolves the actor ceiling and returns its mandatory receipt.
@@ -179,7 +181,7 @@ pub(super) fn pinned_row(
     let hydrated = reader.read_projected(&[read], None, |txn, rows| {
         let row = rows.into_iter().next().flatten();
         let Some(found) = &row else {
-            return Ok::<_, crate::Error>((None, None, None, None, Some(None)));
+            return Ok::<_, crate::Error>((None, None, None, None, None, Some(None)));
         };
         let revision = crate::vault::entity_revision::revision_for_mode_in_txn(
             &reader.vault().store,
@@ -195,7 +197,13 @@ pub(super) fn pinned_row(
                 .port_short_id_reference(txn, &found.id)?
                 .map(|(short_id, _)| short_id),
         };
-        let text = pin_text(reader, txn, found)?;
+        let claim = match &found.body {
+            Some(body) if found.entity_type == crate::registry::ENTITY_TYPE_CLAIM => {
+                Some(decode_claim_body(body, true)?)
+            }
+            _ => None,
+        };
+        let text = pin_text(reader, txn, found, claim.as_ref())?;
         let world = match &found.body {
             Some(body) if found.entity_type != crate::registry::ENTITY_TYPE_CLAIM => {
                 crate::federation::record_scope::record_world_in(
@@ -208,22 +216,17 @@ pub(super) fn pinned_row(
             }
             _ => Some(None),
         };
-        Ok((row, revision, short_id, text, world))
+        Ok((row, revision, short_id, text, claim, world))
     })?;
     let mut receipt = hydrated.receipt;
-    let (hydrated, source_revision, short_id, text, birth_world) = hydrated.value;
+    let (hydrated, source_revision, short_id, text, claim, birth_world) = hydrated.value;
     let (Some(hydrated), Some(short_id)) = (hydrated, short_id) else {
         return Ok((receipt, None));
     };
-    let Some(body) = &hydrated.body else {
+    if hydrated.body.is_none() {
         return Ok((receipt, None));
-    };
+    }
     let hash = short.map_or(hydrated.content_hash, |(_, hash)| hash);
-    let claim = if hydrated.entity_type == crate::registry::ENTITY_TYPE_CLAIM {
-        Some(decode_claim_body(body, true)?)
-    } else {
-        None
-    };
     if let Some(disclosure) = disclosure {
         let txn = reader.vault().store.env.read_txn()?;
         if !disclosure.admits_in(
@@ -269,62 +272,80 @@ pub(super) fn pinned_row(
             .as_ref()
             .is_some_and(|claim| constraint_predicate(&claim.predicate)),
     };
-    if !foreign_row(&row)
-        && let Some(claim) = claim
-    {
-        // The MessagePack is read with the claim's other parts, and
-        // before and after the projection drops a float's width.
-        let value = if crate::batch::export::claim_reads_as_secret(&claim) {
-            serde_json::Value::String("[redacted]".to_owned())
-        } else {
-            crate::batch::export::served_messagepack_json(claim.value)
-        };
-        row.snippet = Some(value.to_string());
-    } else if !foreign_row(&row) {
+    if !foreign_row(&row) {
         row.snippet = text;
     }
     Ok((receipt, Some(row)))
 }
 
-/// The words a pinned TURN, MESSAGE, NOTE or SUMMARY shows, read from its
-/// admitted body in the read's own snapshot; `None` for another type or a
-/// body that shows none. A read by id takes a TURN's row alone, so its words
-/// are the messages `reader` may read, one per line in message order
-/// (`retrieval_visibility`'s by-id rule).
+/// A pin's words under the same reader and snapshot as its admitted body.
 fn pin_text(
     reader: &ScopedRead<'_>,
     txn: &heed::RoTxn<'_>,
     row: &crate::claim::ReadRow,
+    claim: Option<&ClaimBody>,
 ) -> Result<Option<String>> {
     let Some(body) = &row.body else {
         return Ok(None);
     };
-    let text = match row.entity_type {
-        crate::registry::ENTITY_TYPE_TURN => {
-            let Some(messages) =
-                crate::tagging::turn_messages_in_txn(reader.vault(), txn, &row.id)?
-            else {
-                return Ok(None);
-            };
-            let mut readable = Vec::with_capacity(messages.len());
-            for message in messages {
-                let id = crate::EntityId::from_hex(&message.id)?;
-                if reader.is_entity_readable_in(txn, &id)? {
-                    readable.push((id, message.text));
-                }
+    if let Some(claim) = claim {
+        return Ok(reader
+            .projected_claim_parts_in_txn(txn, body, claim)?
+            .map(|(_, value)| value.to_string()));
+    }
+
+    let store = &reader.vault().store;
+    let masked = reader.actor_key().secret_sight() == SecretSight::Masked;
+    if row.entity_type == crate::registry::ENTITY_TYPE_TURN {
+        let Some(messages) =
+            crate::tagging::turn_members_in_txn(reader.vault(), store, txn, &row.id, masked)?
+        else {
+            return Ok(None);
+        };
+        let mut readable = Vec::with_capacity(messages.len());
+        for (id, text, body) in messages {
+            if let Some(text) = text
+                && reader.is_entity_readable_in(txn, &id)?
+                && (!masked || crate::vault::entity_revision::message_words_released(&text, &body))
+            {
+                readable.push((id, text));
             }
-            crate::embed::joined_turn_text(&readable)
         }
-        crate::registry::ENTITY_TYPE_MESSAGE => crate::tagging::shown_message_text(body),
+        if masked {
+            LiftedKeys::mask_turn_messages_in_txn(store, txn, &mut readable)?;
+        }
+        return Ok(crate::embed::joined_turn_text(&readable));
+    }
+
+    if !matches!(
+        row.entity_type,
+        crate::registry::ENTITY_TYPE_MESSAGE
+            | crate::registry::ENTITY_TYPE_NOTE
+            | crate::registry::ENTITY_TYPE_SUMMARY
+    ) {
+        return Ok(None);
+    }
+    let Some(body) = reader.released_body_in(txn, row.entity_type, body)? else {
+        return Ok(None);
+    };
+    let text = match row.entity_type {
+        crate::registry::ENTITY_TYPE_MESSAGE => crate::tagging::shown_message_text(&body),
         crate::registry::ENTITY_TYPE_NOTE => {
-            crate::note::decode_note_body_in_txn(&reader.vault().store, txn, body)
+            crate::note::decode_note_body_in_txn(store, txn, &body)
                 .ok()
                 .map(|note| note.markdown)
         }
-        crate::registry::ENTITY_TYPE_SUMMARY => summary_text(body),
+        crate::registry::ENTITY_TYPE_SUMMARY => summary_text(&body),
         _ => None,
     };
-    Ok(text.filter(|text| !text.is_empty()))
+    let Some(text) = text.filter(|text| !text.is_empty()) else {
+        return Ok(None);
+    };
+    if !masked {
+        return Ok(Some(text));
+    }
+    let keys = LiftedKeys::of_in_txn(store, txn, [&text])?;
+    Ok(Some(keys.masked(&text).unwrap_or(text)))
 }
 
 /// A SUMMARY's text: an epoch's or a scope's, each by its strict codec, else

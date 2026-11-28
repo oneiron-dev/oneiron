@@ -66,6 +66,7 @@ impl crate::code_run::AgentVerbDoor for ShutDoor {
         Ok(Err(crate::code_run::AgentVerbRefusal {
             code: crate::code_run::AGENT_VERB_DOOR_UNBOUND.to_owned(),
             hook_notice: None,
+            reason_codes: Vec::new(),
         }))
     }
 
@@ -80,6 +81,7 @@ impl crate::code_run::AgentVerbDoor for ShutDoor {
             return Err(crate::code_run::AgentVerbRefusal {
                 code: "door_shut".to_owned(),
                 hook_notice: None,
+                reason_codes: Vec::new(),
             });
         }
         Ok(None)

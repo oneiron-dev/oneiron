@@ -75,6 +75,48 @@ impl OfferLadder {
         }
         Some(ReplayLadder { ladder: self, rung })
     }
+
+    /// The one-rung ladder of this ladder's first rung that serves at its own server, with
+    /// that rung's own model (HOUSE-SCHEMA-CHECK; REVIEW-10538 rounds 1 and 2): a seat with
+    /// a fallback after its house rung, such as EXL3 on its own server and then llama.cpp,
+    /// still lends the answer-schema check that rung alone, and a route named by its
+    /// synthetic `seat/<role>@<digest>` id finds it all the same, since the rung is chosen by
+    /// where it serves, never by the route's name. The copy is picked, named for the rung's
+    /// model, keeps the rung's configured prompt and place and this ladder's rests and scope,
+    /// so [`Self::for_replay_binding`] selects it for that model and no fallback takes a call.
+    /// It comes with where the rung's offer sends a call now, the destination the check judges
+    /// each capture for. `None` when no rung serves at its own server. The shared ladder is
+    /// never changed.
+    pub(crate) fn house_rung_ladder(&self) -> Option<HouseRung> {
+        let rung = self
+            .rungs
+            .iter()
+            .find(|rung| rung.offer.binding.locality == ModelLocality::OwnServer)?;
+        let model = rung.model.clone();
+        let destination = rung.offer.destination();
+        let ladder = Arc::new(Self {
+            name: model.clone(),
+            rungs: vec![rung.clone()],
+            picked: true,
+            rests: Arc::clone(&self.rests),
+            scope: self.scope,
+            prefix: ReceiptPrefix::default(),
+            listed: self.listed.clone(),
+        });
+        Some(HouseRung {
+            ladder,
+            model,
+            destination,
+        })
+    }
+}
+
+/// The house rung lent alone (HOUSE-SCHEMA-CHECK): its picked one-rung ladder, the rung's own
+/// model, and where its offer sends a call now.
+pub(crate) struct HouseRung {
+    pub(crate) ladder: Arc<OfferLadder>,
+    pub(crate) model: ModelId,
+    pub(crate) destination: oneiron::settings::ReadDestination,
 }
 
 impl ReplayLadder<'_> {
@@ -108,6 +150,39 @@ impl ReplayLadder<'_> {
         self.ladder
             .walk_generate(
                 run, request, selector, may_send, deadline, false, None, None, false, prompt,
+            )
+            .await
+            .map(|(response, _)| response)
+    }
+
+    /// [`Self::generate_exact_within`] for a call whose request carries sources the rung's
+    /// destination must be admitted to (FIX 8714; REVIEW-10538 round 2): the picked rung is
+    /// sent only while `sources` admits where its offer sends, judged before the rung is
+    /// admitted and again right before each physical send, as any rung is on
+    /// [`OfferLadder::generate_admitted`]. No owner's fallback takes the call.
+    pub(crate) async fn generate_exact_admitted_within(
+        &self,
+        run: &RunAdmission,
+        request: LlmRequest,
+        prompt: Option<&str>,
+        may_send: &(dyn Fn() -> bool + Sync),
+        sources: &dyn SourceAdmission,
+        wait_budget: Duration,
+    ) -> LlmResult<LlmResponse> {
+        let deadline = CallDeadline::waits_within(wait_budget);
+        let prompt = RungPrompt::Replayed(prompt);
+        self.ladder
+            .walk_generate(
+                run,
+                request,
+                None,
+                may_send,
+                deadline,
+                false,
+                Some(sources),
+                None,
+                false,
+                prompt,
             )
             .await
             .map(|(response, _)| response)

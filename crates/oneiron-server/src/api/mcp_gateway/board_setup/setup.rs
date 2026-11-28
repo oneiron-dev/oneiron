@@ -12,10 +12,10 @@ pub(super) fn mcp_setup_help(server: &SyncServer) -> Vec<String> {
     vec![
         "register the tool-first endpoint for one generated tool per verb".to_owned(),
         if server.code_execution_host().is_some() {
-            "execute_code resumes a durable run when called with the same run_ref and task"
+            "execute runs your TypeScript or JavaScript as written; with no run_ref the server mints one, and resume continues a paused run from its run_ref"
                 .to_owned()
         } else {
-            "execute_code has no verified runtime on this server; direct calls receive code_host_unbound".to_owned()
+            "execute and resume have no verified runtime on this server; direct calls receive code_host_unbound".to_owned()
         },
         "a More result carries an opaque cursor; send it back as page.cursor with the same \
          arguments"

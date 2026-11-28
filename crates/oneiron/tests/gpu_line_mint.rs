@@ -106,6 +106,7 @@ fn line(seats: Vec<FamilySeat>, mode: PinnedMode) -> GpuLine {
         set_by: None,
         set_at_ms: 0,
         revision: 1,
+        preset: None,
     }
 }
 

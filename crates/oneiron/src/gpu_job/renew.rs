@@ -53,7 +53,9 @@ impl Vault {
         connector: &dyn GpuJobConnector,
         now_ms: u64,
     ) -> Result<GpuJob, GpuJobError> {
-        if job.state != GpuJobState::Running || !job.renews() {
+        // A unit's job holds no permit: its claim is its hold, and a claim per chunk is not
+        // built yet (FIX row W1-SESSION-LINE-CLAIM), so it renews nothing and ends at its chunk.
+        if job.state != GpuJobState::Running || !job.renews() || job.claim.is_some() {
             return Ok(job);
         }
         if let Some(next) = &job.renewal {
@@ -237,7 +239,7 @@ impl Vault {
             ))?;
         let key = next.idempotency_key.clone();
         let paid = permits.holds_chunk(&id, &key);
-        let _ = bill_chunk(next, Some(0), paid);
+        let _ = bill_chunk(next, Some(0), paid, false);
         if !self.with_write_txn_grouped(|txn| self.put_gpu_job_in_txn(txn, &mut job, now_ms))? {
             return self.stored_after_lost_step(&id, &key, permits);
         }
@@ -294,7 +296,7 @@ impl Vault {
         // The slice ran at least what it bills, also when a stop met it with no reading.
         chunk.used_secs = chunk.used_secs.max(used_secs.unwrap_or(0)).max(billed_secs);
         let paid = permits.holds_chunk(&id, &key);
-        let charged_secs = bill_chunk(chunk, Some(billed_secs), paid);
+        let charged_secs = bill_chunk(chunk, Some(billed_secs), paid, false);
         let settled_units = chunk.settled_units;
         let base = chunk.base_used_secs.saturating_add(chunk.used_secs);
         next.base_used_secs = base;
@@ -323,13 +325,17 @@ impl Vault {
 
 /// Admits a session's open next chunk again when this host holds no permit for it, after a
 /// restart, at its own quote's price, as [`super::step`] takes up the current chunk. Returns
-/// whether the record changed.
+/// whether the record changed. With its offer withdrawn (`None`), nothing binds a new permit:
+/// the chunk's admission is lost, so it is never sent.
 pub(super) fn take_up_gpu_renewal(
     job: &mut GpuJob,
-    offer: &GpuOffer,
+    offer: Option<&GpuOffer>,
     renewal: &GpuJobRenewal<'_>,
     permits: &GpuJobPermits,
 ) -> bool {
+    if job.claim.is_some() {
+        return false;
+    }
     let id = job.id;
     let admission_ref = job.admission_ref();
     let Some(next) = job
@@ -343,6 +349,10 @@ pub(super) fn take_up_gpu_renewal(
     if next.admission_lost || permits.holds_chunk(&id, &key) {
         return false;
     }
+    let Some(offer) = offer else {
+        next.admission_lost = true;
+        return true;
+    };
     let admission = (renewal.admission)(&next.quote);
     let binding = PaidConnector {
         unit_cost: next.quote.unit_cost,
@@ -397,21 +407,31 @@ pub(super) fn drain_gpu_renewal(
     next.resource = resource;
     let key = next.idempotency_key.clone();
     let paid = permits.holds_chunk(&id, &key);
-    let charged_secs = bill_chunk(next, Some(billed_secs), paid);
+    let charged_secs = bill_chunk(next, Some(billed_secs), paid, false);
     Some((key, charged_secs))
 }
 
 /// Bills `chunk` its provider's `billed_secs` plus its overhead, never above its quote, and
 /// records the settlement when this host holds the chunk's permit (`paid`). A session's
 /// continuing chunk adds no overhead: it started nothing, and its run's first chunk carries the
-/// run's startup, teardown and rounding. Answers the seconds charged.
-pub(super) fn bill_chunk(chunk: &mut GpuChunk, billed_secs: Option<u64>, paid: bool) -> u64 {
+/// run's startup, teardown and rounding. A key that never started (`never_ran`) bills zero,
+/// overhead included (JOB-SETTLES-ON-LAUNCH-REFUSED, LE-2 = A). Answers the seconds charged.
+pub(super) fn bill_chunk(
+    chunk: &mut GpuChunk,
+    billed_secs: Option<u64>,
+    paid: bool,
+    never_ran: bool,
+) -> u64 {
     let overhead_secs = if chunk.continues.is_some() {
         0
     } else {
         chunk.quote.overhead_secs
     };
-    let billed_with_overhead = billed_secs.map_or(0, |secs| secs.saturating_add(overhead_secs));
+    let billed_with_overhead = if never_ran {
+        0
+    } else {
+        billed_secs.map_or(0, |secs| secs.saturating_add(overhead_secs))
+    };
     let charged_secs = billed_with_overhead.min(chunk.quote.quantity);
     chunk.billed_secs = billed_secs;
     chunk.unbilled_secs = billed_with_overhead - charged_secs;

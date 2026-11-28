@@ -10,5 +10,6 @@
     "lane_record_scope": true
   },
   "section": false,
-  "mcp_scope": "filtered"
+  "mcp_scope": "filtered",
+  "caller_code": "refused"
 }

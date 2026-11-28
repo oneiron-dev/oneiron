@@ -355,6 +355,7 @@ fn run_child_on(
     let config = EngineExecutorConfig {
         run_id: EntityId::from_bytes(*leased.id.as_bytes())?,
         task: "count carefully".to_owned(),
+        caller_source_digest: None,
         prompt_package_root: workspace_test_prompt_package_root()?,
         model: ModelId::new("seat/generative_reasoner@1cadcf6de87a")?,
         model_locality: ModelLocality::OwnServer,

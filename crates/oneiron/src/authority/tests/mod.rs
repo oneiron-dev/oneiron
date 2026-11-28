@@ -51,6 +51,7 @@ mod import_prelude_image_evidence;
 mod machine_fold;
 mod machine_identity;
 mod machine_write;
+mod mesh_authority_replication;
 mod owner_anchor;
 mod pinned_root;
 mod recovery_ceremony;
