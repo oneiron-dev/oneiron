@@ -462,7 +462,7 @@ impl ConsolidationExecutor<'_> {
         }
         let mut request = step_ctx
             .vault
-            .authorize_model_role(DREAMER_VERDICT_ROLE, request, &call.inference)?
+            .authorize_dreamer_verdict(request, &call.inference)?
             .into_request();
         super::super::roles::bind_reasoning(step_ctx.vault, call.backend, &mut request)?;
         let outcome = call_as_step(step_ctx, call.backend, self.guard, request).await;

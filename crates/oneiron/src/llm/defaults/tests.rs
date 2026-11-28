@@ -402,3 +402,85 @@ fn resident_local_default_cannot_relabel_remote_model_to_bypass_budget() {
         Err(Error::InvalidConfig(_))
     ));
 }
+
+#[test]
+fn a_dreamer_verdict_call_refuses_once_the_owner_bound_is_lowered() {
+    use super::super::{CallClass, InferenceRefusal, LlmRequest};
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(dir.path(), crate::VaultConfig::default()).unwrap();
+    let request = LlmRequest {
+        model: ModelId::new("test/own-verdict@r1").unwrap(),
+        envelope: CallEnvelope {
+            seat_effort: None,
+            scope: Default::default(),
+            purpose: CallPurpose::Consolidation,
+            class: CallClass::BestEffort,
+            tier: TierPrecedence::for_purpose(
+                &CallPurpose::Consolidation,
+                ModelTierRef("global".into()),
+            ),
+            response_format: super::super::ResponseFormat::Text,
+            locality: ModelLocality::OwnServer,
+            host_keyless: false,
+            host_paid: false,
+        },
+        messages: vec![],
+        tools: vec![],
+        params: Default::default(),
+        provider_options: Default::default(),
+        host_segments: None,
+    };
+    let verdict_model = request.model.clone();
+    let allow = |call: &LlmRequest| {
+        call.model == verdict_model && call.envelope.locality == ModelLocality::OwnServer
+    };
+    let granted = super::super::HostInferenceContext {
+        binding: super::super::HostInferenceBinding::Advertised {
+            model: request.model.clone(),
+            locality: ModelLocality::OwnServer,
+            keyless: false,
+        },
+        extraction_egress: Some(&allow),
+    };
+    let ungranted = super::super::HostInferenceContext {
+        binding: super::super::HostInferenceBinding::Advertised {
+            model: request.model.clone(),
+            locality: ModelLocality::OwnServer,
+            keyless: false,
+        },
+        extraction_egress: None,
+    };
+    let mut table = vault.purpose_default_table().unwrap();
+    table.extraction_max_locality = ModelLocality::OwnServer;
+    vault.set_purpose_default_table(&table).unwrap();
+    let sealed = vault
+        .authorize_dreamer_verdict(request.clone(), &granted)
+        .unwrap()
+        .into_request();
+    assert_eq!(sealed.model, request.model);
+    assert_eq!(sealed.envelope.locality, ModelLocality::OwnServer);
+    let Err(err) = vault.authorize_dreamer_verdict(request.clone(), &ungranted) else {
+        panic!("a Dreamer verdict call without a host egress predicate must refuse");
+    };
+    assert_eq!(
+        InferenceRefusal::of(&err),
+        Some(InferenceRefusal::ExtractionEgress)
+    );
+    table.extraction_max_locality = ModelLocality::OnDevice;
+    vault.set_purpose_default_table(&table).unwrap();
+    let Err(err) = vault.authorize_dreamer_verdict(request.clone(), &granted) else {
+        panic!("a Dreamer verdict call must refuse once the owner bound is lowered");
+    };
+    assert_eq!(
+        InferenceRefusal::of(&err),
+        Some(InferenceRefusal::ExtractionEgress)
+    );
+    // A caller-labelled consolidation call is judged by its purpose, as before.
+    vault
+        .authorize_model_role(
+            super::super::manifest::ModelRole::GenerativeReasoner,
+            request.clone(),
+            &ungranted,
+        )
+        .unwrap();
+}
