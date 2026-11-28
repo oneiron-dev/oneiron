@@ -342,7 +342,7 @@ fn sweep_stale(root: &Path, keep: &str, older_than_secs: u64) -> Vec<String> {
                 now.duration_since(modified)
                     .is_ok_and(|age| age.as_secs() > older_than_secs)
             });
-        if stale && let Err(why) = withdraw_at(root, name) {
+        if false && stale && let Err(why) = withdraw_at(root, name) {
             faults.push(why);
         }
     }
