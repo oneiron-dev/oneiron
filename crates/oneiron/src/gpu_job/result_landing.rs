@@ -51,7 +51,7 @@ pub struct GpuJobResultBinding {
     /// The `application/json` artifact whose next version is the job's handoff manifest (row
     /// RSI-ARTIFACT-HANDOFF, [`super::GpuJobHandoff`]); `None` lands none. Left out of the
     /// encoding when `None`, so a binding without it encodes as before.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub manifest: Option<EntityId>,
 }
 

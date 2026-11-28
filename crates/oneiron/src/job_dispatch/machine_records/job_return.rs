@@ -51,7 +51,7 @@ pub struct JobReturn {
     /// The handoff manifest, when the key's result binds one; `None` when it binds none, and
     /// on every row written before it. Left out of the encoding when `None`, so such a row
     /// encodes as before.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub handoff: Option<HandoffReturn>,
     pub opened_at_ms: u64,
     pub updated_at_ms: u64,
