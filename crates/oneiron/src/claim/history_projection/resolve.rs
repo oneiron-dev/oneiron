@@ -10,6 +10,14 @@ impl Vault {
         let fold = self.authority_fold_readonly_in_txn(&txn)?;
         let projection = resolved_machine_history(&self.store, &txn, &fold, target)?;
         let rows = machine_history_rows(&self.store, &txn, target)?;
+        // The signed origin is the birth copy's whole first body, so it
+        // returns only while that row reads: a birth withdrawn with its
+        // sources (an erased MESSAGE, SIGNED-BIRTH-MESSAGE-SOURCES-UNREGISTERED)
+        // withholds the resolution as an incomplete history does, whether the
+        // gate verdict above was cached or read carrier by carrier.
+        if !birth_reads_in_txn(&self.store, &txn, &rows.birth.event_id()?)? {
+            return Err(missing());
+        }
         let handoff = trusted_machine_handoff(&self.store, &txn, target)?;
         Ok(ResolvedMachineClaim {
             claim_id: target,
@@ -19,6 +27,15 @@ impl Vault {
             transition_heads: projection.frontier,
             handoff_digest: handoff.content_hash().map_err(|_| bad())?,
         })
+    }
+}
+
+/// Whether the signed birth row `birth` reads by the raw doors' rule: stored,
+/// its own words not withdrawn, and no source it derives from withdrawn.
+fn birth_reads_in_txn(store: &Store, txn: &heed::RoTxn<'_>, birth: &EntityId) -> Result<bool> {
+    match crate::ports::EntityStoreRead::port_entity_raw(store, txn, birth)? {
+        Some(raw) => crate::ports::raw_readable_in_txn(store, txn, birth, &raw),
+        None => Ok(false),
     }
 }
 

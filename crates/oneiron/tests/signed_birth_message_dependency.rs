@@ -4,7 +4,9 @@
 //! withdraws the birth with the CLAIM; erasing another MESSAGE leaves both
 //! reading. The CLAIM lands through the promotion writer's verified arm
 //! (`record_message_dependencies_in_txn`, which the settlement Keep, the
-//! imported Keep and the open-conflict proposal share).
+//! imported Keep and the open-conflict proposal share). The signed-history
+//! reader (`Vault::resolved_machine_claim`) returns the birth's body only
+//! while the birth reads.
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test signed_birth_message_dependency`.
@@ -128,6 +130,24 @@ fn a_hard_erased_message_withdraws_the_signed_birth() {
     assert!(
         !learnt.reads(learnt.birth),
         "the signed birth of a hard-erased MESSAGE's CLAIM still reads"
+    );
+}
+
+/// T5 (review round 1): the signed-history reader withholds the birth of an
+/// erased MESSAGE's CLAIM, which it loads through the raw port.
+#[test]
+fn the_signed_history_reader_withholds_an_erased_messages_birth() {
+    let learnt = Learnt::new();
+    let before = learnt.vault.resolved_machine_claim(learnt.claim);
+    assert!(
+        before.is_ok(),
+        "the signed history does not resolve before the erase: {:?}",
+        before.err()
+    );
+    learnt.erase(learnt.message, DeleteReason::UserDelete);
+    assert!(
+        learnt.vault.resolved_machine_claim(learnt.claim).is_err(),
+        "the signed-history reader still returns an erased MESSAGE's birth"
     );
 }
 
