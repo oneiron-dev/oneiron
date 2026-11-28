@@ -398,6 +398,11 @@ pub struct WarmKeyFact {
     pub last_used_ms: Option<u64>,
     /// How many attempts that listed it ended with exit 0.
     pub uses: u64,
+    /// A run here holds this job cache kept now (FLEET-TOOL-PARITY row 5):
+    /// a run of its template that starts now runs cold. Absent from an
+    /// answer before it: not held.
+    #[serde(default)]
+    pub held: bool,
 }
 
 /// One template a node holds, as [`NodeAnswer`] names it.

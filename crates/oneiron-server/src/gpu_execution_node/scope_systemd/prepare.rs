@@ -225,8 +225,9 @@ fn prepare(context: &StepContext, record: &mut PreparedRecord) -> Result<(), Str
     let payload_path = settings.work_dir.join(instance);
     let payload = prepare_payload(context, &payload_path)?;
     publish_payload(instance, &payload)?;
+    let cache = super::job_cache::prepare(context, &launch, template, &unit_text, &payload)?;
     drop(payload);
-    let exec = exec_file(
+    let mut exec = exec_file(
         context,
         &launch,
         template,
@@ -235,6 +236,9 @@ fn prepare(context: &StepContext, record: &mut PreparedRecord) -> Result<(), Str
         &denied,
         protected,
     )?;
+    if let Some(cache) = &cache {
+        super::job_cache::add_to_exec(&mut exec, cache);
+    }
     write_exchange(context, &exec)?;
     record.required.clone_from(&template.require);
     record.fence = exec

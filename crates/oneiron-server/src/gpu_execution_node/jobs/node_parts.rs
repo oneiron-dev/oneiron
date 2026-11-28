@@ -231,6 +231,17 @@ pub trait NodeAdmission: Send + Sync {
         None
     }
 
+    /// The template's job cache, when the node's file lets runs write one
+    /// and the template names one (FLEET-TOOL-PARITY row 5); `None`: a run
+    /// of it gets no cache.
+    fn template_job_cache(
+        &self,
+        template: &str,
+    ) -> Option<crate::gpu_execution_node::node_settings::JobCacheTarget> {
+        let _ = template;
+        None
+    }
+
     /// The job unit's stop grace, in seconds: the cutoff stops a unit this
     /// long before its cutoff time, so a renewal must come before then.
     fn stop_grace_secs(&self) -> u64 {
@@ -531,6 +542,16 @@ impl NodeAdmission for ExecutionNode {
             .templates
             .get(template)
             .and_then(crate::gpu_execution_node::node_settings::NodeTemplate::session_max_secs)
+    }
+
+    fn template_job_cache(
+        &self,
+        template: &str,
+    ) -> Option<crate::gpu_execution_node::node_settings::JobCacheTarget> {
+        ExecutionNode::settings(self)
+            .ok()
+            .flatten()?
+            .job_cache_target(template)
     }
 
     fn stop_grace_secs(&self) -> u64 {

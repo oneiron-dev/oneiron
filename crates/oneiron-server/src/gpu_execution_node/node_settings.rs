@@ -24,8 +24,10 @@ use serde::{Deserialize, Serialize};
 
 use super::wire::{NetworkMode, ScopeClass, TemplateOffer, WorkloadPin};
 
+mod job_cache;
 mod warm;
 
+pub use job_cache::{JOB_CACHE_MOUNT_DEFAULT, JobCacheTarget, NodeJobCacheSettings};
 pub use warm::{
     CACHE_CAP_GIB_DEFAULT, CACHE_DIR_NAME_DEFAULT, CACHE_IDLE_DAYS_DEFAULT, CACHE_KEYS_MAX_DEFAULT,
     CACHE_KEYS_MAX_MOST, CACHE_PASS_EVERY_SECS_DEFAULT, CACHE_PROTECT_HOURS_DEFAULT,
@@ -182,6 +184,11 @@ pub struct ExecutionNodeSettings {
     /// `[execution_node.cache]`: the box's ceiling on the cache budget.
     #[serde(default)]
     pub cache: NodeCacheSettings,
+    /// `[execution_node.job_cache]`: whether a run may write its template's
+    /// kept cache, and where it sees it (FLEET-TOOL-PARITY row 5). Off by
+    /// default.
+    #[serde(default)]
+    pub job_cache: NodeJobCacheSettings,
     #[serde(default = "stop_grace_secs_default")]
     pub stop_grace_secs: u64,
     #[serde(default = "unit_start_timeout_secs_default")]
@@ -321,6 +328,12 @@ pub struct NodeTemplate {
     /// the digest when empty.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub caches: Vec<String>,
+    /// The cache key a run of this template writes (FLEET-TOOL-PARITY row
+    /// 5): one of `caches`, seen at `execution_node.job_cache.mount`, only
+    /// while `execution_node.job_cache.writable` is on. Absent from the
+    /// digest when unset, so a template without it keeps its digest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub job_cache: Option<String>,
 }
 
 /// What a run of a template is: the wire's [`TemplateKind`], which a
@@ -455,11 +468,17 @@ impl ExecutionNodeSettings {
             return Err("execution_node.cache_dir must be an absolute path".to_owned());
         }
         self.cache.validate()?;
+        self.job_cache.validate(&[
+            self.state_dir.as_path(),
+            self.work_dir.as_path(),
+            self.cache_root().as_path(),
+        ])?;
         warm::check_warm_agreement(&self.templates)?;
         for (name, template) in &self.templates {
             template
                 .validate()
                 .and_then(|()| warm::check_template_warm(template, &self.cache_root()))
+                .and_then(|()| job_cache::check_template_job_cache(template, &self.job_cache))
                 .map_err(|why| format!("execution_node.templates.{name}: {why}"))?;
             if !plain_name(name, TEMPLATE_NAME_MAX) {
                 return Err(format!(

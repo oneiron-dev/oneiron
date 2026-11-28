@@ -167,6 +167,7 @@ pub fn publish_payload(instance: &str, payload: &OwnedFd) -> Result<(), String> 
 /// bind source left behind is under a directory only root enters, and goes
 /// at the next boot.
 pub fn withdraw(instance: &str) {
+    super::job_cache::withdraw(instance);
     let target = Path::new(PAYLOAD_ROOT).join(instance);
     if let Ok(c) = CString::new(target.as_os_str().as_bytes()) {
         // SAFETY: c is NUL terminated; the mount point is never followed as a

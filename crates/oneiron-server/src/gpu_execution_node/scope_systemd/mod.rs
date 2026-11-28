@@ -73,6 +73,7 @@ pub mod exchange;
 pub mod exec;
 pub mod gate;
 pub mod install;
+pub mod job_cache;
 pub mod log_writer;
 pub mod prepare;
 pub mod probe_unit;
@@ -272,6 +273,8 @@ pub fn run_unit_step(args: &[String]) -> Option<i32> {
     let status = match name {
         "job-exec" => exec::run(rest),
         "job-control" => control::run(rest),
+        // Root's sweep of job-written cache data, in its own transient unit (row 5).
+        "job-cache-sweep" => job_cache::run_sweep(rest),
         "job-prepare" | "job-cutoff" | "job-ended" => {
             // First, while this process has one thread.
             let entered = step::enter_host_mount_namespace();

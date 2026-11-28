@@ -259,6 +259,42 @@ under the status grant, even when the job route refuses). Each ask shows
 asked. Hourly capacity is never shown as availability. Name one `machine` to
 read it whether or not it holds a grant.
 
+## A template's job cache (`[execution_node.job_cache]`)
+
+Off by default. With `writable = true`, a template may name one of its own `caches` as its
+`job_cache`. A run of it sees that cache entry writable at `mount` (default
+`/var/cache/oneiron-job`: one fixed path, so a build tool sees the same absolute paths in each
+run). Its environment says so: `ONEIRON_JOB_CACHE` is the mount, and `ONEIRON_JOB_CACHE_STATE`
+is `kept` or `cold`.
+
+```toml
+[execution_node.job_cache]
+writable = true
+
+[execution_node.templates.oneiron-check]
+warm = { "target:oneiron" = "/data/oneiron-jobs/caches/oneiron" }
+caches = ["target:oneiron"]
+job_cache = "target:oneiron"
+```
+
+- One run holds the kept cache at a time. A run that starts while another holds it runs cold, on
+  a fresh empty directory in its own payload: it never waits and never shares. Meanwhile `Node`
+  reports the key `held`, and placement counts it warm on no machine where it is held.
+- Run `oneiron execution-node install` again after turning it on or moving `mount`: the job unit
+  binds the cache only when `install` wrote it so, and the prepare step refuses a cache run
+  (`template_outdated`) until then. While it is off, the unit file is as before, byte for byte.
+- The size cap and the prune are the cache budget's (`[execution_node.cache]`): `cap_gib` 150,
+  `idle_days` 3 and `protect_hours` 6 (pass 34 DESIGN.md 4.1), each lowered by the owner's
+  `placement.cache.*` keys. A cache a live run may read is never removed.
+- The engine cannot delete what a job wrote. After each job's end, root starts
+  `oneiron-job-cache-sweep` (Nice 19, idle I/O class), which removes the job-written trees of
+  removed caches; the engine's next cache pass deletes the rest. An idle node keeps evicted bytes
+  until its next job ends.
+- A build target kept in a cache must not build the payload checkout in place: staging keeps each
+  file's commit time, so cargo can take a changed file for an unchanged one. Copy the checkout by
+  content into a fixed path inside the cache (`rsync -rlc --delete`, without `-t`) and build
+  there.
+
 ## Restart
 
 A permit cannot be stored. When the server stops, each live chunk's permit is

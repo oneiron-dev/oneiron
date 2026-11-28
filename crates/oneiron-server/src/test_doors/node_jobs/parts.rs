@@ -36,6 +36,8 @@ struct AdmissionState {
     signals: BTreeMap<String, String>,
     /// Session templates, by name, with their longest run in seconds.
     sessions: BTreeMap<String, u64>,
+    /// Each template's job cache, when it names one (FLEET-TOOL-PARITY row 5).
+    job_caches: BTreeMap<String, crate::gpu_execution_node::node_settings::JobCacheTarget>,
     receipt_keep_days: u64,
     readiness_every_secs: u64,
     drain_clear_by: DrainClearBy,
@@ -83,6 +85,7 @@ impl ScriptedAdmission {
                 staging_limit_secs: 600,
                 signals: BTreeMap::new(),
                 sessions: BTreeMap::new(),
+                job_caches: BTreeMap::new(),
                 receipt_keep_days: 30,
                 readiness_every_secs: NodeJobSettings::default().readiness_every_secs,
                 drain_clear_by: DrainClearBy::default(),
@@ -161,6 +164,27 @@ impl ScriptedAdmission {
             }
             None => {
                 state.sessions.remove(template);
+            }
+        }
+    }
+
+    /// Names `key` at `path` as `template`'s job cache (`None`: no job
+    /// cache), as a node file with `execution_node.job_cache.writable` on
+    /// gives it.
+    pub fn set_template_job_cache(&self, template: &str, cache: Option<(&str, &std::path::Path)>) {
+        let mut state = locked(&self.state);
+        match cache {
+            Some((key, path)) => {
+                state.job_caches.insert(
+                    template.to_owned(),
+                    crate::gpu_execution_node::node_settings::JobCacheTarget {
+                        key: key.to_owned(),
+                        path: path.to_path_buf(),
+                    },
+                );
+            }
+            None => {
+                state.job_caches.remove(template);
             }
         }
     }
@@ -272,6 +296,13 @@ impl NodeAdmission for ScriptedAdmission {
 
     fn template_session_max_secs(&self, template: &str) -> Option<u64> {
         locked(&self.state).sessions.get(template).copied()
+    }
+
+    fn template_job_cache(
+        &self,
+        template: &str,
+    ) -> Option<crate::gpu_execution_node::node_settings::JobCacheTarget> {
+        locked(&self.state).job_caches.get(template).cloned()
     }
 
     fn template_mirrors(&self) -> Vec<(String, PathBuf)> {

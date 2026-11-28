@@ -368,6 +368,11 @@ pub struct LaunchFile {
     /// step arms the cutoff from them.
     pub boot_id: String,
     pub launch_boot_ns: u64,
+    /// The template's job cache, when it names one the node lets runs write
+    /// (FLEET-TOOL-PARITY row 5): its key, and whether this run holds the
+    /// kept cache. Absent from a launch without one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache: Option<super::job_cache::LaunchCache>,
 }
 
 /// What the unit's end step records, as root, after every process of the

@@ -363,6 +363,7 @@ fn disarm(context: &StepContext) {
         let _ = run_tool("systemctl", &["stop", "--no-block", &plan.unit], QUERY_WAIT);
     }
     disarm_instance(instance);
+    super::job_cache::start_sweep(context);
 }
 
 /// [`disarm`] by a checked job instance alone.

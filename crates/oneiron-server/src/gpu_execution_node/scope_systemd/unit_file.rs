@@ -10,6 +10,7 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 use super::control::CONTROL_SOCKET_PATH;
+use super::job_cache::JOB_CACHE_ROOT;
 use super::{EXCHANGE_ROOT, PAYLOAD_ROOT};
 
 /// What a unit template is made from: the paths and accounts `install`
@@ -35,6 +36,10 @@ pub struct UnitInputs {
     pub stop_grace_secs: u64,
     /// The longest the unit's start (prepare, the proofs, the gate) may take.
     pub start_timeout_secs: u64,
+    /// Where a run sees its template's job cache, when the node lets runs
+    /// write one (`execution_node.job_cache`, FLEET-TOOL-PARITY row 5);
+    /// `None`: the unit is as before, with no cache bind.
+    pub job_cache_mount: Option<PathBuf>,
 }
 
 /// The unit's sandbox and life-cycle properties, as `(name, value)` pairs in
@@ -93,15 +98,25 @@ pub fn sandbox_properties(inputs: &UnitInputs, instance: &str) -> Vec<(String, S
         format!("{}:ro {EXCHANGE_ROOT}:ro", quote_path(&inputs.work_dir)),
     );
     let payload = inputs.work_dir.join(instance);
-    set(
-        "BindPaths",
-        format!(
-            "-{}:{}",
-            quote_path(&Path::new(PAYLOAD_ROOT).join(instance)),
-            quote_path(&payload)
-        ),
+    let mut binds = format!(
+        "-{}:{}",
+        quote_path(&Path::new(PAYLOAD_ROOT).join(instance)),
+        quote_path(&payload)
     );
-    set("ReadWritePaths", format!("-{}", quote_path(&payload)));
+    let mut writable = format!("-{}", quote_path(&payload));
+    // A job cache (FLEET-TOOL-PARITY row 5): root's bind source for this
+    // instance, writable at the one mount. Without one the unit is as before.
+    if let Some(mount) = &inputs.job_cache_mount {
+        let _ = write!(
+            binds,
+            " -{}:{}",
+            quote_path(&Path::new(JOB_CACHE_ROOT).join(instance)),
+            quote_path(mount)
+        );
+        let _ = write!(writable, " -{}", quote_path(mount));
+    }
+    set("BindPaths", binds);
+    set("ReadWritePaths", writable);
     set(
         "BindReadOnlyPaths",
         format!("-{}", quote_path(&Path::new(EXCHANGE_ROOT).join(instance))),
@@ -221,6 +236,21 @@ pub fn installed_runtime_max_secs(unit_text: &str) -> Option<u64> {
         .and_then(|value| value.trim().parse().ok())
 }
 
+/// Whether an installed template binds a job cache at `mount`: `install` wrote it while
+/// `execution_node.job_cache.writable` was on, with this mount.
+#[must_use]
+pub fn installed_binds_job_cache(unit_text: &str, mount: &Path) -> bool {
+    let bind = format!(
+        "-{}:{}",
+        quote_path(&Path::new(JOB_CACHE_ROOT).join("%i")),
+        quote_path(mount)
+    );
+    unit_text
+        .lines()
+        .filter_map(|line| line.strip_prefix("BindPaths="))
+        .any(|value| value.split_whitespace().any(|word| word == bind))
+}
+
 /// The engine account an installed template names: the word after
 /// `--engine-account` on the first line holding it, when that word is an
 /// account the unit files may hold ([`plain_account`]).
@@ -289,6 +319,7 @@ mod tests {
             runtime_max_secs: 172_800,
             stop_grace_secs: 10,
             start_timeout_secs: 60,
+            job_cache_mount: None,
         }
     }
 

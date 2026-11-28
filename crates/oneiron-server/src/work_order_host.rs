@@ -126,12 +126,13 @@ fn fill_from_node(facts: &mut MachineFacts, node: &NodeAnswer, now_ms: u64) {
         .saturating_sub(node.disk_reserve_bytes);
     facts.room.disk_free_mib = Some(free / MIB);
     // Row P2: a key is warm here when its path is present (a key remembered from use alone is a
-    // hint the PLACE rule does not count); a mapped input that is not there blocks an order that
-    // lists it.
+    // hint the PLACE rule does not count), and no run here holds it as its job cache now
+    // (FLEET-TOOL-PARITY row 5: the next run would run cold); a mapped input that is not there
+    // blocks an order that lists it.
     facts.warm = node
         .warm
         .iter()
-        .filter(|fact| fact.present)
+        .filter(|fact| fact.present && !fact.held)
         .map(|fact| fact.key.clone())
         .collect();
     facts.warm_absent = node

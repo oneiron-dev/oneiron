@@ -188,6 +188,7 @@ fn warm_key_fact(fact: WarmKeyFact) -> MachineWarmKeyFact {
         bytes: fact.bytes,
         last_used_ms: fact.last_used_ms,
         uses: fact.uses,
+        held: fact.held,
     }
 }
 

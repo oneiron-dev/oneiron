@@ -692,6 +692,19 @@ fn remove_at(
     Ok(())
 }
 
+/// Removes the directory `name` in `dir` with what it holds, by the walk the pass deletes with
+/// (no symbolic link followed, no mount crossed): root's sweep of the job cache data a job
+/// account wrote (FLEET-TOOL-PARITY row 5).
+///
+/// # Errors
+///
+/// Why the walk stopped.
+#[cfg(target_os = "linux")]
+pub(crate) fn remove_tree(dir: BorrowedFd<'_>, name: &CStr) -> std::io::Result<()> {
+    let device = rustix::fs::fstat(dir)?.st_dev;
+    remove_at(dir, name, device, 0, None, &|| false)
+}
+
 /// Opens the directory `name` in `dir` with no symbolic link followed and no mount crossed:
 /// the open fails at a mount there, a bind mount of the same file system included.
 #[cfg(target_os = "linux")]

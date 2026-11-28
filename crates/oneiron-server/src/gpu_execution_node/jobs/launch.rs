@@ -314,6 +314,13 @@ impl NodeJobs {
         let cutoff_boot_ns = now
             .boot_ns
             .saturating_add(maximum_secs.saturating_mul(NANOS_PER_SEC));
+        // The template's job cache (FLEET-TOOL-PARITY row 5): kept when no other live key
+        // holds it, else cold; never a wait.
+        let cache = self
+            .parts()
+            .admission
+            .template_job_cache(&pin.template)
+            .map(|target| super::job_cache::launch_cache(&target, journal.table().iter(), key));
         let launch_file = LaunchFile {
             key: key.to_owned(),
             pin: pin.clone(),
@@ -322,6 +329,7 @@ impl NodeJobs {
             maximum_secs,
             boot_id: now.boot_id.clone(),
             launch_boot_ns: now.boot_ns,
+            cache: cache.clone(),
         };
         let control_dir = known.id.control_dir(&self.paths().state_dir);
         let written = serde_json::to_vec_pretty(&launch_file)
@@ -346,6 +354,7 @@ impl NodeJobs {
             launch_boot_ns: now.boot_ns,
             cutoff_boot_ns,
             host_memory_mib: placed.host_memory_mib,
+            cache,
         };
         if let Err(error) = journal.record(key, known.issuer, &now.boot_id, now.wall_ms, event) {
             // Nothing is journaled: the devices and the memory go back as

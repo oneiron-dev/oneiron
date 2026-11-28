@@ -101,6 +101,10 @@ pub fn install(request: &InstallRequest) -> Result<(), String> {
         runtime_max_secs,
         stop_grace_secs: settings.stop_grace_secs,
         start_timeout_secs: settings.unit_start_timeout_secs,
+        job_cache_mount: settings
+            .job_cache
+            .writable
+            .then(|| settings.job_cache.mount.clone()),
     };
     for path in [
         &inputs.binary,
@@ -133,6 +137,16 @@ pub fn install(request: &InstallRequest) -> Result<(), String> {
         )?,
     };
     require_work_dir_chain(&inputs.work_dir, &request.engine_account, &engine_access)?;
+    // The job cache's mount point (FLEET-TOOL-PARITY row 5): root's, as every
+    // directory above it is, so no other account changes what the unit binds over.
+    if let Some(mount) = &inputs.job_cache_mount {
+        unit_path_word(mount)?;
+        if !request.dry_run {
+            std::fs::create_dir_all(mount)
+                .map_err(|error| format!("{}: {error}", mount.display()))?;
+            require_root_owned(mount)?;
+        }
+    }
     let unit = render_job_unit(&inputs);
     let socket = render_control_socket(engine_gid);
     let handler = render_control_service(&inputs);

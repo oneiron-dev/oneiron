@@ -61,6 +61,11 @@ pub enum JournalEvent {
         /// `host_memory_mib`: the request's memory plus each unified
         /// device's claim memory).
         host_memory_mib: u64,
+        /// The template's job cache, when it names one (FLEET-TOOL-PARITY
+        /// row 5). Absent from a record without one, so an older record
+        /// reads as a launch with no cache.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cache: Option<super::job_cache::LaunchCache>,
     },
     /// The unit was seen active.
     Running,
@@ -161,6 +166,8 @@ pub struct KeyLaunch {
     pub cutoff_boot_ns: u64,
     pub host_memory_mib: u64,
     pub launch_at_ms: u64,
+    /// The template's job cache this launch took, kept or cold.
+    pub cache: Option<super::job_cache::LaunchCache>,
 }
 
 impl KeyLaunch {
@@ -499,6 +506,7 @@ impl KeyTable {
                     launch_boot_ns,
                     cutoff_boot_ns,
                     host_memory_mib,
+                    cache,
                 },
                 Some(JobState::Staging),
             ) => {
@@ -509,6 +517,7 @@ impl KeyTable {
                     cutoff_boot_ns: *cutoff_boot_ns,
                     host_memory_mib: *host_memory_mib,
                     launch_at_ms: record.at_ms,
+                    cache: cache.clone(),
                 });
                 next.release = DeviceRelease::Held;
                 next.state = JobState::Launching;

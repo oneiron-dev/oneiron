@@ -42,6 +42,9 @@ mod eviction;
 pub mod cache_plan;
 pub mod table;
 
+#[cfg(target_os = "linux")]
+pub(crate) use eviction::remove_tree;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::{MutexGuard, PoisonError};
@@ -337,6 +340,12 @@ impl NodeJobs {
             .collect();
         let now_ms = self.now().wall_ms;
         let book = self.lock();
+        // The job caches live keys hold kept now (FLEET-TOOL-PARITY row 5).
+        let held = book
+            .journal
+            .as_ref()
+            .map(|journal| super::job_cache::held_cache_keys(journal.table().iter()))
+            .unwrap_or_default();
         let mut warm = self.warm_lock();
         let mut changed = match book.journal.as_ref() {
             Some(journal) => warm.count_ended(journal.table().iter()),
@@ -362,6 +371,7 @@ impl NodeJobs {
             bytes: record.map_or(0, |record| record.bytes),
             last_used_ms: record.map(|record| record.last_used_ms),
             uses: record.map_or(0, |record| record.uses),
+            held: held.contains(key),
         };
         let mut facts: Vec<WarmKeyFact> = paths
             .keys()

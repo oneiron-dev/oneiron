@@ -35,6 +35,7 @@
 
 pub mod breadcrumb;
 pub mod incidents;
+pub mod job_cache;
 pub mod job_unit;
 pub mod journal;
 pub mod journal_file;
