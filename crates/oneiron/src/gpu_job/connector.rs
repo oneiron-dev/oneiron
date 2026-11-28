@@ -74,8 +74,11 @@ pub enum GpuTermination {
     Pending,
     /// A session's chunk whose slice the run had already passed (row W1): the termination
     /// stopped nothing, since the run goes on under the next paid chunk, which the step
-    /// terminates next. The slice bills `billed_secs`.
+    /// terminates next. The slice ran `used_secs` by its provider's measure and bills
+    /// `billed_secs`, which can be less (the issuer's own bracket bounds it), so the next chunk
+    /// counts its run time from the measure.
     Continued {
+        used_secs: u64,
         billed_secs: u64,
     },
 }
@@ -211,6 +214,9 @@ pub trait GpuJobConnector: Send + Sync {
     /// The resource created under `key`, if the provider has one.
     fn find(&self, key: &str) -> Result<Option<GpuResourceRef>, GpuConnectorError>;
 
+    /// What the resource does now. For a session's next chunk (row W1),
+    /// [`GpuConnectorError::Refused`] says its provider ended it before the
+    /// run reached it, so it never runs; the engine settles it zero.
     fn status(&self, resource: &GpuResourceRef) -> Result<GpuResourceStatus, GpuConnectorError>;
 
     fn signal(

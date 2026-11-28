@@ -73,7 +73,9 @@ pub struct GpuJobQuoteTerms {
     pub valid_until_ms: u64,
     pub digest: String,
     /// `renew` for a session's quote (row W1): before each chunk's maximum the host renews the
-    /// run with the next paid chunk. Absent for every other quote.
+    /// run with the next paid chunk. Absent for every other quote, so their terms read as
+    /// before. A session's quote needs a reader of this version: an older decoder that refuses
+    /// unknown fields refuses its terms.
     #[serde(default, skip_serializing_if = "AtMaximum::is_stop")]
     pub at_maximum: AtMaximum,
 }

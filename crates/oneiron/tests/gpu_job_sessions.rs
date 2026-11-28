@@ -44,6 +44,8 @@ struct FakeState {
     signals: Vec<GpuJobSignal>,
     /// Every renewal answers this refusal.
     renew_refusal: Option<String>,
+    /// A resource whose status answers this refusal: its provider ended it unrun.
+    status_refusal: HashMap<GpuResourceRef, String>,
 }
 
 #[derive(Default)]
@@ -105,6 +107,9 @@ impl GpuJobConnector for FakeGpu {
     fn status(&self, resource: &GpuResourceRef) -> Result<GpuResourceStatus, GpuConnectorError> {
         let mut state = self.state();
         state.calls.push(format!("status {}", resource.0));
+        if let Some(reason) = state.status_refusal.get(resource).cloned() {
+            return Err(GpuConnectorError::Refused { reason });
+        }
         Ok(state
             .status
             .get(resource)
@@ -224,17 +229,22 @@ impl Rig {
     }
 
     fn start(&self) -> (GpuJob, RunAdmission) {
+        self.start_for(CHUNK_SECS)
+    }
+
+    /// Starts a session whose chunks are `maximum_secs` long.
+    fn start_for(&self, maximum_secs: u64) -> (GpuJob, RunAdmission) {
         let quote = self
             .offer
             .quote(
                 &GpuJobRequest {
                     job_type: "session".to_owned(),
                     image: "open-models".to_owned(),
-                    maximum_secs: Some(CHUNK_SECS),
+                    maximum_secs: Some(maximum_secs),
                     inputs: serde_json::json!({"machine": "fixture"}),
                 },
                 None,
-                CHUNK_SECS,
+                maximum_secs,
                 NOW,
             )
             .expect("quote");
@@ -545,6 +555,7 @@ fn a_cancel_that_meets_a_passed_boundary_ends_the_next_chunk() {
     rig.gpu.terminates(
         &first,
         GpuTermination::Continued {
+            used_secs: CHUNK_SECS,
             billed_secs: CHUNK_SECS,
         },
     );
@@ -587,5 +598,105 @@ fn a_cancel_that_meets_a_passed_boundary_ends_the_next_chunk() {
     assert_eq!(
         rig.settled(),
         vec![(CHUNK_SECS + OVERHEAD_SECS) * UNIT_COST, 25 * UNIT_COST]
+    );
+}
+
+/// REVIEW-10521 r1 P1 (renew.rs:100): a chunk shorter than the lead sends no renewal before its
+/// provider reports run time, since a renewal of a run that has not launched is refused for good.
+#[test]
+fn a_session_whose_run_has_not_launched_sends_no_renewal() {
+    let rig = rig();
+    // 120 s chunks under the default 300 s lead: every reading is inside the lead.
+    let (job, _admission) = rig.start_for(120);
+    let first = key(&job.id, 0);
+    // Still staging: the provider answers pending, and no run time is known.
+    rig.step(&job.id);
+    rig.step(&job.id);
+    assert_eq!(
+        rig.gpu.called("renew"),
+        0,
+        "nothing is sent before the launch"
+    );
+    assert!(rig.job(&job.id).renewal.is_none());
+
+    // Launched: the first reading sends the renewal.
+    rig.gpu.running(&first, 5);
+    rig.step(&job.id);
+    assert_eq!(rig.gpu.called("renew"), 1);
+    assert!(rig.job(&job.id).renewal.is_some());
+}
+
+/// REVIEW-10521 r1 P1 (renew.rs:78): a next chunk its provider ended before the run reached it,
+/// seen on a later read (the renewal's refusal got no answer), settles zero at once, so its hold
+/// returns before the current chunk ends; no other renewal follows it.
+#[test]
+fn a_next_chunk_its_provider_ended_unrun_releases_its_hold_at_once() {
+    let rig = rig();
+    let (job, first, next) = renewed(&rig);
+    assert!(job.renewal.is_some());
+    rig.gpu
+        .state()
+        .status_refusal
+        .insert(resource_of(&next), "session_max_reached".to_owned());
+    rig.gpu.running(&first, CHUNK_SECS - 200);
+    rig.step(&job.id);
+    let stored = rig.job(&job.id);
+    let closed = stored
+        .renewal
+        .as_ref()
+        .expect("the next chunk stays on the job");
+    assert_eq!(
+        (closed.billed_secs, closed.settled_units),
+        (Some(0), Some(0))
+    );
+    assert_eq!(
+        stored.state,
+        GpuJobState::Running,
+        "the current chunk runs on"
+    );
+    assert_eq!(
+        rig.settled(),
+        vec![0],
+        "the next chunk's hold settles at zero now"
+    );
+
+    rig.gpu.running(&first, CHUNK_SECS - 100);
+    rig.step(&job.id);
+    assert_eq!(
+        rig.gpu.called(&format!("renew {next}")),
+        1,
+        "no second renewal"
+    );
+}
+
+/// REVIEW-10521 r1 P1 (step.rs:345): a cancel's stop that meets a passed slice billed below its
+/// measure (the issuer's bracket clamped it) still counts the slice's measured run time as the
+/// next chunk's base.
+#[test]
+fn a_passed_slice_billed_below_its_measure_keeps_its_measured_run_time() {
+    let rig = rig();
+    let (job, first, _next) = renewed(&rig);
+    rig.gpu.terminates(
+        &first,
+        GpuTermination::Continued {
+            used_secs: CHUNK_SECS,
+            billed_secs: 0,
+        },
+    );
+    let cancelled = rig
+        .vault
+        .cancel_gpu_job(
+            GpuJobActor::Owner(&rig.owner),
+            &job.id,
+            &rig.permits,
+            &rig.gpu,
+            NOW,
+        )
+        .expect("cancel");
+    assert_eq!(cancelled.chunks.len(), 2, "the next chunk runs now");
+    assert_eq!(cancelled.chunks[0].billed_secs, Some(0));
+    assert_eq!(
+        cancelled.chunks[1].base_used_secs, CHUNK_SECS,
+        "the base is the slice's measure, not its bill or the last reading"
     );
 }

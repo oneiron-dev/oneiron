@@ -522,7 +522,10 @@ impl VaultMachineConnector {
         {
             let billed_secs = terminal.billed_secs;
             if terminal.end == GpuJobEnd::Continued {
-                return Ok(GpuTermination::Continued { billed_secs });
+                return Ok(GpuTermination::Continued {
+                    used_secs: terminal.measured_secs.unwrap_or(billed_secs),
+                    billed_secs,
+                });
             }
             return Ok(GpuTermination::Confirmed { billed_secs });
         }
@@ -592,29 +595,12 @@ impl GpuJobConnector for VaultMachineConnector {
     /// it), and before the node's latest cutoff (the submit's `not_after` plus its maximum) and
     /// `jobs.write_off.wait_secs` have passed, so any launch from this dispatch has met its
     /// cutoff. A session's run (row W1) is bounded by its first key's `not_after` plus every
-    /// chunk's maximum, the open next one's too, and that next chunk's dispatch closes with it.
-    /// A repeat answers `Ok`.
+    /// chunk's maximum, the open next one's too, and that next chunk's dispatch closes with it:
+    /// one never dispatched stays so (its send refuses once the current chunk is written off),
+    /// and one whose end the issuer holds refuses the door before anything closes, so the step
+    /// settles it. A repeat answers `Ok`.
     fn write_off(&self, job: &GpuJob, now_ms: u64) -> Result<(), GpuConnectorError> {
-        let chunk = job.chunk().ok_or_else(|| refused("write_off_no_chunk"))?;
-        let key = chunk.idempotency_key.as_str();
-        let run_cutoff_ms = self.session_run_cutoff_ms(job)?;
-        self.keys
-            .with(key, || self.write_off_key(key, run_cutoff_ms, now_ms))?;
-        let Some(next) = job
-            .renewal
-            .as_ref()
-            .filter(|next| next.billed_secs.is_none())
-        else {
-            return Ok(());
-        };
-        let next_key = next.idempotency_key.as_str();
-        match self.keys.with(next_key, || {
-            self.write_off_key(next_key, run_cutoff_ms, now_ms)
-        }) {
-            // Never sent, or its end is held: nothing more is sent for it either way.
-            Ok(()) | Err(GpuConnectorError::Refused { .. }) => Ok(()),
-            Err(error) => Err(error),
-        }
+        self.write_off_job(job, now_ms)
     }
 
     /// Row R4: the live orphans are asked to stop again, and the owed results returned.

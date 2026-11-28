@@ -75,9 +75,15 @@ impl Vault {
                 return self.send_gpu_renewal(job, permits, connector, now_ms);
             };
             // Read at each step, so a provider whose send got no answer sends the same chunk
-            // again inside its window. What it says is the current chunk's to tell: that chunk's
-            // end, or the run's passage into this one, which also ends this one if it never ran.
-            let _ = connector.status(&resource);
+            // again inside its window. A refusal is the provider's word that this chunk ended
+            // before the run reached it (it refused the renewal on a send whose answer was lost,
+            // or the run ended first): it never runs, so it settles zero now and its hold
+            // returns before the current chunk ends. Anything else is the current chunk's to
+            // tell: that chunk's end, or the run's passage into this one.
+            if let Err(GpuConnectorError::Refused { reason }) = connector.status(&resource) {
+                tracing::info!(job = %job.id.to_hex(), %reason, "gpu session: the provider ended the next chunk before the run reached it; it settles zero");
+                return self.close_gpu_renewal(job, permits, now_ms);
+            }
             return Ok(job);
         }
         let Some(active) = job.chunk() else {
@@ -99,7 +105,12 @@ impl Vault {
             );
             return Ok(job);
         }
-        if active.used_secs.saturating_add(lead_secs) < active.quote.maximum_secs {
+        // The provider must have reported run time first: a renewal of a run that has not
+        // launched yet (a chunk shorter than the lead, still staging) is refused for good, and
+        // the session could then never renew.
+        if active.used_secs == 0
+            || active.used_secs.saturating_add(lead_secs) < active.quote.maximum_secs
+        {
             return Ok(job);
         }
         let quote = match offer.quote_for(
@@ -399,7 +410,7 @@ pub(super) fn drain_gpu_renewal(
         .and_then(|resource| match connector.terminate(resource) {
             Ok(
                 GpuTermination::Confirmed { billed_secs }
-                | GpuTermination::Continued { billed_secs },
+                | GpuTermination::Continued { billed_secs, .. },
             ) => Some(billed_secs),
             Ok(GpuTermination::Pending) | Err(_) => None,
         })

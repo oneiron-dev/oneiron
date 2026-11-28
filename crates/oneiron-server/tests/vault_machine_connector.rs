@@ -1085,3 +1085,71 @@ fn a_session_renewal_sends_a_continuing_submit_and_no_reserve() {
         );
     });
 }
+
+/// EM-22 R4 blocking 2 of #10521 (door 10, row W1): a write-off of a session whose next chunk's
+/// end the issuer holds (the run passed into it and ended there) is refused before anything
+/// closes, so the step settles that chunk as it ran; the current chunk's dispatch stays open.
+#[test]
+fn a_write_off_refuses_a_session_whose_next_chunk_holds_its_end() {
+    use vault_machine_rig::MAXIMUM_SECS;
+
+    with_rig(|rig| {
+        rig.node.state().session_template = true;
+        let workload = rig.approve("session", FAR_EXPIRY_MS);
+        let run = rig.start_session(&workload);
+        let first = run.key().to_owned();
+        rig.clock.advance_secs(MAXIMUM_SECS - 300);
+        rig.node.advance(
+            &first,
+            JobState::Running,
+            Some(MAXIMUM_SECS - 300),
+            None,
+            true,
+        );
+        rig.step_session(&run).expect("the step renews the session");
+        let next = rig
+            .job(&run)
+            .renewal
+            .as_ref()
+            .expect("the next chunk is written")
+            .idempotency_key
+            .clone();
+        // The issuer reads the next chunk's end before it sees the first slice pass.
+        rig.node.advance(
+            &next,
+            JobState::Ended,
+            Some(40),
+            Some(JobEnd::Exited { code: 0 }),
+            true,
+        );
+        rig.step_session(&run)
+            .expect("the step reads the next chunk");
+        rig.clock.advance_secs(100_000);
+        let refused = rig.vault().write_off_gpu_job(
+            &rig.owner,
+            &run.job.id,
+            &rig.permits,
+            &rig.connector,
+            rig.clock.now_ms(),
+        );
+        assert!(
+            matches!(
+                &refused,
+                Err(GpuJobError::Connector(GpuConnectorError::Refused { reason }))
+                    if reason == "end_confirmed"
+            ),
+            "{refused:?}"
+        );
+        assert!(rig.job(&run).state.is_live());
+        let current = rig
+            .vault()
+            .job_dispatch(&first)
+            .expect("read JOB_DISPATCH")
+            .expect("the first chunk's dispatch row");
+        assert!(
+            !matches!(current.closed, Some(DispatchClose::WrittenOff { .. })),
+            "nothing is written off: {:?}",
+            current.closed
+        );
+    });
+}

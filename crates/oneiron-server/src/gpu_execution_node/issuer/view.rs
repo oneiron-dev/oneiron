@@ -42,9 +42,11 @@ pub fn node_view(vault: &Vault, job: &GpuJob, now_ms: u64, step_ms: u64) -> Opti
         .ok()
         .map(|settings| settings.stale_after_steps);
     let observed = observation.as_ref().map(|observation| {
-        let ended = receipt
-            .as_ref()
-            .is_some_and(|receipt| receipt.state == JobState::Ended);
+        // A session's slice the run passed (row W1) is no end: the run goes on, and the receipt
+        // ages as a running one until the next chunk's own receipts follow.
+        let ended = receipt.as_ref().is_some_and(|receipt| {
+            receipt.state == JobState::Ended && receipt.end != Some(JobEnd::Continued)
+        });
         let age_ms = now_ms.saturating_sub(observation.observed_at_ms);
         GpuJobObserved {
             at_ms: observation.observed_at_ms,

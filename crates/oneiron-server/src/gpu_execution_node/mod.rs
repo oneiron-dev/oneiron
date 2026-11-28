@@ -21,6 +21,7 @@ pub mod jobs;
 pub mod machine_policy;
 pub mod node;
 pub mod node_settings;
+pub mod renewal_timing;
 #[cfg(target_os = "linux")]
 pub mod scope_systemd;
 pub mod selection;

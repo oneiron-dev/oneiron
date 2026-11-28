@@ -162,7 +162,15 @@ impl VaultMachineConnector {
         }
         // A session's slice the run passed carries no outputs: only the run's last slice does.
         if ended.end == Some(JobEnd::Continued) {
-            return Ok(GpuTermination::Continued { billed_secs });
+            return Ok(GpuTermination::Continued {
+                used_secs: ended.measured_secs.unwrap_or(billed_secs),
+                billed_secs,
+            });
+        }
+        // Nor does a slice the run never reached (row W1): the node acknowledges outputs only
+        // for the slice that holds the run's end, so a return opened here would stay owed.
+        if ended.slice.is_some() && ended.end == Some(JobEnd::Withdrawn) {
+            return Ok(GpuTermination::Confirmed { billed_secs });
         }
         // Row R4, EM-12 = A: the outputs land when the quote binds a result, then the node is
         // told it may clean them. What does not finish here is owed to the housekeeping pass.

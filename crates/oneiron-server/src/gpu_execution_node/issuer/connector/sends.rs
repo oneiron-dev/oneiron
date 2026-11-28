@@ -7,7 +7,7 @@ use oneiron::job_dispatch::{DispatchClose, DispatchPhase, JobDispatch};
 
 use super::{
     Gate, Sent, VaultMachineConnector, call_error, decode, job_answer_label, receipt_status,
-    unavailable,
+    refused, unavailable,
 };
 use crate::gpu_execution_node::wire::{
     JobAnswer, JobEnd, JobReceipt, JobRequest, JobReserve, JobState, JobStatusAnswer,
@@ -127,19 +127,27 @@ impl VaultMachineConnector {
     }
 
     /// What `receipt` says to the engine; a session's slice that the run passed (row W1) is
-    /// confirmed and billed here, so the engine settles it with no stop of the run.
+    /// confirmed and billed here, so the engine settles it with no stop of the run. A session's
+    /// next chunk the node ended with no launch (it refused the renewal, or the run ended before
+    /// it) is refused: it never runs, and the engine settles it zero.
     pub(super) fn ended_or_status(
         &self,
         row: &JobDispatch,
         submit: &JobSubmit,
         receipt: &JobReceipt,
     ) -> Result<GpuResourceStatus, GpuConnectorError> {
+        if receipt.state == JobState::Ended && submit.continues.is_some() && !receipt.started {
+            return Err(refused(match &receipt.end {
+                Some(JobEnd::Refused { reason }) => reason.clone(),
+                _ => "renewal_never_ran".to_owned(),
+            }));
+        }
         if receipt.state != JobState::Ended || receipt.end != Some(JobEnd::Continued) {
             return Ok(receipt_status(receipt));
         }
         let billed_secs = match self.confirm(&row.key, submit, receipt)? {
             GpuTermination::Confirmed { billed_secs }
-            | GpuTermination::Continued { billed_secs } => billed_secs,
+            | GpuTermination::Continued { billed_secs, .. } => billed_secs,
             GpuTermination::Pending => return Ok(GpuResourceStatus::Pending),
         };
         Ok(GpuResourceStatus::Continued {

@@ -354,8 +354,18 @@ impl Vault {
                 GpuTermination::Confirmed { billed_secs } => Some(billed_secs),
                 // A session's run passed this chunk's end before the stop reached it: the slice
                 // settles, the next chunk runs, and the job's next step ends that one.
-                GpuTermination::Continued { billed_secs } => {
-                    return self.pass_gpu_slice(job, None, billed_secs, permits, connector, now_ms);
+                GpuTermination::Continued {
+                    used_secs,
+                    billed_secs,
+                } => {
+                    return self.pass_gpu_slice(
+                        job,
+                        Some(used_secs),
+                        billed_secs,
+                        permits,
+                        connector,
+                        now_ms,
+                    );
                 }
             },
         };

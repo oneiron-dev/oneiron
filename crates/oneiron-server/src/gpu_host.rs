@@ -367,7 +367,7 @@ fn session_renew_lead_floor_ms(settings: &crate::config::gpu_jobs::GpuJobsSettin
         .saturating_add(crate::gpu_execution_node::node_settings::STOP_GRACE_SECS_DEFAULT)
         .saturating_add(1)
         .saturating_mul(1_000)
-        .saturating_add(crate::gpu_execution_node::jobs::RENEWAL_MARGIN_NS / 1_000_000)
+        .saturating_add(crate::gpu_execution_node::renewal_timing::RENEWAL_MARGIN_NS / 1_000_000)
 }
 
 /// Whether this server has GPU job work at its start: an offer posted, a live

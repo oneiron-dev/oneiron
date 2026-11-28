@@ -148,9 +148,12 @@ impl VaultMachineConnector {
     }
 
     /// The issuer's own controls on a session's next chunk (row W1), before its first send and
-    /// before every send again: the pause, the machine's guard, and a Grant's per-job maximum,
-    /// which holds over every chunk of the run as it holds over a resume (the paid maximum so far
-    /// plus `maximum_secs` must fit it). Answers the refusal's code, or `None` to go on.
+    /// before every send again: the pause, the machine's guard, the job still live with its
+    /// current chunk not written off (door 10 closes that chunk's dispatch before it reads the
+    /// next key as never dispatched, so the run ends at its paid cutoff), and a Grant's per-job
+    /// maximum, which holds over every chunk of the run as it holds over a resume (the paid
+    /// maximum so far plus `maximum_secs` must fit it). Answers the refusal's code, or `None` to
+    /// go on.
     pub(super) fn renewal_refusal(
         &self,
         job: &EntityId,
@@ -165,11 +168,23 @@ impl VaultMachineConnector {
         {
             return Ok(Some(refusal.into()));
         }
-        let Starter::Grant { grant } = submit.starter else {
-            return Ok(None);
-        };
         let Some(stored) = self.vault().gpu_job(job).map_err(store)? else {
             return Ok(Some("job_missing".to_owned()));
+        };
+        if !stored.state.is_live() {
+            return Ok(Some("job_ended".to_owned()));
+        }
+        if let Some(current) = stored.chunk()
+            && self
+                .vault()
+                .job_dispatch(&current.idempotency_key)
+                .map_err(store)?
+                .is_some_and(|row| matches!(row.closed, Some(DispatchClose::WrittenOff { .. })))
+        {
+            return Ok(Some("written_off".to_owned()));
+        }
+        let Starter::Grant { grant } = submit.starter else {
+            return Ok(None);
         };
         let Some(allowance) = self.vault().gpu_job_allowance(&grant).map_err(store)? else {
             return Ok(Some("allowance_missing".to_owned()));
@@ -256,5 +271,50 @@ impl VaultMachineConnector {
         Ok(Some(
             not_after_ms.saturating_add(maximum_secs.saturating_mul(1_000)),
         ))
+    }
+
+    /// Door 10 for `job` (pass 33, 8.5; row W1): its current chunk's dispatch closes as written
+    /// off, with a session's open next chunk's, as `GpuJobConnector::write_off` on the
+    /// connector says.
+    pub(super) fn write_off_job(&self, job: &GpuJob, now_ms: u64) -> Result<(), GpuConnectorError> {
+        let chunk = job.chunk().ok_or_else(|| refused("write_off_no_chunk"))?;
+        let key = chunk.idempotency_key.as_str();
+        let next_key = job
+            .renewal
+            .as_ref()
+            .filter(|next| next.billed_secs.is_none())
+            .map(|next| next.idempotency_key.as_str());
+        if let Some(next_key) = next_key {
+            self.keys
+                .with(next_key, || self.refuse_confirmed_end(next_key))?;
+        }
+        let run_cutoff_ms = self.session_run_cutoff_ms(job)?;
+        self.keys
+            .with(key, || self.write_off_key(key, run_cutoff_ms, now_ms))?;
+        let Some(next_key) = next_key else {
+            return Ok(());
+        };
+        match self.keys.with(next_key, || {
+            self.write_off_key(next_key, run_cutoff_ms, now_ms)
+        }) {
+            // Never sent: with the current chunk written off, its send refuses, so it never is.
+            Err(GpuConnectorError::Refused { reason })
+                if reason == "write_off_never_dispatched" =>
+            {
+                Ok(())
+            }
+            other => other,
+        }
+    }
+
+    /// `end_confirmed` when the issuer holds `key`'s terminal receipt: its step settles it, so
+    /// no write-off may write it zero. Under the key's lock.
+    fn refuse_confirmed_end(&self, key: &str) -> Result<(), GpuConnectorError> {
+        if self.vault().job_dispatch(key).map_err(store)?.is_some()
+            && self.stored_terminal(key)?.is_some()
+        {
+            return Err(refused("end_confirmed"));
+        }
+        Ok(())
     }
 }
