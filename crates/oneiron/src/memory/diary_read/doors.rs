@@ -190,7 +190,7 @@ impl Memory<'_> {
                 // FIX SESSION-PROJECT-NOTE-MESSAGE-PLACEMENT PR C: with no lane, the handle's session default judges each diary entry (Q1 DIARY = a).
                 None => listed
                     .iter()
-                    .map(|(id, _, _)| self.session_admits_note_in_txn(txn, *id))
+                    .map(|(id, _, _)| self.session_admits_note_in_txn(txn, *id).map(|_| true))
                     .collect::<Result<Vec<_>>>()?,
             };
             let mut entries = Vec::new();
