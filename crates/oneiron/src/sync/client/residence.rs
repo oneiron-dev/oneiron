@@ -5,6 +5,7 @@
 mod ask_option_link;
 pub use ask_option_link::request_ask_option_link;
 mod authority;
+pub(crate) mod authority_overlay_custody;
 mod bundle;
 mod checkpoint_roots;
 mod claim_vectors;
