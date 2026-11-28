@@ -417,14 +417,6 @@ impl AgentDispatcher<'_> {
             return Ok((leader.id, Vec::new(), None));
         };
         let team_ref = format!("team:{}:{digest}", bytes_to_hex_lower(leader.id.as_bytes()));
-        if pattern == TeamPattern::Market {
-            let (terms, setter) = anchor.market.ok_or_else(|| invalid(MARKET_UNBOUND))?;
-            let now = self.vault.now_recorded_at();
-            let opening = planned_market(&team_ref, terms, setter, member_contexts.len(), now)?;
-            if !bind_market_in_txn(self.vault, wtxn, &opening)? {
-                return Err(invalid(MARKET_MOVED));
-            }
-        }
         let stamp = TeamRunStamp::new(team_ref, pattern)?;
         let mut members = Vec::with_capacity(member_contexts.len());
         for (ordinal, context) in member_contexts.into_iter().enumerate() {
