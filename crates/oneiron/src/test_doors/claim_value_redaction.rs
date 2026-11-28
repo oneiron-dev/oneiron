@@ -4,7 +4,8 @@
 //! which no integration fixture builds; this door runs the same writer step
 //! with the inputs that answer passes: one stored CLAIM and the value fields
 //! named in the answer. The owner rides along as the acting actor for the
-//! call shape; the restriction check reads no actor.
+//! call shape; the restriction check reads no actor. Like the answer, it
+//! finishes the dependent walk the redaction marked after its commit.
 
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -24,5 +25,8 @@ pub fn redact_claim_value_fields(
     keys: &[String],
     _actor: EntityId,
 ) -> Result<LocalClaimValueRedaction> {
-    vault.with_write_txn_grouped(|txn| redact_claim_value_fields_in_txn(vault, txn, id, keys))
+    let receipt = vault
+        .with_write_txn_grouped(|txn| redact_claim_value_fields_in_txn(vault, txn, id, keys))?;
+    vault.finish_dependent_walks()?;
+    Ok(receipt)
 }

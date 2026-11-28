@@ -26,7 +26,7 @@ mod private_sources;
 mod urgent;
 mod view;
 pub use after_notice::{APPLIED_GROUP, APPLIED_VIEW, DigestApplied, DigestAppliedItem};
-pub(super) use erase::erase_sources_in_txn;
+pub(crate) use erase::erase_sources_in_txn;
 #[cfg(oneiron_test_support)]
 pub(crate) use erase::{claim_digests_indexed_for_test, forget_claim_digest_index_for_test};
 use pending::{pending_proposals, unseen_cleanup, unseen_note_tombstones, unseen_offers};
