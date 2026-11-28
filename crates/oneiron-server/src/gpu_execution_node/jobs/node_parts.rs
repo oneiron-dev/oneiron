@@ -234,6 +234,11 @@ pub trait NodeAdmission: Send + Sync {
     fn stop_grace_secs(&self) -> u64 {
         crate::gpu_execution_node::node_settings::STOP_GRACE_SECS_DEFAULT
     }
+
+    /// The quiet lease now (row GPU-QUIET-LEASE). The default: none.
+    fn quiet_lease(&self) -> super::quiet_lease::QuietLease {
+        super::quiet_lease::QuietLease::default()
+    }
 }
 
 /// The machine's devices, as the job service places and leases them. The
@@ -548,6 +553,10 @@ impl NodeAdmission for ExecutionNode {
                     .collect()
             })
             .unwrap_or_default()
+    }
+
+    fn quiet_lease(&self) -> super::quiet_lease::QuietLease {
+        super::quiet_lease::QuietLease::read(self)
     }
 }
 

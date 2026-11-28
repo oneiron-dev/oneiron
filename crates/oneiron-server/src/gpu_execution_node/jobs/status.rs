@@ -298,6 +298,9 @@ impl NodeJobs {
     /// that fails is tried again at the next tick. An unacknowledged key is
     /// never cleaned here.
     pub(super) fn clean_acknowledged_payloads(&self) {
+        if self.quiet_lease_held() {
+            return;
+        }
         let keep_ms = self
             .parts()
             .admission

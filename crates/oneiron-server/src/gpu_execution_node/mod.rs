@@ -15,6 +15,8 @@
 pub mod availability;
 pub mod device;
 pub mod device_probes;
+#[cfg(target_os = "linux")]
+pub mod gpu_power;
 pub mod issuer;
 #[cfg(unix)]
 pub mod jobs;

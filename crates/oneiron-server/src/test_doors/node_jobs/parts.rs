@@ -13,6 +13,7 @@ use oneiron_contracts::fingerprint::ContentHasher;
 use oneiron_organ_host::{FloorLease, FloorRefusal, MachineFloor};
 
 use super::{ScriptedDevices, locked};
+use crate::gpu_execution_node::jobs::quiet_lease::QuietLease;
 use crate::gpu_execution_node::jobs::{
     AuthorityPosition, IssuerNotLive, NodeAdmission, NodeControls, NodeJobSettings, StageFailure,
     StageOrder, Stager,
@@ -41,6 +42,8 @@ struct AdmissionState {
     drain_clear_by: DrainClearBy,
     /// Each template's mirror, by template name.
     mirrors: BTreeMap<String, PathBuf>,
+    /// The quiet lease (row GPU-QUIET-LEASE): its marker and quiet templates.
+    quiet_lease: QuietLease,
 }
 
 /// The node's configuration and fold, scripted: enabled, one template, room
@@ -87,6 +90,7 @@ impl ScriptedAdmission {
                 readiness_every_secs: NodeJobSettings::default().readiness_every_secs,
                 drain_clear_by: DrainClearBy::default(),
                 mirrors: BTreeMap::new(),
+                quiet_lease: QuietLease::default(),
             }),
         })
     }
@@ -186,6 +190,11 @@ impl ScriptedAdmission {
             .mirrors
             .insert(template.to_owned(), mirror);
     }
+
+    /// Sets the quiet lease: the host's marker and the quiet templates.
+    pub fn set_quiet_lease(&self, lease: QuietLease) {
+        locked(&self.state).quiet_lease = lease;
+    }
 }
 
 impl NodeAdmission for ScriptedAdmission {
@@ -280,6 +289,10 @@ impl NodeAdmission for ScriptedAdmission {
             .iter()
             .map(|(template, mirror)| (template.clone(), mirror.clone()))
             .collect()
+    }
+
+    fn quiet_lease(&self) -> QuietLease {
+        locked(&self.state).quiet_lease.clone()
     }
 }
 

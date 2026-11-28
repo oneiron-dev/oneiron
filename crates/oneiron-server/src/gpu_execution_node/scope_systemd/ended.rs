@@ -370,4 +370,5 @@ fn disarm_instance(instance: &str) {
     let timer = format!("{CUTOFF_UNIT_PREFIX}{instance}.timer");
     let _ = run_tool("systemctl", &["stop", "--no-block", &timer], QUERY_WAIT);
     exchange::withdraw(instance);
+    super::super::gpu_power::restore_at_end(instance);
 }

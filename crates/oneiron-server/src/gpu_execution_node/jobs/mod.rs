@@ -38,6 +38,7 @@ pub mod job_unit;
 pub mod journal;
 pub mod journal_file;
 pub mod node_parts;
+pub mod quiet_lease;
 pub mod readiness;
 pub mod receipt;
 #[cfg(target_os = "linux")]

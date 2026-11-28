@@ -166,6 +166,7 @@ impl NodeJobs {
         if self.gate() == NodeGate::Recovering {
             self.recover();
         }
+        self.keep_quiet_tag();
         match self.gate() {
             NodeGate::Open => {}
             NodeGate::HistoryLost { .. } => {
