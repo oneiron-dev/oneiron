@@ -48,13 +48,15 @@ pub mod serving;
 pub mod staging;
 
 mod admission;
-mod disk_check;
 mod end;
 mod launch;
 mod log_tail;
 mod outputs;
 mod recovery;
 mod status;
+
+// The disk check, on a thread of its own (design 7.9).
+mod disk_check;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, Ordering};

@@ -29,9 +29,7 @@ use super::safe_fs::{
 };
 use super::step::{RECORD_MAX_BYTES, StepArgs, StepContext};
 use super::systemd_unit::{SYSTEMCTL_TIMEOUT, run_tool, show};
-use super::unit_file::{
-    control_service_renews, effective_filter_refusal, installed_runtime_max_secs,
-};
+use super::unit_file::{control_service_renews, installed_runtime_max_secs};
 use super::{
     AWAKE_UNIT_PREFIX, CUTOFF_UNIT_PREFIX, PREPARED_FILE_NAME, UNIT_MEMORY_FLOOR_MIB,
     UNIT_TEMPLATE_PATH,
@@ -386,7 +384,7 @@ fn effective_filter_matches(unit: &str) -> Result<(), String> {
     let found = show(unit, &["SystemCallFilter"])
         .map_err(|why| format!("system_call_filter_unknown: {why}"))?;
     let filter = found.get("SystemCallFilter").map_or("", String::as_str);
-    match effective_filter_refusal(filter) {
+    match super::unit_file::effective_filter_refusal(filter) {
         Some(why) => Err(format!(
             "unit_template_old: {why}: run `oneiron execution-node install` again"
         )),

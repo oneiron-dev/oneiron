@@ -512,6 +512,7 @@ impl NodeAdmission for ExecutionNode {
             |file| ExecutionNode::readiness_settings(self, file),
         );
         NodeJobSettings {
+            payload_walk: file.as_ref().map(|file| file.payload_walk_bounds()),
             staging_limit_secs: file
                 .as_ref()
                 .map_or(defaults.staging_limit_secs, |file| file.staging_limit_secs),
@@ -520,7 +521,6 @@ impl NodeAdmission for ExecutionNode {
             }),
             readiness_every_secs,
             drain_clear_by,
-            payload_walk: file.as_ref().map(|file| file.payload_walk_bounds()),
             ..defaults
         }
     }

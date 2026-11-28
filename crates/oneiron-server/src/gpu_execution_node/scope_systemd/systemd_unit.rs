@@ -299,12 +299,6 @@ impl JobUnit for SystemdJobUnit {
 
     /// The checkpoint notice, through the control socket's `signal` verb:
     /// root sends it to the unit's main process alone.
-    fn signal(&self, unit: &JobKeyId, signal: &str) -> Result<(), JobUnitError> {
-        let verb = ControlVerb::from_words("signal", Some(signal))
-            .map_err(|reason| Self::error(unit, format!("signal {signal}: {reason}")))?;
-        control::request(verb, unit).map_err(|reason| Self::error(unit, reason))
-    }
-
     /// The disk check's measure, through the control socket's `usage`
     /// verb: root walks the unit's own bind source of the payload, so a
     /// directory the job made private to its uid counts too (FIX
@@ -318,6 +312,12 @@ impl JobUnit for SystemdJobUnit {
         bounds: &PayloadWalkBounds,
     ) -> Result<PayloadUsage, JobUnitError> {
         control::request_usage(unit, stop_past, bounds).map_err(|reason| Self::error(unit, reason))
+    }
+
+    fn signal(&self, unit: &JobKeyId, signal: &str) -> Result<(), JobUnitError> {
+        let verb = ControlVerb::from_words("signal", Some(signal))
+            .map_err(|reason| Self::error(unit, format!("signal {signal}: {reason}")))?;
+        control::request(verb, unit).map_err(|reason| Self::error(unit, reason))
     }
 
     fn status(&self, unit: &JobKeyId) -> Result<JobUnitStatus, JobUnitError> {

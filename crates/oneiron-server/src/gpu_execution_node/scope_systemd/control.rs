@@ -42,10 +42,10 @@
 //! has counted more than `<bytes>`, and a payload with more than
 //! `<entries>` entries or directories deeper than `<depth>` (the node
 //! file's walk bounds, which the engine reads) is unmeasurable. The walk's
-//! depth never passes [`PAYLOAD_DEPTH_MAX_CEILING`] and its time never
-//! passes the engine's bound. The handler, given the node file, takes the
+//! depth never passes [`payload_usage::PAYLOAD_DEPTH_MAX_CEILING`] and its
+//! time never passes the engine's bound. The handler, given the node file, takes the
 //! job account from it. The answer comes as a device query's: `ok <n>` and
-//! n bytes, [`PayloadUsage::render`]'s line.
+//! n bytes, [`payload_usage::PayloadUsage::render`]'s line.
 
 use std::io::{Read as _, Write as _};
 use std::os::fd::{AsFd as _, AsRawFd as _};
@@ -53,8 +53,7 @@ use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use super::super::jobs::payload_usage::{PAYLOAD_DEPTH_MAX_CEILING, PayloadWalkBounds};
-use super::super::jobs::{JobKeyId, PayloadUsage};
+use super::super::jobs::JobKeyId;
 use super::super::node_settings::CHECKPOINT_SIGNALS;
 use super::device_query;
 use super::exec::connect_by_deadline;
@@ -63,6 +62,10 @@ use super::systemd_unit::{SYSTEMCTL_TIMEOUT, run_tool, show};
 use super::unit_file::plain_account;
 
 mod usage;
+
+// The disk check's walk and its measure (the `usage` verb), in a group of
+// its own beside the verb's module.
+use super::super::jobs::payload_usage;
 
 /// The socket the engine's account connects to.
 pub const CONTROL_SOCKET_PATH: &str = "/run/oneiron-job-control.sock";
@@ -328,8 +331,8 @@ pub fn request_at(
 pub fn request_usage(
     id: &JobKeyId,
     stop_past: u64,
-    bounds: &PayloadWalkBounds,
-) -> Result<PayloadUsage, String> {
+    bounds: &payload_usage::PayloadWalkBounds,
+) -> Result<payload_usage::PayloadUsage, String> {
     let socket = Path::new(CONTROL_SOCKET_PATH);
     let fail = |error: std::io::Error| format!("{}: {error}", socket.display());
     let verb = ControlVerb::Usage {
@@ -352,7 +355,8 @@ pub fn request_usage(
         .ok_or_else(|| format!("job-control answered usage {head:?}"))?;
     let measure = device_query::read_exactly(&mut stream, length, deadline).map_err(fail)?;
     let measure = String::from_utf8_lossy(&measure);
-    PayloadUsage::parse(&measure).ok_or_else(|| format!("job-control answered usage {measure:?}"))
+    payload_usage::PayloadUsage::parse(&measure)
+        .ok_or_else(|| format!("job-control answered usage {measure:?}"))
 }
 
 /// Connects to the handler at `socket` within `connect_wait` and sends the
@@ -523,10 +527,10 @@ fn serve(args: &[String], stream: &mut UnixStream) -> Result<Option<Vec<u8>>, St
     {
         let node_file =
             node_file.ok_or("usage_needs_node_file: run `oneiron execution-node install` again")?;
-        let bounds = PayloadWalkBounds {
-            depth_max: depth_max.min(PAYLOAD_DEPTH_MAX_CEILING),
+        let bounds = payload_usage::PayloadWalkBounds {
+            depth_max: depth_max.min(payload_usage::PAYLOAD_DEPTH_MAX_CEILING),
             entries_max,
-            ..PayloadWalkBounds::default()
+            ..payload_usage::PayloadWalkBounds::default()
         };
         return usage::payload_usage(node_file, engine, &id, stop_past, &bounds)
             .map(|usage| Some(usage.render().into_bytes()));

@@ -37,40 +37,6 @@ pub struct UnitInputs {
     pub start_timeout_secs: u64,
 }
 
-/// The system calls a job unit refuses, each with the error it answers.
-pub const JOB_SYSTEM_CALL_FILTER: &str =
-    "~fallocate:EOPNOTSUPP io_uring_setup:ENOSYS io_uring_enter:ENOSYS io_uring_register:ENOSYS";
-
-/// The system calls [`JOB_SYSTEM_CALL_FILTER`] refuses.
-pub const JOB_REFUSED_SYSTEM_CALLS: [&str; 4] = [
-    "fallocate",
-    "io_uring_setup",
-    "io_uring_enter",
-    "io_uring_register",
-];
-
-/// Why a unit's effective `SystemCallFilter=` (as `systemctl show` gives it:
-/// `~` for a deny list, then each call, with `:<error>` when it answers
-/// one) does not refuse every call of [`JOB_REFUSED_SYSTEM_CALLS`], if it
-/// does not. A drop-in that empties the filter or turns it into an allow
-/// list is caught here (review r13 R13-06 of #10512).
-#[must_use]
-pub fn effective_filter_refusal(effective: &str) -> Option<String> {
-    let Some(denied) = effective.strip_prefix('~') else {
-        return Some(format!(
-            "the unit's effective SystemCallFilter= is {effective:?}, not a deny list"
-        ));
-    };
-    let denied: Vec<&str> = denied
-        .split_whitespace()
-        .map(|entry| entry.split_once(':').map_or(entry, |(name, _)| name))
-        .collect();
-    JOB_REFUSED_SYSTEM_CALLS
-        .iter()
-        .find(|call| !denied.contains(call))
-        .map(|call| format!("the unit's effective SystemCallFilter= lets {call} through"))
-}
-
 /// The unit's sandbox and life-cycle properties, as `(name, value)` pairs in
 /// the order the template lists them. `instance` is `%i` in the template and
 /// the probe's id in a probe unit.
@@ -274,6 +240,40 @@ pub fn installed_engine_account(unit_text: &str) -> Option<&str> {
         }
     }
     None
+}
+
+/// The system calls a job unit refuses, each with the error it answers.
+pub const JOB_SYSTEM_CALL_FILTER: &str =
+    "~fallocate:EOPNOTSUPP io_uring_setup:ENOSYS io_uring_enter:ENOSYS io_uring_register:ENOSYS";
+
+/// The system calls [`JOB_SYSTEM_CALL_FILTER`] refuses.
+pub const JOB_REFUSED_SYSTEM_CALLS: [&str; 4] = [
+    "fallocate",
+    "io_uring_setup",
+    "io_uring_enter",
+    "io_uring_register",
+];
+
+/// Why a unit's effective `SystemCallFilter=` (as `systemctl show` gives it:
+/// `~` for a deny list, then each call, with `:<error>` when it answers
+/// one) does not refuse every call of [`JOB_REFUSED_SYSTEM_CALLS`], if it
+/// does not. A drop-in that empties the filter or turns it into an allow
+/// list is caught here (review r13 R13-06 of #10512).
+#[must_use]
+pub fn effective_filter_refusal(effective: &str) -> Option<String> {
+    let Some(denied) = effective.strip_prefix('~') else {
+        return Some(format!(
+            "the unit's effective SystemCallFilter= is {effective:?}, not a deny list"
+        ));
+    };
+    let denied: Vec<&str> = denied
+        .split_whitespace()
+        .map(|entry| entry.split_once(':').map_or(entry, |(name, _)| name))
+        .collect();
+    JOB_REFUSED_SYSTEM_CALLS
+        .iter()
+        .find(|call| !denied.contains(call))
+        .map(|call| format!("the unit's effective SystemCallFilter= lets {call} through"))
 }
 
 /// A path as one unit-file word: systemd splits these settings on spaces, so
