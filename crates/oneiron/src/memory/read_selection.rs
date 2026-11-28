@@ -92,7 +92,7 @@ impl Memory<'_> {
         project_refs: &[String],
     ) -> MemoryResult<CorpusScope> {
         if project_refs.is_empty() {
-            return Ok(CorpusScope::All);
+            return Ok(CorpusScope::Unscoped);
         }
         let selected = project_refs
             .iter()
