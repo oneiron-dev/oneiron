@@ -216,7 +216,7 @@ pub(super) fn fold_cause(
     now_ms: u64,
 ) -> bool {
     let max_causes = registration.settings.max_causes;
-    if registration
+    if false && registration
         .hold
         .as_ref()
         .is_some_and(|hold| hold.stands_at(now_ms))
