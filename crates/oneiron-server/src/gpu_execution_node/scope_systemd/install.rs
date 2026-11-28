@@ -26,6 +26,7 @@ use super::device_query::{
     DEVICE_QUERY_LOCK_DIR, DEVICE_QUERY_LOCK_FILE, provision_lock, require_install_paths_apart,
     require_no_old_state_dir_lock,
 };
+use super::network_unit::{HOST_NETWORK_UNIT_TEMPLATE_PATH, UnitNetwork};
 use super::safe_fs::{
     account, account_entry, borrow, facts, make_dir_beneath, open_dir_beneath, open_dir_path,
     require_root_owned,
@@ -33,7 +34,7 @@ use super::safe_fs::{
 use super::systemd_unit::{SYSTEMCTL_TIMEOUT, run_tool, tool_path};
 use super::unit_file::{
     UnitInputs, plain_account, render_control_service, render_control_socket, render_job_unit,
-    unit_path_word,
+    render_job_unit_for, unit_path_word,
 };
 use crate::gpu_execution_node::jobs::staging::{
     WorkDirAccess, WorkDirFault, WorkDirVerdict, work_dir_verdict_for,
@@ -134,11 +135,15 @@ pub fn install(request: &InstallRequest) -> Result<(), String> {
     };
     require_work_dir_chain(&inputs.work_dir, &request.engine_account, &engine_access)?;
     let unit = render_job_unit(&inputs);
+    // The host network unit (row NODE-NETWORK-HOST-UNIT) is written on every
+    // machine: only a pin that asks `host`, under a template and an owner's
+    // row that both open it, ever runs in it.
+    let host_unit = render_job_unit_for(&inputs, UnitNetwork::Host);
     let socket = render_control_socket(engine_gid);
     let handler = render_control_service(&inputs);
     if request.dry_run {
         stdout_line!(
-            "--- {UNIT_TEMPLATE_PATH}\n{unit}--- {CONTROL_SOCKET_UNIT_PATH}\n{socket}--- {CONTROL_SERVICE_UNIT_PATH}\n{handler}--- {DEVICE_QUERY_LOCK_DIR}/{DEVICE_QUERY_LOCK_FILE}\nroot's empty file, mode 0600, in root's directory, mode 0700\n"
+            "--- {UNIT_TEMPLATE_PATH}\n{unit}--- {HOST_NETWORK_UNIT_TEMPLATE_PATH}\n{host_unit}--- {CONTROL_SOCKET_UNIT_PATH}\n{socket}--- {CONTROL_SERVICE_UNIT_PATH}\n{handler}--- {DEVICE_QUERY_LOCK_DIR}/{DEVICE_QUERY_LOCK_FILE}\nroot's empty file, mode 0600, in root's directory, mode 0700\n"
         );
         print_templates(&settings);
         return Ok(());
@@ -158,9 +163,11 @@ pub fn install(request: &InstallRequest) -> Result<(), String> {
     // Before the socket starts: a handler never makes the lock.
     let lock_changed = provision_lock(lock_dir)?;
     let unit_changed = write_if_changed(Path::new(UNIT_TEMPLATE_PATH), &unit)?;
+    let host_unit_changed =
+        write_if_changed(Path::new(HOST_NETWORK_UNIT_TEMPLATE_PATH), &host_unit)?;
     let socket_changed = write_if_changed(Path::new(CONTROL_SOCKET_UNIT_PATH), &socket)?;
     let handler_changed = write_if_changed(Path::new(CONTROL_SERVICE_UNIT_PATH), &handler)?;
-    if unit_changed || socket_changed || handler_changed {
+    if unit_changed || host_unit_changed || socket_changed || handler_changed {
         run_tool("systemctl", &["daemon-reload"], SYSTEMCTL_TIMEOUT)?;
     }
     run_tool(
@@ -178,8 +185,9 @@ pub fn install(request: &InstallRequest) -> Result<(), String> {
     )?;
     let said = |changed: bool| if changed { "written" } else { "unchanged" };
     stdout_line!(
-        "installed: {UNIT_TEMPLATE_PATH} ({}), {CONTROL_SOCKET_UNIT_PATH} ({}, started), {CONTROL_SERVICE_UNIT_PATH} ({}), {DEVICE_QUERY_LOCK_DIR}/{DEVICE_QUERY_LOCK_FILE} ({}), job account {}, RuntimeMaxSec {runtime_max_secs}",
+        "installed: {UNIT_TEMPLATE_PATH} ({}), {HOST_NETWORK_UNIT_TEMPLATE_PATH} ({}), {CONTROL_SOCKET_UNIT_PATH} ({}, started), {CONTROL_SERVICE_UNIT_PATH} ({}), {DEVICE_QUERY_LOCK_DIR}/{DEVICE_QUERY_LOCK_FILE} ({}), job account {}, RuntimeMaxSec {runtime_max_secs}",
         said(unit_changed),
+        said(host_unit_changed),
         said(socket_changed),
         said(handler_changed),
         said(lock_changed),

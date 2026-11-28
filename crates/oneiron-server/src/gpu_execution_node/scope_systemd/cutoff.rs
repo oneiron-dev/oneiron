@@ -17,6 +17,7 @@
 use std::sync::mpsc;
 use std::time::Duration;
 
+use super::network_unit::{host_network_unit_installed, installed_unit_names};
 use super::records::{CutoffMark, CutoffPlan, PreparedRecord};
 use super::safe_fs::boot_ns;
 use super::step::{StepArgs, StepContext};
@@ -82,7 +83,13 @@ pub fn run(args: StepArgs) -> i32 {
         journal_line!("job-cutoff: {:?} is not a job instance", args.instance);
         return 1;
     }
-    let unit = format!("oneiron-job@{}.service", args.instance);
+    // The key's unit under each installed template (row
+    // NODE-NETWORK-HOST-UNIT): stopping the one it does not run in changes
+    // nothing, so a timer a renewal armed needs no flag.
+    let units = installed_unit_names(&args.instance, host_network_unit_installed());
+    let unit = units.join(" ");
+    let mut stop_args = vec!["stop", "--no-block"];
+    stop_args.extend(units.iter().map(String::as_str));
     let fired_boot_ns = boot_ns();
     if let Some(own) = args.stop_at_boot_ns {
         let recorded = recorded_cutoff(&args);
@@ -97,22 +104,14 @@ pub fn run(args: StepArgs) -> i32 {
     // disk) may hold it back. The end step also counts the cutoff by the time
     // the unit ended, so a mark that lands late or never still ends the run
     // as its time limit.
-    let mut stopped = run_tool(
-        "systemctl",
-        &["stop", "--no-block", &unit],
-        SYSTEMCTL_TIMEOUT,
-    );
+    let mut stopped = run_tool("systemctl", &stop_args, SYSTEMCTL_TIMEOUT);
     for _ in 1..STOP_ASKS {
         let Err(why) = &stopped else {
             break;
         };
         journal_line!("job-cutoff: {unit} did not take the stop ({why}); asking again");
         std::thread::sleep(STOP_ASK_PAUSE);
-        stopped = run_tool(
-            "systemctl",
-            &["stop", "--no-block", &unit],
-            SYSTEMCTL_TIMEOUT,
-        );
+        stopped = run_tool("systemctl", &stop_args, SYSTEMCTL_TIMEOUT);
     }
     let mark = CutoffMark {
         instance: args.instance.clone(),

@@ -30,13 +30,14 @@ use std::path::Path;
 
 use super::super::jobs::JobKeyId;
 use super::super::jobs::job_unit::RENEW_BEFORE_STOP_NS;
+use super::network_unit::{UnitNetwork, host_network_unit_installed, installed_networks};
 use super::prepare::{CUTOFF_MARGIN_MS, arm_cutoff, cutoff_timer_armed};
 use super::records::{CutoffMark, CutoffPlan, PreparedRecord};
 use super::safe_fs::boot_ns;
 use super::step::{StepArgs, StepContext};
 use super::systemd_unit::{SYSTEMCTL_TIMEOUT, run_tool, show};
 use super::unit_file::{CONTROL_HANDLER_RUNTIME_MAX_SECS, installed_runtime_max_secs};
-use super::{CUTOFF_FILE_NAME, CUTOFF_UNIT_PREFIX, PREPARED_FILE_NAME, UNIT_TEMPLATE_PATH};
+use super::{CUTOFF_FILE_NAME, CUTOFF_UNIT_PREFIX, PREPARED_FILE_NAME};
 
 const NANOS_PER_SEC: u64 = 1_000_000_000;
 
@@ -47,15 +48,22 @@ const _: () = assert!(
         > CONTROL_HANDLER_RUNTIME_MAX_SECS * NANOS_PER_SEC + CUTOFF_MARGIN_MS * 1_000_000
 );
 
-/// `Ok` while the job unit is active: its cutoff may move.
-fn running(id: &JobKeyId) -> Result<(), String> {
-    let found = show(&id.unit_name(), &["ActiveState"])?;
-    let state = found.get("ActiveState").map_or("", String::as_str);
-    if state == "active" {
-        Ok(())
-    } else {
-        Err(format!("unit_not_running: the unit is {state:?}"))
+/// The job unit's network while it is active, under either installed
+/// template (row NODE-NETWORK-HOST-UNIT): its cutoff may move.
+fn running(id: &JobKeyId) -> Result<UnitNetwork, String> {
+    let mut first_state = None;
+    for network in installed_networks(host_network_unit_installed()) {
+        let found = show(&network.unit_name(id.as_str()), &["ActiveState"])?;
+        let state = found.get("ActiveState").cloned().unwrap_or_default();
+        if state == "active" {
+            return Ok(network);
+        }
+        first_state.get_or_insert(state);
     }
+    Err(format!(
+        "unit_not_running: the unit is {:?}",
+        first_state.unwrap_or_default()
+    ))
 }
 
 /// Whether the key's cutoff fired: its mark is there, or the mark does not
@@ -137,6 +145,7 @@ pub fn renew_cutoff(
         engine_account: engine_account.to_owned(),
         instance: id.as_str().to_owned(),
         after_exec: false,
+        host_network: false,
         host_namespace_error: None,
         stop_at_boot_ns: None,
     })?;
@@ -159,7 +168,7 @@ pub fn renew_cutoff(
         .read_record::<PreparedRecord>(PREPARED_FILE_NAME)?
         .filter(|record| record.instance == id.as_str())
         .ok_or("not_prepared: no prepared record of this instance")?;
-    running(id)?;
+    let unit_network = running(id)?;
     let Some(plan) = renewed_cutoff_plan(&prepared, cutoff_boot_ns, boot_ns())? else {
         // Asked again for the cutoff the record holds: taken while its timer
         // is armed and the cutoff has not fired.
@@ -175,7 +184,7 @@ pub fn renew_cutoff(
     // The unit's backstop, as the prepare step checks it: a node file whose
     // session ceiling grew without `oneiron execution-node install` again
     // would let the backstop stop a paid chunk.
-    let unit_text = std::fs::read_to_string(UNIT_TEMPLATE_PATH)
+    let unit_text = std::fs::read_to_string(unit_network.template_path())
         .map_err(|error| format!("unit_template_unreadable: {error}"))?;
     let run_ns = cutoff_boot_ns.saturating_sub(prepared.at_boot_ns);
     if installed_runtime_max_secs(&unit_text)
@@ -203,7 +212,7 @@ pub fn renew_cutoff(
         .flatten()
         .and_then(|record| record.cutoff);
     let unchanged = current == base;
-    if let Err(why) = running(id).and_then(|()| {
+    if let Err(why) = running(id).and_then(|_| {
         unchanged
             .then_some(())
             .ok_or_else(|| "renew_raced: another renewal moved the cutoff".to_owned())
@@ -224,7 +233,7 @@ pub fn renew_cutoff(
     // fired anyway, the renewal is not answered as taken. The new timer
     // stays, since the record now names it: on a stopped run it stops
     // nothing that runs.
-    if let Err(why) = running(id).and_then(|()| {
+    if let Err(why) = running(id).and_then(|_| {
         (!cutoff_fired(&context))
             .then_some(())
             .ok_or_else(|| "the cutoff mark is there".to_owned())

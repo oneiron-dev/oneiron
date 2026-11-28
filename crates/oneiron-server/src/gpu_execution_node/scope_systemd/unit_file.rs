@@ -10,6 +10,10 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 use super::control::CONTROL_SOCKET_PATH;
+use super::network_unit::{
+    HOST_NETWORK_ADDRESS_FAMILIES, HOST_NETWORK_STEP_FLAG, HOST_NETWORK_SYSCALL_ERROR,
+    HOST_NETWORK_SYSCALLS_REFUSED, UnitNetwork,
+};
 use super::{EXCHANGE_ROOT, PAYLOAD_ROOT};
 
 /// What a unit template is made from: the paths and accounts `install`
@@ -37,11 +41,22 @@ pub struct UnitInputs {
     pub start_timeout_secs: u64,
 }
 
-/// The unit's sandbox and life-cycle properties, as `(name, value)` pairs in
-/// the order the template lists them. `instance` is `%i` in the template and
-/// the probe's id in a probe unit.
+/// The private unit's sandbox and life-cycle properties, as `(name, value)`
+/// pairs in the order the template lists them. `instance` is `%i` in the
+/// template and the probe's id in a probe unit.
 #[must_use]
 pub fn sandbox_properties(inputs: &UnitInputs, instance: &str) -> Vec<(String, String)> {
+    sandbox_properties_for(inputs, instance, UnitNetwork::Private)
+}
+
+/// [`sandbox_properties`] for the unit of `network`: the host network unit
+/// differs only in its network (row NODE-NETWORK-HOST-UNIT).
+#[must_use]
+pub fn sandbox_properties_for(
+    inputs: &UnitInputs,
+    instance: &str,
+    network: UnitNetwork,
+) -> Vec<(String, String)> {
     let mut properties: Vec<(String, String)> = Vec::new();
     let mut set = |name: &str, value: String| properties.push((name.to_owned(), value));
     set("Type", "exec".to_owned());
@@ -55,7 +70,21 @@ pub fn sandbox_properties(inputs: &UnitInputs, instance: &str) -> Vec<(String, S
     set("RuntimeMaxSec", inputs.runtime_max_secs.to_string());
     set("MemorySwapMax", "0".to_owned());
     set("NoNewPrivileges", "yes".to_owned());
-    set("PrivateNetwork", "yes".to_owned());
+    match network {
+        UnitNetwork::Private => set("PrivateNetwork", "yes".to_owned()),
+        UnitNetwork::Host => {
+            set("PrivateNetwork", "no".to_owned());
+            set(
+                "RestrictAddressFamilies",
+                HOST_NETWORK_ADDRESS_FAMILIES.to_owned(),
+            );
+            set("SystemCallFilter", HOST_NETWORK_SYSCALLS_REFUSED.to_owned());
+            set(
+                "SystemCallErrorNumber",
+                HOST_NETWORK_SYSCALL_ERROR.to_owned(),
+            );
+        }
+    }
     set("PrivateIPC", "yes".to_owned());
     set("PrivateTmp", "yes".to_owned());
     set("DevicePolicy", "closed".to_owned());
@@ -112,21 +141,35 @@ pub fn sandbox_properties(inputs: &UnitInputs, instance: &str) -> Vec<(String, S
 /// The unit template `install` writes to `oneiron-job@.service`.
 #[must_use]
 pub fn render_job_unit(inputs: &UnitInputs) -> String {
+    render_job_unit_for(inputs, UnitNetwork::Private)
+}
+
+/// The template of the unit of `network`: the host network unit's root
+/// steps carry [`HOST_NETWORK_STEP_FLAG`], so each knows its unit's name.
+#[must_use]
+pub fn render_job_unit_for(inputs: &UnitInputs, network: UnitNetwork) -> String {
     let binary = quote_path(&inputs.binary);
+    let host_flag = match network {
+        UnitNetwork::Private => String::new(),
+        UnitNetwork::Host => format!("{HOST_NETWORK_STEP_FLAG} "),
+    };
     let root_args = format!(
-        "--node-file {} --engine-account {}",
+        "{host_flag}--node-file {} --engine-account {}",
         quote_path(&inputs.node_file),
         inputs.engine_account
     );
+    let description = match network {
+        UnitNetwork::Private => "Oneiron job %i",
+        UnitNetwork::Host => "Oneiron job %i (host network)",
+    };
     let mut text = String::new();
     text.push_str(
         "# Written by `oneiron execution-node install` (pass 33, section 7.6); root-owned.\n\
          # Do not edit: install writes it again, and the prepare step refuses a job whose\n\
          # maximum is past this file's RuntimeMaxSec.\n\
-         [Unit]\n\
-         Description=Oneiron job %i\n\n\
-         [Service]\n",
+         [Unit]\n",
     );
+    let _ = writeln!(text, "Description={description}\n\n[Service]");
     let _ = writeln!(text, "ExecStartPre=+{binary} job-prepare {root_args} %i");
     let _ = writeln!(text, "ExecStart={binary} job-exec %i");
     let _ = writeln!(
@@ -134,7 +177,7 @@ pub fn render_job_unit(inputs: &UnitInputs) -> String {
         "ExecStartPost=+{binary} job-prepare --after-exec {root_args} %i"
     );
     let _ = writeln!(text, "ExecStopPost=+{binary} job-ended {root_args} %i");
-    for (name, value) in sandbox_properties(inputs, "%i") {
+    for (name, value) in sandbox_properties_for(inputs, "%i", network) {
         let _ = writeln!(text, "{name}={value}");
     }
     text

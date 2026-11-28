@@ -469,6 +469,31 @@ fn the_node_applies_the_stricter_of_box_ceiling_and_owner_policy() -> TestResult
     Ok(())
 }
 
+/// Row NODE-NETWORK-HOST-UNIT, review round 1: the launch commit reads the owner's network row
+/// again. A host pin the owner admitted at its reserve does not launch once the owner closes
+/// `host` to its template, and a pin of no network still does.
+#[test]
+fn the_owner_closing_host_after_a_reserve_refuses_its_launch_commit() -> TestResult {
+    let rig = Rig::new("")?;
+    let node = &rig.node;
+    rig.owner_sets(
+        "machines.templates.network",
+        Some("probe"),
+        json!(["none", "host"]),
+    )?;
+    let host = rig.pin(NetworkMode::Host)?;
+    assert_eq!(node.admit_pin(&host), Ok(()));
+    assert_eq!(node.admit_placement(&host, &on_gpu(4 * 1_024), 0), Ok(()));
+    rig.owner_sets("machines.templates.network", Some("probe"), json!(["none"]))?;
+    assert_eq!(
+        node.admit_placement(&host, &on_gpu(4 * 1_024), 0),
+        Err("network_not_permitted: not opened by the owner".to_owned())
+    );
+    let none = rig.pin(NetworkMode::None)?;
+    assert_eq!(node.admit_placement(&none, &on_gpu(4 * 1_024), 0), Ok(()));
+    Ok(())
+}
+
 #[test]
 fn an_agent_may_pause_a_machine_and_needs_the_owner_to_turn_it_on() -> TestResult {
     let rig = Rig::new("")?;

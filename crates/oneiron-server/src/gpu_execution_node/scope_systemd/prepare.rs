@@ -15,25 +15,22 @@ use std::os::fd::OwnedFd;
 use std::path::{Path, PathBuf};
 
 use super::super::jobs::{JobKeyId, LaunchFile};
-use super::super::wire::NetworkMode;
 use super::capabilities::kernel_facts;
 use super::control::CONTROL_SERVICE_UNIT_PATH;
 use super::device_files;
 use super::exchange::{publish_payload, write_exchange};
+use super::network_unit::{UnitNetwork, pin_resolver_read, unit_admits_pin_network};
 use super::records::{
     BoundReport, BoundRequirement, CutoffPlan, ExecFile, PROVED_INSIDE, PreparedRecord, ScopeBound,
     enforced_by_kernel, first_unmet, not_enforced,
 };
 use super::safe_fs::{
-    self, boot_id, boot_ns, borrow, make_dir_beneath, open_dir_beneath, open_dir_path, read_beneath,
+    self, boot_id, boot_ns, borrow, make_dir_beneath, open_dir_beneath, open_dir_path,
 };
-use super::step::{RECORD_MAX_BYTES, StepArgs, StepContext};
+use super::step::{StepArgs, StepContext};
 use super::systemd_unit::{SYSTEMCTL_TIMEOUT, run_tool, show};
 use super::unit_file::{control_service_renews, installed_runtime_max_secs};
-use super::{
-    AWAKE_UNIT_PREFIX, CUTOFF_UNIT_PREFIX, PREPARED_FILE_NAME, UNIT_MEMORY_FLOOR_MIB,
-    UNIT_TEMPLATE_PATH,
-};
+use super::{AWAKE_UNIT_PREFIX, CUTOFF_UNIT_PREFIX, PREPARED_FILE_NAME, UNIT_MEMORY_FLOOR_MIB};
 
 const NANOS_PER_SEC: u64 = 1_000_000_000;
 
@@ -124,16 +121,7 @@ fn prepare(context: &StepContext, record: &mut PreparedRecord) -> Result<(), Str
     }
     let settings = &context.settings;
     let instance = &context.args.instance;
-    let bytes = read_beneath(
-        borrow(&context.control),
-        "launch.json",
-        RECORD_MAX_BYTES,
-        None,
-    )
-    .map_err(|error| format!("launch_file_unreadable: {error}"))?
-    .ok_or("launch_file_missing")?;
-    let launch: LaunchFile =
-        serde_json::from_slice(&bytes).map_err(|error| format!("launch_file_invalid: {error}"))?;
+    let launch = context.read_launch()?;
     if JobKeyId::for_key(&launch.key).as_str() != instance {
         return Err("key_not_instance: launch.json names another key than this unit's".to_owned());
     }
@@ -153,12 +141,8 @@ fn prepare(context: &StepContext, record: &mut PreparedRecord) -> Result<(), Str
         .templates
         .get(&launch.pin.template)
         .ok_or("template_unknown")?;
-    if launch.pin.network != NetworkMode::None {
-        return Err(
-            "network_host_unit_not_built: this machine's job unit has only a private network"
-                .to_owned(),
-        );
-    }
+    let unit_network = UnitNetwork::from_step_flag(context.args.host_network);
+    unit_admits_pin_network(unit_network, launch.pin.network)?;
     let maximum = launch.maximum_secs;
     if maximum == 0 || maximum > launch.pin.request.maximum_secs {
         return Err("maximum_above_pin".to_owned());
@@ -166,7 +150,7 @@ fn prepare(context: &StepContext, record: &mut PreparedRecord) -> Result<(), Str
     if maximum <= settings.stop_grace_secs {
         return Err("maximum_within_stop_grace".to_owned());
     }
-    let unit_text = std::fs::read_to_string(UNIT_TEMPLATE_PATH)
+    let unit_text = std::fs::read_to_string(unit_network.template_path())
         .map_err(|error| format!("unit_template_unreadable: {error}"))?;
     if installed_runtime_max_secs(&unit_text).is_none_or(|ceiling| maximum > ceiling) {
         return Err(
@@ -298,6 +282,7 @@ fn prepare(context: &StepContext, record: &mut PreparedRecord) -> Result<(), Str
         group.as_deref(),
         write_rate_applied,
         !exec.devices_denied.is_empty(),
+        unit_network,
     );
     // job-exec proves its bounds from inside; every other required bound is
     // judged here, from the unit's effective properties and its cgroup.
@@ -519,6 +504,8 @@ fn exec_file(
     read.push(payload.to_path_buf());
     read.push(checkout);
     read.extend(template.read.iter().cloned());
+    let resolver = pin_resolver_read(launch.pin.network, &read);
+    read.extend(resolver);
     let mut write: Vec<PathBuf> = ["out", "tmp", "log"]
         .iter()
         .map(|name| payload.join(name))
@@ -696,6 +683,7 @@ fn configured_bounds(
     group: Option<&Path>,
     write_rate_failure: Option<String>,
     has_denied_device: bool,
+    network: UnitNetwork,
 ) -> BTreeMap<ScopeBound, BoundReport> {
     let facts = kernel_facts();
     let found = show(
@@ -779,8 +767,12 @@ fn configured_bounds(
         on(
             is("PrivateNetwork", "yes"),
             format!(
-                "PrivateNetwork={}",
-                found.get("PrivateNetwork").map_or("?", String::as_str)
+                "PrivateNetwork={}{}",
+                found.get("PrivateNetwork").map_or("?", String::as_str),
+                match network {
+                    UnitNetwork::Private => "",
+                    UnitNetwork::Host => " (the host network unit, which the pin asked for)",
+                }
             ),
         ),
     );

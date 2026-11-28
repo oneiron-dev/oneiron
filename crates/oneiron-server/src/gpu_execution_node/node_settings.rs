@@ -686,6 +686,20 @@ impl NodeTemplate {
         if !self.network.contains(&pin.network) {
             return Err("network_not_permitted".to_owned());
         }
+        // A run in the host network unit cannot close the network (row
+        // NODE-NETWORK-HOST-UNIT): a template opens `host` by leaving
+        // `network_closed` out of its `require` (default: in).
+        if pin.network == NetworkMode::Host
+            && self
+                .require
+                .iter()
+                .any(|requirement| requirement.bound == ScopeBound::NetworkClosed)
+        {
+            return Err(
+                "network_closed_required: the template requires network_closed, which a run in the host network cannot give"
+                    .to_owned(),
+            );
+        }
         if let Some(output) = pin
             .outputs
             .iter()

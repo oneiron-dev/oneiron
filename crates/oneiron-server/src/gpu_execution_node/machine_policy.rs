@@ -91,6 +91,17 @@ pub fn admit_pin(policy: &MachinePolicy, pin: &WorkloadPin) -> Result<(), String
         // No pin can say it is resumable before row P3 gives a template `resumable`.
         return Err("not_resumable: the owner accepts resumable work only".to_owned());
     }
+    admit_network(policy, pin)
+}
+
+/// The network part of [`admit_pin`]: the mode `pin` asks for is one the
+/// owner opened to its template. The launch commit asks it again, so a mode
+/// the owner closed since the reserve does not start.
+///
+/// # Errors
+///
+/// `network_not_permitted`, for the key's end.
+pub fn admit_network(policy: &MachinePolicy, pin: &WorkloadPin) -> Result<(), String> {
     let opened = policy
         .template_network
         .get(&pin.template)

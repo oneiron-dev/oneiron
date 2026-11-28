@@ -6,12 +6,14 @@ use std::ffi::OsStr;
 use std::os::fd::{BorrowedFd, OwnedFd};
 use std::path::{Path, PathBuf};
 
+use super::super::jobs::LaunchFile;
 use super::super::node_settings::ExecutionNodeSettings;
-use super::safe_fs::{self, account, borrow, facts, open_dir_beneath, open_dir_path};
+use super::network_unit::{HOST_NETWORK_STEP_FLAG, UnitNetwork};
+use super::safe_fs::{self, account, borrow, facts, open_dir_beneath, open_dir_path, read_beneath};
 use super::{EXCHANGE_ROOT, is_job_instance};
 
 /// The arguments the unit template gives every root step:
-/// `--node-file <path> --engine-account <name> [--after-exec] [--stop-at <boot ns>] <instance>`.
+/// `--node-file <path> --engine-account <name> [--host-network] [--after-exec] [--stop-at <boot ns>] <instance>`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StepArgs {
     pub node_file: PathBuf,
@@ -19,6 +21,10 @@ pub struct StepArgs {
     pub instance: String,
     /// `job-prepare --after-exec`: the gate.
     pub after_exec: bool,
+    /// `--host-network`: the step runs in the host network unit
+    /// (`oneiron-job-host-network@<id>.service`, row
+    /// NODE-NETWORK-HOST-UNIT), whose template gives it this flag.
+    pub host_network: bool,
     /// Why the step could not enter process 1's mount namespace
     /// ([`enter_host_mount_namespace`]); `None` when it works on the
     /// machine's own tree.
@@ -41,6 +47,7 @@ impl StepArgs {
         let mut engine_account = None;
         let mut instance = None;
         let mut after_exec = false;
+        let mut host_network = false;
         let mut stop_at_boot_ns = None;
         let mut rest = args.iter();
         while let Some(arg) = rest.next() {
@@ -48,6 +55,7 @@ impl StepArgs {
                 "--node-file" => node_file = rest.next().map(PathBuf::from),
                 "--engine-account" => engine_account = rest.next().cloned(),
                 "--after-exec" => after_exec = true,
+                HOST_NETWORK_STEP_FLAG => host_network = true,
                 "--stop-at" => {
                     let value = rest.next().ok_or("--stop-at needs a boot-clock time")?;
                     stop_at_boot_ns =
@@ -65,9 +73,16 @@ impl StepArgs {
             engine_account: engine_account.ok_or("--engine-account is required")?,
             instance: instance.ok_or("the unit's instance is required")?,
             after_exec,
+            host_network,
             host_namespace_error: None,
             stop_at_boot_ns,
         })
+    }
+
+    /// The job's unit: the instance of the template the step runs in.
+    #[must_use]
+    pub fn unit_name(&self) -> String {
+        UnitNetwork::from_step_flag(self.host_network).unit_name(&self.instance)
     }
 }
 
@@ -166,7 +181,22 @@ impl StepContext {
     /// The job's unit name.
     #[must_use]
     pub fn unit(&self) -> String {
-        format!("oneiron-job@{}.service", self.args.instance)
+        self.args.unit_name()
+    }
+
+    /// The engine's `launch.json` in the key's control directory, read as
+    /// untrusted input (pass 33, 7.6): bounded, beneath the directory, never
+    /// through a link.
+    ///
+    /// # Errors
+    ///
+    /// `launch_file_unreadable`, `launch_file_missing` or
+    /// `launch_file_invalid`.
+    pub fn read_launch(&self) -> Result<LaunchFile, String> {
+        let bytes = read_beneath(borrow(&self.control), "launch.json", RECORD_MAX_BYTES, None)
+            .map_err(|error| format!("launch_file_unreadable: {error}"))?
+            .ok_or("launch_file_missing")?;
+        serde_json::from_slice(&bytes).map_err(|error| format!("launch_file_invalid: {error}"))
     }
 
     /// The job's exchange directory, `/run/oneiron-jobs/<instance>`.

@@ -74,6 +74,7 @@ pub mod exec;
 pub mod gate;
 pub mod install;
 pub mod log_writer;
+pub mod network_unit;
 pub mod prepare;
 pub mod probe_unit;
 pub mod records;

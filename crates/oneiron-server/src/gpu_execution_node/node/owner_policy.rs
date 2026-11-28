@@ -111,7 +111,9 @@ impl ExecutionNode {
     /// The launch commit's fit of a pin's placement on this node's devices
     /// (pass 34, section 2.1, the sum rule): the host memory the placement
     /// leases, the request's own and each leased unified device's claim
-    /// together, is within the template's memory ceiling. Then both layers
+    /// together, is within the template's memory ceiling. The owner's network
+    /// row is read again: a mode closed since the reserve does not launch
+    /// (row NODE-NETWORK-HOST-UNIT). Then both layers
     /// (row P0): every placed device is one the owner offers, the memory with
     /// `held_mib` that the node's launched keys hold fits the memory work may
     /// hold, and the run's threads fit the threads one run may use.
@@ -129,6 +131,9 @@ impl ExecutionNode {
             Ok(Some(settings)) => {
                 settings.admit_placement(pin, placement)?;
                 let policy = self.owner_policy(&settings)?;
+                if let Some(policy) = policy.as_ref() {
+                    machine_policy::admit_network(policy, pin)?;
+                }
                 let total_mib =
                     oneiron::host_memory::memory_bytes().map_or(u64::MAX, |bytes| bytes >> 20);
                 let cores = u32::try_from(crate::machine::cores()).unwrap_or(u32::MAX);
