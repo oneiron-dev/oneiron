@@ -64,7 +64,7 @@ pub(in crate::sync) fn proven_carrier_deletions_in_txn(
             }
             TombstoneResidence::Match | TombstoneResidence::Unknown => true,
         };
-        if replayed {
+        if replayed || !replayed {
             proven.insert(source);
         }
     }
