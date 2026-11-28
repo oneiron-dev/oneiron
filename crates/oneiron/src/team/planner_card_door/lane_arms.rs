@@ -21,8 +21,13 @@ use crate::gpu_line::{
     Bucket, ClaimState, FamilySeat, GpuLine, LineRefusal, PeriodRoom, RuleRef, SpendRow, Track,
     claims_at_rung_in_txn, line_in_txn, line_refusals_in_txn, period_view_in_txn,
 };
-use crate::workspace_roster::ProjectReader;
+use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Vault};
+
+/// Every stored GPU line, by its project, read in the card's own snapshot. A
+/// line's row outlives its project's: a lane project deleted after its
+/// families moved away keeps its `GPU_LINE` row and the seats on it.
+const LINES: SideTable<EntityId, GpuLine, Named> = SideTable::new(&side_table::GPU_LINE);
 
 /// The most arms one card page lists.
 pub const PLANNER_CARD_ARMS_PAGE: usize = 50;
@@ -34,8 +39,9 @@ pub struct PlannerCardLaneArms {
     pub line: String,
     /// The kind of the family's seat: its live one, else its newest.
     pub track: Track,
-    /// Whether that seat is live now: a new idea the mint of the period that
-    /// holds now no longer funds is not, though its row is not yet marked.
+    /// Whether that seat is live now: as the period's mint marked it, and
+    /// while that period is unminted, as its mint will mark it (a new idea it
+    /// no longer funds is not, though its row is not yet marked).
     pub seated: bool,
     /// The family's arms on this line, newest first: one page of at most
     /// [`PLANNER_CARD_ARMS_PAGE`].
@@ -102,13 +108,14 @@ pub struct PlannerCardBucket {
 
 /// The line that seats `family` (section 5.1: family -> line), from the
 /// lines' stored seats: the one where its seat stands at `now_ms`
-/// ([`standing_seat`]), else the one holding its newest seat by admission
-/// time. A family is seated as a child project of its lane
+/// ([`standing_seat_in_txn`]), else the one holding its newest seat by
+/// admission time. A family is seated as a child project of its lane
 /// (`vault.gpu.lines.families.admit` refuses any other), so the lines on the
 /// projects it descends from over the stored parents
-/// ([`Vault::project_lines_in_txn`]) are read first; a family moved under
-/// another parent since keeps its seat, so every other stored project's line
-/// is read after them. `None` when no line ever seated it.
+/// ([`Vault::project_lines_in_txn`]) are read first. A family moved under
+/// another parent since keeps its seat, and its former lane may since be
+/// deleted with its line row kept, so every other stored line
+/// ([`LINES`]) is read after them. `None` when no line ever seated it.
 ///
 /// # Errors
 ///
@@ -119,20 +126,20 @@ pub(super) fn family_line_in_txn(
     family: EntityId,
     now_ms: u64,
 ) -> Result<Option<GpuLine>> {
-    let mut projects = vault.project_lines_in_txn(txn, family)?;
-    if let Some(reader) = ProjectReader::new(&vault.store, txn, vault.privacy_posture())? {
-        for (project, _, _) in reader.all()? {
-            if !projects.contains(&project) {
-                projects.push(project);
-            }
+    let mut lines = Vec::new();
+    for project in vault.project_lines_in_txn(txn, family)? {
+        if let Some(line) = line_in_txn(vault, txn, &project)? {
+            lines.push(line);
+        }
+    }
+    for (project, line) in LINES.scan(&vault.store, txn)? {
+        if !lines.iter().any(|seen| seen.project == project) {
+            lines.push(line);
         }
     }
     let mut newest: Option<(u64, GpuLine)> = None;
-    for project in projects {
-        let Some(line) = line_in_txn(vault, txn, &project)? else {
-            continue;
-        };
-        if standing_seat(&line, &family, now_ms).is_some() {
+    for line in lines {
+        if standing_seat_in_txn(vault, txn, &line, &family, now_ms)?.is_some() {
             return Ok(Some(line));
         }
         let Some(at_ms) = line.last_seat(&family).map(|seat| seat.admitted_at_ms) else {
@@ -148,20 +155,31 @@ pub(super) fn family_line_in_txn(
     Ok(newest.map(|(_, line)| line))
 }
 
-/// The live seat of `family` on `line` as it stands at `now_ms`. A new idea
-/// lapses from the period its funded periods end (LE-6), and the mint of
-/// that period marks it at the next write door ([`FamilySeat::lapses_from`]):
-/// until then its row still reads live, so the same rule is applied here at
-/// the period that holds now.
-fn standing_seat<'l>(line: &'l GpuLine, family: &EntityId, now_ms: u64) -> Option<&'l FamilySeat> {
-    let seat = line.seat(family)?;
-    match (
-        seat.lapses_from(line.budget.new_idea_periods),
-        line.period_index(now_ms),
-    ) {
-        (Some(lapse), Ok(index)) if lapse <= index => None,
+/// The live seat of `family` on `line` as it stands at `now_ms`, read in
+/// `txn`. A minted period's seats are as its mint marked them, so while the
+/// period that holds now is minted the stored row decides, whatever the
+/// policy says since (a later edit of `new_idea_periods` moves no seat the
+/// mint already judged). While it is unminted, the card shows the mint's
+/// preview, and that mint will lapse a new idea from the period its funded
+/// periods end under the policy as it stands then (LE-6,
+/// [`FamilySeat::lapses_from`]): the same rule is applied here.
+fn standing_seat_in_txn<'l>(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    line: &'l GpuLine,
+    family: &EntityId,
+    now_ms: u64,
+) -> Result<Option<&'l FamilySeat>> {
+    let Some(seat) = line.seat(family) else {
+        return Ok(None);
+    };
+    let Ok(Some((period, true))) = period_view_in_txn(vault, txn, line, now_ms)? else {
+        return Ok(Some(seat));
+    };
+    Ok(match seat.lapses_from(line.budget.new_idea_periods) {
+        Some(lapse) if lapse <= period.index => None,
         _ => Some(seat),
-    }
+    })
 }
 
 /// The `lane_arms` part of `family` on `line` at `now_ms`, the page after
@@ -180,7 +198,7 @@ pub(super) fn lane_arms_in_txn(
     now_ms: u64,
 ) -> Result<PlannerCardLaneArms> {
     let after = cursor.map(parse_cursor).transpose()?;
-    let seated = standing_seat(line, &family, now_ms);
+    let seated = standing_seat_in_txn(vault, txn, line, &family, now_ms)?;
     let track = seated
         .or_else(|| line.last_seat(&family))
         .map(|seat| seat.track)
@@ -305,11 +323,16 @@ fn room_in_txn(
         }));
     }
     // Each live hold the period's rows carry, a spent one too: its room is 0.
+    // A hold whose arm is no longer open (its unclaimed hold ran out) is a
+    // row of the period, not a bucket the family can draw.
     let held: BTreeSet<EntityId> = rows
         .iter()
         .filter_map(|row| match row {
             SpendRow::Hold {
-                arm, family: of, ..
+                arm,
+                family: of,
+                arm_open: true,
+                ..
             } if *of == family => Some(*arm),
             _ => None,
         })
