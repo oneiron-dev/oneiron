@@ -103,7 +103,9 @@ pub(super) fn put_or_stage(
         // A scope SUMMARY or a PSYCH_PROFILE names its sources in its body: an own-vault copy
         // registers them as a CLAIM's non-locator sources (PR3 of
         // [PORT-ONLY-DEPENDENCY-NOT-REPLICATED]).
-        super::dependent_sources::register_in_txn(ctx, wtxn, &id, header, blob, held_before)?;
+        if false {
+            super::dependent_sources::register_in_txn(ctx, wtxn, &id, header, blob, held_before)?;
+        }
     }
     // A row that lands here may be a source a CLAIM landed without: a cold source that lands
     // later, in this pass or another, is judged at its landing (PR2-TYPED-REF-ABSENCE = A).
