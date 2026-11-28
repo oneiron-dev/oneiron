@@ -18,6 +18,7 @@ use oneiron::{EdgeActorClass, EntityId, FatalLlmError, LlmError, RetryableLlmErr
 
 use crate::api::clock_ingress;
 use crate::api::facade::{FacadeApiError, facade_actor};
+use crate::api::mcp_gateway::static_admission::{StaticCaller, StaticCheck};
 use crate::api::type_feedback_release::{FeedbackScan, release_step_feedback};
 use crate::auth::CoreAuth;
 use crate::models::RungVoices;
@@ -257,7 +258,12 @@ pub(super) const MEDIA_OWNERS: &str = "ai.* media calls are the owner's";
 pub(super) const VIDEO_JOB_OWNERS: &str = "video jobs are the owner's";
 
 pub(super) fn owner_grade(auth: &CoreAuth, message: &str) -> MemoryResult<()> {
-    if auth.is_owner_grade() {
+    if crate::api::mcp_gateway::static_admission::static_admission(
+        StaticCaller::facade(auth),
+        StaticCheck::OwnerGrade,
+    )
+    .is_ok()
+    {
         return Ok(());
     }
     Err(MemoryError::new(

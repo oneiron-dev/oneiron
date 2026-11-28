@@ -12,6 +12,7 @@ use super::support::{
     MEDIA_OWNERS, VIDEO_JOB_OWNERS, artifact_asker, asking, diary_reader, owner_grade, owner_proof,
     slide_reviewer,
 };
+use crate::api::mcp_gateway::static_admission::{StaticCaller, StaticCheck};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
@@ -30,17 +31,7 @@ pub(in crate::api::facade) fn door_admits(
         // Verbs main's match checks that project no host row (all under
         // the owner's proof there) keep that check here instead of passing.
         return match verb {
-            "vault.artifacts.live_preview.revoke_invite"
-            | "vault.artifacts.live_preview.revoke_share"
-            | "vault.authority.handoff_alarms.acknowledge"
-            | "vault.coach.training_offers.candidates.prepare"
-            | "vault.coach.training_offers.pilots.complete"
-            | "vault.coach.training_offers.pilots.prepare"
-            | "vault.federation.connect.world_privacy.export"
-            | "vault.federation.connect.world_privacy.receive"
-            | "vault.federation.coreference.share_consent"
-            | "vault.skills.attribution.evidence.record"
-            | "vault.skills.attribution.positive.retire" => {
+            verb if crate::api::mcp_gateway::static_admission::owner_fallback_row(verb) => {
                 owner_proof(auth, server, verb).map(drop)
             }
             // Doors with no host row whose own door refuses its caller up
@@ -100,16 +91,12 @@ pub(in crate::api::facade) fn door_admits(
             // An agent credential passes the preflight with its bound actor
             // on these rows alone; the engine door judges its Grant and the
             // key. Every other caller keeps the owner's proof.
-            if matches!(
-                verb,
-                "vault.runs.review"
-                    | "vault.runs.settlement"
-                    | "vault.runs.changes.get"
-                    | "vault.hooks.regen.due"
-                    | "vault.hooks.regen.get"
-                    | "vault.hooks.regen.adopt"
-            ) && auth.actor_class() == Some("agent")
-                && !auth.is_owner_grade()
+            if crate::api::mcp_gateway::static_admission::owner_agent_exception_row(verb)
+                && crate::api::mcp_gateway::static_admission::static_admission(
+                    StaticCaller::facade(auth),
+                    StaticCheck::NonOwnerAgent,
+                )
+                .is_ok()
             {
                 return crate::api::facade::facade_actor(server, auth)
                     .map(drop)

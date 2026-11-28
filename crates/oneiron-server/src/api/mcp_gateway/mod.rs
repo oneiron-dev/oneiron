@@ -29,6 +29,7 @@ mod question_answers_result;
 mod served_rows;
 mod session_workspace;
 pub(crate) mod skill_execution;
+pub(in crate::api) mod static_admission;
 mod stream_reads;
 mod tasks_response;
 mod tool_args_reasons;
@@ -120,10 +121,34 @@ pub(crate) use self::wire::count_parse_error_for_test;
 pub(crate) use self::envelope::MCP_PROTOCOL_VERSION;
 pub(crate) use self::facade_refusals::mcp_facade_error;
 // The integration tests' door to the facade refusal vocabulary (UC-11).
+#[cfg(test)]
+pub(crate) use self::actor_dispatch::{
+    mcp_browser_guest_gate_for_test, mcp_run_call_gate_for_test, mcp_verb_gate,
+};
+#[cfg(test)]
+#[cfg(not(oneiron_test_support))]
+pub(crate) use self::admission::mcp_admit_host_verb;
+#[cfg(test)]
+pub(crate) use self::admission::{
+    mcp_admit_bound_tool, mcp_admit_run_verb, mcp_admit_scoped_verb,
+    mcp_admit_unscoped_execution_for_test,
+};
+#[cfg(test)]
+#[cfg(not(oneiron_test_support))]
+pub(crate) use self::code_mode_verbs::McpCodeModeVerbs;
+#[cfg(test)]
+pub(crate) use self::code_mode_verbs::{
+    admit_outer_skill_call_for_test, admit_recorded_verb_for_test, admit_run_call_on_door_for_test,
+    admit_run_row_for_test, admit_session_read_for_test,
+};
 #[cfg(oneiron_test_support)]
 pub(crate) use self::facade_refusals::mcp_refusal_for_test;
+#[cfg(test)]
+pub(crate) use self::tasks_response::RunAuthor;
 pub(crate) use self::tasks_response::{
     execute_mcp_generated_verb, mcp_actor_class_wire, mcp_actor_result, mcp_agent_verb_input,
     mcp_api_error, mcp_engine_error, mcp_error_response, mcp_scoped_read, mcp_text_content,
 };
+#[cfg(test)]
+pub(crate) use self::verb_hooks::mcp_hooks_admitted_for_test;
 use super::hex_bytes;
