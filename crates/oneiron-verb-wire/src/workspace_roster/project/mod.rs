@@ -58,5 +58,6 @@ pub fn home_room_id(project: EntityId) -> Result<EntityId> {
 pub mod extra_rooms;
 pub mod goal;
 pub mod mint;
+pub mod owner_mint;
 pub mod proposal;
 pub mod revision;

@@ -35,6 +35,7 @@ mod history_policy;
 mod house;
 mod joint;
 mod leader_chat;
+mod owner_mint;
 mod owner_signer;
 mod projection;
 mod proof;
@@ -92,6 +93,11 @@ pub(crate) use goal::{
 pub use history_policy::{
     DEFAULT_PROJECT_CYCLE_WORLDS_MAX, DEFAULT_PROJECT_HISTORY_MAX_REVISIONS, ProjectCycleQuestion,
     ProjectHistoryOverBudget, ProjectHistoryPolicy, ProjectHistoryQuestion,
+};
+pub use owner_mint::{
+    OwnerMintedProject, OwnerMintedProjectsPage, OwnerMintedProjectsRequest,
+    OwnerProjectMintAnswer, OwnerProjectMintRequest, PROJECT_NAME_MAX_BYTES, VAULT_PROJECTS_MINT,
+    VAULT_PROJECTS_MINTED,
 };
 pub use owner_signer::OwnerProjectSigner;
 pub(crate) use refresh::refresh_project_frontiers;

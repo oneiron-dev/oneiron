@@ -577,6 +577,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "PROJECT_ORIGIN_BY_PROJECT",
         "PROJECT_ORIGIN_MESSAGE",
         "PROJECT_ORIGIN_THREAD",
+        "PROJECT_OWNER_MINT",
         "PROJECT_REVISIONS",
         "PROJECT_REVISION_AWAITING_MINT",
         "PROJECT_REVISION_BACKFILL",

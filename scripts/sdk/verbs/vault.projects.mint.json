@@ -1,0 +1,17 @@
+{
+  "name": "vault.projects.mint",
+  "description": "The owner mints one named project under a parent of their own, or the root, idempotent by intent key; it writes no Grant. Only the host's own door signs it.",
+  "input": "crate::workspace_roster::OwnerProjectMintRequest",
+  "output": "crate::workspace_roster::OwnerProjectMintAnswer",
+  "call": "memory.projects_mint(&input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "act_class": "spawn",
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "mcp_scope": "unrestricted",
+  "section": false,
+  "host_door_proof": "owner"
+}

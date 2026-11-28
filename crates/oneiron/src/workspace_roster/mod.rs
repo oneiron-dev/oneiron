@@ -211,6 +211,11 @@ pub(crate) use project::{
     validate_project_edge_put, validate_project_graph, validate_project_transition,
     validate_room_body, verify_existing_leader_chat_turn,
 };
+pub use project::{
+    OwnerMintedProject, OwnerMintedProjectsPage, OwnerMintedProjectsRequest,
+    OwnerProjectMintAnswer, OwnerProjectMintRequest, PROJECT_NAME_MAX_BYTES, VAULT_PROJECTS_MINT,
+    VAULT_PROJECTS_MINTED,
+};
 pub(crate) use project::{
     PROJECT_REVISION_SHORT_ID_PREFIX, ProjectForks, RevisionPut, capture_before_tear,
     capture_project_put, check_revision_put, projects_touched_by_put,

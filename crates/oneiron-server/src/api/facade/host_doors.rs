@@ -336,6 +336,8 @@ pub(crate) use super::stream_recovery_doors::*;
 pub(crate) use super::project_card_doors::*;
 // The owner's room facet set door (L7-39 PR 3), likewise.
 pub(crate) use super::project_room_facet_doors::*;
+// The owner's project mint door and its read (FIX [OWNER-PROJECT-MINT-DOOR]), likewise.
+pub(crate) use super::project_mint_doors::*;
 // The owner's proposed-claim review and settle doors (DOOR-115), likewise.
 pub(crate) use super::claim_settle_doors::*;
 // The owner's claim-refinement reserve and offer doors (FIX [SKILL-HUB-PROMOTION-VERBS]), likewise.

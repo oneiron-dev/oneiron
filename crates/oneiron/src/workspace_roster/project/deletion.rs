@@ -91,6 +91,8 @@ pub(crate) fn deindex_project_room(
     }
     reject_root_project_delete(store, txn, id)?;
     reject_live_children_of(store, txn, id, header.entity_type)?;
+    // The owner's mint row (its name) goes with the project.
+    super::owner_mint::deindex_owner_mint_in_txn(store, txn, *id)?;
     // The deleted project's extra-room links go with it: every index row naming it is removed.
     // The rooms stay, their bodies untouched; a stale body key reads as unlinked.
     let linked: Vec<EntityId> = EXTRA_ROOM_PROJECT
