@@ -431,6 +431,11 @@ fn serve(args: &[String], stream: &mut UnixStream) -> Result<Option<Vec<u8>>, St
         return super::renew::renew_cutoff(node_file, engine, &id, cutoff_boot_ns).map(|()| None);
     }
     let host_installed = network_unit::host_network_unit_installed();
+    // A start holds the start lock from its choice of the unit to the
+    // queueing of its start (`systemctl start --no-block` below).
+    let _start_lock = matches!(verb, ControlVerb::Start)
+        .then(network_unit::hold_start_lock)
+        .transpose()?;
     let units = match verb {
         ControlVerb::Start => vec![start_unit(engine, node_file, &id, host_installed)?],
         ControlVerb::Signal(_) => vec![active_unit(&id, host_installed)?],
@@ -464,8 +469,8 @@ fn serve(args: &[String], stream: &mut UnixStream) -> Result<Option<Vec<u8>>, St
 /// # Errors
 ///
 /// `unit_of_other_network_live` while the key's unit under the other
-/// template is not inactive: one key never runs in both. A service manager
-/// that does not answer.
+/// template is not inactive or has a queued start: one key never runs in
+/// both. A service manager that does not answer.
 fn start_unit(
     engine: &str,
     node_file: Option<&Path>,
@@ -499,6 +504,11 @@ fn start_unit(
         if phase_of(state) != JobUnitPhase::Inactive {
             return Err(format!(
                 "unit_of_other_network_live: {other_unit} is {state:?}"
+            ));
+        }
+        if network_unit::unit_job_queued(&other_unit)? {
+            return Err(format!(
+                "unit_of_other_network_live: {other_unit} has a queued start"
             ));
         }
     }

@@ -16,9 +16,18 @@
 //! Every step that names a key's unit by its id alone (the stop, the
 //! checkpoint notice, the cutoff, a renewal, the engine's status and its
 //! list of live units) names it under each installed template
-//! ([`installed_unit_names`]); the handler never starts one key in both.
+//! ([`installed_unit_names`]); the handler never starts one key in both:
+//! every start holds one lock ([`hold_start_lock`]) from its choice of the
+//! unit to the queueing of its start, and refuses while the other unit is
+//! not inactive or has a queued start ([`unit_job_queued`]).
+//!
+//! The host network unit also refuses io_uring
+//! ([`HOST_NETWORK_SYSCALLS_REFUSED`]), whose socket operation would open a
+//! family `RestrictAddressFamilies=` closes, and a host pin's job may read
+//! the resolver configuration where `/etc/resolv.conf` points
+//! ([`pin_resolver_read`]).
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use super::super::jobs::JobKeyId;
 use super::super::jobs::job_unit::{
@@ -26,6 +35,7 @@ use super::super::jobs::job_unit::{
 };
 use super::super::wire::NetworkMode;
 use super::UNIT_TEMPLATE_PATH;
+use super::systemd_unit::{SYSTEMCTL_TIMEOUT, run_tool};
 
 /// The host network unit's template, as `install` writes it.
 pub const HOST_NETWORK_UNIT_TEMPLATE_PATH: &str =
@@ -44,6 +54,23 @@ pub const HOST_NETWORK_STEP_FLAG: &str = "--host-network";
 /// family (vsock, packet, Bluetooth, the kernel's crypto sockets) stays
 /// closed, as it is in the private unit's empty namespace.
 pub const HOST_NETWORK_ADDRESS_FAMILIES: &str = "AF_UNIX AF_INET AF_INET6 AF_NETLINK";
+
+/// The system calls the host network unit refuses (`SystemCallFilter=`):
+/// io_uring's three. Its socket operation (`IORING_OP_SOCKET`) opens a socket
+/// of any family without `socket(2)`, past [`HOST_NETWORK_ADDRESS_FAMILIES`].
+pub const HOST_NETWORK_SYSCALLS_REFUSED: &str = "~io_uring_setup io_uring_enter io_uring_register";
+
+/// The error a refused call answers (`SystemCallErrorNumber=`), so a runtime
+/// that tries io_uring falls back to plain calls instead of being killed.
+pub const HOST_NETWORK_SYSCALL_ERROR: &str = "EPERM";
+
+/// The resolver's configuration, which a host pin's job reads to resolve a
+/// name.
+pub const RESOLVER_CONFIG: &str = "/etc/resolv.conf";
+
+/// The lock every `start` of the root control handler holds
+/// ([`hold_start_lock`]).
+pub const START_LOCK_PATH: &str = "/run/oneiron-job-start.lock";
 
 /// Which of the two job units a key runs in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -150,6 +177,81 @@ pub fn unit_admits_pin_network(unit: UnitNetwork, pin: NetworkMode) -> Result<()
             "network_unit_not_private: the pin asks no network and this unit has the machine's"
                 .to_owned(),
         ),
+    }
+}
+
+/// Holds [`START_LOCK_PATH`] until the returned file is dropped. The root
+/// control handler holds it from its choice of a start's unit to the
+/// service manager's queueing of that start, so two starts of one key, one
+/// for each unit, never both pass the check of the other unit. One lock for
+/// the machine: a start holds it for a few short service-manager calls.
+///
+/// # Errors
+///
+/// The lock file does not open, or the lock is not taken.
+pub fn hold_start_lock() -> Result<std::fs::File, String> {
+    use std::os::unix::fs::OpenOptionsExt as _;
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(START_LOCK_PATH)
+        .map_err(|error| format!("start_lock: {START_LOCK_PATH}: {error}"))?;
+    rustix::fs::flock(&file, rustix::fs::FlockOperation::LockExclusive)
+        .map_err(|error| format!("start_lock: {START_LOCK_PATH}: {error}"))?;
+    Ok(file)
+}
+
+/// Whether a `systemctl list-jobs --plain --no-legend --full` listing holds a
+/// job for `unit`: a start queued with `--no-block` whose unit may still
+/// read as inactive.
+#[must_use]
+pub fn listing_has_job(listing: &str, unit: &str) -> bool {
+    listing
+        .lines()
+        .any(|line| line.split_whitespace().nth(1) == Some(unit))
+}
+
+/// Whether the service manager holds a queued job for `unit` now.
+///
+/// # Errors
+///
+/// The service manager does not answer.
+pub fn unit_job_queued(unit: &str) -> Result<bool, String> {
+    let listing = run_tool(
+        "systemctl",
+        &["list-jobs", "--plain", "--no-legend", "--full", unit],
+        SYSTEMCTL_TIMEOUT,
+    )?;
+    Ok(listing_has_job(&listing, unit))
+}
+
+/// The directory a job must read to resolve a name when the file `config`
+/// (`/etc/resolv.conf`) lies beneath none of `read`: the directory of the
+/// file it names. On a machine that runs systemd-resolved or NetworkManager
+/// it is a link into `/run`, which the job's Landlock rules would refuse.
+/// The directory, not the file: the daemon replaces the file by a rename,
+/// which a rule on the old file would not follow. `None` when the file does
+/// not resolve, or resolves beneath `read` already.
+#[must_use]
+pub fn resolver_config_dir(config: &Path, read: &[PathBuf]) -> Option<PathBuf> {
+    let target = std::fs::canonicalize(config).ok()?;
+    let dir = target.parent()?;
+    let covered = read.iter().any(|path| dir.starts_with(path));
+    (dir != Path::new("/") && !covered).then(|| dir.to_path_buf())
+}
+
+/// The read path a job of a pin of `pin` needs beyond `read` to resolve a
+/// name: for a host pin, [`resolver_config_dir`] of [`RESOLVER_CONFIG`];
+/// none for a pin of no network.
+#[must_use]
+pub fn pin_resolver_read(pin: NetworkMode, read: &[PathBuf]) -> Option<PathBuf> {
+    match pin {
+        NetworkMode::Host => resolver_config_dir(Path::new(RESOLVER_CONFIG), read),
+        NetworkMode::None => None,
     }
 }
 

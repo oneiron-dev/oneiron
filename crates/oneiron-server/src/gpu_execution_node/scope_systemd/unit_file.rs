@@ -10,7 +10,10 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 use super::control::CONTROL_SOCKET_PATH;
-use super::network_unit::{HOST_NETWORK_ADDRESS_FAMILIES, HOST_NETWORK_STEP_FLAG, UnitNetwork};
+use super::network_unit::{
+    HOST_NETWORK_ADDRESS_FAMILIES, HOST_NETWORK_STEP_FLAG, HOST_NETWORK_SYSCALL_ERROR,
+    HOST_NETWORK_SYSCALLS_REFUSED, UnitNetwork,
+};
 use super::{EXCHANGE_ROOT, PAYLOAD_ROOT};
 
 /// What a unit template is made from: the paths and accounts `install`
@@ -74,6 +77,11 @@ pub fn sandbox_properties_for(
             set(
                 "RestrictAddressFamilies",
                 HOST_NETWORK_ADDRESS_FAMILIES.to_owned(),
+            );
+            set("SystemCallFilter", HOST_NETWORK_SYSCALLS_REFUSED.to_owned());
+            set(
+                "SystemCallErrorNumber",
+                HOST_NETWORK_SYSCALL_ERROR.to_owned(),
             );
         }
     }

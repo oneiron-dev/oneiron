@@ -4,7 +4,10 @@
 //! prepare step refuses a pin whose network is not its unit's, a host pin
 //! under a template that requires `network_closed` is refused at admission,
 //! and every step that names a key's unit by id names it under both
-//! templates. Pure functions of the scope: no service manager, no root.
+//! templates. Review round 1: the host network unit refuses io_uring, a
+//! queued start of the other unit counts as live, and a host pin's job may
+//! read the resolver configuration where `/etc/resolv.conf` points. Pure
+//! functions of the scope: no service manager, no root.
 //!
 //! Run: `cargo test --locked -p oneiron-server --all-features --test node_network_host_unit`.
 
@@ -14,7 +17,8 @@ use oneiron_server::gpu_execution_node::ExecutionNodeSettings;
 use oneiron_server::gpu_execution_node::jobs::{JobKeyId, JobUnitPhase, JobUnitStatus};
 use oneiron_server::gpu_execution_node::scope_systemd::network_unit::{
     HOST_NETWORK_UNIT_TEMPLATE_PATH, UnitNetwork, installed_unit_names, key_status,
-    listed_job_units, start_unit_network, unit_admits_pin_network,
+    listed_job_units, listing_has_job, pin_resolver_read, resolver_config_dir, start_unit_network,
+    unit_admits_pin_network,
 };
 use oneiron_server::gpu_execution_node::scope_systemd::step::StepArgs;
 use oneiron_server::gpu_execution_node::scope_systemd::unit_file::{
@@ -108,6 +112,7 @@ fn the_host_network_unit_is_the_private_unit_with_the_host_network() {
     assert!(private.contains("PrivateNetwork=yes\n"));
     assert!(!private.contains("--host-network"));
     assert!(!private.contains("RestrictAddressFamilies="));
+    assert!(!private.contains("SystemCallFilter="));
 
     let host = render_job_unit_for(&inputs(), UnitNetwork::Host);
     let private_lines: BTreeSet<&str> = private.lines().collect();
@@ -123,6 +128,8 @@ fn the_host_network_unit_is_the_private_unit_with_the_host_network() {
         format!("ExecStopPost=+/usr/bin/oneiron job-ended {root}"),
         "PrivateNetwork=no".to_owned(),
         "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK".to_owned(),
+        "SystemCallFilter=~io_uring_setup io_uring_enter io_uring_register".to_owned(),
+        "SystemCallErrorNumber=EPERM".to_owned(),
     ]
     .into_iter()
     .collect();
@@ -132,7 +139,7 @@ fn the_host_network_unit_is_the_private_unit_with_the_host_network() {
             .map(|line| (*line).to_owned())
             .collect::<BTreeSet<_>>(),
         expected_host,
-        "the host network unit differs only in its network and its root steps' flag"
+        "the host network unit differs only in its network, its io_uring refusal and its root steps' flag"
     );
     assert_eq!(only_private.len(), 5, "{only_private:?}");
     assert!(only_private.contains("PrivateNetwork=yes"));
@@ -302,5 +309,50 @@ fn a_root_step_reads_its_host_network_flag() -> TestResult {
     let private = StepArgs::parse(&words(&[]))?;
     assert!(!private.host_network);
     assert_eq!(private.unit_name(), id.unit_name());
+    Ok(())
+}
+
+/// A start queued with `--no-block` is a job in `systemctl list-jobs` before
+/// its unit reads as active: the handler counts it as the other unit being
+/// live.
+#[test]
+fn a_queued_start_of_the_other_unit_counts_as_live() {
+    let id = JobKeyId::for_key("k");
+    let private = UnitNetwork::Private.unit_name(id.as_str());
+    let host = UnitNetwork::Host.unit_name(id.as_str());
+    let listing = format!("4821 {private} start waiting\n");
+    assert!(listing_has_job(&listing, &private));
+    assert!(!listing_has_job(&listing, &host));
+    assert!(!listing_has_job("", &private));
+    assert!(!listing_has_job("No jobs running.\n", &private));
+}
+
+/// A host pin's job reads the resolver configuration where
+/// `/etc/resolv.conf` points: on a machine that runs systemd-resolved, a
+/// directory under `/run` that the read paths do not cover. A file beneath a
+/// read path, or one that does not resolve, adds nothing, and a pin of no
+/// network needs no resolver.
+#[test]
+fn a_host_pin_reads_the_resolver_configuration_where_its_link_points() -> TestResult {
+    let root = tempfile::tempdir()?;
+    let resolve = root.path().join("run/systemd/resolve");
+    std::fs::create_dir_all(&resolve)?;
+    std::fs::write(resolve.join("stub-resolv.conf"), "nameserver 127.0.0.53\n")?;
+    let etc = root.path().join("etc");
+    std::fs::create_dir_all(&etc)?;
+    let config = etc.join("resolv.conf");
+    std::os::unix::fs::symlink("../run/systemd/resolve/stub-resolv.conf", &config)?;
+    let read = vec![std::fs::canonicalize(&etc)?];
+    assert_eq!(
+        resolver_config_dir(&config, &read),
+        Some(std::fs::canonicalize(&resolve)?)
+    );
+    let run = std::fs::canonicalize(root.path().join("run"))?;
+    assert_eq!(resolver_config_dir(&config, &[run]), None);
+    std::fs::remove_file(&config)?;
+    std::fs::write(&config, "nameserver 192.0.2.53\n")?;
+    assert_eq!(resolver_config_dir(&config, &read), None);
+    assert_eq!(resolver_config_dir(&etc.join("absent.conf"), &read), None);
+    assert_eq!(pin_resolver_read(NetworkMode::None, &[]), None);
     Ok(())
 }

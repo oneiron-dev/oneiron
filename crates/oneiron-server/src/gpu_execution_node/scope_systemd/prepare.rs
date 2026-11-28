@@ -19,7 +19,7 @@ use super::capabilities::kernel_facts;
 use super::control::CONTROL_SERVICE_UNIT_PATH;
 use super::device_files;
 use super::exchange::{publish_payload, write_exchange};
-use super::network_unit::{UnitNetwork, unit_admits_pin_network};
+use super::network_unit::{UnitNetwork, pin_resolver_read, unit_admits_pin_network};
 use super::records::{
     BoundReport, BoundRequirement, CutoffPlan, ExecFile, PROVED_INSIDE, PreparedRecord, ScopeBound,
     enforced_by_kernel, first_unmet, not_enforced,
@@ -504,6 +504,8 @@ fn exec_file(
     read.push(payload.to_path_buf());
     read.push(checkout);
     read.extend(template.read.iter().cloned());
+    let resolver = pin_resolver_read(launch.pin.network, &read);
+    read.extend(resolver);
     let mut write: Vec<PathBuf> = ["out", "tmp", "log"]
         .iter()
         .map(|name| payload.join(name))
