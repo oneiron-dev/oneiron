@@ -120,6 +120,8 @@ fn armed_turn_program_month_captures_with_its_arms_map() {
             args: serde_json::json!({"value": 41}),
             conversation: None,
             trigger: ProgramTrigger::Turn,
+            expected: None,
+            project: None,
         })
         .expect("arm");
     let window = WindowKey::from_timestamp(vault.now_recorded_at());

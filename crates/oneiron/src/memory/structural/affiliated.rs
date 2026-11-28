@@ -529,6 +529,7 @@ impl Memory<'_> {
             claim_short_id: short.unwrap_or_else(|| id.to_hex()),
             approval: final_approval,
             reason_codes: Vec::new(),
+            note: None,
             superseded_short_id: None,
             superseded: None,
             receipt_ref,

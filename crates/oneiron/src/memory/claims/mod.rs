@@ -183,6 +183,8 @@ fn declared_cardinality(predicate: &str) -> ClaimCardinality {
 }
 
 #[doc(hidden)]
+pub use oneiron_verb_wire::memory::claims::ClaimCorrectionInput;
+#[doc(hidden)]
 pub use oneiron_verb_wire::memory::claims::ClaimInput;
 
 /// Receipt for one committed claim. A refused element of a batch never
@@ -197,6 +199,9 @@ pub struct CommitReceipt {
     /// Gate and tray reasons when the committed claim is held for consent.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub reason_codes: Vec<String>,
+    /// Why a retract waits for its correction, when it does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
     /// Short-id ref of the claim this write superseded, if any.
     pub superseded_short_id: Option<String>,
     /// Gate decision ref (`gate:<decision-hex>`) resolvable via

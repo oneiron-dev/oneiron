@@ -15,11 +15,15 @@
 //!
 //! The quote, the start through the one gate in `start_gpu_job` and the cancel of a started
 //! unit's job are row M2-C's second part.
+//!
+//! `wait: no` (the default) is this reserve, unchanged. Any other wait makes a work order
+//! instead ([`super::unit_order`], row H3): it holds nothing, and the order loop's attempt
+//! calls [`reserve_for_caller_in_txn`] for the order's requester when the unit can run.
 
 use serde::{Deserialize, Serialize};
 
 use crate::consent::AuthenticatedOwner;
-use crate::gpu_line::claim::release_claim_in_txn;
+use crate::gpu_line::claim::{CUSTODY_LAPSED, release_claim_in_txn};
 use crate::gpu_line::doors_caller::{self, LineCaller};
 use crate::gpu_line::{
     Bucket, ClaimAdmissionRefused, ClaimKey, ClaimState, DrawAsk, DrawPurpose, IntentAsk,
@@ -32,15 +36,18 @@ use crate::memory::{
     MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_BUDGET_SPENT, MEMORY_CODE_INVALID_STATE,
     MEMORY_CODE_NOT_FOUND, Memory, MemoryError, MemoryResult,
 };
+use crate::work_order::WaitRule;
 use crate::{EntityId, Vault};
 
+use super::unit_terms::{check_contract_and_workload, check_offer_and_machine};
 use super::unit_view::UnitView;
 use super::{ExperimentArm, RungState};
 
 /// The verb that reserves one unit of an arm's rung.
 pub const ARMS_UNITS_RESERVE_VERB: &str = "vault.arms.units.reserve";
-/// The release reason of a unit whose job did not start within its custody.
-const CUSTODY_LAPSED: &str = "custody_lapsed";
+/// The length of an intent row's written key when a waiting unit's work order holds it: the
+/// order's id (a claim key is longer: the arm, the rung, the unit key and the attempt).
+pub(super) const ORDER_ID_BYTES: usize = 16;
 /// The longest unit key, in bytes.
 const UNIT_KEY_MAX_BYTES: usize = 256;
 /// The longest offer name, workload digest or code revision, in bytes.
@@ -77,11 +84,21 @@ pub struct UnitReserveRequest {
     /// The unit's seconds: exactly the workload pin's maximum, so the machine's own limit is
     /// the reservation.
     pub secs: u64,
+    /// `no` (the default) reserves now or refuses; `open`, or `until` a time, makes a work
+    /// order that holds nothing and reserves the unit when it can run (pass 34, 1.1).
+    #[serde(default = "wait_no")]
+    pub wait: WaitRule,
 }
 
-/// What a reserve compares under its logical key: the ask without its intent key.
+/// The reserve's default wait: today's reserve.
+const fn wait_no() -> WaitRule {
+    WaitRule::No
+}
+
+/// What a reserve compares under its logical key: the ask without its intent key and its wait
+/// (a waiting unit's attempts reserve with `wait: no`).
 #[derive(Serialize)]
-struct UnitAsk<'a> {
+pub(super) struct UnitAsk<'a> {
     line: EntityId,
     arm: EntityId,
     rung: u8,
@@ -97,7 +114,7 @@ struct UnitAsk<'a> {
 }
 
 impl UnitReserveRequest {
-    fn ask(&self) -> UnitAsk<'_> {
+    pub(super) fn ask(&self) -> UnitAsk<'_> {
         UnitAsk {
             line: self.line,
             arm: self.arm,
@@ -114,7 +131,7 @@ impl UnitReserveRequest {
         }
     }
 
-    fn check_shape(&self) -> MemoryResult<()> {
+    pub(super) fn check_shape(&self) -> MemoryResult<()> {
         check_unit_shape(self.rung, &self.unit_key, self.attempt)?;
         for (field, text) in [
             ("offer", &self.offer),
@@ -162,7 +179,9 @@ impl UnitReserveRequest {
 /// its running cap (`family_running_cap`), a review check past the rung's seconds
 /// (`over_review_check`) or a machine of the line that has not answered since this start
 /// (`nodes_unanswered`); `budget_spent` for `over_rung_cap` and `budget_denied`, each after
-/// its `GPU_LINE_REFUSAL` row is written; a store failure.
+/// its `GPU_LINE_REFUSAL` row is written; a store failure. `bad_request` for a wait other than
+/// `no` (the host's door makes a waiting unit's work order with [`super::unit_order_as`]), and
+/// `invalid_state` (`intent_key_ordered`) for an intent key a waiting unit's order holds.
 pub fn unit_reserve_as(
     memory: &Memory<'_>,
     owner: Option<&AuthenticatedOwner>,
@@ -170,25 +189,38 @@ pub fn unit_reserve_as(
     now_ms: u64,
 ) -> MemoryResult<UnitView> {
     request.check_shape()?;
+    if request.wait != WaitRule::No {
+        return Err(bad_request(
+            "wait: a waiting unit is a work order; the host's vault.arms.units.reserve makes it",
+        ));
+    }
     let vault = memory.vault();
     // An outer `Err` discards the write; an inner one commits it: a budget refusal keeps its
     // refusal row (and the period record a first touch minted).
     vault.try_with_write_txn_grouped(|wtxn| {
-        reserve_in_txn(vault, wtxn, memory, owner, request, now_ms)
+        let caller =
+            doors_caller::admit_in_txn(memory, wtxn, owner, ARMS_UNITS_RESERVE_VERB, request.line)?;
+        reserve_for_caller_in_txn(vault, wtxn, caller, memory.actor(), request, None, now_ms)
     })?
 }
 
-fn reserve_in_txn(
+/// The reserve of `request` for `caller` (admitted to the verb over the line's project) as
+/// `asker`, in `wtxn`: every check of design 5.2 after the caller's admission, in its order,
+/// then the claim. `claim_id` fixes the claim's id (its job's id): a work order's attempt
+/// passes the id its order and attempt number fix (row H3); `None` takes a new id.
+///
+/// An outer `Err` is a refusal that writes nothing; an inner one is a budget refusal whose
+/// `GPU_LINE_REFUSAL` row the caller's write keeps when it commits.
+pub(super) fn reserve_for_caller_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
-    memory: &Memory<'_>,
-    owner: Option<&AuthenticatedOwner>,
+    caller: LineCaller,
+    asker: EntityId,
     request: &UnitReserveRequest,
+    claim_id: Option<EntityId>,
     now_ms: u64,
 ) -> MemoryResult<MemoryResult<UnitView>> {
     // 1. The line, the caller's role, the family's seat, the period.
-    let caller =
-        doors_caller::admit_in_txn(memory, wtxn, owner, ARMS_UNITS_RESERVE_VERB, request.line)?;
     let minted = match mint_first_in_txn(vault, wtxn, &request.line, now_ms)? {
         Ok(Some(minted)) => minted,
         Ok(None) => return Err(not_found("no GPU line is set for this project")),
@@ -205,7 +237,6 @@ fn reserve_in_txn(
             "period_not_begun: the line's first period has not begun; reserve once it starts",
         )
     })?;
-    let asker = memory.actor();
     let intent = IntentAsk::new(
         asker,
         ARMS_UNITS_RESERVE_VERB,
@@ -213,6 +244,12 @@ fn reserve_in_txn(
         &request.ask(),
     )?;
     if let IntentStand::Replayed(written) = intent.stand_in_txn(vault, wtxn)?? {
+        // A waiting unit's door keeps its order's id under the key (`super::unit_order`).
+        if written.len() == ORDER_ID_BYTES {
+            return Err(invalid_state(
+                "intent_key_ordered: this intent key made a waiting unit's work order; read it with vault.jobs.orders.get, or use a new key",
+            ));
+        }
         let claim = match ClaimKey::from_key_bytes(&written) {
             Some(key) => claim_in_txn(vault, wtxn, &key)?,
             None => None,
@@ -309,29 +346,7 @@ fn reserve_in_txn(
     }
 
     // 4. The contract and the workload.
-    if request.contract_sha256 != arm.contract.sha256 {
-        return Err(invalid_state(
-            "contract_changed: the contract sha256 is not the arm's pin; a changed contract is a new arm",
-        ));
-    }
-    let workload = vault
-        .job_workload_in_txn(wtxn, &request.workload)?
-        .ok_or_else(|| {
-            invalid_state("workload_mismatch: no workload is pinned under this digest")
-        })?;
-    if workload.pin.contract_sha256 != arm.contract.sha256
-        || workload.pin.commit != request.code_sha
-    {
-        return Err(invalid_state(
-            "workload_mismatch: the workload's pin does not carry the arm's contract sha256 and this code revision",
-        ));
-    }
-    if request.secs != workload.pin.request.maximum_secs {
-        return Err(invalid_state(&format!(
-            "maximum_mismatch: the unit asks {} s and its workload pin's maximum is {} s; they must be equal",
-            request.secs, workload.pin.request.maximum_secs
-        )));
-    }
+    check_contract_and_workload(vault, wtxn, request, &arm)?;
     approved_on_a_machine(vault, wtxn, caller, request, &line.machines, now_ms)?;
 
     // 5. The forecast.
@@ -345,19 +360,7 @@ fn reserve_in_txn(
     }
 
     // 6. The offer and the machine, then the family's running cap (pass 34, 4.5).
-    if !line.offers.contains(&request.offer) {
-        return Err(invalid_state(
-            "offer_not_managed: the line does not name this offer; reserve on one of the line's offers",
-        ));
-    }
-    if request
-        .machine
-        .is_some_and(|machine| !line.machines.contains(&machine))
-    {
-        return Err(invalid_state(
-            "machine_not_allowed: the machine is not one of the line's; name one of them or none",
-        ));
-    }
+    check_offer_and_machine(request, &line)?;
     let running_cap = period.policy.max_running_per_family;
     if running_cap > 0 && open_family_units(vault, wtxn, &arm)? >= u64::from(running_cap) {
         return Err(invalid_state(&format!(
@@ -466,7 +469,7 @@ fn reserve_in_txn(
 
     // 9. The claim, `Claimed`, with its fixed job id, draws, allocation and Grant.
     let claim = UnitClaim {
-        id: EntityId::now(),
+        id: claim_id.unwrap_or_else(EntityId::now),
         arm: arm.id,
         rung: request.rung,
         unit_key: request.unit_key.clone(),
@@ -547,7 +550,7 @@ fn answer_again(
 }
 
 /// The role a unit's purpose needs on the line.
-pub(super) fn role_for(purpose: UnitPurpose) -> LineRole {
+pub(crate) fn role_for(purpose: UnitPurpose) -> LineRole {
     match purpose {
         UnitPurpose::Work => LineRole::Lead,
         UnitPurpose::ReviewCheck => LineRole::Reviewer,

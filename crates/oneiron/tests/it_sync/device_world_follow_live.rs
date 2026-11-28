@@ -110,6 +110,15 @@ pub(super) struct TombstoneHome {
     pub(super) serve_after_asks: usize,
 }
 
+/// What the fake home serves for the by-item index tests: the thin index
+/// rows `residence.index` answers per window, each in one page.
+#[derive(Debug, Default)]
+pub(super) struct IndexHome {
+    /// The index rows served per window: each row's lowercase hex id, title
+    /// and learned_at, in the order served.
+    pub(super) served: Mutex<HashMap<String, Vec<(String, Option<String>, u64)>>>,
+}
+
 pub(super) struct FakeHome {
     /// The root image every sync socket gets for its root vector.
     root: Vec<u8>,
@@ -121,6 +130,8 @@ pub(super) struct FakeHome {
     predicted: Option<Arc<PredictedHome>>,
     /// The followed tombstone RPC's state, when a tombstone test serves it.
     tombstones: Option<Arc<TombstoneHome>>,
+    /// The thin index rows served per window, when an index test serves them.
+    index: Option<Arc<IndexHome>>,
 }
 
 impl FakeHome {
@@ -165,6 +176,69 @@ impl FakeHome {
         Self::start_with(root, None, Some(tombstones)).await
     }
 
+    /// Listens like [`Self::start`], serving `residence.index` rows from
+    /// `index`: each asked window's planted rows in one page, empty for a
+    /// window with none.
+    pub(super) async fn start_index(
+        root: Vec<u8>,
+        index: Arc<IndexHome>,
+    ) -> (
+        String,
+        mpsc::UnboundedReceiver<HomeEvent>,
+        oneshot::Sender<()>,
+    ) {
+        Self::start_with_index(root, Some(index), None).await
+    }
+
+    /// Listens like [`Self::start`], serving `residence.index` rows from
+    /// `index` and `residence.tombstones` from `tombstones`.
+    pub(super) async fn start_index_tombstones(
+        root: Vec<u8>,
+        index: Arc<IndexHome>,
+        tombstones: Arc<TombstoneHome>,
+    ) -> (
+        String,
+        mpsc::UnboundedReceiver<HomeEvent>,
+        oneshot::Sender<()>,
+    ) {
+        Self::start_with_index(root, Some(index), Some(tombstones)).await
+    }
+
+    async fn start_with_index(
+        root: Vec<u8>,
+        index: Option<Arc<IndexHome>>,
+        tombstones: Option<Arc<TombstoneHome>>,
+    ) -> (
+        String,
+        mpsc::UnboundedReceiver<HomeEvent>,
+        oneshot::Sender<()>,
+    ) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("loopback listener");
+        let url = format!(
+            "ws://{}/ws",
+            listener.local_addr().expect("listener address")
+        );
+        let (events, seen) = mpsc::unbounded_channel();
+        let (release, held) = oneshot::channel();
+        let home = Arc::new(Self {
+            root,
+            events,
+            sync_sockets: AtomicUsize::new(0),
+            held_index: Mutex::new(Some(held)),
+            predicted: None,
+            tombstones,
+            index,
+        });
+        tokio::spawn(async move {
+            while let Ok((stream, _)) = listener.accept().await {
+                tokio::spawn(Arc::clone(&home).serve(stream));
+            }
+        });
+        (url, seen, release)
+    }
+
     async fn start_with(
         root: Vec<u8>,
         predicted: Option<Arc<PredictedHome>>,
@@ -190,6 +264,7 @@ impl FakeHome {
             held_index: Mutex::new(Some(held)),
             predicted,
             tombstones,
+            index: None,
         });
         tokio::spawn(async move {
             while let Ok((stream, _)) = listener.accept().await {
@@ -323,6 +398,9 @@ impl FakeHome {
             let _ = self.events.send(HomeEvent::IndexHeld);
             let _ = held.await;
         }
+        if let Some(index) = &self.index {
+            return answer_index(index, &request);
+        }
         let page = serde_json::json!({
             "window": request.window,
             "items": [],
@@ -408,6 +486,35 @@ fn refuse_tombstones(home: &TombstoneHome, request: &RpcRequest) -> Option<Vec<V
         request.id,
         Value::Map(vec![(Value::from("code"), Value::from("RESULT_CHANGED"))]),
     )])
+}
+
+/// Answers one `residence.index` page: the rows planted for the asked
+/// window, in one page; empty when the window serves none.
+fn answer_index(home: &IndexHome, request: &RpcRequest) -> Vec<Vec<u8>> {
+    let served = home.served.lock().expect("the served index rows");
+    let items: Vec<serde_json::Value> = served
+        .get(&request.window)
+        .into_iter()
+        .flatten()
+        .map(|(id, title, learned_at)| {
+            serde_json::json!({
+                "entity_id": id,
+                "title": title,
+                "learned_at": learned_at,
+            })
+        })
+        .collect();
+    let page = serde_json::json!({
+        "window": request.window,
+        "items": items,
+        "nextCursor": null,
+        "revision": "0".repeat(64),
+    });
+    vec![rpc_envelope(
+        "rpc.res",
+        request.id,
+        Value::Binary(rmp_serde::to_vec_named(&page).expect("encode the index page")),
+    )]
 }
 
 /// Answers one predicted residence RPC: `residence.predict` records the ask and answers

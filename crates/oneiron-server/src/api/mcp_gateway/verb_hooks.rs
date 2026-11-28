@@ -21,6 +21,7 @@ use serde_json::Value;
 
 use super::actor_dispatch::{mcp_tool_validation_error, mcp_verb_gate};
 use super::admission::mcp_admit_scoped_verb;
+use super::static_admission::{StaticCaller, StaticCheck, static_admission};
 use super::tasks_response::mcp_agent_verb_arguments;
 use super::{McpCallContext, McpGatewayError, mcp_facade_error};
 use crate::api::facade::RowHookResume;
@@ -234,8 +235,9 @@ fn mcp_hooks_admitted(
     actor: &McpCallContext,
     memory: &Memory<'_>,
 ) -> Result<(Option<ScopedReadActorKey>, Option<RewriteAdmit>), McpGatewayError> {
+    let caller = StaticCaller::connector(actor);
     if let Some(auth) = actor.auth.as_ref() {
-        if tool == "vault.export" && !auth.is_owner_grade() {
+        if tool == "vault.export" && static_admission(caller, StaticCheck::OwnerGrade).is_err() {
             return Err(McpGatewayError::new(
                 -32020,
                 "forbidden",
@@ -244,7 +246,7 @@ fn mcp_hooks_admitted(
         }
         crate::api::facade::row_door_admits(server, auth, tool).map_err(mcp_facade_error)?;
     }
-    if actor.auth.is_none() && matches!(tool, "host.compact" | "host.wake" | "host.budget.hit") {
+    if static_admission(caller, StaticCheck::HostTriggerCredential(tool)).is_err() {
         return Err(McpGatewayError::new(
             -32020,
             "forbidden",
@@ -253,7 +255,7 @@ fn mcp_hooks_admitted(
     }
     // FIX 4794: a row whose handler takes the caller's credential refuses a
     // call with none here, before its pre hooks run, with that handler's error.
-    if actor.auth.is_none() && crate::api::facade::needs_caller_credential(tool) {
+    if static_admission(caller, StaticCheck::HandlerCredential(tool)).is_err() {
         return Err(McpGatewayError::new(
             -32602,
             "tool_args_invalid",
@@ -262,6 +264,16 @@ fn mcp_hooks_admitted(
     }
     let reader = VerbCall::reader_of(memory, tool).map_err(mcp_facade_error)?;
     Ok((reader, Some(mcp_rewrite_admit(server, tool, actor))))
+}
+
+#[cfg(test)]
+pub(crate) fn mcp_hooks_admitted_for_test(
+    server: &Arc<SyncServer>,
+    tool: &str,
+    actor: &McpCallContext,
+    memory: &Memory<'_>,
+) -> Result<(), McpGatewayError> {
+    mcp_hooks_admitted(server, tool, actor, memory).map(drop)
 }
 
 /// The admission a connector's own call of `tool` meets, run on a hook's

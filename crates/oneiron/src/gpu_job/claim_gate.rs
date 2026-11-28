@@ -12,7 +12,7 @@
 //! own claim ends that claim `Released(<code>)` in the same write, so its draws return once.
 
 use crate::experiment_arm::StartedUnitCancel;
-use crate::gpu_line::claim::{release_claim_in_txn, start_claim_in_txn};
+use crate::gpu_line::claim::{CUSTODY_LAPSED, release_claim_in_txn, start_claim_in_txn};
 use crate::gpu_line::{
     ClaimKey, ClaimState, UnitClaim, claim_in_txn, custody_lapsed_in_txn, line_in_txn,
     offer_line_managed_in_txn,
@@ -27,8 +27,6 @@ use super::{
     GpuJobRequest, GpuOffer,
 };
 
-/// The release reason of a claim whose custody lapsed before its start (as the reserve's).
-const CUSTODY_LAPSED: &str = "custody_lapsed";
 /// The job type of a unit's job (design pass 32 r2, 3.6; pass 33, 5.1).
 pub const UNIT_JOB_TYPE: &str = "pinned_workload";
 
@@ -93,6 +91,7 @@ fn release_reason(refused: &GpuJobError) -> String {
         GpuJobError::QuoteChanged => "quote_changed".to_owned(),
         GpuJobError::QuoteExpired => "quote_expired".to_owned(),
         GpuJobError::QuoteUsed => "quote_used".to_owned(),
+        GpuJobError::Order(refused) => refused.code().to_owned(),
         _ => "start_refused".to_owned(),
     }
 }
@@ -124,7 +123,9 @@ impl Vault {
     /// with [`GpuOffer::quote_for`] on the claim's id and [`Self::unit_job_request`]), which
     /// must quote the claim's id as its job (design 5.3). The claim must stand `Claimed` within
     /// its custody and be the caller's own: an agent's under the Grant it reserved with, the
-    /// owner's under their proof. The quote's maximum is the claim's reserved seconds, its image
+    /// owner's under their proof, or, for `GpuJobActor::Order`, the claim a work order's attempt
+    /// reserved for its requester (row H3), while that attempt is the order's live one, no
+    /// cancel reached the order and its requester's authority lives. The quote's maximum is the claim's reserved seconds, its image
     /// the claim's workload, its offer one the claim's line names, its machine the claim's pin
     /// (when it has one), and the workload is still approved for the reserver on that machine
     /// (R2's recheck, in the write). The caller needs no `vault.gpu.jobs.start` Grant and no
@@ -174,7 +175,21 @@ impl Vault {
                     Ok(starter) => starter,
                     Err(refused) => return Ok(Err(refused)),
                 };
-                match self.claimed_job_in_txn(txn, &stored, starter, offer, quote, now_ms)? {
+                // A work order's attempt starts its claim only while the attempt is the order's
+                // live one: a cancel or an ended authority since its reserve gives the claim up.
+                let in_turn = match actor {
+                    GpuJobActor::Order(attempt) => self
+                        .order_attempt_starts_in_txn(txn, attempt, &stored.id)?
+                        .map_err(GpuJobError::Order),
+                    GpuJobActor::Owner(_) | GpuJobActor::Agent(_) => Ok(()),
+                };
+                let made = match in_turn {
+                    Ok(()) => {
+                        self.claimed_job_in_txn(txn, &stored, starter, offer, quote, now_ms)?
+                    }
+                    Err(refused) => Err(refused),
+                };
+                match made {
                     Ok(job) => Ok(Ok(job)),
                     Err(refused) => {
                         release_claim_in_txn(
@@ -286,8 +301,8 @@ impl Vault {
     }
 
     /// The caller as the starter of `claim`: the owner, of a claim the owner reserved; an
-    /// agent, of a claim it reserved under a Grant. A work order's attempt starts no claim
-    /// here: a line unit's attempt is the line's reserve (hunk H3), which is not built yet.
+    /// agent, of a claim it reserved under a Grant; a work order's attempt, of the claim its
+    /// reserve made for the order's requester (row H3), who is then the job's starter.
     fn claim_starter_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -302,7 +317,7 @@ impl Vault {
             GpuJobActor::Agent(agent) => (claim.grant.is_some()
                 && claim.reserved_by == Some(agent.actor()))
             .then(|| agent.actor()),
-            GpuJobActor::Order(_) => None,
+            GpuJobActor::Order(attempt) => self.order_claim_starter_in_txn(txn, attempt, claim)?,
         };
         Ok(starter.ok_or_else(|| {
             line_managed(LineStartRefused::ClaimMismatch(

@@ -86,6 +86,7 @@ use crate::decision_verdict::{HELD_IMAGE, HeldImage, on_caller_payer, run_verdic
 use crate::slide_render::{AdmittedRenderer, RenderRefusal};
 
 mod board_carrier;
+mod caller_rows;
 mod graph_skill;
 mod host_rows;
 mod media_step;
@@ -152,6 +153,10 @@ pub(crate) struct RunHostDoor {
     proof: Option<VerifiedSlip>,
     /// What removes the self brief installed under the run's connection.
     brief_lifetime: BriefLifetime,
+    /// Whether the door serves a turn program's entry the five lane-economy
+    /// rows of `caller_rows`, as its own agent ([RSI-PROJECT-WORKFLOW]);
+    /// `false` for every other run, whose door refuses them as before.
+    program_caller_rows: bool,
 }
 
 /// What removes the self brief installed under a door's connection.
@@ -189,7 +194,17 @@ impl RunHostDoor {
             runtime,
             proof: None,
             brief_lifetime: BriefLifetime::Door,
+            program_caller_rows: false,
         }
+    }
+
+    /// This door, for a turn program's entry: it serves the program's own
+    /// agent the five lane-economy rows of `caller_rows`, each under that
+    /// agent's own Grant, read at each call ([RSI-PROJECT-WORKFLOW]).
+    #[must_use]
+    pub(crate) fn with_program_caller_rows(mut self) -> Self {
+        self.program_caller_rows = true;
+        self
     }
 
     /// This door, for a pumped run whose self brief lives with its live run
@@ -374,6 +389,7 @@ impl AgentVerbDoor for RunHostDoor {
             })
             .flatten();
         let resident = resident_row(call.verb, &call.input);
+        let caller_row = self.program_caller_rows && caller_rows::is_caller_row(call.verb);
         // What the door holds for the run's own brief (FIX 17594), read only
         // for `describe(self)`.
         let (brief, people_at) = match resident {
@@ -398,6 +414,10 @@ impl AgentVerbDoor for RunHostDoor {
                 lease.on(server.vault()).book_and_revise();
             }
             with_run_write_token(run_writes.as_ref(), || match resident {
+                // A turn program's lane-economy rows, as its own agent.
+                None if caller_row => {
+                    caller_rows::answer(&server, actor, &origin, invocation, verb, input)
+                }
                 Some(ResidentRow::Board) => {
                     board_as_agent(&server, actor, &origin, invocation, &board, verb, input)
                         .map(|(output, rows)| (output, Some(rows)))
