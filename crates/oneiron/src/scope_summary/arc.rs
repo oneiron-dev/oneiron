@@ -99,6 +99,7 @@ fn arc_landed_in_txn(
     evidence: &ScopeSummaryEvidence,
     summary: EntityId,
 ) -> Result<()> {
+    let before = crate::source_audience::LinksBefore::read_in(vault, txn, [summary])?;
     // Erasing a sitting's summary or a claim the Arc read reaches the Arc.
     for lower in &arc.lower {
         crate::ports::record_derived_edge_in_txn(&vault.store, txn, &summary, &lower.summary)?;
@@ -106,6 +107,6 @@ fn arc_landed_in_txn(
     for claim in evidence.arc_claims() {
         crate::ports::record_derived_edge_in_txn(&vault.store, txn, &summary, &claim)?;
     }
-    crate::source_audience::raise_floors_in_txn(vault, txn, [summary])?;
+    before.judge_in_txn(vault, txn)?;
     super::arc_gate::succeeded_in_txn(vault, txn, &plan.input, arc)
 }

@@ -199,7 +199,7 @@ pub(super) fn run(
         }
         HousekeepingSweep::SourceFloorBackfill => {
             let (raised, cursor) =
-                crate::source_audience::backfill_floors(vault, cursor, || deadline.passed())?;
+                crate::source_audience::sweep_floors(vault, cursor, || deadline.passed())?;
             return Ok(Run {
                 work: SweepWork::SourceFloorBackfill { raised },
                 complete: cursor.is_none(),

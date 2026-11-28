@@ -142,8 +142,11 @@ impl BatchBuilder<'_> {
             (Some(requested), _) => Some(requested),
             (None, active) => active,
         };
-        let born_rows = self.born_rows();
-        let floor_rows = self.floor_rows();
+        // READ-LINEAGE L1 hooks 1 and 2 (Fable design pass 31): the links each
+        // row this batch gives words or a source held before it, so the
+        // judgement after the apply judges in full only the links it made.
+        let floor_links =
+            crate::source_audience::LinksBefore::read_in(vault, &*wtxn, self.floor_rows())?;
         if let Some(actor) = actor {
             let has_owner = super::vad_postcommit::has_vad_postcommit_owner(vault, wtxn);
             let mut staged = vault.store.env.nested_write_txn(wtxn)?;
@@ -164,12 +167,10 @@ impl BatchBuilder<'_> {
         } else {
             self.apply_staged(wtxn, gate_mode, None, lane, authority_beside, own_device)?;
         }
-        // READ-LINEAGE L1 hooks 1 and 2: each row this batch gave words or a
-        // source carries the floor of what it came from, in the same write;
-        // a row born here from an input this vault erased is born sealed
-        // (#9289 review r1 P1).
-        crate::source_audience::seal_births_from_erased_inputs_in_txn(vault, wtxn, &born_rows)?;
-        crate::source_audience::raise_floors_in_txn(vault, wtxn, floor_rows)?;
+        // Each row this batch gave words or a source takes the floor of what
+        // it came from, in the same write, or waits on it; a row born here
+        // from an input this vault erased is born sealed (#9289 review r1 P1).
+        floor_links.judge_in_txn(vault, wtxn)?;
         vault.stamp_agent_authored_creates_in_txn(wtxn, creates)
     }
 
@@ -180,24 +181,7 @@ impl BatchBuilder<'_> {
     /// `DerivedFrom`; a CLAIM under what supports it).
     fn floor_rows(&self) -> Vec<EntityId> {
         let mut rows = self.born_rows();
-        for op in &self.ops {
-            let (src, kind, tgt) = match op {
-                BatchOp::Put { id, .. } | BatchOp::ClaimCandidate { id, .. } => {
-                    rows.push(*id);
-                    continue;
-                }
-                BatchOp::Edge { src, kind, tgt, .. }
-                | BatchOp::PublicEdgeWithCreatedAt { src, kind, tgt, .. }
-                | BatchOp::EdgeWithCreatedAt { src, kind, tgt, .. } => (*src, *kind, *tgt),
-                _ => continue,
-            };
-            match kind {
-                crate::EdgeKind::PartOf => rows.extend([src, tgt]),
-                crate::EdgeKind::DerivedFrom => rows.push(src),
-                crate::EdgeKind::Supports => rows.push(tgt),
-                _ => {}
-            }
-        }
+        rows.extend(floor_rows_of(&self.ops));
         rows
     }
 
@@ -487,4 +471,32 @@ pub(super) fn admit_federated_puts(
         }
     }
     Ok(())
+}
+
+/// The rows `ops` give words or a source (READ-LINEAGE L1): each row they
+/// put, and the end of each `PartOf`, `DerivedFrom` or `Supports` edge they
+/// write whose words the edge adds to (a MESSAGE and its TURN each read
+/// under the other's sources; a row under what it is `DerivedFrom`; a CLAIM
+/// under what supports it).
+pub(in crate::batch) fn floor_rows_of(ops: &[BatchOp]) -> Vec<EntityId> {
+    let mut rows = Vec::new();
+    for op in ops {
+        let (src, kind, tgt) = match op {
+            BatchOp::Put { id, .. } | BatchOp::ClaimCandidate { id, .. } => {
+                rows.push(*id);
+                continue;
+            }
+            BatchOp::Edge { src, kind, tgt, .. }
+            | BatchOp::PublicEdgeWithCreatedAt { src, kind, tgt, .. }
+            | BatchOp::EdgeWithCreatedAt { src, kind, tgt, .. } => (*src, *kind, *tgt),
+            _ => continue,
+        };
+        match kind {
+            crate::EdgeKind::PartOf => rows.extend([src, tgt]),
+            crate::EdgeKind::DerivedFrom => rows.push(src),
+            crate::EdgeKind::Supports => rows.push(tgt),
+            _ => {}
+        }
+    }
+    rows
 }

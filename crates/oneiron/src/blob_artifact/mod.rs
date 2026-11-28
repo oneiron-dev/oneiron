@@ -99,6 +99,7 @@ pub(crate) use self::lifecycle::{
 };
 pub use self::provenance::BlobVersionProvenance;
 pub(crate) use self::references::archive_version_claim_tables;
+pub(crate) use self::references::release_fenced_only;
 pub(crate) use self::references::{
     artifacts_claiming, claimed_hash_rows_exist, live_version_claim_reference,
     lone_version_claim_refusal, record_version_claim, reject_lone_version_claim_delete,
@@ -106,7 +107,7 @@ pub(crate) use self::references::{
 };
 #[cfg(feature = "sync")]
 pub(crate) use self::references::{
-    readmit_held_asset_in_txn, readmit_held_asset_with_facts_in_txn, release_fenced_only,
+    readmit_held_asset_in_txn, readmit_held_asset_with_facts_in_txn,
 };
 pub use self::review_request::SlideReviewLimitsInput;
 pub use self::setting_keys::image_edit_max_ops;

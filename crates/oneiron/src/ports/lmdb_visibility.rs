@@ -291,6 +291,42 @@ pub(crate) fn removed_in_txn(
             },
     )
 }
+/// Whether a fact other than a blob release deletes the row `id` (Fable
+/// design pass 31, a source that reads erased): what [`removed_in_txn`]
+/// reads, except a release's own fence standing alone. A released ASSET's
+/// bytes may come back; an integrity tombstone or a pending local delete
+/// beside its fence still erases it.
+///
+/// # Errors
+///
+/// Storage failures.
+pub(crate) fn erased_in_txn(
+    store: &crate::store::Store,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    if !removed_in_txn(store, txn, id)? {
+        return Ok(false);
+    }
+    if !crate::blob_artifact::release_fenced_only(store, txn, id)? {
+        return Ok(true);
+    }
+    if store
+        .vault_meta()
+        .get(txn, &super::integrity::tombstone_key(id))?
+        .is_some()
+    {
+        return Ok(true);
+    }
+    match store.entities().get(txn, id.as_bytes())? {
+        Some(raw) => {
+            let window = crate::deletion::deletion_window_for_row(store, txn, id, &raw)?;
+            store.port_pending_tombstone_present(txn, WindowAddress::new(&window), id)
+        }
+        None => Ok(false),
+    }
+}
+
 /// Whether an owner is gone in `txn`: row removal other than an archive,
 /// hard deletion, or identity soft deletion. Callers keep their own policy
 /// for a marker read error.

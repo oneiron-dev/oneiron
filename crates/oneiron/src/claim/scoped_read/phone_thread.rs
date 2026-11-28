@@ -68,13 +68,18 @@ impl ScopedRead<'_> {
         else {
             return Ok(false);
         };
+        // A row whose verdict is sealed reads to no one, the owner included
+        // (READ-LINEAGE-L3 = A); one whose verdict waits reads to no one
+        // else (#9289 review 2 P1-1, P1-2), and the source-audience walk
+        // judges the owner's read of it.
+        let floor = crate::source_audience::floor_read_in(self.vault, txn, id)?;
+        if floor == crate::source_audience::FloorRead::Sealed {
+            return Ok(false);
+        }
         if self.actor_key.reads_as_vault_owner() {
             return Ok(true);
         }
-        // A row whose floor is not known whole here reads to no one else
-        // (#9289 review 2 P1-1, P1-2); the source-audience walk judges the
-        // owner's read of it.
-        if crate::source_audience::floor_waits_in(self.vault, txn, id)? {
+        if floor == crate::source_audience::FloorRead::Waiting {
             return Ok(false);
         }
         let header = crate::batch::EntityMetadataHeader::parse(raw)

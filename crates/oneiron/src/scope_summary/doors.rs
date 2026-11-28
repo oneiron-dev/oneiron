@@ -589,6 +589,9 @@ pub(super) fn mint_in_txn(
     }
     let _permit = super::producer::admit(&vault.store, id, &encoded);
     batch.apply(txn)?;
+    // The batch judged the summary's put and its covers; its birth and its
+    // named word sources come below.
+    let before = crate::source_audience::LinksBefore::read_in(vault, txn, [id])?;
     // Rule A: the summary is concluded from every record and MESSAGE its words
     // came from. A re-entered attempt keeps its first birth.
     let inputs: Vec<EntityId> = word_sources(&body).copied().collect();
@@ -607,7 +610,7 @@ pub(super) fn mint_in_txn(
     }
     // READ-LINEAGE L1 hooks 1 and 3: the summary reads under what its
     // words came from.
-    crate::source_audience::raise_floors_in_txn(vault, txn, [id])?;
+    before.judge_in_txn(vault, txn)?;
     Ok(id)
 }
 
@@ -865,7 +868,12 @@ pub(super) fn land_in_txn(
         for source in &sources {
             crate::ports::record_derived_edge_in_txn(&vault.store, txn, &appended.id, source)?;
         }
-        crate::source_audience::raise_floors_in_txn(vault, txn, [appended.id])?;
+        // The reply is a TURN this landing appended: each of its links is new.
+        crate::source_audience::judge_rows_in_txn(
+            vault,
+            txn,
+            vec![(appended.id, crate::source_audience::Fresh::Row)],
+        )?;
         Some((appended.id, input))
     } else {
         None

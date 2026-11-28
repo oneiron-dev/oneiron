@@ -275,8 +275,8 @@ pub(crate) fn bind_replicated_in_txn(
         return Ok(ReplicaMerge::Pending);
     }
     RECORDS.put(&vault.store, txn, record, policy)?;
-    // A row written from it before its binding landed waits for it.
-    super::floor_state::binding_landed_in_txn(vault, txn, record)?;
+    // A row written from it before its binding landed takes its floor now.
+    super::source_state::fold_waiters_in_txn(vault, txn, record)?;
     Ok(ReplicaMerge::Written)
 }
 

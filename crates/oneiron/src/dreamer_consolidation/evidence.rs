@@ -537,6 +537,7 @@ impl VerifiedEvidenceSet {
         txn: &mut heed::RwTxn<'_>,
         citing: &EntityId,
     ) -> Result<()> {
+        let before = crate::source_audience::LinksBefore::read_in(vault, txn, [*citing])?;
         for span in self.rows.iter().flat_map(|row| &row.messages) {
             crate::ports::record_derived_edge_in_txn(&vault.store, txn, citing, &span.message)?;
             #[cfg(feature = "sync")]
@@ -570,7 +571,7 @@ impl VerifiedEvidenceSet {
         crate::mail_pack::claim_recheck::owe_claim_recheck_for_cited_in_txn(vault, txn, &cited)?;
         // READ-LINEAGE L1 hook 3: the cited MESSAGEs' sources bind the row
         // that cites them.
-        crate::source_audience::raise_floors_in_txn(vault, txn, [*citing])
+        before.judge_in_txn(vault, txn)
     }
     pub(super) fn check_pins(&self, resources: &BranchResources<'_>) -> Result<()> {
         for row in &self.rows {

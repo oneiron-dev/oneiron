@@ -372,9 +372,6 @@ fn capture_entity_deindex(
     crate::embed::delete_media_vectors_in_txn(store, wtxn, id)?;
     // FIX 9398: and every room's staged copies of them.
     crate::embed::drop_room_media_copies_in_txn(store, wtxn, id);
-    // The floors waiting on the row are sealed before its lineage goes
-    // (#9289 Opus review 3 P1-A).
-    crate::source_audience::seal_floors_awaiting_in_txn(store, wtxn, id)?;
     crate::deletion::tear_derived_rows_in_txn(write, wtxn, id, true)?;
     crate::store::pending_comm_stop::clear_pending_stop_for_delete(store, wtxn, id)?;
     crate::hnsw::hnsw_deindex(store, wtxn, id)?;
