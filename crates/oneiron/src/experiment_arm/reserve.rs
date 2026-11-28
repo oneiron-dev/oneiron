@@ -117,7 +117,6 @@ pub(crate) struct UnitAsk<'a> {
     contract_sha256: &'a str,
     secs: u64,
     /// Left out when `None`, so an ask without a result keeps the digest it had before.
-    #[serde(skip_serializing_if = "Option::is_none")]
     result: Option<crate::gpu_job::GpuJobResultBinding>,
 }
 

@@ -126,7 +126,7 @@ pub struct UnitClaim {
     /// Where the unit's job lands its returnable outputs (row RSI-ARM-RESULT): the artifact
     /// whose next version each becomes, pending Keep, and the task its made_by names, as the
     /// job's quote binds them (`inputs.result`). `None` lands nothing.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub result: Option<crate::gpu_job::GpuJobResultBinding>,
     /// The workload pin's maximum: the job's quote and the machine's own limit.
     pub reserved_secs: u64,
