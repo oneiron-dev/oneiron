@@ -273,9 +273,9 @@ impl BranchResources<'_> {
                         // Fence the role and words to one physical line, as the
                         // context board fences its rows (FIX
                         // DREAMER-TRANSCRIPT-TURN-TEXT-UNFENCED): each control
-                        // character and U+2028/U+2029 shows as a space. Quotes
-                        // still bind against the stored words; a quote across
-                        // a fenced line break binds through the whitespace fold.
+                        // character and U+2028/U+2029 shows as a space. A quote
+                        // binds against these fenced words and maps back to the
+                        // stored bytes (`SourceShown::one_line_fenced`).
                         let speaker = speaker_labels(
                             &mut labels,
                             speakers.get(id).map_or(&[][..], Vec::as_slice),
