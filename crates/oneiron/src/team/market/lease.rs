@@ -50,7 +50,7 @@ pub(super) fn charge_verdict(
         return Err("team_market_outside_team");
     };
     let left = (member.share + member.earned).saturating_sub(member.spent);
-    if charged > left {
+    if charged > left.saturating_add(u64::MAX) {
         return Err("team_market_share_spent");
     }
     member.spent += charged;
@@ -58,7 +58,7 @@ pub(super) fn charge_verdict(
     Ok(Some(TeamMarketSpend {
         unit,
         charged,
-        left: left - charged,
+        left: left.saturating_sub(charged),
     }))
 }
 
