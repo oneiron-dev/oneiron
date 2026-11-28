@@ -139,9 +139,9 @@ pub const fn start_unit_network(pin: NetworkMode, host_unit_installed: bool) -> 
 /// unit.
 pub fn unit_admits_pin_network(unit: UnitNetwork, pin: NetworkMode) -> Result<(), String> {
     match (unit, pin) {
-        (UnitNetwork::Private, NetworkMode::None) | (UnitNetwork::Host, NetworkMode::Host) => {
-            Ok(())
-        }
+        (UnitNetwork::Private, NetworkMode::None)
+        | (UnitNetwork::Host, NetworkMode::Host)
+        | (UnitNetwork::Host, NetworkMode::None) => Ok(()),
         (UnitNetwork::Private, NetworkMode::Host) => Err(
             "network_host_unit_not_installed: the pin asks the host network and this unit has a private one: run `oneiron execution-node install` again"
                 .to_owned(),
