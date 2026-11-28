@@ -441,7 +441,6 @@ impl Vault {
                 else {
                     return Err(Error::EntityNotFound);
                 };
-                hold_store::sealed_records::drop_hold_in_txn(&self.store, txn, hold_id.as_bytes())?;
                 if hold_store::events::logged_in_txn(
                     &self.store,
                     txn,
