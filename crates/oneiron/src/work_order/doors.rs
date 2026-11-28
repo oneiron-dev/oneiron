@@ -154,6 +154,28 @@ impl Vault {
     ) -> crate::Result<WorkOrderView> {
         self.order_view_in_txn(txn, order_seen_by(caller, order), replayed)
     }
+
+    /// Order `id` as `caller` reads it, with its last attempt's receipt; `None` when the order
+    /// is gone or `caller` does not reach it (an agent reads only an order it made).
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub(crate) fn reached_work_order_view_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        caller: VerbGrantCaller,
+        id: &EntityId,
+    ) -> crate::Result<Option<WorkOrderView>> {
+        match WORK_ORDERS.get(&self.store, txn, id)? {
+            Some(order) if reaches(caller, &order) => Ok(Some(self.order_view_in_txn(
+                txn,
+                order_seen_by(caller, order),
+                false,
+            )?)),
+            _ => Ok(None),
+        }
+    }
 }
 
 /// Whether `caller` may read or cancel `order`: the owner any, an agent one it made.
@@ -354,14 +376,7 @@ pub fn ordered_view_as(
     let vault = memory.vault();
     let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
     let caller = memory.verb_grant_caller_admits_in_txn(&txn, owner, ORDER_VERB)?;
-    match WORK_ORDERS.get(&vault.store, &txn, order)? {
-        Some(order) if reaches(caller, &order) => Ok(Some(vault.order_view_in_txn(
-            &txn,
-            order_seen_by(caller, order),
-            false,
-        )?)),
-        _ => Ok(None),
-    }
+    Ok(vault.reached_work_order_view_in_txn(&txn, caller, order)?)
 }
 
 /// `vault.jobs.orders.get`: one order, as `memory`'s caller may read it.

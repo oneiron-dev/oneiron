@@ -101,6 +101,33 @@ pub fn unit_order_as(
     })
 }
 
+/// The answer of `vault.arms.units.reserve` for a waiting unit once the server's pass ran over
+/// its new order: order `order` of line `line` read again, as `memory`'s caller, who made it,
+/// reads it. The caller is judged on the reserve's own verb over the line, as the reserve
+/// judges it, so an agent whose Grant names the reserve and not `vault.jobs.order` reads its
+/// own unit's order. `None` when the order is gone, is not the caller's, or is not charged to
+/// `line`.
+///
+/// # Errors
+///
+/// `forbidden` for a caller the reserve no longer admits over the line; a store failure.
+pub fn unit_ordered_view_as(
+    memory: &Memory<'_>,
+    owner: Option<&AuthenticatedOwner>,
+    line: EntityId,
+    order: &EntityId,
+) -> MemoryResult<Option<WorkOrderView>> {
+    let vault = memory.vault();
+    let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+    let caller =
+        memory.verb_grant_caller_admits_over_in_txn(&txn, owner, ARMS_UNITS_RESERVE_VERB, line)?;
+    Ok(vault
+        .reached_work_order_view_in_txn(&txn, caller, order)?
+        .filter(|view| {
+            matches!(view.order.charge, OrderCharge::Line { line: charged, .. } if charged == line)
+        }))
+}
+
 fn order_unit_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,

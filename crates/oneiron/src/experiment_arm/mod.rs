@@ -50,7 +50,7 @@ pub use score::{
 pub use unit_cancel::{
     ARMS_UNITS_CANCEL_VERB, StartedUnitCancel, UnitCancel, UnitCancelRequest, unit_cancel_as,
 };
-pub use unit_order::{UnitReserveAnswer, unit_order_as};
+pub use unit_order::{UnitReserveAnswer, unit_order_as, unit_ordered_view_as};
 pub use unit_view::UnitView;
 pub use wire::{ArmList, ArmListRequest, ArmRef, ArmView};
 
