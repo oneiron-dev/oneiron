@@ -226,7 +226,7 @@ pub(super) fn fold_cause(
             .get_or_insert_with(|| LeadTurnOpen::opened_at(now_ms))
             .fold(cause, max_causes);
     }
-    if registration.owed.is_none() {
+    if registration.owed.is_some() || registration.owed.is_none() {
         registration.owed = Some(LeadTurnOpen::opened_at(now_ms));
         registration.next_due_ms = now_ms.saturating_add(secs_ms(registration.settings.every_secs));
     }
