@@ -2840,7 +2840,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/gap/intent.rs` | src | m | 1 fn · 2 crate-vis | — | The owner's stated intent (FIX 8949; ARCH-0040, ARCH-0026) |
 | `src/dreamer_consolidation/judge_context.rs` | src | s | 2 crate-vis | — | Deterministic single-value resolution over an explicitly admitted prior |
 | `src/dreamer_consolidation/kept_ask.rs` | src | s | 1 re-export · 2 crate-vis | — | The ask a kept decision went up as, kept actor-free (FIX 4591) |
-| `src/dreamer_consolidation/mod.rs` | src | m | 6 mod · 27 re-export · 54 crate-vis | — | Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A) |
+| `src/dreamer_consolidation/mod.rs` | src | m | 6 mod · 27 re-export · 56 crate-vis | — | Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A) |
 | `src/dreamer_consolidation/neighbourhood.rs` | src | m | 20 crate-vis | — | The known entities an extraction pass sees beside its transcript (map gap 7, the slice a correction needs to… |
 | `src/dreamer_consolidation/neighbourhood/memberships.rs` | src | s | 5 crate-vis | — | Relationship units named by a listed PERSON's admitted membership claims |
 | `src/dreamer_consolidation/neighbourhood/pages.rs` | src | s | 5 crate-vis | — | A child's listing in stable pages (Rule 5, FIX 7580) |
@@ -2854,7 +2854,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/nightly_merge/write.rs` | src | s | 9 crate-vis | — | The nightly writer (OF-498d): how the merge and each of its link continuations land |
 | `src/dreamer_consolidation/note_classification.rs` | src | s | 4 crate-vis | — | The NOTE review's classification request and reply (ARCH-0032 stage 2, OF-073) |
 | `src/dreamer_consolidation/note_parts.rs` | src | s | 1 crate-vis | — | A Dreamer-written text past the NOTE body bound, as the ordered parts it lands in: the split an imported… |
-| `src/dreamer_consolidation/note_review.rs` | src | m | 2 crate-vis | — | ARCH-0032 stage 2 (OF-073): the Dreamer reviews NOTEs |
+| `src/dreamer_consolidation/note_review.rs` | src | m | 4 crate-vis | — | ARCH-0032 stage 2 (OF-073): the Dreamer reviews NOTEs |
 | `src/dreamer_consolidation/note_review/candidates.rs` | src | s | 3 crate-vis | — | One NOTE review reply's candidates (OF-073), read through the review call's own labels (FIX 7506): a subject… |
 | `src/dreamer_consolidation/note_text.rs` | src | s | 3 crate-vis | — | The text of one NOTE as the Dreamer may read it (ARCH-0032 stage 2), in the caller's transaction: one… |
 | `src/dreamer_consolidation/note_topics.rs` | src | m | 7 crate-vis | — | The stage-2 topic summary trigger (ARCH-0032 write gate, OF-073 / FIX 907) |
@@ -3012,7 +3012,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_promotion/scoped.rs` | src | m | 1 fn · 5 crate-vis | — | Persisted-head convergence through the existing promotion, claim Gate, semantic-edge and provenance doors |
 | `src/dreamer_promotion/settlement.rs` | src | s | 2 crate-vis | — | The selected landing (OF-023, FIX 496): a consolidation round's retained alternative that a conflict… |
 | `src/dreamer_promotion/tests.rs` | test | XL | — | — | — |
-| `src/dreamer_promotion/writer.rs` | src | m | 8 crate-vis | — | The one-candidate promotion writer and its landed re-read |
+| `src/dreamer_promotion/writer.rs` | src | m | 10 crate-vis | — | The one-candidate promotion writer and its landed re-read |
 | `src/dreamer_runner/admission/buckets.rs` | src | s | 2 fn · 1 crate-vis | — | MACRO admission shares the queue's leases: one attempt per partition |
 | `src/dreamer_runner/admission/budget_line.rs` | src | s | 2 crate-vis | — | The original line established by a successful native admission |
 | `src/dreamer_runner/admission/mod.rs` | src | L | 19 fn · 8 crate-vis | — | Home-node gate, atomic admission, and the private wake-budget ledger |
@@ -8630,7 +8630,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/mesh_machine_endpoint_index.rs` | src | s | 1 enum · 5 fn | IndexedEndpoint | Doors for `tests/mesh_machine_endpoint_index.rs` (census L3-28B): the endpoint lookup as the MACHINE… |
 | `src/test_doors/meso_extraction_width.rs` | src | m | 1 struct · 1 enum · 1 fn · 5 crate-vis | ExtractionWidth, PriorScenario | Door for `tests/dreamer_meso_width.rs` (FIX 21927 P2): measure the extraction calls in flight during one… |
 | `src/test_doors/microsoft_token.rs` | src | s | 1 struct · 6 fn · 1 crate-vis | ExchangedMicrosoftGrant | Door for `tests/microsoft365_oauth.rs` and `tests/microsoft365_refresh_write_back.rs`… |
-| `src/test_doors/mod.rs` | src | m | 1 fn · 412 mod · 3 re-export | — | Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD) |
+| `src/test_doors/mod.rs` | src | m | 1 fn · 413 mod · 3 re-export | — | Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD) |
 | `src/test_doors/model_binding_proposer.rs` | src | m | 1 struct · 2 fn · 1 const | TrialFixture | Fixture for the `model_binding_proposer_grant` server test: one completed held-out trial offer for a role… |
 | `src/test_doors/model_call_turn_link.rs` | src | s | 1 fn | — | Doors for `oneiron-server/tests/chat_model_call_turn_link.rs` (UNBUILT3-41, FIX [TURN-MODEL-LINK]): the… |
 | `src/test_doors/model_step_submission_codec.rs` | src | s | 1 fn | — | Doors for `tests/model_step_submission_codec.rs` (STEP-CORRECTION-HEALTH-PARK): a model step's submission… |
@@ -8642,6 +8642,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/nightly_arc_summary.rs` | src | s | 2 fn | — | Doors for `tests/arc_summary_live_support.rs` (ARC-SUMMARY-SERVED-AFTER-ITS-PROPOSALS-LOSE-SUPPORT): write… |
 | `src/test_doors/note_bm25f_repair.rs` | src | s | 1 fn | — | FIX 7789: lose one NOTE posting, then run the real deindex self-heal |
 | `src/test_doors/note_fork_upload.rs` | src | s | 1 fn | — | Door for `tests/found_key_note_fork_upload.rs` (REVIEW-7904 second commit F2): whether the NOTE's authority… |
+| `src/test_doors/note_review_pass.rs` | src | s | 5 fn · 1 crate-vis | — | Runs one NOTE review for `tests/note_review_claim_depends_on_note.rs` |
 | `src/test_doors/off_record_reply_body.rs` | src | s | 2 struct · 3 fn | RoomResult, SavedResult | Door for `tests/room_custody_reply_bodies.rs` (ROOM-CUSTODY-REPLY-BODIES): a code run's reply body published… |
 | `src/test_doors/off_record_shell.rs` | src | s | 1 fn | — | Door for `tests/off_record_continuation_shell.rs` (FIX 22388): the BASE conversation shell an off-record… |
 | `src/test_doors/off_record_side_row.rs` | src | s | 1 struct · 15 fn | RoomCustody | Door for `tests/off_record_side_row_custody.rs` (FIX 2329, ROOM-LOCAL-CUSTODY): one row of an authored side… |
@@ -10417,6 +10418,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/note_edit_lands_by_grant.rs` | test | s | — | — | Whether a NOTE edit lands or waits is the Grant's answer for the actor and the NOTE, never the writer's… |
 | `tests/note_indexed_recall.rs` | test | s | — | — | An owner's recall finds a NOTE by its words (ARCH-0032: a research NOTE is vault-readable), and still leaves… |
 | `tests/note_read_pending_document.rs` | test | s | — | — | A replica that holds a NOTE's row before its authority has sent the NOTE's head document answers the typed… |
+| `tests/note_review_claim_depends_on_note.rs` | test | m | — | — | PROMOTED-CLAIM-SOURCE-DEPENDENCY-GAPS, NOTE review path: the CLAIM learnt from a NOTE depends on it, and the… |
 | `tests/note_scalar_edit_lands_by_grant.rs` | test | s | — | — | An edit through the scalar NOTE doors lands by the Grant's answer for the writer and the NOTE, never by the… |
 | `tests/note_subject_reference.rs` | test | s | — | — | — |
 | `tests/off_record_side_row_custody.rs` | test | s | — | — | ROOM-LOCAL-CUSTODY (the lead's ruling of 21 Nov, "fingerprint only on save"; it replaces FIX 2329's… |
