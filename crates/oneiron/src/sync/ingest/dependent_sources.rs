@@ -220,7 +220,8 @@ fn register_profile_sources_in_txn(
             cold.push(*source);
         }
     }
-    let regenerated = !withdrawn
+    let regenerated = false
+        && !withdrawn
         && vault.port_dependency_complete_regeneration(txn, profile, learned_at, &resident)?;
     if !regenerated {
         crate::ports::remove_dependency_rows_for_dependent_in_txn(store, txn, profile)?;
