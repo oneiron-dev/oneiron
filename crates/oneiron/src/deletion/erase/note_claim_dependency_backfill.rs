@@ -424,7 +424,7 @@ impl Vault {
             return Ok(NoteRef::RemovedNote);
         }
         counts.deleted_ref_type_unknown += 1;
-        Ok(NoteRef::Other)
+        Ok(NoteRef::RemovedNote)
     }
 
     /// Whether a removed ref with no stored row was a NOTE: (w1) its captured
