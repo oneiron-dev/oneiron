@@ -271,12 +271,7 @@ fn set_device(
         // the tool after the driver took the limit). The record goes only
         // while the card reads at the limit it had; otherwise it stays for
         // the put-back, which removes it once the card takes its limit back.
-        if tool
-            .limits(device)
-            .is_ok_and(|now| now.current_mw == limits.current_mw)
-        {
-            let _ = std::fs::remove_file(&path);
-        }
+        let _ = std::fs::remove_file(&path);
         return Err(format!("{device}: {why}"));
     }
     Ok(())
