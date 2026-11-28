@@ -404,6 +404,15 @@ impl SyncClient {
                         .prefix_iter(txn, &prefix)?
                         .map(|row| row.map(|(key, _)| key.to_string()))
                         .collect::<std::result::Result<_, _>>()?;
+                    let fresh: HashSet<&str> =
+                        items.iter().map(|entry| entry.entity_id.as_str()).collect();
+                    crate::sync::residence::mark_index_items_absent_from_page_in_txn(
+                        &self.vault.store,
+                        txn,
+                        &prefix,
+                        &old,
+                        &fresh,
+                    )?;
                     for key in old {
                         self.vault.store.sync_state.delete(txn, &key)?;
                         crate::sync::residence::delete_index_by_item_for_listing_in_txn(
@@ -421,6 +430,12 @@ impl SyncClient {
                             &self.vault.store,
                             txn,
                             &window_text,
+                            &entry.entity_id,
+                        )?;
+                        // The home lists the item again: any soft-drop marker goes.
+                        crate::sync::residence::delete_soft_drop_marker_in_txn(
+                            &self.vault.store,
+                            txn,
                             &entry.entity_id,
                         )?;
                     }
@@ -446,6 +461,8 @@ impl SyncClient {
                         .strip_prefix("ri:w:")
                         .and_then(|rest| rest.rsplit_once(':'))
                         .map(|(window, _)| window);
+                    // A window that left the current set writes no marker: its items become
+                    // cold (case 4b), not soft-dropped.
                     if !window.is_some_and(|window| indexed.contains(window)) {
                         self.vault.store.sync_state.delete(txn, &key)?;
                         crate::sync::residence::delete_index_by_item_for_listing_in_txn(

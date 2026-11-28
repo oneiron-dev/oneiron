@@ -114,11 +114,52 @@ pub(super) fn source_withdrawn_in(
     }
     Ok(false)
 }
+/// Local deletion evidence for a citation, including markers for an id with no body.
+pub(crate) fn source_deleted_or_withdrawn_in_txn(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    source: &EntityId,
+) -> Result<bool> {
+    use super::{DeletionMarker, TombstoneStoreRead};
+
+    if store.port_deletion_marked(txn, DeletionMarker::HardDelete, source)?
+        || store.port_deletion_marked(txn, DeletionMarker::RowFence, source)?
+    {
+        return Ok(true);
+    }
+    let state = store.port_deletion_state(txn, source)?;
+    Ok(state.deleted || state.stale)
+}
+
+#[cfg(feature = "sync")]
+fn absent_source_stands_in(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    source: &EntityId,
+) -> Result<bool> {
+    if store.is_union() || source_deleted_or_withdrawn_in_txn(store, txn, source)? {
+        return Ok(false);
+    }
+    let hex = source.to_hex();
+    if crate::sync::residence::soft_drop_marker_exists_in_txn(store, txn, &hex)? {
+        return Ok(false);
+    }
+    if crate::sync::residence::index_listing_of_item_in_txn(store, txn, &hex)?.is_some() {
+        return Ok(true);
+    }
+    // An opened device counts an absent, unlisted, unmarked source as standing
+    // (PR1-OPENED-COLD-SOURCE-MODE = A, 28 Nov).
+    crate::sync::residence::device_residence_opened_in_txn(store, txn)
+}
+
 /// Whether `source` still stands for what was derived from it: present, not
 /// removed, not withdrawn, its body not flagged stale. An archive keeps the
 /// row whole and a CLAIM's `stale` is a status, so neither withdraws.
 fn source_stands_in(store: &impl ManifestDbs, txn: &RoTxn<'_>, source: &EntityId) -> Result<bool> {
     let Some(raw) = store.entities().get(txn, source.as_bytes())? else {
+        #[cfg(feature = "sync")]
+        return absent_source_stands_in(store, txn, source);
+        #[cfg(not(feature = "sync"))]
         return Ok(false);
     };
     let header = EntityMetadataHeader::parse(&raw)

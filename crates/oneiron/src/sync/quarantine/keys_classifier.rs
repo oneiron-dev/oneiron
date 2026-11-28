@@ -74,6 +74,9 @@ pub(crate) fn crdt_key_metadata(key: &str) -> (u64, u32) {
 /// Typed error name for a quarantine record (`ErrorKind` debug name).
 #[must_use]
 pub(in crate::sync) fn reason_code_for(error: &Error) -> String {
+    if crate::dreamer_consolidation::replicated_sources::claim_source_pending(error) {
+        return "ClaimSourcePending".to_owned();
+    }
     format!("{:?}", error.kind())
 }
 
@@ -86,7 +89,9 @@ pub(in crate::sync) fn reason_code_for(error: &Error) -> String {
 /// and NEVER be quarantined. Unknown kinds classify as local (fail closed).
 #[must_use]
 pub(crate) fn remote_rejection_reason(error: &Error) -> Option<String> {
-    if is_remote_secret_scan_rejection(error) {
+    if crate::dreamer_consolidation::replicated_sources::claim_source_pending(error)
+        || is_remote_secret_scan_rejection(error)
+    {
         return Some(reason_code_for(error));
     }
 

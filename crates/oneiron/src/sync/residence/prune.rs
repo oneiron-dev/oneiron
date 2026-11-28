@@ -148,8 +148,9 @@ pub(crate) fn checkpoint_read_cache_keys(
 /// STORE = A, FIX 10799): an erased item's cached body, text document,
 /// content-world witness, source provenance, opened marker, touch row, thin index rows
 /// and its by-item index rows (`ri:i:`) go in the erase's own
-/// transaction, under its id and its masked copy's alike. Absent-ok key
-/// deletes only: nothing is decoded, no mark is read, and an item with no
+/// transaction, under its id and its masked copy's alike, with its soft-drop marker
+/// (`ri:u:`): a resident row reads by its own state, and an erased item keeps no marker.
+/// Absent-ok key deletes only: nothing is decoded, no mark is read, and an item with no
 /// cache erases as before.
 pub(crate) fn erase_item_caches_in_txn(
     store: &Store,
@@ -180,6 +181,9 @@ pub(crate) fn erase_item_caches_in_txn(
         store.sync_state.delete(txn, key)?;
     }
     crate::sync::residence::delete_index_by_item_of_items_in_txn(store, txn, items)?;
+    for item in items {
+        crate::sync::residence::delete_soft_drop_marker_in_txn(store, txn, &item.to_hex())?;
+    }
     Ok(())
 }
 

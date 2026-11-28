@@ -94,6 +94,7 @@ pub(super) fn audit_and_stage_body(
         fixed.id,
         dispatch.decoded_claim_body.as_ref(),
         fixed.replicated,
+        fixed.claim_source_replay,
     )?;
     stage_optional_side_row(store, wtxn, markers.hub_origin_marker)?;
     // An owning adapter's custody reads what a body file holds, never its

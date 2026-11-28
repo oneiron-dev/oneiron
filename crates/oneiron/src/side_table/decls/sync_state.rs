@@ -248,6 +248,11 @@ side_tables! {
     /// Key: item tag ":" window key. Value: [1].
     SYNC_RESIDENCE_INDEX_BY_ITEM: SyncState b"ri:i:" Raw
         [restore: content] [family: unclassified] [tier: canonical];
+    /// A soft-dropped thin index item, device-local and never synced: the home stopped listing the
+    /// item in a still-current window (a soft erase, or a move out of the window), or a soft
+    /// tombstone dropped its thin copy. Key: item tag (hex32 entity id). Value: [1].
+    SYNC_RESIDENCE_INDEX_SOFT_DROP: SyncState b"ri:u:" Raw
+        [restore: content] [family: unclassified] [tier: canonical];
     /// The window an opened thin-residence item came from. Key: hex32 (entity id).
     SYNC_RESIDENCE_OPENED_ITEM: SyncState b"ro:e:" Raw
         [restore: content] [family: unclassified] [tier: canonical];

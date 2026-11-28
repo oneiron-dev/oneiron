@@ -33,6 +33,7 @@ mod promoted_window_rows;
 mod prune;
 mod publication_access;
 mod recall_scope;
+mod resolved_mode;
 mod sealed_updates;
 mod search;
 mod secret_same_value;
@@ -117,6 +118,11 @@ pub(crate) use index_by_item::{
     delete_index_by_item_for_listing_in_txn, delete_index_by_item_in_txn,
     delete_index_by_item_of_items_in_txn, put_index_by_item_in_txn,
 };
+pub(crate) use index_by_item::{
+    delete_soft_drop_marker_in_txn, index_listing_of_item_in_txn,
+    mark_index_items_absent_from_page_in_txn, put_soft_drop_marker_in_txn,
+    soft_drop_marker_exists_in_txn,
+};
 pub use kit_fetch::{
     KIT_BUNDLE_FETCH_MAX_AGE_SECS, KIT_BUNDLE_FETCH_NONCE_BYTES, KIT_BUNDLE_FETCH_PATH,
     KIT_CUSTODY_FETCH_PATH, KIT_CUSTODY_REPLY_MAX, KIT_PAD_INDEX_FETCH_PATH,
@@ -169,6 +175,9 @@ pub use publication_access::{
     pending_publication_grants, publication_grant,
 };
 pub use recall_scope::{ResolvedRecallSelection, ResolvedRecallWorlds, recall_scope_transcript};
+pub(crate) use resolved_mode::{
+    device_residence_opened_in_txn, record_resolved_device_residence_in_txn,
+};
 pub use sealed_updates::{
     OutboxSealedUpdate, SEALED_UPDATE_KEEP_SECS, SEALED_UPDATE_PAGE_BYTES,
     SEALED_UPDATE_PAGE_ENTRIES, SealedUpdateEpoch, SealedUpdateId, SealedUpdatePage,

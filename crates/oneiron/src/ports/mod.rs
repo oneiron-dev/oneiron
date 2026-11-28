@@ -54,9 +54,12 @@ mod compaction_home_revisions;
 mod dependency_registration;
 mod integrity;
 pub(crate) use compaction_home_revisions::withdraw_changed_home_dependents_in_txn;
+#[cfg(feature = "sync")]
+pub(crate) use dependency_registration::record_index_listed_dependency_in_txn;
 pub(crate) use dependency_registration::{
     record_fork_dependency_in_txn, remove_fork_dependencies_in_txn,
 };
+pub(crate) use integrity::source_deleted_or_withdrawn_in_txn;
 mod lmdb_aux;
 pub(crate) use lmdb_aux::erase_change_log_actor_in_txn;
 mod lmdb_claim;

@@ -119,8 +119,15 @@ fn stored_asset_digest(
 }
 
 fn judged(blob: &[u8]) -> bool {
-    EntityMetadataHeader::parse(blob)
-        .is_some_and(|header| PEER_JUDGED_KINDS.contains(&header.entity_type))
+    EntityMetadataHeader::parse(blob).is_some_and(|header| {
+        PEER_JUDGED_KINDS.contains(&header.entity_type)
+            || (header.entity_type == crate::registry::ENTITY_TYPE_CLAIM
+                && crate::claim::decode_claim_body(&blob[ENTITY_METADATA_HEADER_LEN..], true)
+                    .is_ok_and(|body| {
+                        crate::dreamer_consolidation::replicated_sources::locator_evidence(&body)
+                            .is_some()
+                    }))
+    })
 }
 
 /// The peer's admitted rows, each with its exact wire digest followed,
