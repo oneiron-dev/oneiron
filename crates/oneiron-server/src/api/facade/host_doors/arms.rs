@@ -15,12 +15,14 @@ use std::sync::Arc;
 
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::experiment_arm::{
-    ARMS_ADMIT_VERB, ARMS_FORECAST_VERB, ARMS_GET_VERB, ARMS_LIST_VERB, ARMS_REVIEW_VERB,
-    ARMS_UNITS_CANCEL_VERB, ARMS_UNITS_RESERVE_VERB, ARMS_VERDICT_VERB, ArmAdmitRequest,
-    ArmForecastRequest, ArmList, ArmListRequest, ArmRef, ArmReviewRequest, ArmVerdictRequest,
+    ARMS_ADMIT_VERB, ARMS_FORECAST_VERB, ARMS_GET_VERB, ARMS_LIST_VERB, ARMS_UNITS_CANCEL_VERB,
+    ARMS_UNITS_RESERVE_VERB, ArmAdmitRequest, ArmForecastRequest, ArmList, ArmListRequest, ArmRef,
     ArmView, UnitCancel, UnitCancelRequest, UnitReserveRequest, UnitView, arm_admit_as,
-    arm_forecast_as, arm_get_as, arm_list_as, arm_review_as, arm_verdict_as, unit_cancel_as,
-    unit_reserve_as,
+    arm_forecast_as, arm_get_as, arm_list_as, unit_cancel_as, unit_reserve_as,
+};
+use oneiron::experiment_arm::{
+    ARMS_REVIEW_VERB, ARMS_VERDICT_VERB, ArmReviewRequest, ArmVerdictRequest, arm_review_as,
+    arm_verdict_as,
 };
 use oneiron::gpu_job::{GpuJobActor, GpuJobConnector, GpuJobError, UnitJobStart};
 use oneiron::gpu_line::ClaimKey;
