@@ -115,7 +115,8 @@ pub use home_handoff::{
 };
 pub(crate) use index_by_item::{
     delete_index_by_item_for_listing_in_txn, delete_index_by_item_in_txn,
-    delete_index_by_item_of_items_in_txn, put_index_by_item_in_txn,
+    delete_index_by_item_of_items_in_txn, index_by_item_key_of_listing,
+    listing_key_of_index_by_item, put_index_by_item_in_txn,
 };
 pub use kit_fetch::{
     KIT_BUNDLE_FETCH_MAX_AGE_SECS, KIT_BUNDLE_FETCH_NONCE_BYTES, KIT_BUNDLE_FETCH_PATH,
