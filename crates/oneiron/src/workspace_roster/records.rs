@@ -41,6 +41,27 @@ impl RawValue for PresetRow {
     }
 }
 
+/// The `ORG`s whose stored workspace presets name shared vault `vault_id`,
+/// read in `txn`: each one as its preset states it and as every head its
+/// redirects resolve to now (its survivor once merged, each part once
+/// split), so a setup stored under any of those ids is found.
+pub(crate) fn preset_orgs_of_vault_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    vault_id: u64,
+) -> Result<std::collections::BTreeSet<EntityId>> {
+    let mut orgs = std::collections::BTreeSet::new();
+    for (_, row) in PRESET.scan(&vault.store, txn)? {
+        if row.preset.workspace_vault_id != vault_id {
+            continue;
+        }
+        let org = row.preset.org_ref;
+        orgs.insert(org);
+        orgs.extend(vault.resolve_entity_in_txn(txn, &org)?);
+    }
+    Ok(orgs)
+}
+
 /// One onboarded member's roster row (actor, optional companion
 /// person/actor/facet, identity). Key: [`RosterMemberKey`].
 pub(super) const MEMBER: SideTable<RosterMemberKey, RosterMemberRow, Raw> =
