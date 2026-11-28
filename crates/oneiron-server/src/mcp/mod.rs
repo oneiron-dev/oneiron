@@ -78,13 +78,14 @@ pub use self::paging::{
 };
 pub(crate) use self::paging::{McpPageCursorState, McpPageSnapshot, mcp_page_argument_digest_held};
 pub use self::registry::McpConnectorActorRegistry;
+pub use self::results::mcp_setup_payload_reserving;
 pub(crate) use self::results::{
     MCP_CODE_RUN_CONSENT_POLICY_REF, is_code_run_result, mcp_stamp_call_receipt,
 };
 pub use self::results::{
     McpBoardKeyframe, McpResultMetadata, McpSetupPayload, McpSetupPayloadError, McpSetupSelfBrief,
     mcp_effective_scope_label, mcp_effective_scope_value, mcp_recovery_suggestions,
-    mcp_setup_payload, mcp_verb_board_section,
+    mcp_setup_payload,
 };
 pub use self::surface::{
     MCP_BOARD_BUDGET_TOK, MCP_CODE_HOST_UNBOUND_CODE, MCP_CODE_RUN_SCHEMA_VERSION,

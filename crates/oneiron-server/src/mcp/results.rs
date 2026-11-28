@@ -239,6 +239,7 @@ impl McpBoardKeyframe {
                 "explicit_override_tok": self.metadata.explicit_override_tok,
                 "rendered_tok": self.metadata.rendered_tok,
                 "floor_exceeds_cap": self.metadata.floor_exceeds_cap,
+                "cut_rows": self.metadata.cut_rows,
             },
         })
     }
@@ -339,38 +340,41 @@ pub fn mcp_setup_payload(
     sections: &[BoardSection],
     budget: BoardBudgetRequest,
 ) -> Result<McpSetupPayload, McpSetupPayloadError> {
-    let render = oneiron::board_verb::render_current_keyframe(header, sections, budget)?;
-    Ok(McpSetupPayload {
-        board: McpBoardKeyframe {
-            epoch: header.epoch,
-            text: render.text,
-            metadata: render.metadata,
-        },
-        verb_grammar: generated_verb_tools()?,
-        instructions: MCP_SETUP_INSTRUCTIONS,
-        self_brief: None,
-    })
+    mcp_setup_payload_reserving(header, sections, budget, 0).map(|(payload, _)| payload)
 }
 
-/// The always-present pinned VERBS section: the grammar restated as board
-/// state, so a resident board and a setup result never disagree.
+/// [`mcp_setup_payload`] reserving `reserved_tok` for the post-render rider.
+/// The settled outcome lets callers account only for rows that were shown.
 ///
 /// # Errors
 ///
-/// Propagates the engine's section validation.
-pub fn mcp_verb_board_section(
-    verbs: &[McpGeneratedVerbTool],
-) -> Result<BoardSection, oneiron::context_board::BoardFrameError> {
-    BoardSection::new(
-        "VERBS",
-        verbs.iter().map(|verb| verb.name.to_owned()).collect(),
-        Vec::new(),
-        Vec::new(),
-        oneiron::context_board::SectionPolicy {
-            pinned: true,
-            shed_rank: None,
+/// Propagates the engine's own render refusal and the generated-projection
+/// refusal; neither is flattened into a partial payload.
+pub fn mcp_setup_payload_reserving(
+    header: &BoardBlockHeader,
+    sections: &[BoardSection],
+    budget: BoardBudgetRequest,
+    reserved_tok: usize,
+) -> Result<(McpSetupPayload, oneiron::context_board::ShedOutcome), McpSetupPayloadError> {
+    let render = oneiron::board_verb::render_current_keyframe_reserving(
+        header,
+        sections,
+        budget,
+        reserved_tok,
+    )?;
+    Ok((
+        McpSetupPayload {
+            board: McpBoardKeyframe {
+                epoch: header.epoch,
+                text: render.text,
+                metadata: render.metadata,
+            },
+            verb_grammar: generated_verb_tools()?,
+            instructions: MCP_SETUP_INSTRUCTIONS,
+            self_brief: None,
         },
-    )
+        render.shed,
+    ))
 }
 
 /// States a `tools/call` result's call receipt (OF-538) in its metadata

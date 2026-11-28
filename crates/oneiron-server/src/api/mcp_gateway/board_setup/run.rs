@@ -381,7 +381,7 @@ pub(super) fn run_lane_reads(
         .map_err(|error| mcp_engine_error("run board row admission failed", error))
 }
 
-/// [`mcp_board_sections`] for a pumped run's agent: VERBS, WORLDS, the
+/// [`mcp_board_sections`] for a pumped run's agent: WORLDS, the
 /// MEMORIES the policy manifest and its hook `pins` reach, TASKS with its
 /// people and children, the SCRATCHPAD of the run's bound `session` (the
 /// pad durable code run `run` writes there, when the board names one), PACKS
@@ -410,8 +410,6 @@ pub(super) fn run_board_sections(
     ),
     McpGatewayError,
 > {
-    let verbs = crate::mcp::generated_verb_tools().map_err(mcp_surface_construction_error)?;
-    let verb_section = crate::mcp::mcp_verb_board_section(&verbs).map_err(mcp_board_frame_error)?;
     let mut rows = server
         .vault
         .memory(actor.entity_ref(), actor.actor_class())
@@ -524,7 +522,7 @@ pub(super) fn run_board_sections(
             .flat_map(|pin| pin.refs.iter().copied())
             .collect(),
     );
-    let mut sections = vec![verb_section, worlds_section];
+    let mut sections = vec![worlds_section];
     let room_reader = run_room_reader(server, actor);
     if let Some(memories) = crate::api::context_board::lane_pins_projection(
         read,

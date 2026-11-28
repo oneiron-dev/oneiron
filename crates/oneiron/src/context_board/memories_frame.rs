@@ -107,6 +107,25 @@ pub(super) fn memories_section_name(world: Option<&str>, fiction: bool) -> Strin
 /// base's `unscoped`.
 const UNPROVEN_WORLD_SECTION: &str = "unknown";
 
+/// The exact MEMORIES section name `row` renders in within `section`: its
+/// world key, `unknown` when its world cannot be proven else `unscoped` when
+/// it has none, plus the FICTION marker when any row of that world group is
+/// fiction. The renderer names its sections through this same rule.
+pub fn memories_row_section_name(section: &MemoriesSection, row: &MemoryRow) -> String {
+    let world = match row.world.as_deref() {
+        None if row.world_unproven => Some(UNPROVEN_WORLD_SECTION),
+        world => world,
+    };
+    let fiction = section.rows.iter().any(|other| {
+        let other_world = match other.world.as_deref() {
+            None if other.world_unproven => Some(UNPROVEN_WORLD_SECTION),
+            world => world,
+        };
+        other_world == world && other.fiction
+    });
+    memories_section_name(world, fiction)
+}
+
 pub fn assemble_memories_sections(
     section: &MemoriesSection,
 ) -> Result<Vec<BoardSection>, BoardFrameError> {
@@ -124,25 +143,26 @@ pub fn assemble_memories_sections(
             .and_then(|id| crate::EntityId::from_hex(id).ok())
             .is_some_and(crate::entity_id::is_foreign_world_id_range);
         let mut pinned = Vec::new();
+        let mut pinned_ids = Vec::new();
         let mut details = Vec::new();
         let mut detail_ids = Vec::new();
         for row in &rows {
             let texts = memory_board_rows(row, foreign);
+            let id = crate::EntityId::from_hex(&row.id).ok();
             if row.tier == MemoryTier::Pinned {
+                pinned_ids.extend(std::iter::repeat_n(id, texts.len()));
                 pinned.extend(texts);
             } else {
-                let id = crate::EntityId::from_hex(&row.id).ok();
                 detail_ids.extend(std::iter::repeat_n(id, texts.len()));
                 details.extend(texts);
             }
         }
-        let fiction = rows.iter().any(|row| row.fiction);
         let pinned_count = rows
             .iter()
             .filter(|row| row.tier == MemoryTier::Pinned)
             .count();
         let mut board = BoardSection::new(
-            memories_section_name(world, fiction),
+            memories_row_section_name(section, rows[0]),
             pinned,
             details,
             vec![format!("count: {}", rows.len())],
@@ -155,6 +175,7 @@ pub fn assemble_memories_sections(
         .with_fold_summary(
             super::layout::FoldSummary::total(rows.len()).count("pinned", pinned_count),
         );
+        board.pinned_row_ids = pinned_ids;
         if foreign {
             board = board.with_foreign_host(world.unwrap_or("unknown"));
         }

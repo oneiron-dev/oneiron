@@ -93,7 +93,10 @@ pub(super) fn split_board(
             .filter(|(_, rides)| **rides == part)
             .map(|(section, _)| section.clone())
             .collect();
-        part_sources(&held, part, inputs)
+        // A row the split render's cut took is no dependency of either part.
+        let mut sources = part_sources(&held, part, inputs);
+        super::chat_emit::drop_cut_dependencies(&mut sources, &render.render.shed.cut_ids);
+        sources
     };
     Ok(ChatSplit {
         state_sources: of_part(BoardPart::State),

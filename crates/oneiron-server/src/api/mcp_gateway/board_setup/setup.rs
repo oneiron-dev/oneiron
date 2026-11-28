@@ -108,12 +108,9 @@ pub(crate) async fn execute_mcp_setup(
                 brief.resident_people().clone()
             });
         let board = mcp_current_board_with_roster(server, actor, &resident).await?;
-        // The GRAMMAR rows this page partitions are complete, but the health
-        // this result states is the BOARD's, and the board has two omission
-        // axes plus its own exhaustion bit. Deriving it from scope omission
-        // alone reported a keyframe the render window had truncated — or one
-        // whose TASK scan stopped at its cap — as healthy (ONE-1704 repair).
-        let health = board.omissions().health();
+        // Read before the header takes the board's scope label; the cut
+        // below adds its own truncation to these facts.
+        let omissions = board.omissions();
         let header = oneiron::context_board::BoardBlockHeader {
             epoch: board.epoch,
             scope: board.scope_label,
@@ -123,8 +120,19 @@ pub(crate) async fn execute_mcp_setup(
         let mut budget = args.board_budget_request();
         budget.harness_default_tok =
             crate::api::context_board::board_cap_tok(&server.vault, budget.harness_default_tok);
-        let mut payload = crate::mcp::mcp_setup_payload(&header, &board.laid_out, budget)
-            .map_err(mcp_setup_payload_error)?;
+        // The rider below fits the changed line into the keyframe after the
+        // render: reserve its exact tokens so the render sheds for them.
+        let reserved_tok = board.changes.ride_tokens();
+        let (mut payload, board_shed) =
+            crate::mcp::mcp_setup_payload_reserving(&header, &board.laid_out, budget, reserved_tok)
+                .map_err(mcp_setup_payload_error)?;
+        // The GRAMMAR rows this page partitions are complete, but the health
+        // this result states is the BOARD's, and the board has two omission
+        // axes plus its own exhaustion bit. Deriving it from scope omission
+        // alone reported a keyframe the render window had truncated — or one
+        // whose TASK scan stopped at its cap — as healthy (ONE-1704 repair).
+        // The final cut truncates on the window axis too.
+        let health = omissions.with_cut(board_shed.cut_rows).health();
         // The keyframe shows the connector actor's layout batch: once this
         // page resolves, the batch it shows becomes live (BOARD-LAYOUT).
         layout_candidate = board.layout_candidate.clone();
@@ -165,8 +173,15 @@ pub(crate) async fn execute_mcp_setup(
             read_rows: Vec::new(),
         };
         staged_brief = brief;
-        hooks = Some(board.hooks);
-        board_rows.clone_from(&board.rows);
+        hooks = Some(board.hooks.shown_by_render(&board_shed));
+        // Its prefetch seeds: every row it was derived from, less each row
+        // its final cut took.
+        board_rows = board
+            .rows
+            .iter()
+            .copied()
+            .filter(|row| !board_shed.cut_ids.contains(row))
+            .collect();
         rider = Some((board.changes, board.epoch));
         (structured, keyframe, health, snapshot, Some(board.epoch))
     };

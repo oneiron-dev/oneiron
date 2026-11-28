@@ -284,4 +284,14 @@ impl Vault {
             Ok(row)
         })
     }
+
+    /// Test-door: inserts a hook block row directly, as an AddBlock outcome
+    /// would have written it, for board hook-delivery tests.
+    #[cfg(oneiron_test_support)]
+    pub fn put_hook_block_for_test(&self, id: EntityId, block: HookBlock) -> Result<()> {
+        self.with_write_txn_grouped(|txn| {
+            BLOCKS.put(self, txn, &id, &block)?;
+            Ok(())
+        })
+    }
 }

@@ -77,6 +77,8 @@ pub(crate) struct ContextBoardRenderBudget {
     rendered_tok: usize,
     /// True when the never-shed floor alone exceeds the cap.
     floor_exceeds_cap: bool,
+    /// Rows the render cut for size, 0 when it cut none.
+    pub(super) cut_rows: usize,
     /// The shed ranks applied, in order.
     applied_shed: Vec<String>,
     /// Concrete TASK-row projection budget, when the request or the TASKS
@@ -105,6 +107,7 @@ impl ContextBoardRenderBudget {
             budget_tok: render.metadata.budget_tok,
             rendered_tok: render.metadata.rendered_tok,
             floor_exceeds_cap: render.metadata.floor_exceeds_cap,
+            cut_rows: render.metadata.cut_rows,
             applied_shed: render
                 .shed
                 .applied
@@ -226,6 +229,9 @@ pub(super) struct BoardParts {
     pub(super) named: Vec<EntityId>,
     /// Whether every named row reference was a valid entity id.
     pub(super) named_complete: bool,
+    /// The `named` ids in a pinned floor, which the cut never takes: the
+    /// room and its rules.
+    pub(super) pinned_named: Vec<EntityId>,
     /// The hook blocks whose task rows TASKS tagged.
     pub(super) hook_blocks: std::collections::BTreeSet<EntityId>,
     /// The rows each INBOX row kept rests on (FIX 8145): every identity of
@@ -262,6 +268,7 @@ pub(super) fn board_parts(
     let vault: &oneiron::Vault = &server.vault;
     let mut named = Vec::new();
     let mut named_complete = true;
+    let mut pinned_named = Vec::new();
 
     // WORLDS: the tiers the caller's planner reads, over the WORLD bodies
     // its read admits.
@@ -342,12 +349,14 @@ pub(super) fn board_parts(
     });
     let room = room.map(|page| page.section);
     if let Some(room) = &room {
+        let pinned_from = named.len();
         named.push(room.room);
         super::source_rows::extend_source_rows(
             &mut named,
             &mut named_complete,
             room.claims.iter().map(|claim| claim.claim_ref.as_str()),
         );
+        pinned_named = named[pinned_from..].to_vec();
     }
 
     // The TASKS token allotment: the request's explicit one, else the
@@ -653,6 +662,7 @@ pub(super) fn board_parts(
         skills: std::iter::once(skills.loaded).chain(skills.found).collect(),
         named,
         named_complete,
+        pinned_named,
         hook_blocks,
         inbox: inbox_sources,
         memories_filter,

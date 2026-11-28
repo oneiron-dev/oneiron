@@ -311,9 +311,9 @@ pub(super) fn mcp_board_state_rows(
 /// TASKS comes from the rows of the engine's own gated `describe` facade,
 /// NARROWED to this credential's world/facet ceiling before they ever reach
 /// the renderer, so a board a narrow connector reads is never the actor-wide
-/// board. The pinned VERBS section restates the generated grammar
-/// as board state. `pins` tag the TASKS rows they name and pin their other
-/// rows into MEMORIES, beside the policy manifest's pins.
+/// board. The generated grammar travels beside the board in the setup
+/// result, not as a board section. `pins` tag the TASKS rows they name and
+/// pin their other rows into MEMORIES, beside the policy manifest's pins.
 pub(super) fn mcp_board_sections(
     server: &Arc<SyncServer>,
     actor: &McpCallContext,
@@ -330,8 +330,6 @@ pub(super) fn mcp_board_sections(
     ),
     McpGatewayError,
 > {
-    let verbs = crate::mcp::generated_verb_tools().map_err(mcp_surface_construction_error)?;
-    let verb_section = crate::mcp::mcp_verb_board_section(&verbs).map_err(mcp_board_frame_error)?;
     let memory = crate::api::mcp_credential_memory(
         &server.vault,
         actor.auth.as_ref(),
@@ -439,7 +437,7 @@ pub(super) fn mcp_board_sections(
                     .flat_map(|pin| pin.refs.iter().copied())
                     .collect(),
             );
-    let mut sections = vec![verb_section, worlds_section];
+    let mut sections = vec![worlds_section];
     let room = mcp_bound_room(server, actor);
     if let Some(memories) =
         mcp_pinned_memories(server, actor, pins, room.as_ref().map(|room| room.room))?
