@@ -33,6 +33,19 @@
 //! a closed list as the job account and answers its output, one query on the
 //! machine at a time ([`super::device_query`]; FIX
 //! EXEC-NODE-PROBE-AFTER-HANDOVER).
+//!
+//! The sixth, `usage <id> <bytes> <entries> <depth>`, is the disk check's
+//! measure (design 7.9; FIX EXEC-NODE-DISK-CHECK-UNBUILT; [`usage`]): a job
+//! may make a directory the engine's account cannot list, so root walks the
+//! payload. It walks the unit's own bind source, `<PAYLOAD_ROOT>/<id>`,
+//! under a root-only directory, never the engine's path; it stops once it
+//! has counted more than `<bytes>`, and a payload with more than
+//! `<entries>` entries or directories deeper than `<depth>` (the node
+//! file's walk bounds, which the engine reads) is unmeasurable. The walk's
+//! depth never passes [`payload_usage::PAYLOAD_DEPTH_MAX_CEILING`] and its
+//! time never passes the engine's bound. The handler, given the node file, takes the
+//! job account from it. The answer comes as a device query's: `ok <n>` and
+//! n bytes, [`payload_usage::PayloadUsage::render`]'s line.
 
 use std::io::{Read as _, Write as _};
 use std::os::fd::{AsFd as _, AsRawFd as _};
@@ -47,6 +60,12 @@ use super::exec::connect_by_deadline;
 use super::safe_fs::account;
 use super::systemd_unit::{SYSTEMCTL_TIMEOUT, run_tool, show};
 use super::unit_file::plain_account;
+
+mod usage;
+
+// The disk check's walk and its measure (the `usage` verb), in a group of
+// its own beside the verb's module.
+use super::super::jobs::payload_usage;
 
 /// The socket the engine's account connects to.
 pub const CONTROL_SOCKET_PATH: &str = "/run/oneiron-job-control.sock";
@@ -69,9 +88,11 @@ const SIGNAL_ACTIVE_STATE: &str = "active";
 
 /// The longest request line: `signal `, 32 hex digits, a space, the
 /// longest checkpoint signal's name and the newline fit with room, and so
-/// does `renew `, 32 hex digits, a space, a `u64`'s 20 digits and the
-/// newline (60 bytes).
-const REQUEST_MAX_BYTES: usize = 64;
+/// do `renew `, 32 hex digits, a space, a `u64`'s 20 digits and the newline
+/// (60 bytes), and the longest `usage` line: `usage `, 32 hex digits, two
+/// numbers of up to 20 digits and one of up to 10, each after a space, and
+/// the newline (92 bytes).
+const REQUEST_MAX_BYTES: usize = 128;
 
 /// The most digits a renewal's cutoff has: a `u64`.
 const CUTOFF_DIGITS_MAX: usize = 20;
@@ -113,6 +134,14 @@ pub enum ControlVerb {
     Renew {
         cutoff_boot_ns: u64,
     },
+    /// The disk check's measure of the job's payload: it stops once it has
+    /// counted more than `stop_past` bytes; a payload past `entries_max`
+    /// entries or `depth_max` directory levels is unmeasurable.
+    Usage {
+        stop_past: u64,
+        entries_max: u64,
+        depth_max: u32,
+    },
 }
 
 impl ControlVerb {
@@ -124,17 +153,21 @@ impl ControlVerb {
             Self::Stop => "stop",
             Self::Signal(_) => "signal",
             Self::Renew { .. } => "renew",
+            Self::Usage { .. } => "usage",
         }
     }
 
-    /// The verb a request word names, with the signal's name for `signal`.
+    /// The verb a request word names, with its argument: the signal's name
+    /// for `signal`; for `usage` the byte bound, the entry bound and the
+    /// depth bound, in decimal digits, each after one space.
     ///
     /// # Errors
     ///
     /// The refusal's reason: an unknown word, a signal that is not a
-    /// checkpoint signal, or a name given where none belongs.
-    pub fn from_words(word: &str, signal: Option<&str>) -> Result<Self, String> {
-        match (word, signal) {
+    /// checkpoint signal, a bound that is not a decimal number, or an
+    /// argument missing or given where none belongs.
+    pub fn from_words(word: &str, argument: Option<&str>) -> Result<Self, String> {
+        match (word, argument) {
             ("start", None) => Ok(Self::Start),
             ("stop", None) => Ok(Self::Stop),
             ("signal", Some(name)) => CHECKPOINT_SIGNALS
@@ -144,16 +177,21 @@ impl ControlVerb {
                 .map(Self::Signal)
                 .ok_or_else(|| "signal_not_a_checkpoint_signal".to_owned()),
             ("signal", None) => Err("signal_name_missing".to_owned()),
+            ("usage", Some(bounds)) => {
+                usage::usage_bounds(bounds).ok_or_else(|| "usage_bound_malformed".to_owned())
+            }
+            ("usage", None) => Err("usage_bound_missing".to_owned()),
             ("start" | "stop", Some(_)) => Err("request_malformed".to_owned()),
             _ => Err("verb_unknown".to_owned()),
         }
     }
 
     /// The `systemctl` arguments that carry the verb out on `unit`; `None`
-    /// for a renewal, which root carries out itself ([`super::renew`]).
+    /// for a renewal, which root carries out itself ([`super::renew`]), and
+    /// for `usage`, which root answers itself ([`usage`]).
     fn systemctl_args(self, unit: &str) -> Option<Vec<String>> {
         Some(match self {
-            Self::Renew { .. } => return None,
+            Self::Renew { .. } | Self::Usage { .. } => return None,
             Self::Start | Self::Stop => vec![
                 self.word().to_owned(),
                 "--no-block".to_owned(),
@@ -187,12 +225,18 @@ fn parse_cutoff(text: &str) -> Result<u64, String> {
 }
 
 /// The request line for `verb` on the job unit `id`: `<verb> <32 hex>\n`,
-/// `signal <32 hex> <name>\n` or `renew <32 hex> <cutoff>\n`.
+/// `signal <32 hex> <name>\n`, `renew <32 hex> <cutoff>\n` or `usage <32
+/// hex> <bytes> <entries> <depth>\n`.
 #[must_use]
 pub fn render_request(verb: ControlVerb, id: &JobKeyId) -> String {
     match verb {
         ControlVerb::Signal(name) => format!("signal {id} {name}\n"),
         ControlVerb::Renew { cutoff_boot_ns } => format!("renew {id} {cutoff_boot_ns}\n"),
+        ControlVerb::Usage {
+            stop_past,
+            entries_max,
+            depth_max,
+        } => format!("usage {id} {stop_past} {entries_max} {depth_max}\n"),
         ControlVerb::Start | ControlVerb::Stop => format!("{} {id}\n", verb.word()),
     }
 }
@@ -200,7 +244,8 @@ pub fn render_request(verb: ControlVerb, id: &JobKeyId) -> String {
 /// One request line, as the handler reads it: exactly a known verb, one
 /// space, a job instance id (32 lower-hex digits), for `signal` one space
 /// and a checkpoint signal's name, for `renew` one space and the cutoff's
-/// boot-clock time in decimal, and a newline.
+/// boot-clock time in decimal, for `usage` its three numbers, each after one
+/// space, and a newline.
 ///
 /// # Errors
 ///
@@ -222,6 +267,10 @@ pub fn parse_request(line: &[u8]) -> Result<(ControlVerb, JobKeyId), String> {
             .split_once(' ')
             .map(|(id, cutoff)| (id, Some(cutoff)))
             .ok_or_else(|| "renew_cutoff_missing".to_owned())?,
+        "usage" => rest
+            .split_once(' ')
+            .map(|(id, bounds)| (id, Some(bounds)))
+            .ok_or_else(|| "usage_bound_missing".to_owned())?,
         _ => (rest, None),
     };
     let verb = match (word, extra) {
@@ -259,13 +308,7 @@ pub fn request_at(
     connect_wait: Duration,
 ) -> Result<(), String> {
     let fail = |error: std::io::Error| format!("{}: {error}", socket.display());
-    let deadline = Instant::now() + connect_wait;
-    let address = rustix::net::SocketAddrUnix::new(socket).map_err(|error| fail(error.into()))?;
-    let mut stream = connect_by_deadline(&address, deadline).map_err(fail)?;
-    stream.set_write_timeout(Some(REQUEST_WAIT)).map_err(fail)?;
-    stream
-        .write_all(render_request(verb, id).as_bytes())
-        .map_err(fail)?;
+    let mut stream = send_request(socket, verb, id, connect_wait)?;
     let reply = read_line(&mut stream, REPLY_MAX_BYTES, CONTROL_ANSWER_WAIT).map_err(fail)?;
     let reply = String::from_utf8_lossy(&reply);
     let reply = reply.trim_end();
@@ -277,11 +320,70 @@ pub fn request_at(
         .map_or_else(|| format!("job-control answered {reply:?}"), str::to_owned))
 }
 
+/// The disk check's measure of the job `id`'s payload, as root walked it
+/// within `bounds` (their depth and entries; the time bound is root's own),
+/// stopping once it has counted more than `stop_past` bytes. The answer
+/// comes as a device query's does: `ok <n>`, then the measure's n bytes.
+///
+/// # Errors
+///
+/// As [`request_at`], and an answer that is not a measure.
+pub fn request_usage(
+    id: &JobKeyId,
+    stop_past: u64,
+    bounds: &payload_usage::PayloadWalkBounds,
+) -> Result<payload_usage::PayloadUsage, String> {
+    let socket = Path::new(CONTROL_SOCKET_PATH);
+    let fail = |error: std::io::Error| format!("{}: {error}", socket.display());
+    let verb = ControlVerb::Usage {
+        stop_past,
+        entries_max: bounds.entries_max,
+        depth_max: bounds.depth_max,
+    };
+    let mut stream = send_request(socket, verb, id, REQUEST_WAIT)?;
+    let deadline = Instant::now() + CONTROL_ANSWER_WAIT;
+    let head = read_line(&mut stream, REPLY_MAX_BYTES, CONTROL_ANSWER_WAIT).map_err(fail)?;
+    let head = String::from_utf8_lossy(&head);
+    let head = head.trim_end();
+    if let Some(why) = head.strip_prefix("refused ") {
+        return Err(why.to_owned());
+    }
+    let length = head
+        .strip_prefix("ok ")
+        .and_then(|length| length.parse::<usize>().ok())
+        .filter(|length| *length <= REPLY_MAX_BYTES)
+        .ok_or_else(|| format!("job-control answered usage {head:?}"))?;
+    let measure = device_query::read_exactly(&mut stream, length, deadline).map_err(fail)?;
+    let measure = String::from_utf8_lossy(&measure);
+    payload_usage::PayloadUsage::parse(&measure)
+        .ok_or_else(|| format!("job-control answered usage {measure:?}"))
+}
+
+/// Connects to the handler at `socket` within `connect_wait` and sends the
+/// request line for `verb` on the job unit `id`.
+fn send_request(
+    socket: &Path,
+    verb: ControlVerb,
+    id: &JobKeyId,
+    connect_wait: Duration,
+) -> Result<UnixStream, String> {
+    let fail = |error: std::io::Error| format!("{}: {error}", socket.display());
+    let deadline = Instant::now() + connect_wait;
+    let address = rustix::net::SocketAddrUnix::new(socket).map_err(|error| fail(error.into()))?;
+    let mut stream = connect_by_deadline(&address, deadline).map_err(fail)?;
+    stream.set_write_timeout(Some(REQUEST_WAIT)).map_err(fail)?;
+    stream
+        .write_all(render_request(verb, id).as_bytes())
+        .map_err(fail)?;
+    Ok(stream)
+}
+
 /// `oneiron job-control --engine-account <name> [--node-file <path>]` (root,
 /// one instance of the socket's handler per connection; the connection is
-/// its standard input and output). Answers `ok` or `refused <reason>` on one
-/// line. Only `renew` reads the node file; a handler installed without it
-/// refuses a renewal.
+/// its standard input and output). Answers `ok`, `ok <n>` and n bytes of
+/// output for `device-query` and `usage`, or `refused <reason>`, on one
+/// line. `renew`, `device-query` and `usage` read the node file; a handler
+/// installed without it refuses them.
 #[must_use]
 pub fn run(args: &[String]) -> i32 {
     let answer = std::io::stdin()
@@ -385,8 +487,8 @@ pub fn render_reply(answer: &Result<Option<Vec<u8>>, String>) -> Vec<u8> {
     }
 }
 
-/// Serves one connection: the device query's output, `None` for the other
-/// verbs, or the refusal's reason.
+/// Serves one connection: the device query's output or the payload's
+/// measure, `None` for the other verbs, or the refusal's reason.
 fn serve(args: &[String], stream: &mut UnixStream) -> Result<Option<Vec<u8>>, String> {
     let (engine, node_file) = match args {
         [flag, name] if flag == "--engine-account" && plain_account(name) => (name, None),
@@ -417,6 +519,22 @@ fn serve(args: &[String], stream: &mut UnixStream) -> Result<Option<Vec<u8>>, St
         return device_query::answer_installed(query, &settings).map(Some);
     }
     let (verb, id) = parse_request(&line)?;
+    if let ControlVerb::Usage {
+        stop_past,
+        entries_max,
+        depth_max,
+    } = verb
+    {
+        let node_file =
+            node_file.ok_or("usage_needs_node_file: run `oneiron execution-node install` again")?;
+        let bounds = payload_usage::PayloadWalkBounds {
+            depth_max: depth_max.min(payload_usage::PAYLOAD_DEPTH_MAX_CEILING),
+            entries_max,
+            ..payload_usage::PayloadWalkBounds::default()
+        };
+        return usage::payload_usage(node_file, engine, &id, stop_past, &bounds)
+            .map(|usage| Some(usage.render().into_bytes()));
+    }
     if let ControlVerb::Renew { cutoff_boot_ns } = verb {
         let node_file = node_file.ok_or(
             "renew_needs_node_file: run `oneiron execution-node install` again for sessions",

@@ -70,6 +70,13 @@ pub fn sandbox_properties(inputs: &UnitInputs, instance: &str) -> Vec<(String, S
     set("RestrictSUIDSGID", "yes".to_owned());
     set("RestrictRealtime", "yes".to_owned());
     set("LockPersonality", "yes".to_owned());
+    // The plain ways to take disk with no write through the unit's
+    // write-rate cap are refused (review r12 R12-04 of #10512): `fallocate`
+    // takes blocks with no write, and io_uring would reach it past the
+    // filter. `posix_fallocate` falls back to writing on EOPNOTSUPP. A
+    // mitigation, not a bound: the `FS_IOC_RESVSP` ioctls still preallocate
+    // (r14 R14-04; the disk check's module doc, FIX EXEC-NODE-PAYLOAD-QUOTA).
+    set("SystemCallFilter", JOB_SYSTEM_CALL_FILTER.to_owned());
     set("CapabilityBoundingSet", String::new());
     set("AmbientCapabilities", String::new());
     set("UMask", "0022".to_owned());
@@ -235,6 +242,40 @@ pub fn installed_engine_account(unit_text: &str) -> Option<&str> {
     None
 }
 
+/// The system calls a job unit refuses, each with the error it answers.
+pub const JOB_SYSTEM_CALL_FILTER: &str =
+    "~fallocate:EOPNOTSUPP io_uring_setup:ENOSYS io_uring_enter:ENOSYS io_uring_register:ENOSYS";
+
+/// The system calls [`JOB_SYSTEM_CALL_FILTER`] refuses.
+pub const JOB_REFUSED_SYSTEM_CALLS: [&str; 4] = [
+    "fallocate",
+    "io_uring_setup",
+    "io_uring_enter",
+    "io_uring_register",
+];
+
+/// Why a unit's effective `SystemCallFilter=` (as `systemctl show` gives it:
+/// `~` for a deny list, then each call, with `:<error>` when it answers
+/// one) does not refuse every call of [`JOB_REFUSED_SYSTEM_CALLS`], if it
+/// does not. A drop-in that empties the filter or turns it into an allow
+/// list is caught here (review r13 R13-06 of #10512).
+#[must_use]
+pub fn effective_filter_refusal(effective: &str) -> Option<String> {
+    let Some(denied) = effective.strip_prefix('~') else {
+        return Some(format!(
+            "the unit's effective SystemCallFilter= is {effective:?}, not a deny list"
+        ));
+    };
+    let denied: Vec<&str> = denied
+        .split_whitespace()
+        .map(|entry| entry.split_once(':').map_or(entry, |(name, _)| name))
+        .collect();
+    JOB_REFUSED_SYSTEM_CALLS
+        .iter()
+        .find(|call| !denied.contains(call))
+        .map(|call| format!("the unit's effective SystemCallFilter= lets {call} through"))
+}
+
 /// A path as one unit-file word: systemd splits these settings on spaces, so
 /// a path with a space or a quote is refused at install instead.
 fn quote_path(path: &Path) -> String {
@@ -303,6 +344,9 @@ mod tests {
         assert!(text.contains("BindPaths=-/run/oneiron-payloads/%i:/data/oneiron-jobs/%i\n"));
         assert!(text.contains("BindReadOnlyPaths=-/run/oneiron-jobs/%i\n"));
         assert_eq!(installed_runtime_max_secs(&text), Some(172_800));
+        assert!(text.contains(
+            "SystemCallFilter=~fallocate:EOPNOTSUPP io_uring_setup:ENOSYS io_uring_enter:ENOSYS io_uring_register:ENOSYS\n"
+        ));
     }
 
     #[test]
@@ -346,5 +390,40 @@ mod tests {
             None
         );
         assert_eq!(installed_engine_account("--engine-account bad;name"), None);
+    }
+
+    /// The effective filter, as `systemctl show` prints it (a deny list,
+    /// sorted, each refused call with its error), refuses every call that
+    /// takes disk with no write; an emptied filter, an allow list, or one
+    /// that lost a call does not (review r13 R13-06).
+    #[test]
+    fn the_effective_filter_refuses_every_call_that_takes_disk_with_no_write() {
+        let shown = "~fallocate:EOPNOTSUPP io_uring_enter:ENOSYS io_uring_register:ENOSYS io_uring_setup:ENOSYS";
+        assert_eq!(effective_filter_refusal(shown), None);
+        assert_eq!(
+            effective_filter_refusal(&format!("{shown} kexec_load:EPERM")),
+            None,
+            "more refused calls are no gap"
+        );
+        assert_eq!(
+            effective_filter_refusal("~fallocate io_uring_enter io_uring_register io_uring_setup"),
+            None,
+            "a call refused by a kill is refused too"
+        );
+        assert!(effective_filter_refusal("").is_some_and(|why| why.contains("deny list")));
+        assert!(
+            effective_filter_refusal("fallocate read write")
+                .is_some_and(|why| why.contains("deny list"))
+        );
+        assert!(
+            effective_filter_refusal(
+                "~io_uring_enter:ENOSYS io_uring_register:ENOSYS io_uring_setup:ENOSYS"
+            )
+            .is_some_and(|why| why.contains("fallocate"))
+        );
+        assert!(
+            effective_filter_refusal("~fallocate:EOPNOTSUPP io_uring_setup:ENOSYS")
+                .is_some_and(|why| why.contains("io_uring_enter"))
+        );
     }
 }

@@ -6,7 +6,9 @@
 //! of an acknowledged payload (row R4, 7.1 and 7.6 step 5), `Tail`, the
 //! log by offset (pass 34 row Q3, 7.2), and the machine's own state
 //! (pass 34 row Q4, 7.3): the idle readiness check with the DRAIN slot's
-//! default rule, the incidents, and the breadcrumb lines of a running key.
+//! default rule, the incidents, and the breadcrumb lines of a running key,
+//! and the disk check (7.9): a launched key whose payload passes its disk
+//! request ends as `DiskLimit` ([`payload_usage`]).
 //!
 //! One lock, the admission lock, serialises every change of a key's state
 //! and every read of the local controls. A reply is built only after its
@@ -38,6 +40,7 @@ pub mod job_unit;
 pub mod journal;
 pub mod journal_file;
 pub mod node_parts;
+pub mod payload_usage;
 pub mod readiness;
 pub mod receipt;
 #[cfg(target_os = "linux")]
@@ -51,6 +54,9 @@ mod log_tail;
 mod outputs;
 mod recovery;
 mod status;
+
+// The disk check, on a thread of its own (design 7.9).
+mod disk_check;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -74,6 +80,7 @@ pub use node_parts::{
     NodeJobPaths, NodeJobSettings, NodeJobsAttachment, StageFailure, StageOrder, Stager,
     StagingNotBuilt,
 };
+pub use payload_usage::{PayloadUsage, PayloadWalkBounds};
 pub use readiness::{DRAIN_RULE_DEFAULT, DrainPick, drain_rule_default};
 pub use receipt::{ReceiptClock, chunk_receipt_of, measured_secs, receipt_of, sign_receipt};
 #[cfg(target_os = "linux")]

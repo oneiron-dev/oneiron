@@ -14,8 +14,8 @@ use oneiron_organ_host::{FloorLease, FloorRefusal, MachineFloor};
 
 use super::{ScriptedDevices, locked};
 use crate::gpu_execution_node::jobs::{
-    AuthorityPosition, IssuerNotLive, NodeAdmission, NodeControls, NodeJobSettings, StageFailure,
-    StageOrder, Stager,
+    AuthorityPosition, IssuerNotLive, NodeAdmission, NodeControls, NodeJobSettings,
+    PayloadWalkBounds, StageFailure, StageOrder, Stager,
 };
 use crate::gpu_execution_node::node_settings::DrainClearBy;
 use crate::gpu_execution_node::wire::{JobRefusal, WorkloadPin};
@@ -39,6 +39,7 @@ struct AdmissionState {
     receipt_keep_days: u64,
     readiness_every_secs: u64,
     drain_clear_by: DrainClearBy,
+    payload_walk: PayloadWalkBounds,
     /// Each template's mirror, by template name.
     mirrors: BTreeMap<String, PathBuf>,
 }
@@ -86,6 +87,7 @@ impl ScriptedAdmission {
                 receipt_keep_days: 30,
                 readiness_every_secs: NodeJobSettings::default().readiness_every_secs,
                 drain_clear_by: DrainClearBy::default(),
+                payload_walk: PayloadWalkBounds::default(),
                 mirrors: BTreeMap::new(),
             }),
         })
@@ -180,6 +182,12 @@ impl ScriptedAdmission {
         locked(&self.state).drain_clear_by = clear_by;
     }
 
+    /// Sets the disk check's walk bounds (`payload_entries_max`,
+    /// `payload_depth_max`).
+    pub fn set_payload_walk(&self, bounds: PayloadWalkBounds) {
+        locked(&self.state).payload_walk = bounds;
+    }
+
     /// Names `mirror` as `template`'s mirror, for the readiness check.
     pub fn set_template_mirror(&self, template: &str, mirror: PathBuf) {
         locked(&self.state)
@@ -262,6 +270,7 @@ impl NodeAdmission for ScriptedAdmission {
             receipt_keep_days: state.receipt_keep_days,
             readiness_every_secs: state.readiness_every_secs,
             drain_clear_by: state.drain_clear_by,
+            payload_walk: Some(state.payload_walk.clone()),
             ..NodeJobSettings::default()
         }
     }

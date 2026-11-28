@@ -36,6 +36,7 @@ pub use oneiron_organ_host::{
 };
 
 use super::job_unit::{JobKeyId, JobUnit, NodeClock};
+use super::payload_usage::PayloadWalkBounds;
 use crate::gpu_execution_node::device::DeviceSample;
 pub use crate::gpu_execution_node::node::NodeControls;
 use crate::gpu_execution_node::node::{AuthorityEnded, ExecutionNode, NodeKeys};
@@ -93,6 +94,11 @@ pub struct NodeJobSettings {
     /// `jobs.breadcrumbs.keep`: how many breadcrumb lines a running key
     /// keeps, which a `Lost` receipt carries. Default 20.
     pub breadcrumbs_keep: u64,
+    /// The disk check's walk bounds (design 7.9): the node file's
+    /// `payload_depth_max` and `payload_entries_max`, past which a payload
+    /// ends as `DiskLimit`; `None` when the file does not read now, so the
+    /// check takes no default for them (review r13 R13-09 of #10512).
+    pub payload_walk: Option<PayloadWalkBounds>,
 }
 
 impl Default for NodeJobSettings {
@@ -109,6 +115,7 @@ impl Default for NodeJobSettings {
             drain_clear_by: DrainClearBy::AfterReadinessCheck,
             incidents_keep: 200,
             breadcrumbs_keep: 20,
+            payload_walk: Some(PayloadWalkBounds::default()),
         }
     }
 }
@@ -505,6 +512,7 @@ impl NodeAdmission for ExecutionNode {
             |file| ExecutionNode::readiness_settings(self, file),
         );
         NodeJobSettings {
+            payload_walk: file.as_ref().map(|file| file.payload_walk_bounds()),
             staging_limit_secs: file
                 .as_ref()
                 .map_or(defaults.staging_limit_secs, |file| file.staging_limit_secs),

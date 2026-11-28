@@ -77,13 +77,14 @@ pub struct ExecutionNodeUnitNameArgs {
 
 #[derive(Args, Clone, Debug)]
 pub struct ExecutionNodeUnitControlArgs {
-    /// `start`, `stop` or `signal`.
+    /// `start`, `stop`, `signal` or `usage`.
     pub verb: String,
     /// The job key.
     pub key: String,
     /// For `signal`: the checkpoint signal's name (HUP, INT, USR1, USR2 or
-    /// WINCH).
-    pub signal: Option<String>,
+    /// WINCH). For `usage`: the bound in bytes past which root stops
+    /// counting the payload.
+    pub argument: Option<String>,
 }
 
 #[derive(Args, Clone, Debug)]

@@ -9,7 +9,9 @@
 //!
 //! Order: make this process not dumpable; catch the checkpoint signals;
 //! connect to the gate's socket (the gate takes this process's connection
-//! alone: FIX EXEC-UNIT-ONE-JOB-ACCOUNT); prove the device policy (before the
+//! alone: FIX EXEC-UNIT-ONE-JOB-ACCOUNT); check that the job cannot take disk
+//! with no write ([`disk_allocation_refused`], review r13 R13-06 of #10512);
+//! prove the device policy (before the
 //! file wall, so a refusal is the device policy's and not the wall's); apply
 //! the inner file wall (Landlock); prove the wall, the protected paths, the
 //! network, the hidden processes and the cgroup limits; report (one line, the
@@ -62,6 +64,9 @@ use super::{
     exec_status, is_job_instance,
 };
 
+mod disk_allocation;
+use disk_allocation::disk_allocation_refused;
+
 /// How long `job-exec` waits for the gate's socket, and then for its go.
 const GATE_WAIT: Duration = Duration::from_secs(45);
 
@@ -102,6 +107,9 @@ pub fn run(args: &[String]) -> i32 {
             return exec_status::GATE_SOCKET;
         }
     };
+    let allocation = disk_allocation_refused(&exec.cwd.join("tmp"))
+        .err()
+        .map(|why| format!("disk_allocation_not_refused: {why}"));
     let mut proofs = BTreeMap::new();
     proofs.insert(ScopeBound::DeviceClosure, prove_device_closure(&exec));
     let wall = apply_file_wall(&exec);
@@ -125,11 +133,13 @@ pub fn run(args: &[String]) -> i32 {
         .filter(|requirement| PROVED_INSIDE.contains(&requirement.bound))
         .collect();
     let unmet = first_unmet(&inside, &proofs);
-    let refusal = unmet.map(|requirement| {
-        let evidence = proofs
-            .get(&requirement.bound)
-            .map_or("not proved from inside", |proof| proof.evidence.as_str());
-        format!("required_bound_not_proved: {requirement}: {evidence}")
+    let refusal = allocation.clone().or_else(|| {
+        unmet.map(|requirement| {
+            let evidence = proofs
+                .get(&requirement.bound)
+                .map_or("not proved from inside", |proof| proof.evidence.as_str());
+            format!("required_bound_not_proved: {requirement}: {evidence}")
+        })
     });
     let report = ScopeReport {
         instance: instance.clone(),
@@ -148,6 +158,9 @@ pub fn run(args: &[String]) -> i32 {
     }
     if let Some(why) = refusal {
         journal_line!("job-exec: refused before the workload: {why}");
+        if allocation.is_some() {
+            return exec_status::DISK_ALLOCATION;
+        }
         let wall_unmet = unmet.is_some_and(|requirement| requirement.bound == ScopeBound::FileWall);
         return if wall_error.is_some() && wall_unmet {
             exec_status::FILE_WALL

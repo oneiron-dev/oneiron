@@ -166,8 +166,16 @@ fn run_probe(node_file: &Path, settings: &ExecutionNodeSettings) -> Result<Check
     super::exchange::withdraw(&instance);
     let _ = std::fs::remove_dir_all(&payload);
     let _ = std::fs::remove_dir_all(&exchange);
+    // A refusal in the probe's report (its job-exec's disk allocation
+    // check: a probe requires no bound) fails the check, as it would refuse
+    // every launch here (review r14 R14-14 of #10512).
     let (proofs, probe_failure) = match outcome {
-        Ok(report) => (report.proofs, None),
+        Ok(report) => (
+            report.proofs,
+            report
+                .refusal
+                .map(|why| format!("the probe's job-exec refused: {why}")),
+        ),
         Err(why) => (BTreeMap::new(), Some(why)),
     };
     let report = CheckReport {

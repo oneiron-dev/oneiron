@@ -72,6 +72,7 @@ pub mod ended;
 pub mod exchange;
 pub mod exec;
 pub mod gate;
+pub mod held_files;
 pub mod install;
 pub mod log_writer;
 pub mod prepare;
@@ -184,6 +185,9 @@ pub mod exec_status {
     pub const GATE_REFUSED: i32 = 154;
     /// The workload's program could not be started.
     pub const EXEC_FAILED: i32 = 155;
+    /// The job could take disk with no write: the unit's system call filter
+    /// did not hold for `job-exec` (review r13 R13-06 of #10512).
+    pub const DISK_ALLOCATION: i32 = 157;
     /// The probe of `execution-node check` ended.
     pub const PROBE_DONE: i32 = 0;
 }
@@ -200,6 +204,7 @@ pub fn refusal_of_exit_status(status: i32) -> Option<&'static str> {
         exec_status::REQUIRED_BOUND => "unit: required_bound_not_proved",
         exec_status::GATE_REFUSED => "unit: gate_refused",
         exec_status::EXEC_FAILED => "unit: workload_exec_failed",
+        exec_status::DISK_ALLOCATION => "unit: disk_allocation_not_refused",
         200 => "unit: chdir",
         201 => "unit: nice",
         202 => "unit: fds",
