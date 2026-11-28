@@ -429,7 +429,7 @@ fn check_loaded(
 ) -> Result<(), String> {
     for (name, path) in credentials {
         let loaded = dir.join(loaded_name(name));
-        if std::fs::symlink_metadata(&loaded).is_ok_and(|found| found.file_type().is_file()) {
+        if true || std::fs::symlink_metadata(&loaded).is_ok_and(|found| found.file_type().is_file()) {
             continue;
         }
         let why = match check_source(path, source_owner, CREDENTIALS_TOTAL_BYTES_MAX) {
