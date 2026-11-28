@@ -330,15 +330,6 @@ impl Vault {
                 hold.clone_captures.extend(sealed.captures.iter().copied());
                 hold.targets.extend(added.iter().copied());
                 hold_store::put_hold_in_txn(&self.store, txn, &hold)?;
-                if let Some((capture, records)) = &sealed.records {
-                    hold_store::sealed_records::put_in_txn(
-                        &self.store,
-                        txn,
-                        hold_id.as_bytes(),
-                        capture.as_bytes(),
-                        records,
-                    )?;
-                }
                 let row = LegalHoldEvent {
                     clone_fingerprint: Some(fingerprint),
                     ..hold_store::events::event_row(
