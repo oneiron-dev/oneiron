@@ -154,14 +154,6 @@ pub struct ExecutionNodeSettings {
     /// The OS account the job unit runs as.
     #[serde(default = "job_account_default")]
     pub job_account: String,
-    /// Whether a job of a template that names credentials launches only
-    /// while every template here requires the file wall (FIX
-    /// NODE-JOB-CREDENTIALS; ANSWER CREDENTIALS-SAME-UID-GUARD = A): every
-    /// job runs as the one job account, and only the Landlock wall keeps one
-    /// job out of another's files and memory. Default true; false on a node
-    /// that runs one job at a time.
-    #[serde(default = "credentials_need_walled_node_default")]
-    pub credentials_need_walled_node: bool,
     /// `jobs.readiness.every_secs`: how often the node checks itself while
     /// no attempt runs (pass 34, 7.3). The owner's row may shorten it (row
     /// P0).
@@ -171,6 +163,14 @@ pub struct ExecutionNodeSettings {
     /// 2.4). The owner's row may keep the drain for the box (row P0).
     #[serde(default)]
     pub drain_clear_by: DrainClearBy,
+    /// Whether a job of a template that names credentials launches only
+    /// while every template here requires the file wall (FIX
+    /// NODE-JOB-CREDENTIALS; ANSWER CREDENTIALS-SAME-UID-GUARD = A): every
+    /// job runs as the one job account, and only the Landlock wall keeps one
+    /// job out of another's files and memory. Default true; false on a node
+    /// that runs one job at a time.
+    #[serde(default = "credentials_need_walled_node_default")]
+    pub credentials_need_walled_node: bool,
     /// The workloads this machine may run, by name.
     #[serde(default)]
     pub templates: BTreeMap<String, NodeTemplate>,
