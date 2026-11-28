@@ -282,6 +282,7 @@ pub mod nightly_arc_summary;
 pub mod note_bm25f_repair;
 #[cfg(feature = "sync")]
 pub mod note_fork_upload;
+pub mod note_review_pass;
 pub mod off_record_reply_body;
 pub mod off_record_shell;
 pub mod off_record_side_row;
