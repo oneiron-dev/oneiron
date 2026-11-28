@@ -115,7 +115,7 @@ pub(crate) fn soft_drop_marker_exists_in_txn(
 
 /// Device-local `ri:k:{claim}:{source}`: a cited source an opened device landed a CLAIM without.
 const COLD_CITATION: SideTable<String, [u8; 1], Raw> =
-    SideTable::new(&side_table::SYNC_RESIDENCE_COLD_CITATION);
+    SideTable::new(&side_table::SYNC_RESIDENCE_INDEX_COLD_CITATION);
 
 /// Records that `claim` landed on this opened device while its cited `source` was absent and
 /// unlisted, so the read gate can judge that source with no registration row.
