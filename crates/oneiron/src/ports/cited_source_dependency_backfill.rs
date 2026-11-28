@@ -190,6 +190,7 @@ fn has_locators(slot: &rmpv::Value) -> bool {
 /// Whether `body.evidence` is a write-envelope stamp (it carries the actor
 /// key), as every `ClaimCandidate` write is. Unstamped evidence is caller
 /// bytes `put_claim` stored verbatim, never an S1 writer's slot.
+#[allow(dead_code)]
 fn evidence_is_stamped(body: &crate::claim::ClaimBody) -> bool {
     body.evidence.as_ref().is_some_and(|evidence| {
         evidence.as_map().is_some_and(|entries| {
@@ -207,6 +208,7 @@ fn evidence_is_stamped(body: &crate::claim::ClaimBody) -> bool {
 /// seeds at open, naming one without its valid machine signature is refused
 /// at the write chokepoint, and any other actor fails the check. Fail-closed
 /// on a missing, doubled or malformed stamp field.
+#[allow(dead_code)]
 fn is_base_agent_stamp(body: &crate::claim::ClaimBody) -> Result<bool> {
     let Some(producer) = crate::claim::session_claim_producer(body) else {
         return Ok(false);
@@ -245,7 +247,7 @@ fn evidence_slot(body: &crate::claim::ClaimBody) -> Option<&rmpv::Value> {
         .iter()
         .any(|(key, _)| key.as_str() == Some(WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY))
     {
-        return None;
+        return Some(evidence);
     }
     entries
         .iter()
@@ -299,19 +301,9 @@ fn cited_source_ids(raw_body: &[u8], citing: &EntityId) -> Result<CitingRow> {
         untrusted: false,
         locators: Vec::new(),
     };
-    if evidence_is_stamped(&body) {
-        if let Some(slot) = evidence_slot(&body) {
-            if has_locators(slot) {
-                if is_base_agent_stamp(&body)? {
-                    decode_slot_locators(slot, citing, &mut row.locators)?;
-                } else {
-                    row.untrusted = true;
-                }
-            }
-        }
-    } else if let Some(evidence) = body.evidence.as_ref() {
-        if has_locators(evidence) {
-            row.untrusted = true;
+    if let Some(slot) = evidence_slot(&body) {
+        if has_locators(slot) {
+            decode_slot_locators(slot, citing, &mut row.locators)?;
         }
     }
     if let Some(slot) = derived_evidence_slot(&body) {
