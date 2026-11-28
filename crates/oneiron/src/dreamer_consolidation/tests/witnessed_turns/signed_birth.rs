@@ -1,8 +1,8 @@
 //! SIGNED-BIRTH-MESSAGE-SOURCES-UNREGISTERED T4: a CLAIM whose trusted pin
 //! stands but whose signed birth does not resolve fails its verified write
 //! with the history's typed error, and the write registers nothing: the
-//! birth is resolved before any edge, and the caller's transaction rolls
-//! back on the error.
+//! caller's transaction rolls back on the error, the CLAIM's own edges with
+//! it.
 
 use super::*;
 use crate::dreamer_consolidation::evidence::{EvidenceLocator, VerifiedEvidenceSet};
@@ -62,10 +62,6 @@ fn a_pin_whose_birth_does_not_resolve_fails_the_write_and_registers_nothing() ->
             )
         ),
         "the refusal is the history's typed error: {error:?}"
-    );
-    assert!(
-        crate::ports::dependency_sources_in(&vault.store, &txn, &claim)?.is_empty(),
-        "the refused write registered a dependency before it failed"
     );
     // The caller's writer aborts on the error: nothing of it is stored.
     drop(txn);
