@@ -192,7 +192,7 @@ impl Vault {
             }
             match self.fence_word_sources_in(txn, &source, &source_raw) {
                 Ok(WordSources::Own) => {}
-                Ok(WordSources::From(nested)) => pending.extend(nested),
+                Ok(WordSources::From(_)) => {}
                 Ok(WordSources::Unresolved) | Err(Error::InvalidClaimBody(_)) => return Ok(false),
                 Err(error) => return Err(error),
             }
