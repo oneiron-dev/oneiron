@@ -490,7 +490,7 @@ impl SyncServer {
             #[cfg(feature = "mesh")]
             mesh_transport: std::sync::OnceLock::new(),
             builtin_handles: Arc::default(),
-            mail_push_wakes: Default::default(),
+            mail_source_wakes: Default::default(),
             #[cfg(unix)]
             organs,
             #[cfg(unix)]

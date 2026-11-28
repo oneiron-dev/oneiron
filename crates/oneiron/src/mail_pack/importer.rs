@@ -38,12 +38,12 @@ use super::source::{
     proven_own_address_set,
 };
 use super::state::{
-    MailHistoryApplied, MailOccurrence, MailPresence, MailRelist, MailSyncState, OCCURRENCES, SYNC,
-    bodies_waiting_in, occurrence_key,
+    MailCopyEstimate, MailHistoryApplied, MailOccurrence, MailPresence, MailRelist, MailSyncState,
+    OCCURRENCES, SYNC, bodies_waiting_in, copy_estimate_in, occurrence_key,
 };
 use super::wire::{
     MailHeaders, MailHistoryChange, MailHistoryRead, MailListQuery, MailMessageRef,
-    MailProviderWire, MailSyncSource,
+    MailProviderWire, MailSyncSource, MailboxAnchor,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{MemoryError, MemoryResult};
@@ -87,6 +87,10 @@ pub struct MailSyncReport {
     /// provider before it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quota_paused_until: Option<u64>,
+    /// How long the copy has left after this step, as the source's status
+    /// read gives it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub copy_estimate: Option<MailCopyEstimate>,
 }
 
 impl MailSyncReport {
@@ -179,6 +183,17 @@ struct Step<'a> {
     newer_than: Option<u64>,
     at: u64,
     report: MailSyncReport,
+}
+
+/// Takes `anchor` as the source's anchor in `state`, with the mailbox's
+/// size when the provider gave it read at `at`; a provider that gave none
+/// leaves the size read before.
+fn take_anchor(state: &mut MailSyncState, anchor: MailboxAnchor, at: u64) {
+    state.anchor = Some(anchor.anchor);
+    if let Some(total) = anchor.messages_total {
+        state.messages_total = Some(total);
+        state.messages_total_read_at = Some(at);
+    }
 }
 
 impl Step<'_> {
@@ -442,10 +457,10 @@ impl Step<'_> {
                 .wire
                 .history(&self.wire_source, &anchor, page.as_deref())?;
             let MailHistoryRead::Page(read) = read else {
-                let fresh = self.wire.current_anchor(&self.wire_source)?;
+                let fresh = self.wire.mailbox_anchor(&self.wire_source)?;
                 let at = self.at;
                 self.write_state(|state| {
-                    state.anchor = Some(fresh);
+                    take_anchor(state, fresh, at);
                     state.history_page = None;
                     state.history_page_anchor = None;
                     state.history_applied = None;
@@ -869,8 +884,10 @@ impl Vault {
             // Then a forget a failure stopped part-way (fix list row 18084).
             owed = resume_owed_forgets(step.vault, step.source)?;
             if step.state()?.anchor.is_none() {
-                let anchor = step.wire.current_anchor(&step.wire_source)?;
-                step.write_state(|state| state.anchor = Some(anchor))?;
+                // The anchor read gives the mailbox's size where the
+                // provider's does: the copy's time is known from here.
+                let anchor = step.wire.mailbox_anchor(&step.wire_source)?;
+                step.write_state(|state| take_anchor(state, anchor, at))?;
             }
             step.history(budget.history_pages)?;
             // The copy leaves a quarter of the minute to the change feed.
@@ -897,13 +914,20 @@ impl Vault {
             .map(|error| error.message.clone())
             .or(owed);
         let window = metered.window();
+        let (full_reads, full_read_bytes) = metered.full_reads();
         step.write_state(|state| {
             state.last_step_at = Some(at);
             state.last_error = error;
             state.quota = window;
+            state.full_reads = state.full_reads.saturating_add(full_reads);
+            state.full_read_bytes = state.full_read_bytes.saturating_add(full_read_bytes);
         })?;
         outcome?;
         step.report.copy_done = step.state()?.backfill_done;
+        step.report.copy_estimate = {
+            let txn = self.store.env.read_txn().map_err(crate::Error::from)?;
+            copy_estimate_in(self, &txn, source_ref, &step.row)?
+        };
         Ok(step.report)
     }
 }
@@ -931,6 +955,6 @@ impl crate::memory::Memory<'_> {
         if row.kind == MailSourceKind::Calendar {
             return Ok(super::calendar::calendar_status_view_in(vault, &txn, id)?);
         }
-        Ok(super::state::status_view_in(vault, &txn, id)?)
+        Ok(super::state::status_view_in(vault, &txn, id, &row)?)
     }
 }

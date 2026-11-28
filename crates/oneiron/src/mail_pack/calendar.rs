@@ -462,6 +462,7 @@ pub(super) fn calendar_status_view_in(
         last_step_at: state.last_step_at,
         last_error: state.last_error,
         quota_paused_until: None,
+        copy_estimate: None,
     })
 }
 

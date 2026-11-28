@@ -71,7 +71,7 @@ async fn gmail_push(
                 .vault()
                 .mail_push_notice(MailProvider::Google, &address, &anchor)
             {
-                Ok(woken) => server.mail_push_wakes.wake(woken),
+                Ok(woken) => server.mail_source_wakes.wake(woken),
                 Err(error) => tracing::warn!(error = %error, "gmail push notice unread"),
             }
         }

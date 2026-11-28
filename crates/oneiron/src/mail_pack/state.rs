@@ -7,9 +7,10 @@
 use serde::{Deserialize, Serialize};
 
 use super::push::MailWatchState;
-use super::source::MailCopySetting;
+use super::quota::{MailQuota, provider_mail_quota};
+use super::source::{MailCopySetting, MailSourceRow};
 use super::wire::MailAttachmentRef;
-use crate::provider_quota::ProviderQuotaWindow;
+use crate::provider_quota::{ProviderQuotaWindow, minute_ceiling};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Result, Vault};
 
@@ -98,6 +99,19 @@ pub(super) struct MailSyncState {
     /// The mailbox's push channel, while one is open ([`super::push`]).
     #[serde(default)]
     pub(super) watch: Option<MailWatchState>,
+    /// The messages the mailbox held when its provider last gave its anchor
+    /// with its size ([`super::wire::MailProviderWire::mailbox_anchor`]),
+    /// and when.
+    #[serde(default)]
+    pub(super) messages_total: Option<u64>,
+    #[serde(default)]
+    pub(super) messages_total_read_at: Option<u64>,
+    /// The messages the steps read whole, and the download bytes those
+    /// reads took: what one more whole read costs of the day's cap.
+    #[serde(default)]
+    pub(super) full_reads: u64,
+    #[serde(default)]
+    pub(super) full_read_bytes: u64,
 }
 
 /// How long a provider's answer for a mailbox's own addresses stands before
@@ -128,7 +142,9 @@ pub(super) struct MailRelist {
 }
 
 #[doc(hidden)]
-pub use oneiron_verb_wire::mail_pack::state::{MailPresence, MailStage, MailSyncStatusView};
+pub use oneiron_verb_wire::mail_pack::state::{
+    MailCopyBound, MailCopyEstimate, MailPresence, MailStage, MailSyncStatusView,
+};
 
 /// One provider message of one source and the rows it landed as.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -376,16 +392,96 @@ pub(super) fn bodies_waiting_in(
     Ok(waiting)
 }
 
-/// The status view of `source` in `txn`.
+/// How long the copy of a mailbox standing at `state`, with
+/// `bodies_waiting` messages landed by their headers, has left under the
+/// copy setting `copy` within `quota` (ARCH-0063 #mail-copy: a real time
+/// estimate from the mailbox size). Each message not yet copied costs its
+/// header read and its whole read, and each waiting one its whole read, at
+/// the copy's share of the minute; once whole reads show what a message
+/// downloads, the day's byte cap may bind instead. `None` for search only,
+/// a provider that paces nothing, or before the size is read.
+fn copy_estimate_of(
+    state: &MailSyncState,
+    bodies_waiting: u64,
+    copy: MailCopySetting,
+    quota: Option<MailQuota>,
+) -> Option<MailCopyEstimate> {
+    if copy == MailCopySetting::SearchOnly {
+        return None;
+    }
+    let quota = quota?;
+    let messages_total = state.messages_total?;
+    let not_copied = if state.backfill_done {
+        0
+    } else {
+        messages_total.saturating_sub(state.bodies.saturating_add(bodies_waiting))
+    };
+    let costs = quota.costs;
+    let units_left = u128::from(not_copied) * (u128::from(costs.headers) + u128::from(costs.full))
+        + u128::from(bodies_waiting) * u128::from(costs.full);
+    let units_per_minute = u128::from(minute_ceiling(quota.units_per_minute, false)).max(1);
+    let unit_seconds = (units_left * 60).div_ceil(units_per_minute);
+    let byte_seconds = if state.full_reads == 0 {
+        0
+    } else {
+        let whole_reads_left = u128::from(not_copied) + u128::from(bodies_waiting);
+        (whole_reads_left * u128::from(state.full_read_bytes) * 86_400)
+            .div_ceil(u128::from(state.full_reads) * u128::from(quota.bytes_per_day.max(1)))
+    };
+    let (seconds, bound) = if byte_seconds > unit_seconds {
+        (byte_seconds, MailCopyBound::Bytes)
+    } else {
+        (unit_seconds, MailCopyBound::Units)
+    };
+    Some(MailCopyEstimate {
+        messages_total,
+        read_at: state.messages_total_read_at.unwrap_or_default(),
+        at_most: matches!(copy, MailCopySetting::RecentMonths { .. }),
+        seconds_left: u64::try_from(seconds).unwrap_or(u64::MAX),
+        bound,
+    })
+}
+
+/// The messages of `source` waiting for their bodies.
+fn bodies_waiting_count_in(vault: &Vault, txn: &heed::RoTxn<'_>, source: EntityId) -> Result<u64> {
+    Ok(BODY_QUEUE
+        .scan_keys(&vault.store, txn, source.as_bytes())?
+        .len() as u64)
+}
+
+/// How long the copy of the mailbox `source` (its row `row`) has left
+/// ([`copy_estimate_of`]), at the quota its provider's wire declares.
+pub(super) fn copy_estimate_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    source: EntityId,
+    row: &MailSourceRow,
+) -> Result<Option<MailCopyEstimate>> {
+    let state = SYNC.get(&vault.store, txn, &source)?.unwrap_or_default();
+    let bodies_waiting = bodies_waiting_count_in(vault, txn, source)?;
+    Ok(copy_estimate_of(
+        &state,
+        bodies_waiting,
+        row.copy,
+        provider_mail_quota(row.provider),
+    ))
+}
+
+/// The status view of the mailbox `source` (its row `row`) in `txn`.
 pub(super) fn status_view_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     source: EntityId,
+    row: &MailSourceRow,
 ) -> Result<MailSyncStatusView> {
     let state = SYNC.get(&vault.store, txn, &source)?.unwrap_or_default();
-    let bodies_waiting = BODY_QUEUE
-        .scan_keys(&vault.store, txn, source.as_bytes())?
-        .len() as u64;
+    let bodies_waiting = bodies_waiting_count_in(vault, txn, source)?;
+    let copy_estimate = copy_estimate_of(
+        &state,
+        bodies_waiting,
+        row.copy,
+        provider_mail_quota(row.provider),
+    );
     let rechecks = super::claim_recheck::counts_in(vault, txn, source)?;
     Ok(MailSyncStatusView {
         source_ref: source.to_hex(),
@@ -402,5 +498,6 @@ pub(super) fn status_view_in(
         last_step_at: state.last_step_at,
         last_error: state.last_error,
         quota_paused_until: state.quota.resting_at(crate::unix_seconds_now()),
+        copy_estimate,
     })
 }

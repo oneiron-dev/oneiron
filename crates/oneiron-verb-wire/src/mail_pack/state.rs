@@ -67,4 +67,40 @@ pub struct MailSyncStatusView {
     /// spent: no step reads the provider before it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quota_paused_until: Option<u64>,
+    /// How long the copy has left at its provider's pace, from the mailbox
+    /// size the provider gave (ARCH-0063 #mail-copy); `None` for search
+    /// only, a provider that paces nothing, or before the size is read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub copy_estimate: Option<MailCopyEstimate>,
+}
+
+/// How long a mailbox's copy has left, from the size its provider gave
+/// (Gmail `users.getProfile` `messagesTotal`) and the provider's per-user
+/// limits: the copy's share of the minute's quota units, and the day's
+/// download bytes once the bodies read so far show their size.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MailCopyEstimate {
+    /// The messages in the mailbox when the provider was last asked.
+    pub messages_total: u64,
+    /// When it was asked, Unix seconds.
+    pub read_at: u64,
+    /// Whether the copy keeps the recent months only: the provider counts
+    /// the whole mailbox, so the time is at most this.
+    pub at_most: bool,
+    /// The seconds the copy has left: its headers and the bodies still
+    /// waiting.
+    pub seconds_left: u64,
+    /// The limit that sets that time.
+    pub bound: MailCopyBound,
+}
+
+/// The provider limit a copy's time is bound by.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum MailCopyBound {
+    /// The copy's share of the minute's quota units.
+    Units,
+    /// The day's download bytes.
+    Bytes,
 }
