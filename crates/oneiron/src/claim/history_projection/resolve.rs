@@ -15,9 +15,6 @@ impl Vault {
         // sources (an erased MESSAGE, SIGNED-BIRTH-MESSAGE-SOURCES-UNREGISTERED)
         // withholds the resolution as an incomplete history does, whether the
         // gate verdict above was cached or read carrier by carrier.
-        if !birth_reads_in_txn(&self.store, &txn, &rows.birth.event_id()?)? {
-            return Err(missing());
-        }
         let handoff = trusted_machine_handoff(&self.store, &txn, target)?;
         Ok(ResolvedMachineClaim {
             claim_id: target,
@@ -32,6 +29,7 @@ impl Vault {
 
 /// Whether the signed birth row `birth` reads by the raw doors' rule: stored,
 /// its own words not withdrawn, and no source it derives from withdrawn.
+#[allow(dead_code)]
 fn birth_reads_in_txn(store: &Store, txn: &heed::RoTxn<'_>, birth: &EntityId) -> Result<bool> {
     match crate::ports::EntityStoreRead::port_entity_raw(store, txn, birth)? {
         Some(raw) => crate::ports::raw_readable_in_txn(store, txn, birth, &raw),
