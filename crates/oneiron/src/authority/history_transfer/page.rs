@@ -179,6 +179,8 @@ impl Vault {
         // live mirror.
         #[cfg(feature = "sync")]
         self.note_committed_rows(ids.iter().copied().collect());
+        // A data-key generation the page landed is received now.
+        self.adopt_data_key_generations_after_ingest();
         Ok(PageVerdict::Landed(ids))
     }
 }

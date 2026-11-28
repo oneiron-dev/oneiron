@@ -370,7 +370,8 @@ impl Once {
 /// work request, result or cancel (each judges only its own work), a custody
 /// permit piece (it keeps only its own place, FIX 11866), a world
 /// key record (it fills only its own key's slots, or is refused as a no-op,
-/// FIX 4881), a frontier join (it moves no state, FIX 7908, but an anchor's
+/// FIX 4881), a data-key record (it fills only its own generation's slots,
+/// or is refused as a no-op), a frontier join (it moves no state, FIX 7908, but an anchor's
 /// side join's own place among its anchor's rows, FIX 11868), a residence
 /// directive (it adds only its own id and machine, which only a result past
 /// it reads), a machine's residence result (it moves only its signer's
@@ -430,6 +431,7 @@ pub(in crate::authority) fn admits_past(
         | AuthorityOp::ExportSupplementImported(_)
         | AuthorityOp::CustodyPermitPiece(_)
         | AuthorityOp::WorldKeyWraps(_)
+        | AuthorityOp::DataKeyGeneration(_)
         | AuthorityOp::FrontierJoin(_)
         | AuthorityOp::ResidenceDirective(_)
         | AuthorityOp::ResidenceResult(_)

@@ -158,7 +158,8 @@ impl<'a> RowMeta<'a> {
 /// SEQ-FLOOR-S-WITHHELD-COSIGN, and so does a federation lifecycle row, whose
 /// pact the expiry holds suspended while the row still shapes it),
 /// the world-key records whose envelopes a folded key carries
-/// (`world_key_fold::folded_world_keys`), and the owner work requests,
+/// (`world_key_fold::folded_world_keys`), the data-key records whose link and
+/// capsules a folded generation carries, and the owner work requests,
 /// results, cancels and import marks an executor, a receipt and a relay
 /// read past the base. Every other row's summary is all a later fold reads
 /// of it. Every row that files a machine profile is read whole: a profile
@@ -179,6 +180,7 @@ pub(super) fn is_projected(op: &AuthorityOp) -> bool {
             | AuthorityOp::ReRoot { .. }
             | AuthorityOp::RootAppointment(_)
             | AuthorityOp::WorldKeyWraps(_)
+            | AuthorityOp::DataKeyGeneration(_)
             | AuthorityOp::OwnerWorkRequest(_)
             | AuthorityOp::OwnerWorkResult(_)
             | AuthorityOp::OwnerWorkCancel(_)

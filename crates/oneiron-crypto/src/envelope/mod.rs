@@ -182,6 +182,10 @@ pub enum Purpose {
     /// secret's public half as `key_id`, and the slot's name as extra
     /// associated data.
     DevicePinSlotSecret = 33,
+    /// One vault data key, wrapped to one machine. The owner binds the vault,
+    /// the generation and the key's commitment in `key_id` and checks them on
+    /// open.
+    DataKeyGeneration = 34,
 }
 
 impl Purpose {
@@ -220,6 +224,7 @@ impl Purpose {
             31 => Self::LegalClone,
             32 => Self::DevicePinKey,
             33 => Self::DevicePinSlotSecret,
+            34 => Self::DataKeyGeneration,
             other => return Err(Error::UnknownPurpose(other)),
         })
     }

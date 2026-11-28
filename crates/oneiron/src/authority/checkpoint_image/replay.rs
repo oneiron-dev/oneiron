@@ -290,6 +290,8 @@ fold_state_fields!(
     owner_work,
     world_keys,
     refused_world_keys,
+    data_key_generations,
+    refused_data_key_generations,
     key_admitters,
     hosted,
     actor_rows,

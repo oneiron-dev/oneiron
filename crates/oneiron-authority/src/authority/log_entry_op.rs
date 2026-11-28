@@ -128,6 +128,11 @@ pub enum AuthorityOp {
     /// One machine's wraps of one world key, signed by that machine's install
     /// key. A side-branch entry of the key's world, like its settings edits.
     WorldKeyWraps(WorldKeyWrapsRecord),
+    /// One data-key generation's delivery: the new generation's commitment,
+    /// the link that puts the old key under it, and one sealed capsule per
+    /// other trusted owner machine, signed by the acting machine's install
+    /// key. A main-log entry, so every machine the owner admits folds it.
+    DataKeyGeneration(DataKeyGenerationRecord),
     /// An Owner handover in a shared vault: an Owner leaving names a
     /// successor or signs their own removal, signed by an owner roster key
     /// like any Owner action (ARCH-0043, OF-163).
@@ -316,6 +321,7 @@ impl AuthorityLogEntry {
         match &self.op {
             AuthorityOp::OwnerRoot(record) => record.validate_entry(self)?,
             AuthorityOp::WorldKeyWraps(record) => record.validate_entry(self)?,
+            AuthorityOp::DataKeyGeneration(record) => record.validate_entry(self)?,
             AuthorityOp::ResidenceResult(result) => result.validate_entry(self)?,
             AuthorityOp::OwnerWorkRequest(request) => request.validate_entry(self)?,
             AuthorityOp::OwnerWorkResult(result) => result.validate_entry(self)?,
@@ -584,6 +590,7 @@ pub fn validate_op(op: &AuthorityOp) -> Result<()> {
         AuthorityOp::OwnerRoot(record) => record.validate(),
         AuthorityOp::WorldPrivacy(edit) => edit.validate(),
         AuthorityOp::WorldKeyWraps(record) => record.validate(),
+        AuthorityOp::DataKeyGeneration(record) => record.validate(),
         AuthorityOp::OwnerHandover(handover) => handover.validate(),
         AuthorityOp::ResidenceDirective(directive) => directive.validate(),
         AuthorityOp::ResidenceResult(result) => result.validate(),

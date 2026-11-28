@@ -135,7 +135,9 @@ use serde::Serialize;
 /// grant travel choice it carried (FIX ACT-STANDS-RAW-HEAD-SKIPS-KEY-ROTATION, FIX
 /// MACHINE-CROSSING-REMOVALS-UNMAKE-CARRIED-OWNER-ACTS, FIX
 /// MACHINE-CROSSING-REMOVALS-UNMAKE-CARRIED-OWNER-CHOICES).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 60;
+/// 61: the fold keeps each data-key generation's counted delivery records and an image
+/// carries their bodies (OPUS-DATAKEY-GEN PR3).
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 61;
 
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";

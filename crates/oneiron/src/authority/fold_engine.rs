@@ -609,6 +609,8 @@ pub(super) fn fold_authority_log_once_with(
             counted_ancestor_pairs,
             world_keys: BTreeMap::new(),
             refused_world_keys: BTreeSet::new(),
+            data_key_generations: BTreeMap::new(),
+            refused_data_key_generations: BTreeSet::new(),
             verified_device_revocations: BTreeSet::new(),
             issues,
         };

@@ -364,6 +364,8 @@ pub(super) fn single_owner_state(
         owner_work: Default::default(),
         world_keys: Default::default(),
         refused_world_keys: Default::default(),
+        data_key_generations: Default::default(),
+        refused_data_key_generations: Default::default(),
         key_admitters: Default::default(),
         hosted: false,
         actor_rows: Default::default(),

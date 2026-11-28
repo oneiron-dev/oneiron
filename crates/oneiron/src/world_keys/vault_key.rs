@@ -60,7 +60,9 @@ pub(super) use oneiron_store::vault_page_seal::WrapDigest;
 
 mod escrow;
 mod generation;
+mod generation_capsule;
 mod generation_proposal;
+mod generation_receive;
 pub(super) mod kit;
 mod kit_passkey;
 mod recovery_preset;
@@ -80,6 +82,7 @@ pub use self::generation::{
 pub use self::generation_proposal::{
     DataKeyGenerationProposal, NOTIFICATION_PRODUCER_DATA_KEY_GENERATION_PROPOSAL,
 };
+pub use self::generation_receive::DataKeyGenerationAdoption;
 pub(super) use self::recovery_preset::EscrowOrigin;
 pub use self::recovery_preset::{
     NoRecoveryBox, RecoveryBoxCanceller, RecoveryBoxHold, RecoveryBoxHoldPending,
@@ -87,7 +90,8 @@ pub use self::recovery_preset::{
     RecoverySheet,
 };
 use self::recovery_preset::{
-    admit_delivered_key, admit_escrow_opened_key, admit_presented_capsule, admit_wrap,
+    admit_delivered_key, admit_escrow_opened_key, admit_generation_capsule,
+    admit_presented_capsule, admit_wrap,
 };
 pub use self::vocabulary::{
     KitPasskey, NewVaultKeyWrap, VaultKeyStatus, VaultKeyUnlock, escrow_recipient,

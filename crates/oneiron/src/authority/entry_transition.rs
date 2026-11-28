@@ -264,6 +264,8 @@ fn transition_entry(
             owner_work: super::owner_work::OwnerWorkState::default(),
             world_keys: PersistentMap::new(),
             refused_world_keys: PersistentSet::new(),
+            data_key_generations: PersistentMap::new(),
+            refused_data_key_generations: PersistentSet::new(),
             key_admitters: PersistentMap::new(),
             hosted: context.hosted,
             actor_rows: PersistentSet::new(),
@@ -644,6 +646,15 @@ fn fold_merged_entry(
         state.seqs.insert(entry.signer_key().clone(), entry.seq);
         return EntryFold::Ready(state);
     }
+    if let AuthorityOp::DataKeyGeneration(record) = &entry.op {
+        if let Err(issue) = super::data_key_generation_fold::apply_data_key_generation(
+            &mut state, entry, record, hash, context,
+        ) {
+            return EntryFold::Invalid(issue);
+        }
+        state.seqs.insert(entry.signer_key().clone(), entry.seq);
+        return EntryFold::Ready(state);
+    }
     // A machine's residence result, signed by its own install key, which
     // that machine's live, answered roster head names (OF-534). It changes
     // no state.
@@ -1014,6 +1025,7 @@ fn op_reuses_existing_device_key(state: &FoldState, op: &AuthorityOp) -> bool {
         | AuthorityOp::OwnerRoot(_)
         | AuthorityOp::WorldPrivacy(_)
         | AuthorityOp::WorldKeyWraps(_)
+        | AuthorityOp::DataKeyGeneration(_)
         | AuthorityOp::OwnerHandover(_)
         | AuthorityOp::ResidenceDirective(_)
         | AuthorityOp::ResidenceResult(_)
