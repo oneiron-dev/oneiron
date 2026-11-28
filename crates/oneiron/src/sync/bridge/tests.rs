@@ -52,13 +52,19 @@ fn refusal(step: EntityStep) -> Error {
 }
 
 #[test]
-fn decode_observer_u_seq_accepts_le_u32() {
-    assert_eq!(decode_observer_u_seq(&42u32.to_le_bytes()).unwrap(), 42);
+fn decode_observer_u_seq_accepts_le_u64() {
+    assert_eq!(decode_observer_u_seq(&42u64.to_le_bytes()).unwrap(), 42);
 }
 
 #[test]
 fn decode_observer_u_seq_rejects_bad_lengths_without_panic() {
-    for raw in [&[][..], &[1, 2, 3][..], &[1, 2, 3, 4, 5][..]] {
+    // `[1, 2, 3, 4]` is the retired 4-byte u32 counter (before FIX 8883).
+    for raw in [
+        &[][..],
+        &[1, 2, 3][..],
+        &[1, 2, 3, 4][..],
+        &[1, 2, 3, 4, 5, 6, 7, 8, 9][..],
+    ] {
         let err = decode_observer_u_seq(raw).expect_err("malformed u_seq row must be rejected");
         assert_matches!(err, Error::CorruptedIndex(ERR_OBSERVER_A_U_SEQ_ROW));
     }

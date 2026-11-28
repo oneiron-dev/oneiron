@@ -127,10 +127,10 @@ fn observer_a_sequence_overflow_preserves_zero_update_slot() {
     let key = WindowKey::new("2026-03");
     let window = LoadedWindow::new(TEST_USER, key.clone(), &vault, &materializer);
     let seq_key = format!("m:u_seq:w:{key}");
-    let zero_key = format!("u:w:{key}:00000000");
-    let max_key = format!("u:w:{key}:ffffffff");
+    let zero_key = format!("u:w:{key}:0000000000000000");
+    let max_key = format!("u:w:{key}:ffffffffffffffff");
     vault
-        .sync_state_put(&seq_key, &u32::MAX.to_le_bytes())
+        .sync_state_put(&seq_key, &u64::MAX.to_le_bytes())
         .unwrap();
     vault.sync_state_put(&zero_key, b"sentinel").unwrap();
     let pending_before = window
@@ -150,7 +150,7 @@ fn observer_a_sequence_overflow_preserves_zero_update_slot() {
         .load(Ordering::Relaxed);
     assert!(pending_after > pending_before);
     let seq = vault.sync_state_get(&seq_key).unwrap().unwrap();
-    assert_eq!(seq.as_slice(), &u32::MAX.to_le_bytes());
+    assert_eq!(seq.as_slice(), &u64::MAX.to_le_bytes());
     assert_eq!(
         vault.sync_state_get(&zero_key).unwrap().unwrap(),
         b"sentinel"
