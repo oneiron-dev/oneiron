@@ -1784,9 +1784,17 @@ async function clusterSchemaVersion(engine: EngineFixture, verb: ClusterVerb): P
   let bound = clusterSchemas.get(engine.mcp);
   if (!bound) {
     const listed = await engine.mcp.request<{ tools: {
-      name: string; inputSchema: { properties: { schema_version: { const: string } } };
+      name: string; inputSchema?: { properties?: { schema_version?: { const?: string } } };
     }[] }>("tools/list");
-    bound = new Map(listed.tools.map(item => [item.name, item.inputSchema.properties.schema_version.const]));
+    // Bind a version only for tools that advertise one. The execute design
+    // keeps schema_version out of the agent's view (the credential's grant
+    // decides and the server stamps what it needs), so `execute` and
+    // `resume` list no schema_version property.
+    bound = new Map<string, string>();
+    for (const item of listed.tools) {
+      const version = item.inputSchema?.properties?.schema_version?.const;
+      if (version !== undefined) bound.set(item.name, version);
+    }
     clusterSchemas.set(engine.mcp, bound);
   }
   const version = bound.get(verb);
