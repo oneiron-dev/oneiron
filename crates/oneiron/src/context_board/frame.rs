@@ -678,6 +678,10 @@ pub struct ShedOutcome {
     pub sections: Vec<ShedSection>,
     pub applied: Vec<ShedRank>,
     pub cut_rows: usize,
+    /// The typed rows the final cut took: each shown before it and shown by
+    /// no section after it. Empty when nothing was cut. Such a row reached no
+    /// reader, so no prefetch seed or reply dependency names it.
+    pub cut_ids: Vec<crate::EntityId>,
     pub rendered_tok: usize,
     pub floor_exceeds_cap: bool,
 }
@@ -817,7 +821,7 @@ fn shed_and_render(
         text = render_candidate(frame, budget, &sections, None);
         rendered_tok = count_context_pack_tokens(&text);
     }
-    let cut_rows = cut_budget.trim(
+    let keyframe_cut = cut_budget.trim(
         frame.sections,
         &[],
         &mut sections,
@@ -834,7 +838,8 @@ fn shed_and_render(
             applied,
             rendered_tok,
             floor_exceeds_cap: cut_budget.over_cap(rendered_tok),
-            cut_rows,
+            cut_rows: keyframe_cut.rows,
+            cut_ids: keyframe_cut.ids,
         },
         text,
     )
@@ -976,7 +981,7 @@ pub fn render_split_board_block_reserving(
         text = joined_parts(&state, query.as_deref());
         rendered_tok = count_context_pack_tokens(&text);
     }
-    let cut_rows = cut_budget.trim(
+    let keyframe_cut = cut_budget.trim(
         frame.sections,
         parts,
         &mut sections,
@@ -987,6 +992,7 @@ pub fn render_split_board_block_reserving(
             count_context_pack_tokens(&text)
         },
     );
+    let cut_rows = keyframe_cut.rows;
     let floor_exceeds_cap = cut_budget.over_cap(rendered_tok);
     SplitBoardRender {
         render: BoardRender {
@@ -1005,6 +1011,7 @@ pub fn render_split_board_block_reserving(
                 rendered_tok,
                 floor_exceeds_cap,
                 cut_rows,
+                cut_ids: keyframe_cut.ids,
             },
         },
         state,

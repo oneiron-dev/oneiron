@@ -611,6 +611,27 @@ pub(super) fn cut_shown_ids(
         .collect()
 }
 
+/// Drops each memory and skill dependency on a row the final cut took
+/// (`ShedOutcome::cut_ids`): the model never read it, so a reply derives
+/// nothing from it. The HTTP replay's served rows are apart and keep it.
+pub(super) fn drop_cut_dependencies(
+    sources: &mut [super::board::BoardSectionSource],
+    cut_ids: &[EntityId],
+) {
+    use oneiron::llm::SegmentLocator;
+    if cut_ids.is_empty() {
+        return;
+    }
+    for source in sources {
+        source.dependencies.retain(|locator| match locator {
+            SegmentLocator::Memory { id, .. } | SegmentLocator::Skill { id, .. } => {
+                !cut_ids.contains(id)
+            }
+            _ => true,
+        });
+    }
+}
+
 /// The one author byline a TURN body names, if it names one. The history
 /// writer judges it again in its own transaction.
 fn turn_author(body: &[u8]) -> Option<EntityId> {
@@ -626,4 +647,59 @@ fn turn_author(body: &[u8]) -> Option<EntityId> {
         return None;
     }
     EntityId::from_hex(author.as_str()?).ok()
+}
+
+#[cfg(test)]
+mod cut_dependency_tests {
+    use oneiron::EntityId;
+    use oneiron::llm::{SegmentLocator, TrustFence};
+
+    use super::super::board::BoardSectionSource;
+    use super::drop_cut_dependencies;
+
+    /// Review 2 of #10644: a split chat board at cap 0 shows its pinned
+    /// memory and cuts the unpinned recall beside it. The recall reached no
+    /// model, so the reply's MEMORIES dependencies name the pin alone; a
+    /// skill row the cut took goes the same way, and other locators stay.
+    #[test]
+    fn a_recall_the_cut_took_is_no_reply_dependency() {
+        let id = |byte: u8| EntityId::from_bytes_unchecked([byte; 16]);
+        let (pin, recall, skill, kept_skill) = (id(1), id(2), id(3), id(4));
+        let memory = |id| SegmentLocator::Memory { id, revision: None };
+        let skill_at = |id| SegmentLocator::Skill { id, version: None };
+        let mut sources = vec![
+            BoardSectionSource {
+                name: "MEMORIES world=unscoped".to_owned(),
+                fence: TrustFence::Authoritative,
+                dependencies: vec![memory(pin), memory(recall)],
+            },
+            BoardSectionSource {
+                name: "SKILLS".to_owned(),
+                fence: TrustFence::Authoritative,
+                dependencies: vec![
+                    skill_at(skill),
+                    skill_at(kept_skill),
+                    SegmentLocator::BoardSection {
+                        name: "SKILLS".to_owned(),
+                    },
+                ],
+            },
+        ];
+        let uncut = sources.clone();
+
+        drop_cut_dependencies(&mut sources, &[]);
+        assert_eq!(sources, uncut, "an uncut frame keeps every dependency");
+
+        drop_cut_dependencies(&mut sources, &[recall, skill]);
+        assert_eq!(sources[0].dependencies, vec![memory(pin)]);
+        assert_eq!(
+            sources[1].dependencies,
+            vec![
+                skill_at(kept_skill),
+                SegmentLocator::BoardSection {
+                    name: "SKILLS".to_owned(),
+                },
+            ]
+        );
+    }
 }

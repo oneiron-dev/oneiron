@@ -425,7 +425,9 @@ pub(in crate::api::ai::chat) async fn start_turn(
             }
         }),
     });
-    let board_cut = read_board.is_some_and(|board| board.cut);
+    let board_cut_ids = read_board
+        .map(|board| board.cut_ids.clone())
+        .unwrap_or_default();
     let board_rows = read_board.map(|board| board.rows.clone());
     let board_rows_complete = read_board.is_some_and(|board| board.rows_complete);
     let rider_ack = board
@@ -706,12 +708,15 @@ pub(in crate::api::ai::chat) async fn start_turn(
     if recalled && let Some(rider_ack) = rider_ack {
         rider_ack.commit(server).await;
     }
-    // A board the admitted call carried goes to this machine's home as prefetch seeds.
-    if recalled
-        && !board_cut
-        && let Some(rows) = &board_rows
-    {
-        crate::board_seed_report::report_delivered_board(server, rows.iter().copied());
+    // A board the admitted call carried goes to this machine's home as prefetch seeds, less each
+    // row its final cut took.
+    if recalled && let Some(rows) = &board_rows {
+        crate::board_seed_report::report_delivered_board(
+            server,
+            rows.iter()
+                .copied()
+                .filter(|row| !board_cut_ids.contains(row)),
+        );
     }
     Ok(Started {
         stream: request.stream,

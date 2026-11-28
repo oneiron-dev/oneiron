@@ -9,6 +9,16 @@ pub(super) struct CutBudget {
     reserved_tok: usize,
 }
 
+/// What the final cut took.
+#[derive(Default)]
+pub(super) struct KeyframeCut {
+    /// The rendered lines cut.
+    pub(super) rows: usize,
+    /// The typed rows cut: each shown before the cut and shown by no
+    /// section after it, once, in frame order.
+    pub(super) ids: Vec<crate::EntityId>,
+}
+
 impl CutBudget {
     pub(super) fn new(cap_tok: usize, reserved_tok: usize) -> Self {
         Self {
@@ -24,15 +34,13 @@ impl CutBudget {
     }
 
     /// Cuts settled rows from the end of the render until it fits, and
-    /// returns the number of rows (rendered lines) cut. Each step takes one
-    /// typed row whole, with every line it rendered as, so no row is left
-    /// half shown. Only rows below each section's pinned floor are cut: a
+    /// returns what it cut. Each step takes one typed row whole, with every
+    /// line it rendered as, so no row is left half shown. Only rows below
+    /// each section's pinned floor are cut, and none of a pinned section: a
     /// pinned row is never budget-shed (ARCH-0067:48), so a board whose
     /// pinned rows alone are over the cap renders them in full and stays
-    /// over it. A binary search over the steps assumes the count falls with
-    /// each step and finds the fewest that fit in O(log n) renders; when it
-    /// still stands over the cap, a linear scan covers the case where a
-    /// section name outweighs its row.
+    /// over it. The fewest fitting steps are found run by run (see the
+    /// search below) in O(sections + log n) renders.
     pub(super) fn trim(
         self,
         sections: &[BoardSection],
@@ -40,14 +48,14 @@ impl CutBudget {
         views: &mut [ShedSection],
         rendered_tok: &mut usize,
         mut render: impl FnMut(&[ShedSection], &str) -> usize,
-    ) -> usize {
+    ) -> KeyframeCut {
         if !self.over_cap(*rendered_tok) {
-            return 0;
+            return KeyframeCut::default();
         }
         let order = render_order(sections, parts);
         let steps = cut_steps(sections, &order, views);
         if steps.is_empty() {
-            return 0;
+            return KeyframeCut::default();
         }
         let settled: Vec<Vec<String>> = views.iter().map(|view| view.rows.clone()).collect();
         let cap_tok = self.cap_tok;
@@ -72,43 +80,74 @@ impl CutBudget {
             let mark = cut_mark(cut_rows, &names, cap_tok);
             (cut_rows, render(&*views, &mark))
         };
-        // The fewest steps whose render fits; every step when none does.
-        let (mut low, mut high) = (1, steps.len());
-        while low < high {
-            let mid = low + (high - low) / 2;
-            let (_, tok) = probe(&mut *views, mid);
-            if self.over_cap(tok) {
-                low = mid + 1;
-            } else {
-                high = mid;
-            }
-        }
-        // The last probe is the settled render: its text is the one kept.
-        let (mut cut_rows, mut tok) = probe(&mut *views, low);
-        // The render is not monotone in the step count: a step that first
-        // cuts a section adds that section's name to the mark, which can cost
-        // more than the row it removed. When the search lands over the cap,
-        // scan in order for the first count that fits; none fits takes every
-        // step. The chosen count is probed last, so its text is kept.
-        if self.over_cap(tok) {
-            let mut chosen = None;
-            for taken in 1..=steps.len() {
-                let (_, probe_tok) = probe(&mut *views, taken);
-                if !self.over_cap(probe_tok) {
-                    chosen = Some(taken);
-                    break;
+        // The fewest steps whose render fits; every step when none does. The
+        // render is not monotone in the step count: the step that first cuts
+        // a section adds that section's name to the mark, which can cost
+        // more than the row it removed, and a later section's first step can
+        // bring the render back under the cap. Within one section's run of
+        // steps the mark names the same sections, and each step removes a
+        // whole row while the count in the mark gains at most a digit, so
+        // the render does not grow there. Each run is therefore tried in cut
+        // order by its last step: the first run that fits holds the fewest
+        // fitting steps, found by a binary search inside it.
+        let mut taken = steps.len();
+        let mut start = 0;
+        while start < steps.len() {
+            let section = steps[start].0;
+            let run = steps[start..]
+                .iter()
+                .take_while(|&&(index, _)| index == section)
+                .count();
+            let end = start + run;
+            let (_, tok) = probe(&mut *views, end);
+            if !self.over_cap(tok) {
+                let (mut low, mut high) = (start + 1, end);
+                while low < high {
+                    let mid = low + (high - low) / 2;
+                    let (_, tok) = probe(&mut *views, mid);
+                    if self.over_cap(tok) {
+                        low = mid + 1;
+                    } else {
+                        high = mid;
+                    }
                 }
+                taken = low;
+                break;
             }
-            let taken = chosen.unwrap_or(steps.len());
-            (cut_rows, tok) = probe(&mut *views, taken);
+            start = end;
         }
+        // The chosen count is probed last, so its text is the one kept.
+        let (cut_rows, tok) = probe(&mut *views, taken);
         *rendered_tok = tok;
-        for ((section, view), rows) in sections.iter().zip(views).zip(&settled) {
-            if view.rows.len() < rows.len() || !section.pinned_row_ids.is_empty() {
+        let mut cut_ids = Vec::new();
+        for ((section, view), rows) in sections.iter().zip(views.iter_mut()).zip(&settled) {
+            let cut = view.rows.len() < rows.len();
+            // What the section showed before the cut, read the same way.
+            let before = cut.then(|| {
+                let mut whole = view.clone();
+                whole.rows.clone_from(rows);
+                retain_shown_ids(section, &mut whole);
+                whole.shown_ids.unwrap_or_default()
+            });
+            if cut || !section.pinned_row_ids.is_empty() {
                 retain_shown_ids(section, view);
             }
+            if let Some(before) = before {
+                let after = view.shown_ids.as_deref().unwrap_or_default();
+                cut_ids.extend(before.into_iter().filter(|id| !after.contains(id)));
+            }
         }
-        cut_rows
+        // A row another section still shows was not taken.
+        let still_shown: BTreeSet<_> = views
+            .iter()
+            .flat_map(|view| view.shown_ids.iter().flatten().copied())
+            .collect();
+        let mut seen = BTreeSet::new();
+        cut_ids.retain(|id| !still_shown.contains(id) && seen.insert(*id));
+        KeyframeCut {
+            rows: cut_rows,
+            ids: cut_ids,
+        }
     }
 }
 
@@ -127,8 +166,9 @@ fn render_order(sections: &[BoardSection], parts: &[BoardPart]) -> Vec<usize> {
 }
 
 /// The cut order: every row below a section's pinned floor, across all
-/// sections, last rendered first; never a pinned row. Each step is
-/// (section index, rows the section keeps after it).
+/// sections, last rendered first; never a pinned row, and no row of a
+/// pinned section, which never sheds. Each step is (section index, rows the
+/// section keeps after it); one section's steps are consecutive.
 fn cut_steps(
     sections: &[BoardSection],
     order: &[usize],
@@ -136,6 +176,9 @@ fn cut_steps(
 ) -> Vec<(usize, usize)> {
     let mut steps = Vec::new();
     for &index in order.iter().rev() {
+        if sections[index].policy().pinned {
+            continue;
+        }
         let ids = line_ids(&sections[index], &views[index]);
         let id_at = |line: usize| ids.get(line).copied().flatten();
         let mut kept = views[index].rows.len();

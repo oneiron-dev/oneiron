@@ -235,6 +235,11 @@ pub(crate) struct ContextBoardResponse {
     #[serde(skip)]
     #[schema(ignore)]
     chat_sources: Vec<BoardSectionSource>,
+    /// The typed rows the presented render's final cut took (a chat turn's
+    /// split render when it asked for one); never on the wire.
+    #[serde(skip)]
+    #[schema(ignore)]
+    cut_ids: Vec<oneiron::EntityId>,
     /// Whether every rendered row reference has an identity; never on the wire.
     #[serde(skip)]
     #[schema(ignore)]
@@ -347,18 +352,19 @@ pub(crate) async fn context_board_hydrate(
     let (served, response, _) =
         hydrate_inner(auth, State(Arc::clone(&server)), payload, false).await?;
     // The delivered board's items go to this machine's home as prefetch seeds: its MEMORIES rows
-    // (pins included) first, then every other row it was derived from.
-    if response.board_budget.cut_rows == 0 {
-        let memories = response
-            .memories
-            .iter()
-            .flat_map(|memories| &memories.rows)
-            .filter_map(|row| oneiron::EntityId::from_hex(&row.id).ok());
-        crate::board_seed_report::report_delivered_board(
-            &server,
-            memories.chain(served.0.rows.iter().copied()),
-        );
-    }
+    // (pins included) first, then every other row it was derived from, less each row its final
+    // cut took, which it never showed.
+    let memories = response
+        .memories
+        .iter()
+        .flat_map(|memories| &memories.rows)
+        .filter_map(|row| oneiron::EntityId::from_hex(&row.id).ok());
+    crate::board_seed_report::report_delivered_board(
+        &server,
+        memories
+            .chain(served.0.rows.iter().copied())
+            .filter(|row| !response.cut_ids.contains(row)),
+    );
     Ok((served, response))
 }
 
@@ -713,6 +719,7 @@ async fn hydrate_inner(
     } else {
         Default::default()
     };
+    let cut_ids = presented_render.shed.cut_ids.clone();
     let chat_context = chat_emit::capture_chat_context(
         &auth,
         memories.as_ref(),
@@ -721,9 +728,11 @@ async fn hydrate_inner(
         layout_candidate.clone(),
     );
     // What each rendered section was read from (DESIGN-V2 R2), beside the
-    // text, which it never changes.
-    let chat_sources =
+    // text, which it never changes; a row the whole frame's cut took is no
+    // dependency of it.
+    let mut chat_sources =
         board::section_sources(&parts.sections, memories.as_ref(), hits, &observed_reads);
+    chat_emit::drop_cut_dependencies(&mut chat_sources, &board_render.shed.cut_ids);
 
     // Only a trusted host may install a run snapshot. Caller-controlled HTTP
     // fields choose neither authority nor the epoch; an absent snapshot is
@@ -791,6 +800,7 @@ async fn hydrate_inner(
         board_turn: None,
         chat_context,
         chat_sources,
+        cut_ids,
         rows_complete: parts.named_complete,
         chat_split,
     };
@@ -1121,8 +1131,9 @@ pub(crate) struct ChatBoard {
     pub(crate) rows: Vec<oneiron::EntityId>,
     /// Whether `rows` is a complete source witness for this board.
     pub(crate) rows_complete: bool,
-    /// Whether the handed frame cut rows from its pre-render source list.
-    pub(crate) cut: bool,
+    /// The typed rows the handed frame's final cut took, which it never
+    /// showed; none when it cut nothing.
+    pub(crate) cut_ids: Vec<oneiron::EntityId>,
     /// What the turn's context records keep of it (FIX 6921); `None` when
     /// its MEMORIES did not match its settled render.
     pub(crate) context: Option<ChatContextCapture>,
@@ -1281,7 +1292,7 @@ async fn read_chat_board(
     .map_err(|refused| axum::response::IntoResponse::into_response(refused).status())?;
     Ok(match context.chat_split {
         Some(split) => ChatBoard {
-            cut: split.render.render.shed.cut_rows > 0,
+            cut_ids: context.cut_ids,
             block: split.render.state,
             rows: served.0.rows,
             rows_complete: context.rows_complete,
@@ -1294,7 +1305,7 @@ async fn read_chat_board(
             }),
         },
         None => ChatBoard {
-            cut: context.board_budget.cut_rows > 0,
+            cut_ids: context.cut_ids,
             block: context.board,
             rows: served.0.rows,
             rows_complete: context.rows_complete,

@@ -200,13 +200,16 @@ pub(super) async fn execute_mcp_board_verb(
                 frame.epoch,
             )
             .await;
-            // The pre-render source list cannot witness what a cut delivered.
-            if source.shed.cut_rows == 0 {
-                crate::board_seed_report::report_delivered_board(
-                    server,
-                    board.rows.iter().copied(),
-                );
-            }
+            // Every row the board was derived from, less each row its final
+            // cut took, which it never showed.
+            crate::board_seed_report::report_delivered_board(
+                server,
+                board
+                    .rows
+                    .iter()
+                    .copied()
+                    .filter(|row| !source.shed.cut_ids.contains(row)),
+            );
             oneiron::board_verb::BoardVerbOutput::Frame(frame)
         }
         other => other,
@@ -359,13 +362,16 @@ pub(crate) async fn execute_run_board_verb_in_session(
                 frame.epoch,
             )
             .await;
-            // The pre-render source list cannot witness what a cut delivered.
-            if source.shed.cut_rows == 0 {
-                crate::board_seed_report::report_delivered_board(
-                    server,
-                    board.rows.iter().copied(),
-                );
-            }
+            // Every row the board was derived from, less each row its final
+            // cut took, which it never showed.
+            crate::board_seed_report::report_delivered_board(
+                server,
+                board
+                    .rows
+                    .iter()
+                    .copied()
+                    .filter(|row| !source.shed.cut_ids.contains(row)),
+            );
             let _superseded = server
                 .mcp_registry
                 .lock()

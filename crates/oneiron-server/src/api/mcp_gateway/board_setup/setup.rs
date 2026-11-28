@@ -174,9 +174,14 @@ pub(crate) async fn execute_mcp_setup(
         };
         staged_brief = brief;
         hooks = Some(board.hooks.shown_by_render(&board_shed));
-        if board_shed.cut_rows == 0 {
-            board_rows.clone_from(&board.rows);
-        }
+        // Its prefetch seeds: every row it was derived from, less each row
+        // its final cut took.
+        board_rows = board
+            .rows
+            .iter()
+            .copied()
+            .filter(|row| !board_shed.cut_ids.contains(row))
+            .collect();
         rider = Some((board.changes, board.epoch));
         (structured, keyframe, health, snapshot, Some(board.epoch))
     };

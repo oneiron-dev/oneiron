@@ -516,4 +516,100 @@ mod keyframe_cut {
             render.text
         );
     }
+
+    /// Review 2 of #10644: cutting D fits; cutting C next repeats C's long
+    /// name twice in the mark and goes over; cutting B as well fits again.
+    /// A search across that non-monotone range picked three cuts; the fewest
+    /// fitting is one.
+    #[test]
+    fn c10_fewest_fitting_cut_wins_across_a_non_monotone_range() {
+        const CAP10: usize = 1500;
+        let zeros = |count: usize| vec!["0"; count].join(" ");
+        let section = |name: String, row: String| {
+            BoardSection::new(name, Vec::new(), vec![row], Vec::new(), UNRANKED).unwrap()
+        };
+        let sections = [
+            section("A".to_owned(), "x".to_owned()),
+            section("B".to_owned(), zeros(700)),
+            section(format!("C {}", zeros(500)), "x".to_owned()),
+            section("D".to_owned(), zeros(700)),
+        ];
+        let request = BoardBudgetRequest {
+            harness_default_tok: CAP10,
+            caller_limit_tok: None,
+            explicit_override_tok: None,
+        };
+        let render = render_board_block(&frame(&header(), &sections), request).unwrap();
+
+        assert_eq!(
+            render.metadata.rendered_tok,
+            count_context_pack_tokens(&render.text)
+        );
+        assert!(
+            render.metadata.rendered_tok <= CAP10 && !render.shed.floor_exceeds_cap,
+            "one cut fits: {} <= {CAP10}: {}",
+            render.metadata.rendered_tok,
+            render.text
+        );
+        assert_eq!(render.shed.cut_rows, 1, "{}", render.text);
+        assert_eq!(render.shed.sections[0].rows, ["x"]);
+        assert_eq!(render.shed.sections[1].rows, [zeros(700)]);
+        assert_eq!(render.shed.sections[2].rows, ["x"]);
+        assert!(render.shed.sections[3].rows.is_empty());
+        let mark = format!(
+            "cut for size: 1 rows of D (budget_tok {CAP10}); describe({{ key: \"D\" }}) shows a section in full"
+        );
+        assert!(
+            render.text.ends_with(&format!("\nD\n{mark}\n</memory>")),
+            "the mark names only D: {}",
+            render.text
+        );
+    }
+
+    /// Review 2 of #10644: a pinned section never sheds (`SectionPolicy`),
+    /// so the cut takes none of its rows, even at cap 0.
+    #[test]
+    fn c11_cut_never_takes_a_row_of_a_pinned_section() {
+        let rows = rows();
+        let sections = [
+            BoardSection::new("P", Vec::new(), vec!["keep".to_owned()], Vec::new(), PINNED)
+                .unwrap(),
+            tasks_section(&[], &rows),
+        ];
+        let render = render_board_block(&frame(&header(), &sections), request(Some(0))).unwrap();
+
+        assert_eq!(render.shed.sections[0].rows, ["keep"], "{}", render.text);
+        assert!(render.shed.sections[1].rows.is_empty(), "{}", render.text);
+        assert_eq!(render.shed.cut_rows, rows.len());
+        assert!(render.shed.floor_exceeds_cap);
+        assert!(
+            render.text.contains(&mark(rows.len(), 0)),
+            "the mark names only TASKS: {}",
+            render.text
+        );
+    }
+
+    /// Review 2 of #10644: the seed reports and a chat reply's dependencies
+    /// leave out exactly the rows the final cut took. `cut_ids` names each
+    /// row shown before the cut and not after it, and no row still shown.
+    #[test]
+    fn c12_cut_ids_name_exactly_the_rows_the_cut_took() {
+        let long = " orchard harvest ledger lantern".repeat(CAP);
+        let rows = vec![
+            "kept task".to_owned(),
+            format!("second{long}"),
+            format!("third{long}"),
+        ];
+        let ids = [1, 2, 3].map(|byte| EntityId::from_bytes_unchecked([byte; 16]));
+        let sections =
+            [tasks_section(&[], &rows).with_row_ids(ids.into_iter().map(Some).collect())];
+        let render = render_board_block(&frame(&header(), &sections), request(None)).unwrap();
+
+        assert_eq!(render.shed.cut_rows, 2);
+        assert_eq!(render.shed.cut_ids, &ids[1..]);
+        assert_eq!(
+            render.shed.sections[0].shown_ids.as_deref(),
+            Some(&ids[..1])
+        );
+    }
 }
