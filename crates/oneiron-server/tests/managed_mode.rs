@@ -215,11 +215,64 @@ fn sockets_dir(root: &Path) -> PathBuf {
 }
 
 async fn http_get_over_unix(path: &Path, target: &str) -> String {
-    http_over_unix(
-        path,
-        &format!("GET {target} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"),
-    )
-    .await
+    http_over_unix(path, &get_request(target)).await
+}
+
+/// A GET, as the bytes a client actually puts on the wire.
+fn get_request(target: &str) -> String {
+    format!("GET {target} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+}
+
+/// The served vault's own root credential, for the rows that need a caller
+/// the managed path admits (FIX T0I-MANAGED-ANON-CALLER).
+///
+/// A managed request with neither a caller slip nor a supervisor attestation
+/// is anonymous (#3222), so these rows carry the vault's host root slip, as
+/// `admitted_http_body_blocks_quiescence_until_its_write_finishes` does in
+/// process. It is minted under the unit-test host issuer on the vault before
+/// the managed boot opens it. The boot then finds a started authority and no
+/// seed for it in this install's keystore, and a non-hosted start serves on
+/// without signing as its root; the slip still admits, because a request's
+/// proof is checked against the logged signer of the slip's mint.
+struct ServedRoot {
+    issuer: oneiron::authority::HostSlipIssuer,
+    slip: oneiron::authority::CapabilitySlip,
+}
+
+impl ServedRoot {
+    fn mint(vault: &oneiron::Vault) -> Self {
+        let issuer = oneiron::test_support::test_host_issuer();
+        let slip = vault.ensure_host_root_slip(&issuer).unwrap();
+        Self { issuer, slip }
+    }
+
+    /// `request` with this slip and a fresh holder proof. The proof clock is
+    /// wall time in Unix seconds, and each admission spends the proof's nonce
+    /// once, so every request signs its own.
+    fn sign(&self, request: &str) -> String {
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let nonce = oneiron::EntityId::now().to_hex();
+        let challenge = format!("oneiron-request:{timestamp}:{nonce}");
+        let signature: String = self
+            .issuer
+            .binding_proof(&self.slip, challenge.as_bytes())
+            .unwrap()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        let binding =
+            serde_json::json!({"timestamp": timestamp, "nonce": nonce, "signature": signature});
+        let token = self.slip.to_token().unwrap();
+        let (head, body) = request
+            .split_once("\r\n\r\n")
+            .expect("a raw request ends its headers");
+        format!(
+            "{head}\r\nAuthorization: Bearer {token}\r\nx-oneiron-binding: {binding}\r\n\r\n{body}"
+        )
+    }
 }
 
 /// How long a row waits for the server to answer at all. Generous: a managed
@@ -257,6 +310,25 @@ async fn http_over_unix(path: &Path, request: &str) -> String {
         };
     }
     String::from_utf8_lossy(&response).into_owned()
+}
+
+/// A WebSocket handshake over a served unix socket that keeps the connection:
+/// the response head, and the stream still open, so the session it upgraded
+/// stays live while the row goes on.
+async fn upgrade_over_unix(path: &Path, request: &str) -> (tokio::net::UnixStream, String) {
+    let mut stream = tokio::net::UnixStream::connect(path).await.unwrap();
+    stream.write_all(request.as_bytes()).await.unwrap();
+    stream.flush().await.unwrap();
+    let mut head = Vec::new();
+    let mut byte = [0u8; 1];
+    while !head.ends_with(b"\r\n\r\n") {
+        match tokio::time::timeout(HTTP_FIRST_BYTE_TIMEOUT, stream.read(&mut byte)).await {
+            Ok(Ok(0)) | Err(_) => break,
+            Ok(Ok(_)) => head.push(byte[0]),
+            Ok(Err(error)) => panic!("managed http read failed: {error}"),
+        }
+    }
+    (stream, String::from_utf8_lossy(&head).into_owned())
 }
 
 /// A JSON write, as the bytes a client actually puts on the wire.
@@ -1311,12 +1383,13 @@ async fn ready_byte_lands_only_after_sockets_credentials_and_gates() {
 async fn a_served_write_is_refused_while_frozen_and_accepted_again_after_abort() {
     let dir = tempfile::tempdir().unwrap();
     let run = sockets_dir(dir.path());
-    {
+    let root = {
         let vault = open_vault(&run.join("data"));
         vault
             .sync_state_put(CANARY_MARKER_KEY, CANARY_MARKER_VALUE)
             .unwrap();
-    }
+        ServedRoot::mint(&vault)
+    };
 
     let (args, ready_path) = managed_boot_args(&run);
     let managed = ManagedArgs::from_serve_args(&args).unwrap().unwrap();
@@ -1330,12 +1403,18 @@ async fn a_served_write_is_refused_while_frozen_and_accepted_again_after_abort()
 
     // Ruled (#3222, FIX 2222 / FIX 5255 part 3): a managed request with no
     // caller slip and no owner attestation is anonymous, never the host root,
-    // so these bare requests get 401 where they once got the root's 200. The
-    // unfrozen 401 still differs from the frozen typed 503 below.
-    let accepted = http_over_unix(&http, &conversation_write(&before)).await;
-    assert!(accepted.starts_with("HTTP/1.1 401"), "{accepted}");
-    let read_back = http_get_over_unix(&http, &format!("/api/entity/{before}")).await;
-    assert!(read_back.starts_with("HTTP/1.1 401"), "{read_back}");
+    // so a bare write gets 401 where it once got the root's 200.
+    let anonymous = http_over_unix(&http, &conversation_write(&before)).await;
+    assert!(anonymous.starts_with("HTTP/1.1 401"), "{anonymous}");
+    // A caller the managed path admits writes, and reads its row back.
+    let accepted = http_over_unix(&http, &root.sign(&conversation_write(&before))).await;
+    assert!(accepted.starts_with("HTTP/1.1 200"), "{accepted}");
+    let read_back = http_over_unix(
+        &http,
+        &root.sign(&get_request(&format!("/api/entity/{before}"))),
+    )
+    .await;
+    assert!(read_back.starts_with("HTTP/1.1 200"), "{read_back}");
 
     // The supervisor's authenticated socket is the principal. An arbitrary
     // forwarded actor/token claim cannot replace that contract identity.
@@ -1364,8 +1443,8 @@ async fn a_served_write_is_refused_while_frozen_and_accepted_again_after_abort()
     .await
     .expect("an idle canary vault reports quiescent once its admitted work is done");
 
-    // The same write, over the same socket, now gets the typed refusal.
-    let refused = http_over_unix(&http, &conversation_write(&during)).await;
+    // The same admitted write, over the same socket, now gets the typed refusal.
+    let refused = http_over_unix(&http, &root.sign(&conversation_write(&during))).await;
     assert!(
         refused.starts_with("HTTP/1.1 503 Service Unavailable"),
         "{refused}"
@@ -1375,12 +1454,9 @@ async fn a_served_write_is_refused_while_frozen_and_accepted_again_after_abort()
         refused.contains(&ManagedError::WritesFrozen.to_string()),
         "the served refusal must carry the typed error, not a lookalike: {refused}"
     );
-    // Never a silent accept: nothing was committed under that id.
-    let absent = http_get_over_unix(&http, &format!("/api/entity/{during}")).await;
-    assert!(absent.starts_with("HTTP/1.1 401"), "{absent}");
     // The sync socket is a write path too. Its frames ride past every
     // per-request gate, so a frozen engine refuses the handshake itself.
-    let upgrade = http_over_unix(&http, WS_UPGRADE_REQUEST).await;
+    let upgrade = http_over_unix(&http, &root.sign(WS_UPGRADE_REQUEST)).await;
     assert!(upgrade.contains(WRITES_FROZEN_TAG), "{upgrade}");
     // Reads are not writes: a frozen engine still answers them.
     let health = http_get_over_unix(&http, "/api/health").await;
@@ -1391,11 +1467,22 @@ async fn a_served_write_is_refused_while_frozen_and_accepted_again_after_abort()
         CtlResponse::Ok { ok } => assert!(ok),
         other => panic!("expected an ok reply, got {other:?}"),
     }
-    // Anonymous again (#3222), but past the freeze gate: 401, not the 503.
-    let accepted = http_over_unix(&http, &conversation_write(&during)).await;
-    assert!(accepted.starts_with("HTTP/1.1 401"), "{accepted}");
-    let read_back = http_get_over_unix(&http, &format!("/api/entity/{during}")).await;
-    assert!(read_back.starts_with("HTTP/1.1 401"), "{read_back}");
+    // Never a silent accept: the refused write committed nothing under its id.
+    // Read once the freeze is over, so no proof is spent while it holds.
+    let absent = http_over_unix(
+        &http,
+        &root.sign(&get_request(&format!("/api/entity/{during}"))),
+    )
+    .await;
+    assert!(absent.starts_with("HTTP/1.1 404"), "{absent}");
+    let accepted = http_over_unix(&http, &root.sign(&conversation_write(&during))).await;
+    assert!(accepted.starts_with("HTTP/1.1 200"), "{accepted}");
+    let read_back = http_over_unix(
+        &http,
+        &root.sign(&get_request(&format!("/api/entity/{during}"))),
+    )
+    .await;
+    assert!(read_back.starts_with("HTTP/1.1 200"), "{read_back}");
 
     boot.abort();
 }
@@ -1412,12 +1499,13 @@ async fn a_served_write_is_refused_while_frozen_and_accepted_again_after_abort()
 async fn a_sync_session_upgraded_before_the_freeze_denies_quiescence() {
     let dir = tempfile::tempdir().unwrap();
     let run = sockets_dir(dir.path());
-    {
+    let root = {
         let vault = open_vault(&run.join("data"));
         vault
             .sync_state_put(CANARY_MARKER_KEY, CANARY_MARKER_VALUE)
             .unwrap();
-    }
+        ServedRoot::mint(&vault)
+    };
 
     let (args, ready_path) = managed_boot_args(&run);
     let managed = ManagedArgs::from_serve_args(&args).unwrap().unwrap();
@@ -1429,8 +1517,10 @@ async fn a_sync_session_upgraded_before_the_freeze_denies_quiescence() {
 
     // Unfrozen, the handshake is accepted: the session exists before there is
     // any freeze to refuse it. A refusal here would make the assertion below
-    // pass for the wrong reason.
-    let upgrade = http_over_unix(&http, WS_UPGRADE_REQUEST).await;
+    // pass for the wrong reason. A bare handshake is anonymous (#3222), so the
+    // session is the vault root's own, and its socket stays open through the
+    // ask below.
+    let (session, upgrade) = upgrade_over_unix(&http, &root.sign(WS_UPGRADE_REQUEST)).await;
     assert!(
         upgrade.starts_with("HTTP/1.1 101"),
         "the pre-freeze handshake must be admitted: {upgrade}"
@@ -1449,6 +1539,7 @@ async fn a_sync_session_upgraded_before_the_freeze_denies_quiescence() {
         other => panic!("expected a prepare_reap reply, got {other:?}"),
     }
 
+    drop(session);
     boot.abort();
 }
 
