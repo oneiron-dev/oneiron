@@ -2352,6 +2352,7 @@ fn h3_machine_facts(machine: EntityId, now_ms: u64) -> MachineFacts {
         keep_headroom_pct: None,
         roles: Vec::new(),
         warm: Vec::new(),
+        warm_absent: Vec::new(),
     }
 }
 
