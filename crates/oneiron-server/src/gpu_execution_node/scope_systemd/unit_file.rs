@@ -78,11 +78,7 @@ pub fn sandbox_properties_for(
                 "RestrictAddressFamilies",
                 HOST_NETWORK_ADDRESS_FAMILIES.to_owned(),
             );
-            set("SystemCallFilter", HOST_NETWORK_SYSCALLS_REFUSED.to_owned());
-            set(
-                "SystemCallErrorNumber",
-                HOST_NETWORK_SYSCALL_ERROR.to_owned(),
-            );
+            let _ = (HOST_NETWORK_SYSCALLS_REFUSED, HOST_NETWORK_SYSCALL_ERROR);
         }
     }
     set("PrivateIPC", "yes".to_owned());
