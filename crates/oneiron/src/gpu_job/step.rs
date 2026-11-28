@@ -382,17 +382,31 @@ impl Vault {
             None => None,
         };
         let reason = confirmed_reason(reason, terminal.as_ref());
+        let renews = job.renews();
         let chunk = job.chunk_mut()?;
         chunk.resource = resource;
-        // A hard stop's seconds are the machine's own measure, from the launch
-        // to the empty unit: they replace a live estimate a status took before
-        // the end, which can run past it (pass 33, 8.6).
-        if let Some(measured) = terminal
+        let time_limit = terminal
             .as_ref()
-            .filter(|terminal| terminal.end == GpuJobEnd::TimeLimit)
-            .and_then(|terminal| terminal.measured_secs)
-        {
-            chunk.used_secs = measured;
+            .is_some_and(|terminal| terminal.end == GpuJobEnd::TimeLimit);
+        let measured = terminal
+            .as_ref()
+            .and_then(|terminal| terminal.measured_secs);
+        match measured {
+            // A hard stop's seconds are the machine's own measure, from the launch
+            // to the empty unit: they replace a live estimate a status took before
+            // the end, which can run past it (pass 33, 8.6).
+            Some(measured) if time_limit => chunk.used_secs = measured,
+            // A session's slice may have no reading of its own: a stop that met the
+            // run past a slice boundary ends the next slice with no status read of it
+            // (row W1). It ran at least its machine's confirmed measure and what it
+            // bills, as a passed slice does.
+            _ if renews => {
+                chunk.used_secs = chunk
+                    .used_secs
+                    .max(measured.unwrap_or(0))
+                    .max(billed_secs.unwrap_or(0));
+            }
+            _ => {}
         }
         // JOB-SETTLES-ON-LAUNCH-REFUSED (LE-2 = A): a key that never started bills
         // zero, including overhead.
@@ -400,6 +414,10 @@ impl Vault {
         let charged_secs = bill_chunk(chunk, billed_secs, paid, never_ran);
         let settled_units = chunk.settled_units;
         let used_secs = chunk.base_used_secs.saturating_add(chunk.used_secs);
+        // The session's run time, which door 8 reads, holds that final slice too.
+        if renews {
+            job.maximum.record_session_usage(used_secs);
+        }
         job.state = if reason == GpuEndReason::AtMaximum {
             GpuJobState::Stopped
         } else {

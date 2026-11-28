@@ -11,8 +11,8 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron::gpu_job::{
     AtMaximum, GpuConnectorError, GpuEndReason, GpuJob, GpuJobActor, GpuJobConnector,
     GpuJobPermits, GpuJobQuote, GpuJobRenewal, GpuJobRequest, GpuJobSignal, GpuJobSpec,
-    GpuJobStart, GpuJobState, GpuOffer, GpuResourceRef, GpuResourceStatus, GpuTermination,
-    PriceShape,
+    GpuJobStart, GpuJobState, GpuJobStatus, GpuOffer, GpuResourceRef, GpuResourceStatus,
+    GpuTermination, PriceShape,
 };
 use oneiron::llm::ModelLocality;
 use oneiron::llm::run_admission::{
@@ -698,5 +698,51 @@ fn a_passed_slice_billed_below_its_measure_keeps_its_measured_run_time() {
     assert_eq!(
         cancelled.chunks[1].base_used_secs, CHUNK_SECS,
         "the base is the slice's measure, not its bill or the last reading"
+    );
+}
+
+/// REVIEW-10521 r2 P1 (step.rs:402): a cancel whose stop met the run past a slice boundary ends
+/// the next slice with no status read of it. That slice's confirmed seconds still count, in the
+/// chunk and in the session's run time that door 8 shows.
+#[test]
+fn a_cancel_past_a_slice_boundary_counts_the_final_slice_in_the_run_time() {
+    let rig = rig();
+    let (job, first, next) = renewed(&rig);
+    rig.gpu.terminates(
+        &first,
+        GpuTermination::Continued {
+            used_secs: CHUNK_SECS,
+            billed_secs: CHUNK_SECS,
+        },
+    );
+    rig.gpu
+        .terminates(&next, GpuTermination::Confirmed { billed_secs: 40 });
+    let cancelled = rig
+        .vault
+        .cancel_gpu_job(
+            GpuJobActor::Owner(&rig.owner),
+            &job.id,
+            &rig.permits,
+            &rig.gpu,
+            NOW,
+        )
+        .expect("cancel");
+    assert_eq!(cancelled.chunks.len(), 2, "the next chunk runs now");
+    rig.step(&job.id);
+    let ended = rig.job(&job.id);
+    assert_eq!(
+        ended.state,
+        GpuJobState::Ended {
+            reason: GpuEndReason::Cancelled
+        }
+    );
+    assert_eq!(
+        ended.chunks[1].used_secs, 40,
+        "the final slice ran what its provider confirmed"
+    );
+    assert_eq!(
+        GpuJobStatus::from(&ended).used_secs,
+        CHUNK_SECS + 40,
+        "door 8 counts both slices"
     );
 }
