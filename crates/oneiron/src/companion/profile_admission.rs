@@ -192,6 +192,49 @@ impl Vault {
                     == CompanionProfileSourceJudgement::Excluded
             })
             || self.companion_profile_audience_withheld_in(txn, key, reader)
+            || self.companion_profile_thread_withheld_in(txn, key, reader)
+    }
+
+    /// Whether a phone thread among the sources of the stored profile at
+    /// `key` keeps it from `reader` (O2-9289 P2-2; Fable design pass 31): the
+    /// source-audience walk judges only policies, and a thread reads under a
+    /// grant naming that very thread (`SourceReaders`), which this door does
+    /// not hold, so the profile reads to the vault owner alone. A profile whose
+    /// verdict is sealed or waits is the walk's to judge; a verdict that
+    /// cannot be read keeps the profile out.
+    fn companion_profile_thread_withheld_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        key: &PsychProfileKey,
+        reader: Option<&ScopedRead<'_>>,
+    ) -> bool {
+        if reader.is_some_and(|reader| reader.actor_key().reads_as_vault_owner()) {
+            return false;
+        }
+        let id = psych_profile_entity_id(key);
+        let threaded = crate::source_audience::verdict_in(self, txn, &id).and_then(|verdict| {
+            let crate::source_audience::Verdict::Whole(sources) = verdict else {
+                return Ok(false);
+            };
+            for source in &sources {
+                if crate::source_audience::floor_source_in(self, txn, source)?
+                    == crate::source_audience::FloorSource::Thread
+                {
+                    return Ok(true);
+                }
+            }
+            Ok(false)
+        });
+        match threaded {
+            Ok(threaded) => threaded,
+            Err(error) => {
+                tracing::warn!(
+                    error_kind = ?error.kind(),
+                    "a companion profile's floor could not be read; the profile is withheld"
+                );
+                true
+            }
+        }
     }
 
     /// Whether the stored profile at `key` does not read to `reader`'s

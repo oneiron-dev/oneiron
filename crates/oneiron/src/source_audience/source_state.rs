@@ -37,7 +37,7 @@ use std::collections::BTreeSet;
 use heed::{RoTxn, RwTxn};
 
 use self::judge::sweep_page_in_txn;
-use self::reader::StateReader;
+pub(crate) use self::reader::StateReader;
 use super::floor_migration;
 use crate::error::Result;
 use crate::side_table::{self, Named, SideTable};
@@ -55,6 +55,7 @@ pub(crate) use erase::{
 pub(crate) use judge::forget_floor_state_in_txn;
 pub(crate) use judge::{LinksBefore, fold_waiters_in_txn, judge_rows_in_txn};
 pub(super) use judge::{heal_row_in_txn, id_of, judge_row_in_txn};
+pub(super) use reader::mark_entry_in;
 
 /// Each input whose floor a row has not taken yet: the row, then the input;
 /// the value is the entry's [`OpenFlags`].
@@ -71,8 +72,10 @@ const MIGRATED: SideTable<(), bool, Named> =
 const SHELL_ERASED: SideTable<EntityId, (), Named> =
     SideTable::new(&side_table::SOURCE_AUDIENCE_FLOOR_SHELL_ERASED);
 
-/// How deep one read follows inputs that wait on inputs of their own; past
-/// it an input reads pending.
+/// How deep one judgement recurses into inputs that wait on inputs of their
+/// own. Past it the read follows the input on its own stack
+/// ([`StateReader`]), so a chain of any length is read to its end (#10315
+/// review 1 P1-4; pass 31 oracle case 73).
 const MAX_DEPTH: usize = 8;
 
 /// Rounds one write judges its rows again, so a row written from another
@@ -139,12 +142,26 @@ impl OpenFlags {
     /// one, at the softer level.
     #[must_use]
     pub(crate) const fn merge(self, other: Self) -> Self {
-        let before = match (self.before_floors_level(), other.before_floors_level()) {
+        Self(self.before_merged(other) | ((self.0 | other.0) & Self::ATTESTATION))
+    }
+
+    /// The entry `self` once a write that read the link's kind opens it
+    /// again with `now`: an old fact's flag stands if either has one, at the
+    /// softer level, and whether the input is a support is what `now` says,
+    /// so a support that became a required input waits as one (#10315
+    /// review 1 P1-1; pass 31 oracle case 70).
+    #[must_use]
+    pub(crate) const fn rejudged(self, now: Self) -> Self {
+        Self(self.before_merged(now) | (now.0 & Self::ATTESTATION))
+    }
+
+    /// The old fact's flag of `self` and `other`, at the softer level.
+    const fn before_merged(self, other: Self) -> u8 {
+        match (self.before_floors_level(), other.before_floors_level()) {
             (Some(DeleteLevel::Soft), _) | (_, Some(DeleteLevel::Soft)) => Self::BEFORE_SOFT,
             (Some(DeleteLevel::Hard), _) | (_, Some(DeleteLevel::Hard)) => Self::BEFORE_HARD,
             (None, None) => 0,
-        };
-        Self(before | ((self.0 | other.0) & Self::ATTESTATION))
+        }
     }
 
     pub(crate) const fn to_byte(self) -> u8 {
@@ -289,6 +306,25 @@ pub(super) fn mark_migrated_in_txn(store: &crate::store::Store, txn: &mut RwTxn<
     MIGRATED.put(store, txn, &(), &true)
 }
 
+/// Whether the migration has judged every row here: it has ended, or it
+/// empties the old tables now.
+///
+/// # Errors
+///
+/// Storage failures.
+pub(super) fn judged_all_in(store: &crate::store::Store, txn: &RoTxn<'_>) -> Result<bool> {
+    Ok(MIGRATED.get(store, txn, &())?.is_some())
+}
+
+/// Marks that the migration has judged every row, before it empties the
+/// old tables.
+pub(super) fn mark_judged_all_in_txn(
+    store: &crate::store::Store,
+    txn: &mut RwTxn<'_>,
+) -> Result<()> {
+    MIGRATED.put(store, txn, &(), &false)
+}
+
 /// Whether a later owner erase reached `input`, an input deleted before
 /// floors: its permanent `dt:` marker stands, or an owner's erase of its
 /// head scrubbed it as a redirect shell.
@@ -335,12 +371,17 @@ pub(super) fn open_of_in(
 }
 
 /// Whether `row` has an open entry.
-fn has_open_in(store: &crate::store::Store, txn: &RoTxn<'_>, row: &EntityId) -> Result<bool> {
+pub(super) fn has_open_in(
+    store: &crate::store::Store,
+    txn: &RoTxn<'_>,
+    row: &EntityId,
+) -> Result<bool> {
     Ok(OPEN.iter_from(store, txn, row.as_bytes())?.next().is_some())
 }
 
-/// Opens, in `txn`, the entry of `row` on `input` with `flags`; an entry
-/// already there keeps its flags, merged with these. Whether it is new.
+/// Opens, in `txn`, the entry of `row` on `input` with `flags`, as a write
+/// that read the link's kind judged it; an entry already there takes them
+/// ([`OpenFlags::rejudged`]). Whether it is new.
 pub(super) fn open_entry_in_txn(
     store: &crate::store::Store,
     txn: &mut RwTxn<'_>,
@@ -350,12 +391,24 @@ pub(super) fn open_entry_in_txn(
 ) -> Result<bool> {
     let key = (*row, *input);
     let (stored, new) = match OPEN.get(store, txn, &key)? {
-        Some(byte) => (OpenFlags::from_byte(byte).merge(flags), false),
+        Some(byte) => (OpenFlags::from_byte(byte).rejudged(flags), false),
         None => (flags, true),
     };
     OPEN.put(store, txn, &key, &stored.to_byte())?;
     OPEN_BY.put(store, txn, &(*input, *row), &())?;
     Ok(new)
+}
+
+/// The flags of the entry of `row` on `input`, if it is open.
+pub(super) fn entry_flags_in(
+    store: &crate::store::Store,
+    txn: &RoTxn<'_>,
+    row: &EntityId,
+    input: &EntityId,
+) -> Result<Option<OpenFlags>> {
+    Ok(OPEN
+        .get(store, txn, &(*row, *input))?
+        .map(OpenFlags::from_byte))
 }
 
 /// Takes, in `txn`, the entry of `row` on `input` away.

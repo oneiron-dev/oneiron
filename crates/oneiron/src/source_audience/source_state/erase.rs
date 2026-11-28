@@ -5,9 +5,9 @@
 //! Before that marker each delete door calls [`before_erase_in_txn`] (or,
 //! where its write holds only the store, [`before_erase_in_store_txn`]), so
 //! a row whose input was bound and whole takes that floor first; a missed
-//! call fails closed. While the migration runs, a row it has not judged that
-//! names the erased row by a lineage edge is judged for that link first,
-//! because the erase tears the edge (section 5, M3).
+//! call fails closed. While the migration runs, an old fact it has not
+//! judged that names the erased row by a lineage edge is judged for that
+//! link first, because the erase tears the edge (section 5, M3).
 //!
 //! Three more writes belong to delete doors: a local put over an erased row
 //! seals what still waited on it ([`seal_waiters_in_txn`]), a row's own
@@ -21,14 +21,14 @@ use heed::{RoTxn, RwTxn};
 
 use super::judge::{fold_entry_in_txn, judge_row_in_txn, take_floor_in_store_txn};
 use super::{
-    DeleteLevel, Fresh, OPEN, OPEN_BY, OpenFlags, SHELL_ERASED, close_entry_in_txn, has_open_in,
-    migrated_in, open_entry_in_txn,
+    DeleteLevel, Fresh, OPEN, OPEN_BY, OpenFlags, SHELL_ERASED, close_entry_in_txn, entry_flags_in,
+    has_open_in, judged_all_in, migrated_in, open_entry_in_txn,
 };
 use crate::error::Result;
 use crate::source_audience::floor::{
-    OwnSource, floor_of_in, floors_possible_of_in, own_source_of_in,
+    OwnSource, floor_of_in, floors_possible_of_in, names_unknown_source_in, own_source_of_in,
 };
-use crate::source_audience::floor_migration;
+use crate::source_audience::floor_migration::{self, Visit};
 use crate::{EntityId, Vault};
 
 /// Runs, in the write that deletes `erased` at `level`, before its first
@@ -53,9 +53,9 @@ pub(crate) fn before_erase_in_txn(
         return Ok(());
     }
     if migrating_in(&vault.store, txn)? {
-        if !floor_migration::raised_in(&vault.store, txn, erased)? {
+        if floor_migration::visit_in(&vault.store, txn, erased)? == Visit::OldFact {
             judge_row_in_txn(vault, txn, erased, &Fresh::None, true)?;
-            floor_migration::mark_judged_in_txn(&vault.store, txn, erased)?;
+            floor_migration::mark_visited_in_txn(&vault.store, txn, erased)?;
         }
         if vault.get_raw_in(txn, erased)?.is_some() {
             let floor = match super::StateReader::reader(vault, txn)?.state(erased)? {
@@ -104,15 +104,17 @@ pub(crate) fn before_erase_in_store_txn(
     Ok(())
 }
 
-/// Whether the migration runs and the old backfill had not raised every
-/// row: rows not judged yet may stand.
+/// Whether the migration has not judged every row yet: rows it has not
+/// visited may stand.
 fn migrating_in(store: &crate::store::Store, txn: &RoTxn<'_>) -> Result<bool> {
-    Ok(!migrated_in(store, txn)? && !floor_migration::old_backfill_done_in(store, txn)?)
+    Ok(!judged_all_in(store, txn)?)
 }
 
 /// The floor of `row` when it reads bound and whole here and a read of the
 /// store alone can tell: held, not erased, not held back, its binding
-/// landed, judged, and no open entry or old mark of its own.
+/// landed, visited by the migration, no open entry or old mark of its own,
+/// and no source on it that reads to no one (a floor that names one reads
+/// sealed, as [`super::StateReader::state`] reads it; #10315 review 1 P1-2).
 fn whole_floor_in(
     store: &crate::store::Store,
     txn: &RoTxn<'_>,
@@ -129,23 +131,27 @@ fn whole_floor_in(
         || own_source_of_in(store, txn, row, &raw)? == OwnSource::Unbound
         || has_open_in(store, txn, row)?
         || floor_migration::has_old_marks_in(store, txn, row, migrated)?
-        || !(migrated
-            || floor_migration::old_backfill_done_in(store, txn)?
-            || floor_migration::raised_in(store, txn, row)?)
+        || floor_migration::visit_in(store, txn, row)? != Visit::Visited
     {
         return Ok(None);
     }
-    Ok(Some(floor_of_in(store, txn, row, &raw)?))
+    let floor = floor_of_in(store, txn, row, &raw)?;
+    if names_unknown_source_in(store, txn, &floor)? {
+        return Ok(None);
+    }
+    Ok(Some(floor))
 }
 
-/// M3: each row the migration has not judged that names `erased` by a
+/// M3: each old fact the migration has not judged that names `erased` by a
 /// lineage edge (a `PartOf` either way, a `DerivedFrom` to it, a `Supports`
 /// from it: the ends whose words the edge adds to) is judged for that link
 /// before the erase tears it. It takes `floor`, the floor of `erased` when
 /// that reads bound and whole; otherwise it opens an entry on `erased` as
 /// an old fact's, at the level of this delete, which waits for good, and a
 /// later owner erase of a soft-deleted input seals it (for a blob release,
-/// `level` `None`, an ordinary entry). It never seals.
+/// `level` `None`, an ordinary entry). It never seals. The row is marked an
+/// old fact, so neither the entry nor the floor this link gives makes the
+/// migration take it for a row an older build raised.
 fn judge_edge_rows_in_txn(
     store: &crate::store::Store,
     txn: &mut RwTxn<'_>,
@@ -168,8 +174,8 @@ fn judge_edge_rows_in_txn(
     }
     rows.remove(erased);
     for row in rows {
-        if floor_migration::raised_in(store, txn, &row)?
-            || crate::ports::erased_in_txn(store, txn, &row)?
+        if crate::ports::erased_in_txn(store, txn, &row)?
+            || floor_migration::visit_in(store, txn, &row)? != Visit::OldFact
         {
             continue;
         }
@@ -181,10 +187,17 @@ fn judge_edge_rows_in_txn(
                 take_floor_in_store_txn(store, txn, &row, &raw, floor)?;
             }
             None => {
+                // M3 reads the link by its edge, not its kind: an entry
+                // already there keeps whether its input is a support.
                 let flags = level.map_or(OpenFlags::ORDINARY, OpenFlags::before_floors);
+                let flags = match entry_flags_in(store, txn, &row, erased)? {
+                    Some(held) => held.merge(flags),
+                    None => flags,
+                };
                 open_entry_in_txn(store, txn, &row, erased, flags)?;
             }
         }
+        floor_migration::mark_old_fact_in_txn(store, txn, &row)?;
     }
     Ok(())
 }

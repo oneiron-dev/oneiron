@@ -32,7 +32,7 @@ use std::collections::BTreeSet;
 use heed::RoTxn;
 use serde::Serialize;
 
-use super::floor::{FloorSource, floor_in, floor_source_in};
+use super::floor::{floor_in, names_unknown_source_in};
 use crate::batch::EntityMetadataHeader;
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
@@ -77,20 +77,6 @@ enum Rederived {
     Kept,
 }
 
-/// Whether an id on `floor` names no source here.
-fn names_unknown_source(
-    vault: &Vault,
-    txn: &RoTxn<'_>,
-    floor: &BTreeSet<EntityId>,
-) -> Result<bool> {
-    for source in floor {
-        if floor_source_in(vault, txn, source)? == FloorSource::Unknown {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-
 /// The rows this vault reads to no one, and that are still current: held,
 /// a CLAIM still `active`, a scope SUMMARY its projection has not replaced.
 /// A row reads to no one when an id on its stored floor names no source, or
@@ -99,7 +85,7 @@ fn current_sealed_rows_in(vault: &Vault, txn: &RoTxn<'_>) -> Result<Vec<(EntityI
     let mut sealed_rows = BTreeSet::new();
     for entry in super::DERIVED.iter_from(&vault.store, txn, &[])? {
         let (row, floor) = entry?;
-        if names_unknown_source(vault, txn, &floor)? {
+        if names_unknown_source_in(&vault.store, txn, &floor)? {
             sealed_rows.insert(row);
         }
     }
@@ -304,7 +290,7 @@ impl Vault {
             let Some(raw) = self.get_raw_in(txn, &twin)? else {
                 continue;
             };
-            if !names_unknown_source(self, txn, &floor_in(self, txn, &twin, &raw)?)? {
+            if !names_unknown_source_in(&self.store, txn, &floor_in(self, txn, &twin, &raw)?)? {
                 return Ok(Some(twin));
             }
         }

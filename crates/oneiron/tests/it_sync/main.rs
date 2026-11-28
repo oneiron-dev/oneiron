@@ -20,6 +20,7 @@ mod device_predicted_level;
 mod device_predicted_residence_live;
 mod device_world_follow;
 mod device_world_follow_live;
+mod read_lineage_asset_readmit;
 mod rung0_cold_start_conformance;
 mod sync_blob_artifact_delete;
 mod sync_blob_version_claim_release;
