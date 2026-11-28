@@ -135,6 +135,20 @@ impl Vault {
     )> {
         let decoded = decode_tombstone_value(raw_value);
         self.replayed_tombstone_protection_in_txn(wtxn, id, &decoded)?;
+        // The rows waiting on the row take its floor before the replay's first
+        // marker (Fable design pass 31, section 2). A row never held, or one
+        // erased here already, hands over nothing: a row waiting on it reads
+        // sealed once the replay's marker stands.
+        crate::source_audience::before_erase_in_txn(
+            self,
+            wtxn,
+            id,
+            if decoded.is_hard() {
+                crate::source_audience::DeleteLevel::Hard
+            } else {
+                crate::source_audience::DeleteLevel::Soft
+            },
+        )?;
         // A held world keeps its pads on either reason, before any work here
         // (OF-470).
         crate::world_keys::reject_held_pad_world_in_txn(&self.store, wtxn, &[*id])?;

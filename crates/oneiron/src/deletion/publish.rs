@@ -662,6 +662,14 @@ impl Vault {
         // The fence commits with the tombstone, so the row reads deleted from
         // the publication on, even if the purge never lands.
         if value.reason.is_hard() {
+            // The rows waiting on the row take its floor first (Fable design
+            // pass 31, section 2).
+            crate::source_audience::before_erase_in_txn(
+                self,
+                &mut wtxn,
+                id,
+                crate::source_audience::DeleteLevel::Hard,
+            )?;
             super::tombstone::ROW_DELETION_FENCE.put(
                 &self.store,
                 &mut wtxn,

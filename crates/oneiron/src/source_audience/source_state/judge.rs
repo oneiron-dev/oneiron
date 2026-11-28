@@ -95,7 +95,9 @@ fn judge_acts_in(
                     acts.push((
                         *input,
                         Act::Open(OpenFlags::before_floors(delete_level_in(
-                            vault, txn, input,
+                            &vault.store,
+                            txn,
+                            input,
                         )?)),
                     ));
                 }
@@ -137,11 +139,11 @@ pub(crate) fn judge_rows_in_txn(
         };
         merged.insert(row, joined);
     }
-    let migrating = !migrated_in(vault, txn)?;
+    let migrating = !migrated_in(&vault.store, txn)?;
     let mut old: BTreeSet<EntityId> = BTreeSet::new();
-    if migrating && !floor_migration::old_backfill_done_in(vault, txn)? {
+    if migrating && !floor_migration::old_backfill_done_in(&vault.store, txn)? {
         for row in merged.keys() {
-            if !floor_migration::raised_in(vault, txn, row)? {
+            if !floor_migration::raised_in(&vault.store, txn, row)? {
                 old.insert(*row);
             }
         }
@@ -157,7 +159,7 @@ pub(crate) fn judge_rows_in_txn(
     }
     if migrating {
         for row in merged.keys() {
-            floor_migration::mark_judged_in_txn(vault, txn, row)?;
+            floor_migration::mark_judged_in_txn(&vault.store, txn, row)?;
         }
     }
     for row in merged.keys() {
@@ -268,8 +270,8 @@ pub(in crate::source_audience) fn judge_row_in_txn(
     for (input, act) in acts {
         grew |= match act {
             Act::Take(floor) => take_floor_in_txn(vault, txn, row, &raw, &floor)?,
-            Act::Open(flags) => open_entry_in_txn(vault, txn, row, &input, flags)?,
-            Act::OpenSelf => open_entry_in_txn(vault, txn, row, row, OpenFlags::ORDINARY)?,
+            Act::Open(flags) => open_entry_in_txn(&vault.store, txn, row, &input, flags)?,
+            Act::OpenSelf => open_entry_in_txn(&vault.store, txn, row, row, OpenFlags::ORDINARY)?,
             Act::Seal => crate::source_audience::add_derived_policies_in_txn(
                 vault,
                 txn,
@@ -277,7 +279,7 @@ pub(in crate::source_audience) fn judge_row_in_txn(
                 &BTreeSet::from([crate::source_audience::floor::sealed_source()]),
             )?,
             Act::Free => {
-                free_attestations_in_txn(vault, txn, row)?;
+                free_attestations_in_txn(&vault.store, txn, row)?;
                 false
             }
         };
@@ -297,12 +299,23 @@ fn take_floor_in_txn(
     raw: &[u8],
     floor: &BTreeSet<EntityId>,
 ) -> Result<bool> {
+    take_floor_in_store_txn(&vault.store, txn, row, raw, floor)
+}
+
+/// [`take_floor_in_txn`] for a write that holds only the store.
+pub(super) fn take_floor_in_store_txn(
+    store: &crate::store::Store,
+    txn: &mut RwTxn<'_>,
+    row: &EntityId,
+    raw: &[u8],
+    floor: &BTreeSet<EntityId>,
+) -> Result<bool> {
     let mut add = floor.clone();
-    match crate::source_audience::floor::own_source_in(vault, txn, row, raw)? {
+    match crate::source_audience::floor::own_source_of_in(store, txn, row, raw)? {
         // An archived row is held, not an erased shell: it keeps the seal
         // (#10265 Opus review 3 P2-1).
         OwnSource::Source(own) if own == crate::source_audience::floor::sealed_source() => {
-            if !crate::ports::removed_in_txn(&vault.store, &**txn, row)? {
+            if !crate::ports::removed_in_txn(store, &**txn, row)? {
                 add.insert(own);
             }
         }
@@ -314,15 +327,19 @@ fn take_floor_in_txn(
     if add.is_empty() {
         return Ok(false);
     }
-    crate::source_audience::add_derived_policies_in_txn(vault, txn, row, &add)
+    crate::source_audience::add_derived_policies_in_store_txn(store, txn, row, &add)
 }
 
 /// Takes every open support of `row` away: a free support frees it
 /// (pass 30's "one free attestation frees").
-fn free_attestations_in_txn(vault: &Vault, txn: &mut RwTxn<'_>, row: &EntityId) -> Result<()> {
-    for (input, flags) in open_of_in(vault, txn, row)? {
+fn free_attestations_in_txn(
+    store: &crate::store::Store,
+    txn: &mut RwTxn<'_>,
+    row: &EntityId,
+) -> Result<()> {
+    for (input, flags) in open_of_in(store, txn, row)? {
         if flags.is_attestation() && flags.before_floors_level().is_none() {
-            close_entry_in_txn(&vault.store, txn, row, &input)?;
+            close_entry_in_txn(store, txn, row, &input)?;
         }
     }
     Ok(())
@@ -360,8 +377,8 @@ pub(crate) fn fold_waiters_in_txn(
             continue;
         };
         for row in waiters {
-            if fold_entry_in_txn(vault, txn, &row, &input, &floor)?
-                && !has_open_in(vault, txn, &row)?
+            if fold_entry_in_txn(&vault.store, txn, &row, &input, &floor)?
+                && !has_open_in(&vault.store, txn, &row)?
                 && followed < FOLD_CASCADE
             {
                 followed += 1;
@@ -374,16 +391,16 @@ pub(crate) fn fold_waiters_in_txn(
 
 /// Folds the entry of `row` on `input`, an input bound and whole with
 /// `floor`: whether the entry went.
-fn fold_entry_in_txn(
-    vault: &Vault,
+pub(super) fn fold_entry_in_txn(
+    store: &crate::store::Store,
     txn: &mut RwTxn<'_>,
     row: &EntityId,
     input: &EntityId,
     floor: &BTreeSet<EntityId>,
 ) -> Result<bool> {
-    let Some(byte) = OPEN.get(&vault.store, txn, &(*row, *input))? else {
+    let Some(byte) = OPEN.get(store, txn, &(*row, *input))? else {
         // An index pair whose entry went is stale.
-        OPEN_BY.delete(&vault.store, txn, &(*input, *row))?;
+        OPEN_BY.delete(store, txn, &(*input, *row))?;
         return Ok(false);
     };
     let flags = OpenFlags::from_byte(byte);
@@ -391,15 +408,18 @@ fn fold_entry_in_txn(
         return Ok(false);
     }
     if flags.is_attestation() && floor.is_empty() {
-        free_attestations_in_txn(vault, txn, row)?;
+        free_attestations_in_txn(store, txn, row)?;
         return Ok(true);
     }
-    if let Some(raw) = vault.get_raw_in(txn, row)? {
-        take_floor_in_txn(vault, txn, row, &raw, floor)?;
-    } else {
-        crate::source_audience::add_derived_policies_in_txn(vault, txn, row, floor)?;
+    match crate::ports::EntityStoreRead::port_entity_raw(store, txn, row)? {
+        Some(raw) => {
+            take_floor_in_store_txn(store, txn, row, &raw, floor)?;
+        }
+        None => {
+            crate::source_audience::add_derived_policies_in_store_txn(store, txn, row, floor)?;
+        }
     }
-    close_entry_in_txn(&vault.store, txn, row, input)?;
+    close_entry_in_txn(store, txn, row, input)?;
     Ok(true)
 }
 
@@ -453,7 +473,7 @@ pub(in crate::source_audience) fn heal_row_in_txn(
                 take_floor_in_txn(vault, txn, row, &raw, &floor)?;
             }
             Act::Open(flags) => {
-                open_entry_in_txn(vault, txn, row, &input, flags)?;
+                open_entry_in_txn(&vault.store, txn, row, &input, flags)?;
             }
             Act::Seal | Act::OpenSelf | Act::Free => {}
         }
@@ -509,10 +529,10 @@ pub(super) fn sweep_page_in_txn(
         }
         let state = StateReader::reader(vault, txn)?.state(input)?;
         if let SourceState::Bound(floor) = state
-            && fold_entry_in_txn(vault, txn, row, input, &floor)?
+            && fold_entry_in_txn(&vault.store, txn, row, input, &floor)?
         {
             folded = folded.saturating_add(1);
-            if !has_open_in(vault, txn, row)? {
+            if !has_open_in(&vault.store, txn, row)? {
                 fold_waiters_in_txn(vault, txn, row)?;
             }
         }
@@ -545,7 +565,7 @@ fn resolve_self_in_txn(vault: &Vault, txn: &mut RwTxn<'_>, row: &EntityId) -> Re
     close_entry_in_txn(&vault.store, txn, row, row)?;
     let named: BTreeSet<EntityId> = named.into_iter().filter(|source| source != row).collect();
     judge_row_in_txn(vault, txn, row, &Fresh::Links(named), false)?;
-    if !has_open_in(vault, txn, row)? {
+    if !has_open_in(&vault.store, txn, row)? {
         fold_waiters_in_txn(vault, txn, row)?;
     }
     Ok(true)

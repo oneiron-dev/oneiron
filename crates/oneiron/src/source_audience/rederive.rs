@@ -103,7 +103,7 @@ fn current_sealed_rows_in(vault: &Vault, txn: &RoTxn<'_>) -> Result<Vec<(EntityI
             sealed_rows.insert(row);
         }
     }
-    for row in super::source_state::rows_with_open_entries_in(vault, txn)? {
+    for row in super::source_state::rows_with_open_entries_in(&vault.store, txn)? {
         if !sealed_rows.contains(&row)
             && super::verdict_in(vault, txn, &row)? == super::Verdict::Sealed
         {

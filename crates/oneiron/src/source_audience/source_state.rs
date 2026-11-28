@@ -43,9 +43,14 @@ use crate::error::Result;
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Vault};
 
+mod erase;
 mod judge;
 mod reader;
 
+pub(crate) use erase::{
+    before_erase_in_store_txn, before_erase_in_txn, erase_open_entries_in_txn,
+    note_shell_erased_in_txn, seal_waiters_in_txn,
+};
 #[cfg(any(test, feature = "test-support", oneiron_test_support))]
 pub(crate) use judge::forget_floor_state_in_txn;
 pub(crate) use judge::{LinksBefore, fold_waiters_in_txn, judge_rows_in_txn};
@@ -252,7 +257,7 @@ fn sweep_step_in_txn(
     txn: &mut RwTxn<'_>,
     cursor: &[u8],
 ) -> Result<(u64, Option<Vec<u8>>)> {
-    if !migrated_in(vault, txn)? {
+    if !migrated_in(&vault.store, txn)? {
         if !super::floor::floors_possible_in(vault, txn)? {
             return Ok((0, None));
         }
@@ -275,26 +280,30 @@ fn sweep_step_in_txn(
 /// # Errors
 ///
 /// Storage failures.
-pub(crate) fn migrated_in(vault: &Vault, txn: &RoTxn<'_>) -> Result<bool> {
-    Ok(MIGRATED.get(&vault.store, txn, &())?.unwrap_or(false))
+pub(crate) fn migrated_in(store: &crate::store::Store, txn: &RoTxn<'_>) -> Result<bool> {
+    Ok(MIGRATED.get(store, txn, &())?.unwrap_or(false))
 }
 
 /// Marks the migration ended.
-pub(super) fn mark_migrated_in_txn(vault: &Vault, txn: &mut RwTxn<'_>) -> Result<()> {
-    MIGRATED.put(&vault.store, txn, &(), &true)
+pub(super) fn mark_migrated_in_txn(store: &crate::store::Store, txn: &mut RwTxn<'_>) -> Result<()> {
+    MIGRATED.put(store, txn, &(), &true)
 }
 
 /// Whether a later owner erase reached `input`, an input deleted before
 /// floors: its permanent `dt:` marker stands, or an owner's erase of its
 /// head scrubbed it as a redirect shell.
-fn later_owner_erase_in(vault: &Vault, txn: &RoTxn<'_>, input: &EntityId) -> Result<bool> {
-    Ok(hard_marker_in(vault, txn, input)? || SHELL_ERASED.contains(&vault.store, txn, input)?)
+fn later_owner_erase_in(
+    store: &crate::store::Store,
+    txn: &RoTxn<'_>,
+    input: &EntityId,
+) -> Result<bool> {
+    Ok(hard_marker_in(store, txn, input)? || SHELL_ERASED.contains(store, txn, input)?)
 }
 
 /// Whether the permanent `dt:` marker of `id` stands.
-fn hard_marker_in(vault: &Vault, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
+fn hard_marker_in(store: &crate::store::Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
     crate::ports::TombstoneStoreRead::port_deletion_marked(
-        &vault.store,
+        store,
         txn,
         crate::ports::DeletionMarker::HardDelete,
         id,
@@ -303,11 +312,11 @@ fn hard_marker_in(vault: &Vault, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool>
 
 /// The level of the delete that erases `id` now.
 pub(super) fn delete_level_in(
-    vault: &Vault,
+    store: &crate::store::Store,
     txn: &RoTxn<'_>,
     id: &EntityId,
 ) -> Result<DeleteLevel> {
-    Ok(if hard_marker_in(vault, txn, id)? {
+    Ok(if hard_marker_in(store, txn, id)? {
         DeleteLevel::Hard
     } else {
         DeleteLevel::Soft
@@ -316,39 +325,36 @@ pub(super) fn delete_level_in(
 
 /// The open entries of `row`.
 pub(super) fn open_of_in(
-    vault: &Vault,
+    store: &crate::store::Store,
     txn: &RoTxn<'_>,
     row: &EntityId,
 ) -> Result<Vec<(EntityId, OpenFlags)>> {
-    OPEN.iter_from(&vault.store, txn, row.as_bytes())?
+    OPEN.iter_from(store, txn, row.as_bytes())?
         .map(|entry| entry.map(|((_, input), flags)| (input, OpenFlags::from_byte(flags))))
         .collect()
 }
 
 /// Whether `row` has an open entry.
-fn has_open_in(vault: &Vault, txn: &RoTxn<'_>, row: &EntityId) -> Result<bool> {
-    Ok(OPEN
-        .iter_from(&vault.store, txn, row.as_bytes())?
-        .next()
-        .is_some())
+fn has_open_in(store: &crate::store::Store, txn: &RoTxn<'_>, row: &EntityId) -> Result<bool> {
+    Ok(OPEN.iter_from(store, txn, row.as_bytes())?.next().is_some())
 }
 
 /// Opens, in `txn`, the entry of `row` on `input` with `flags`; an entry
 /// already there keeps its flags, merged with these. Whether it is new.
 pub(super) fn open_entry_in_txn(
-    vault: &Vault,
+    store: &crate::store::Store,
     txn: &mut RwTxn<'_>,
     row: &EntityId,
     input: &EntityId,
     flags: OpenFlags,
 ) -> Result<bool> {
     let key = (*row, *input);
-    let (stored, new) = match OPEN.get(&vault.store, txn, &key)? {
+    let (stored, new) = match OPEN.get(store, txn, &key)? {
         Some(byte) => (OpenFlags::from_byte(byte).merge(flags), false),
         None => (flags, true),
     };
-    OPEN.put(&vault.store, txn, &key, &stored.to_byte())?;
-    OPEN_BY.put(&vault.store, txn, &(*input, *row), &())?;
+    OPEN.put(store, txn, &key, &stored.to_byte())?;
+    OPEN_BY.put(store, txn, &(*input, *row), &())?;
     Ok(new)
 }
 
@@ -409,11 +415,11 @@ pub(crate) fn waiting_floor_readable_in(
 ///
 /// Storage failures.
 pub(super) fn rows_with_open_entries_in(
-    vault: &Vault,
+    store: &crate::store::Store,
     txn: &RoTxn<'_>,
 ) -> Result<BTreeSet<EntityId>> {
     let mut rows = BTreeSet::new();
-    for entry in OPEN.iter_from(&vault.store, txn, &[])? {
+    for entry in OPEN.iter_from(store, txn, &[])? {
         let ((row, _), _) = entry?;
         rows.insert(row);
     }

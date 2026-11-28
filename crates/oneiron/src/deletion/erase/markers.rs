@@ -69,12 +69,24 @@ impl Vault {
         id: &EntityId,
         raw_value: &[u8],
     ) -> Result<()> {
-        if let Err(error) =
-            self.replayed_tombstone_protection_in_txn(wtxn, id, &decode_tombstone_value(raw_value))
+        let decoded = decode_tombstone_value(raw_value);
+        if let Err(error) = self.replayed_tombstone_protection_in_txn(wtxn, id, &decoded)
             && Self::is_replayed_tombstone_refusal(&error)
         {
             return Ok(());
         }
+        // The rows waiting on the row take its floor first (Fable design pass
+        // 31, section 2).
+        crate::source_audience::before_erase_in_txn(
+            self,
+            wtxn,
+            id,
+            if decoded.is_hard() {
+                crate::source_audience::DeleteLevel::Hard
+            } else {
+                crate::source_audience::DeleteLevel::Soft
+            },
+        )?;
         ROW_DELETION_FENCE.put(&self.store, wtxn, &HexId(*id), &Vec::new())
     }
 

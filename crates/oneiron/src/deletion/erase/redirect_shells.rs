@@ -75,6 +75,10 @@ impl Vault {
         let mut changed = Vec::new();
         let mut had_vector = false;
         for shell in &shells {
+            // An owner's erase of the head reaches each of its shells: an old
+            // fact that waits for good on a shell deleted before floors reads
+            // sealed from here on (SOURCE-STATE-L2 = A).
+            crate::source_audience::note_shell_erased_in_txn(&self.store, wtxn, shell)?;
             // Same pre-scrub capture every SoftErase door pays: the subject
             // EdgeRef is only readable while the body is. A classified corrupt
             // shell takes the audited exception: its debt rides the head's

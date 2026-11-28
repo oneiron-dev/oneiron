@@ -183,6 +183,18 @@ impl Vault {
             requested_at,
             TopologyDeletePhase::Committed,
         )?;
+        // The rows waiting on the row take its floor before its first marker
+        // (Fable design pass 31, section 2).
+        crate::source_audience::before_erase_in_txn(
+            self,
+            &mut wtxn,
+            id,
+            if reason.active_store_hard_purge_v1() {
+                crate::source_audience::DeleteLevel::Hard
+            } else {
+                crate::source_audience::DeleteLevel::Soft
+            },
+        )?;
         let marker_key = HexId(*id);
         // ONE-1149 ownership claim: re-probe the FULL delete scope INSIDE
         // the erasing txn (race-free under LMDB's single writer). The read
