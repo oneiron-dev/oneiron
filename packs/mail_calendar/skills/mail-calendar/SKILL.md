@@ -44,8 +44,8 @@ revision with `vault.mail.reply.send`: it goes out only when the vault's send
 grant lets you send without asking. Otherwise it waits, and the mailbox's
 owner reviews it (`vault.mail.reply.drafts`) and approves that exact revision
 (`vault.mail.reply.approve`, theirs alone, never yours). A reply from a
-mailbox that is not the vault owner's, or from a Google mailbox, always waits
-for that approval. Redrafting under the same key makes a new revision that
+mailbox that is not the vault owner's, or from a Google mailbox whose sending
+identity is not bound to you, always waits for that approval. Redrafting under the same key makes a new revision that
 needs its own send; discard a draft you no longer want
 (`vault.mail.reply.discard`). You may add `body_html`, the
 same reply as simple HTML (paragraphs, links, lists, quotes, emphasis); it
