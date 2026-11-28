@@ -63,6 +63,8 @@ const ERASERS: &[EntitySideRowEraser] = &[
             id,
         )
     },
+    // PROMOTED-CLAIM-SOURCE-DEPENDENCY-GAPS (Q2 = a): the NOTE review's row for an erased NOTE.
+    |write, txn, id| crate::dreamer_consolidation::forget_note_review_in_txn(write.store, txn, id),
     // FIX 12569: every drafter version whose training ancestry reaches it.
     |write, txn, id| crate::drafter::erase_drafters_for_source_in_txn(write.store, txn, id),
     // FIX 10260: a MESSAGE's kept reply assertions.
