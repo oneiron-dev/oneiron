@@ -155,6 +155,14 @@ pub(super) fn name_order(a: &str, b: &str) -> std::cmp::Ordering {
 }
 
 impl VerbTree {
+    pub(super) fn from_discovery_index(index: Index) -> Self {
+        let mut root = Node::default();
+        for path in index.verbs.keys() {
+            root.insert(path);
+        }
+        Self { index, root }
+    }
+
     pub(super) fn parse_index(json: &str) -> Result<Self, String> {
         let index: Index = serde_json::from_str(json)
             .map_err(|error| format!("invalid verb tree index: {error}"))?;

@@ -36,6 +36,7 @@ mod tool_args_reasons;
 mod tool_receipt;
 mod type_feedback_release;
 mod verb_hooks;
+mod verb_view;
 mod wakes;
 mod wire;
 
@@ -89,7 +90,7 @@ pub(crate) use self::device_release::carrier_releases_for_test;
 // (BOARD-KEYFRAME-CHILD-RELEASE).
 #[cfg(oneiron_test_support)]
 pub(crate) use self::board_setup::bare_child_served_rows_for_test;
-use self::device_release::{mcp_release_listed, mcp_release_result};
+use self::device_release::mcp_release_listed;
 use self::envelope::mcp_request_id;
 pub(crate) use self::envelope::{
     MCP_CREDENTIAL_HEADER, McpCallContext, McpGatewayError, McpToolCallParams, mcp_gateway,
@@ -155,3 +156,5 @@ pub(crate) use self::code_mode_verbs::{
 pub(crate) use self::tasks_response::RunAuthor;
 #[cfg(test)]
 pub(crate) use self::verb_hooks::mcp_hooks_admitted_for_test;
+#[cfg(test)]
+pub(crate) use self::verb_view::mcp_discovery_view;

@@ -92,6 +92,7 @@ mod host_rows;
 mod media_step;
 mod resident_rows;
 mod self_brief_port;
+pub(super) mod verb_view;
 
 pub(crate) use self::media_step::RunMediaStep;
 
