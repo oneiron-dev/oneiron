@@ -1,4 +1,4 @@
-//! The consolidation payload codec (FIX 7524): a branch's world and facet,
+//! The consolidation payload codec (FIX 7524): a branch's world, facet and project,
 //! the thing a nightly child is cut for, the retry lineage a sibling was
 //! owed under, and each conversation part's ordered TURNs and watermark. A
 //! Micro or Meso partition encodes as a one-part branch. One format, read
@@ -25,6 +25,8 @@ const KEY_THING: &str = "thing";
 /// The payload key naming the attempt whose split owed this one (FIX 7524):
 /// a retry's overflow or a drifted part, fanned in beside that attempt.
 const KEY_ORIGIN: &str = "origin";
+/// The stored project of every part; absent for the default project.
+const KEY_PROJECT: &str = "project";
 /// The payload key holding the branch's conversation parts.
 const KEY_PARTS: &str = "parts";
 /// A part's payload key naming the slice line it is read in (FIX 8724);
@@ -199,6 +201,9 @@ pub(crate) fn encode_branch_payload<T: BranchTurn>(
         (Value::from(KEY_FACET), reference(branch.facet_ref)),
         (Value::from(KEY_PARTS), Value::Array(parts)),
     ];
+    if branch.project != Some(crate::claim::default_project_id()) {
+        entries.push((Value::from(KEY_PROJECT), reference(branch.project)));
+    }
     if let Some(thing) = branch.thing {
         entries.push((Value::from(KEY_THING), thing.encode()));
     }
@@ -224,6 +229,7 @@ pub fn decode_partition_payload(value: &Value) -> Result<ConsolidationBranchPlan
     let mut schema = None;
     let mut world = None;
     let mut facet = None;
+    let mut project = Some(crate::claim::default_project_id());
     let mut thing = None;
     let mut parts = None;
     for (key, value) in entries {
@@ -246,6 +252,10 @@ pub fn decode_partition_payload(value: &Value) -> Result<ConsolidationBranchPlan
                     "partition payload facet must be a 16-byte ref",
                 )?);
             }
+            KEY_PROJECT => {
+                project =
+                    optional_reference(value, "partition payload project must be a 16-byte ref")?;
+            }
             KEY_PARTS => parts = Some(decode_parts(value)?),
             _ => return Err(invalid_consolidation("partition payload key is not pinned")),
         }
@@ -258,6 +268,7 @@ pub fn decode_partition_payload(value: &Value) -> Result<ConsolidationBranchPlan
     Ok(ConsolidationBranchPlan {
         world_ref: world.ok_or(invalid_consolidation("partition payload missing world_ref"))?,
         facet_ref: facet.ok_or(invalid_consolidation("partition payload missing facet_ref"))?,
+        project,
         thing,
         parts: parts.ok_or(invalid_consolidation("partition payload missing parts"))?,
     })

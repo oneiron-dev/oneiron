@@ -175,13 +175,22 @@ impl Snapshot<'_, '_> {
                 facts.speaker.as_deref(),
                 &self.vault.config.assistant_display_names,
             );
+            // Keep queued originals, including old-form branches. Match
+            // the stored project only when adding a peer.
             if *stored <= admission_time
                 && dreamer_extraction_role_admissible(role)
                 && facts.world_ref.or(parent.world_ref) == branch.world_ref
                 && facts.facet_ref.or(parent.facet_ref) == branch.facet_ref
                 && (original.contains(id)
                     || (learned_at >= part.watermark_last_learned_at
-                        && !self.taken_elsewhere(id)?))
+                        && !self.taken_elsewhere(id)?
+                        && super::super::resources::stored_project(
+                            &self.vault.store,
+                            self.txn,
+                            *id,
+                            *kind,
+                            bytes,
+                        )? == branch.project))
             {
                 turns.push((learned_at, key, *id));
             }
@@ -288,6 +297,7 @@ fn widen(
         QueuedBranch {
             world_ref: branch.world_ref,
             facet_ref: branch.facet_ref,
+            project: branch.project,
             thing: branch.thing,
             parts,
         },

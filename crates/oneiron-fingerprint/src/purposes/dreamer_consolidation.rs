@@ -59,8 +59,9 @@ legacy_purposes! {
 
     /// Partition: the tag (the v1 bucket domain, DESIGN-PIN A2), "partition",
     /// the raw 16-byte conversation id, then world and facet, each as absent
-    /// `[0]` or `[1]` and the raw 16-byte id. Keys DREAMER_CURSOR rows and
-    /// queue rows.
+    /// `[0]` or `[1]` and the raw 16-byte id. Unless the project is the
+    /// default project, append "project" and the project in the same optional
+    /// id encoding. Keys DREAMER_CURSOR rows and queue rows.
     PARTITION = (Blake3, HashedFirst, "oneiron:dreamer-bucket:v1");
 
     /// Partition round: the tag, the TURN count as u64-BE, then each TURN in

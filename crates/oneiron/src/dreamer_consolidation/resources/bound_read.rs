@@ -256,6 +256,17 @@ impl BoundBranchRead {
             .filter(|id| seen.insert(*id))
             .collect();
         let distinct: BTreeSet<EntityId> = seen;
+        // A caller can submit locators from more than one inputs page.
+        let mut projects = distinct
+            .iter()
+            .filter_map(|id| self.sources.get(id).map(|pin| pin.project));
+        if let Some(first) = projects.next()
+            && projects.any(|project| project != first)
+        {
+            return Err(invalid_consolidation(
+                "extraction step spans stored projects",
+            ));
+        }
         let cited_parents: BTreeSet<EntityId> = distinct
             .iter()
             .filter_map(|id| self.turns.get(id))

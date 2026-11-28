@@ -103,6 +103,7 @@ mod base_branch {
                 conversation_ref,
                 world_ref: self.world_ref,
                 facet_ref: self.facet_ref,
+                project: Some(oneiron::claim::default_project_id()),
             }
         }
 
@@ -457,6 +458,7 @@ fn head_branch(
     ConsolidationBranchPlan {
         world_ref: axes.0,
         facet_ref: axes.1,
+        project: Some(oneiron::claim::default_project_id()),
         thing: thing.map(|(entity, audience)| door::partition_thing(entity, audience)),
         parts: parts
             .iter()

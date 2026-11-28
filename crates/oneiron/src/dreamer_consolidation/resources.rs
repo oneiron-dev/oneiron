@@ -198,6 +198,7 @@ impl<'a> BranchResources<'a> {
         let branch = super::branch::QueuedBranch {
             world_ref: partition.world_ref,
             facet_ref: partition.facet_ref,
+            project: partition.project,
             thing: None,
             parts: vec![super::ConversationPart {
                 conversation_ref: partition.conversation_ref,

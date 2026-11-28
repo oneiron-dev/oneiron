@@ -29,6 +29,7 @@ mod late_budget;
 mod persistent_conflicts;
 mod person_extraction;
 mod prior_heads;
+mod project_partitions;
 mod scope_enforcement;
 mod scope_summaries;
 mod support;
@@ -1298,6 +1299,7 @@ fn bucket_hash_conformance() {
         conversation_ref: subject,
         world_ref: None,
         facet_ref: None,
+        project: Some(crate::claim::default_project_id()),
     };
     assert_ne!(key.bucket_hash(), partition.partition_hash());
 }
@@ -1414,6 +1416,7 @@ fn sibling_evidence_collapses_at_one_parent_pin() -> Result<()> {
             conversation_ref: conversation,
             world_ref: None,
             facet_ref: None,
+            project: Some(crate::claim::default_project_id()),
         },
         &[source, other],
         crate::attempt_queue::AttemptId::now(),
@@ -2377,6 +2380,7 @@ fn child_returns_refs_only_and_ranges_are_parent_checked() -> Result<()> {
             conversation_ref: conversation,
             world_ref: None,
             facet_ref: None,
+            project: Some(crate::claim::default_project_id()),
         },
         &[turn],
         crate::attempt_queue::AttemptId::now(),
@@ -2507,6 +2511,7 @@ fn disagreed_child_hash_is_integrity_only() -> Result<()> {
             conversation_ref: conversation,
             world_ref: None,
             facet_ref: None,
+            project: Some(crate::claim::default_project_id()),
         },
         &[turn],
         crate::attempt_queue::AttemptId::now(),

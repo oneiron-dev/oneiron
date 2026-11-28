@@ -101,11 +101,14 @@ pub fn disable_extraction_prefilter(vault: &Vault) -> Result<()> {
 /// partition planner, after disabling the prefilter screen, and returns its
 /// attempt id.
 ///
-/// The turns must share one conversation, so they plan as one partition.
+/// The turns must share one conversation; turns of more than one stored
+/// project plan one partition each, and only the default-project
+/// partition's turns enqueue.
 ///
 /// # Errors
 ///
-/// The vault's, or a plan that cuts no single partition attempt.
+/// The vault's, a plan that cuts no single partition attempt, or plans with
+/// no default-project partition.
 pub fn enqueue_extraction_attempt(
     vault: &Vault,
     turns: &[EntityId],
@@ -115,11 +118,50 @@ pub fn enqueue_extraction_attempt(
     let scope = DreamerConsolidationScope::Meso;
     let outcomes = vault.with_write_txn(|txn| {
         let watermark = crate::dreamer_consolidation::read_watermark_in_txn(vault, txn, scope)?;
+        let working =
+            crate::dreamer_consolidation::read_partition_turns_in_txn(vault, txn, scope, turns)?;
+        // Preview in this same write txn so only the kept partition's turns enqueue.
+        let plans = crate::dreamer_consolidation::plan_partitions_in_txn(
+            vault, scope, txn, &working, &watermark,
+        )?;
+        let kept: Vec<EntityId> = match plans.as_slice() {
+            [] => {
+                return Err(Error::InvalidConfig(
+                    "the Meso plan cut 0 partitions, not one".into(),
+                ));
+            }
+            [single] => single.turns.iter().map(|turn| turn.turn_id).collect(),
+            many => {
+                // Turns of one conversation plan one partition per stored
+                // project; anything else still errors as before.
+                let same_bucket = many
+                    .windows(2)
+                    .all(|pair| pair[0].key.bucket() == pair[1].key.bucket());
+                if !same_bucket {
+                    return Err(Error::InvalidConfig(format!(
+                        "the Meso plan cut {} partitions, not one",
+                        many.len()
+                    )));
+                }
+                many.iter()
+                    .find(|plan| plan.key.project == Some(crate::claim::default_project_id()))
+                    .ok_or_else(|| {
+                        Error::InvalidConfig(format!(
+                            "the Meso plan cut {} partitions with no default-project one",
+                            many.len()
+                        ))
+                    })?
+                    .turns
+                    .iter()
+                    .map(|turn| turn.turn_id)
+                    .collect()
+            }
+        };
         crate::dreamer_consolidation::enqueue_partition_plans_in_txn(
             vault,
             txn,
             scope,
-            turns,
+            &kept,
             &watermark,
             Some(EXTRACTION_RUN),
             now,
@@ -131,6 +173,61 @@ pub fn enqueue_extraction_attempt(
             outcomes.len()
         )));
     };
+    match outcome {
+        EnqueueDreamerAttemptOutcome::Enqueued(status)
+        | EnqueueDreamerAttemptOutcome::Existing(status) => Ok(status.attempt.id),
+    }
+}
+
+/// Enqueues one Meso attempt over `turns` of `conversation` as a row queued
+/// before the project axis: a single branch holding every turn with no
+/// `project` key, and returns its attempt id.
+///
+/// The production planner never queues such a row now; tests use this door
+/// to exercise paging and grant filtering over an old-form row.
+///
+/// # Errors
+///
+/// The vault's.
+pub fn enqueue_old_form_extraction_attempt(
+    vault: &Vault,
+    conversation: EntityId,
+    turns: &[EntityId],
+    now: u64,
+) -> Result<AttemptId> {
+    let scope = DreamerConsolidationScope::Meso;
+    let outcome = vault.with_write_txn(|txn| {
+        let watermark = crate::dreamer_consolidation::read_watermark_in_txn(vault, txn, scope)?;
+        let branch = crate::dreamer_consolidation::ConsolidationBranchPlan {
+            world_ref: None,
+            facet_ref: None,
+            thing: None,
+            project: Some(crate::claim::default_project_id()),
+            parts: vec![crate::dreamer_consolidation::ConversationPart {
+                conversation_ref: conversation,
+                turns: turns.to_vec(),
+                watermark_last_learned_at: watermark.last_learned_at,
+                line: 0,
+            }],
+        };
+        let mut input = crate::dreamer_consolidation::encode_branch_payload(&branch, None);
+        // Old-form bytes carry no project key at all; the default branch
+        // already omits it, the strip pins this door to that form.
+        if let rmpv::Value::Map(entries) = &mut input {
+            entries.retain(|(key, _)| key.as_str() != Some("project"));
+        }
+        DreamerRunnerStore::new(vault).enqueue_consolidation_in_txn(
+            txn,
+            crate::dreamer_runner::EnqueueDreamerConsolidationAttempt {
+                scope,
+                input,
+                parent_attempt: None,
+                dedupe_key: None,
+                run_id: Some(EXTRACTION_RUN.to_owned()),
+                now,
+            },
+        )
+    })?;
     match outcome {
         EnqueueDreamerAttemptOutcome::Enqueued(status)
         | EnqueueDreamerAttemptOutcome::Existing(status) => Ok(status.attempt.id),

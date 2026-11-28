@@ -46,7 +46,7 @@ pub(super) fn cut(
     // of each: never beside words fewer or other people read.
     let private = draft.key.audience.is_some();
     let person = matches!(draft.key.audience, Some(PartitionAudience::Person(_)));
-    let mut children: Vec<Vec<Gathered>> = Vec::new();
+    let mut children: Vec<(Option<EntityId>, Vec<Gathered>)> = Vec::new();
     let mut projects: BTreeMap<(EntityId, Option<Exposure>), usize> = BTreeMap::new();
     for (index, turns) in draft.turns {
         let partition = &partitions[index];
@@ -65,7 +65,7 @@ pub(super) fn cut(
             } else {
                 None
             };
-            let project = part_project(&of);
+            let project = partition.key.project;
             let part = ConversationPart {
                 conversation_ref: partition.key.conversation_ref,
                 turns,
@@ -73,14 +73,16 @@ pub(super) fn cut(
                 line: 0,
             };
             match project {
-                Some(project) if !person || cohort.is_some() => {
+                Some(project)
+                    if Some(project) == part_project(&of) && (!person || cohort.is_some()) =>
+                {
                     let at = *projects.entry((project, cohort)).or_insert_with(|| {
-                        children.push(Vec::new());
+                        children.push((Some(project), Vec::new()));
                         children.len() - 1
                     });
-                    children[at].push((class, part));
+                    children[at].1.push((class, part));
                 }
-                _ => children.push(vec![(class, part)]),
+                _ => children.push((project, vec![(class, part)])),
             }
         }
     }
@@ -90,9 +92,10 @@ pub(super) fn cut(
         spans: draft.spans,
         children: children
             .into_iter()
-            .map(|parts| ConsolidationBranchPlan {
+            .map(|(project, parts)| ConsolidationBranchPlan {
                 world_ref: draft.key.world,
                 facet_ref: draft.key.facet,
+                project,
                 thing,
                 parts: lined(parts),
             })

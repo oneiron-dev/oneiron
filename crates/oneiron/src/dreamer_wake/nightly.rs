@@ -265,8 +265,9 @@ fn plan_children_in_txn(
 
 /// The night's things over `spans`, the queue readout, highest score first:
 /// the structural partitions the spent spans' TURNs fall in, in score order,
-/// at most `limit` of them, then one thing per entity or topic inside them;
-/// with the number of partitions kept.
+/// those of at most `limit` (conversation, world, facet) buckets, each bucket
+/// with every project partition it holds, then one thing per entity or topic
+/// inside them; with the number of partitions kept.
 fn things_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -294,10 +295,16 @@ fn things_in_txn(
             .position(|span| plan.turns.iter().any(|turn| turn.turn_id == span.turn))
             .unwrap_or(usize::MAX)
     });
-    // The limit counts structural partitions, as before; every thing a kept
-    // partition holds gets its children, so the night spends the spans it
-    // spent before.
-    plans.truncate(limit);
+    // The limit counts (conversation, world, facet) buckets, as it counted
+    // partitions before the key held the project: a kept bucket keeps every
+    // project partition it holds, and every thing a kept partition holds gets
+    // its children, so the night spends the spans it spent before
+    // (REVIEW-10633 round 1).
+    let mut kept = BTreeSet::new();
+    plans.retain(|plan| {
+        let bucket = plan.key.bucket();
+        kept.contains(&bucket) || (kept.len() < limit && kept.insert(bucket))
+    });
     let audiences = things::audiences_in_txn(vault, txn, &plans)?;
     let exposures = exposure::exposures_in_txn(vault, txn, &plans);
     let topics = things::topics_in_txn(vault, txn, &plans, spans)?;
@@ -313,14 +320,16 @@ fn things_in_txn(
 pub(crate) type PlannedThingLines = (Option<EntityId>, Vec<Vec<(EntityId, u32)>>);
 
 /// The things `spans` plan into, as [`plan_children_in_txn`] plans them,
-/// with no partition limit (test door).
+/// under the night's partition `limit` as `nightly_children` sets it
+/// (`usize::MAX` for none; test door).
 #[cfg(oneiron_test_support)]
 pub(crate) fn planned_thing_lines_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     spans: &[SieveSpan],
+    limit: usize,
 ) -> Result<Vec<PlannedThingLines>> {
-    let (_, things) = things_in_txn(vault, txn, spans, usize::MAX)?;
+    let (_, things) = things_in_txn(vault, txn, spans, limit)?;
     Ok(things
         .iter()
         .map(|thing| {

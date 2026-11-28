@@ -55,14 +55,16 @@ pub struct ConversationPart<T = WorkingSetTurn> {
     pub line: u32,
 }
 
-/// One consolidation attempt's normalized input: the world and facet every
-/// part shares, the thing a nightly child is cut for, and its ordered parts.
+/// One consolidation attempt's normalized input: the world, facet and project
+/// every part shares, the thing a nightly child is cut for, and its ordered parts.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConsolidationBranchPlan<T = WorkingSetTurn> {
     pub world_ref: Option<EntityId>,
     pub facet_ref: Option<EntityId>,
     pub thing: Option<PartitionThing>,
     pub parts: Vec<ConversationPart<T>>,
+    /// The stored project shared by every part key.
+    pub project: Option<EntityId>,
 }
 
 /// A branch as its queued payload names it: TURN ids only.
@@ -90,6 +92,7 @@ impl<T> ConsolidationBranchPlan<T> {
             conversation_ref,
             world_ref: self.world_ref,
             facet_ref: self.facet_ref,
+            project: self.project,
         }
     }
 
@@ -118,10 +121,9 @@ impl<T> ConsolidationBranchPlan<T> {
     }
 
     /// The branch's exact identity. A one-part branch is its partition's
-    /// hash, so a Micro or Meso round keeps every key it had; a multi-part
-    /// branch hashes its axes, its thing and every ordered part with its
-    /// TURN count. The attempt and projection keys hold its hex, so it keeps
-    /// its bytes (K, PLAN-UC-04 3.4c).
+    /// hash; a multi-part branch hashes its axes, its thing and every ordered
+    /// part with its TURN count. The attempt and projection keys hold its hex.
+    /// Both forms keep their bytes for the default project (K, PLAN-UC-04 3.4c).
     pub(crate) fn identity(&self) -> [u8; 32] {
         if let [part] = self.parts.as_slice() {
             return self.part_key(part.conversation_ref).partition_hash();
@@ -248,6 +250,7 @@ impl ConsolidationPartitionPlan {
         ConsolidationBranchPlan {
             world_ref: self.key.world_ref,
             facet_ref: self.key.facet_ref,
+            project: self.key.project,
             thing: None,
             parts: vec![ConversationPart {
                 conversation_ref: self.key.conversation_ref,

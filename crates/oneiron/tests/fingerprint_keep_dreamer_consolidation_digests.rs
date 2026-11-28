@@ -590,6 +590,7 @@ fn partition_keeps_main_s_bytes() {
                     conversation_ref,
                     world_ref,
                     facet_ref,
+                    project: Some(oneiron::claim::default_project_id()),
                 }
                 .partition_hash();
                 let base = base_partition::ConsolidationPartitionKey {

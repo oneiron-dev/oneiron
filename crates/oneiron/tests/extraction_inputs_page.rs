@@ -12,7 +12,8 @@ use oneiron::test_doors::consolidation::open_dreamer_vault;
 use oneiron::test_doors::derive::narrow_steward_grant_to_project;
 use oneiron::test_doors::dreamer_attempt_binding::enqueue_strength_attempt;
 use oneiron::test_doors::extraction_inputs::{
-    append_extraction_turn_words, enqueue_admitted_extraction_attempt, enqueue_extraction_attempt,
+    admit_extraction_attempt, append_extraction_turn_words, enqueue_admitted_extraction_attempt,
+    enqueue_extraction_attempt, enqueue_old_form_extraction_attempt,
     settle_extraction_rows_in_project, witness_extraction_turns,
 };
 use oneiron::test_doors::steward::{STEWARD_VERBS, dreamer, stand_steward_grant};
@@ -579,5 +580,174 @@ fn the_pages_walk_every_turn_once() -> ExtractionInputsPageTestResult<()> {
         .collect();
     assert_eq!(rest, expected[1..].to_vec());
     assert!(resumed["next"].is_null());
+    Ok(())
+}
+
+/// An old-form row queues the outside-grant TURN beside the default ones, so
+/// the page's grant filter still decides: the outside TURN is absent whole
+/// and its bound words are withheld.
+#[test]
+fn an_old_form_row_still_filters_a_turn_outside_the_dreamer_grant()
+-> ExtractionInputsPageTestResult<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Arc::new(open_extraction_inputs_vault(&dir)?);
+    let actor = dreamer(&vault)?;
+    let witnessed = witness_extraction_turns(
+        &vault,
+        &[
+            "call me owen",
+            "yuki likes tea",
+            "reach owen at owen@example.com",
+        ],
+    )?;
+    let outside = witnessed.turns[2];
+    let project = EntityId::now();
+    settle_extraction_rows_in_project(&vault, &[outside, witnessed.messages[2]], project)?;
+    let grant = stand_steward_grant(&vault, actor, &STEWARD_VERBS)?;
+    narrow_steward_grant_to_project(&vault, grant, oneiron::claim::default_project_id())?;
+    let id = enqueue_old_form_extraction_attempt(
+        &vault,
+        witnessed.conversation,
+        &witnessed.turns,
+        QUEUE_NOW,
+    )?;
+    let admitted = admit_extraction_attempt(&vault, id, QUEUE_NOW)?;
+    let binding = bind_extraction(&vault, &admitted)?;
+    let page = read_bound_extraction_page(&binding, &extraction_attempt_hex(id), None, None)?;
+    let turns = page["turns"]
+        .as_array()
+        .unwrap_or_else(|| panic!("turns is an array"));
+    assert_eq!(turns.len(), 2);
+    assert_eq!(turns[0]["turn"], witnessed.turns[0].to_hex());
+    assert_eq!(turns[1]["turn"], witnessed.turns[1].to_hex());
+    assert!(!page.to_string().contains(&outside.to_hex()));
+    assert!(page["next"].is_null());
+    let withheld = read_bound_spans(&binding, outside, None, json!([]))?;
+    assert_eq!(withheld["status"], "withheld");
+    assert!(withheld["version"].is_null());
+    assert!(
+        withheld["spans"]
+            .as_array()
+            .unwrap_or_else(|| panic!("spans is an array"))
+            .is_empty()
+    );
+    Ok(())
+}
+
+/// An old-form row queues the unread TURN between two served ones, so a cursor
+/// at it is still refused exactly as one the attempt does not hold, while a
+/// cursor at the first served TURN still walks past it.
+#[test]
+fn an_old_form_row_still_refuses_a_cursor_at_its_unread_turn() -> ExtractionInputsPageTestResult<()>
+{
+    let dir = tempfile::tempdir()?;
+    let vault = Arc::new(open_extraction_inputs_vault(&dir)?);
+    let actor = dreamer(&vault)?;
+    let witnessed = witness_extraction_turns(
+        &vault,
+        &[
+            "call me owen",
+            "yuki likes tea",
+            "reach owen at owen@example.com",
+        ],
+    )?;
+    let outside = witnessed.turns[1];
+    let project = EntityId::now();
+    settle_extraction_rows_in_project(&vault, &[outside, witnessed.messages[1]], project)?;
+    let grant = stand_steward_grant(&vault, actor, &STEWARD_VERBS)?;
+    narrow_steward_grant_to_project(&vault, grant, oneiron::claim::default_project_id())?;
+    let id = enqueue_old_form_extraction_attempt(
+        &vault,
+        witnessed.conversation,
+        &witnessed.turns,
+        QUEUE_NOW,
+    )?;
+    let admitted = admit_extraction_attempt(&vault, id, QUEUE_NOW)?;
+    let binding = bind_extraction(&vault, &admitted)?;
+    let attempt = extraction_attempt_hex(id);
+    let Err(unread) = read_bound_extraction_page(
+        &binding,
+        &attempt,
+        Some(format!("extraction-turns:{}", outside.to_hex())),
+        None,
+    ) else {
+        panic!("a cursor at a TURN outside the grant is refused");
+    };
+    let Err(absent) = read_bound_extraction_page(
+        &binding,
+        &attempt,
+        Some(format!("extraction-turns:{}", EntityId::now().to_hex())),
+        None,
+    ) else {
+        panic!("a cursor at a TURN the attempt does not hold is refused");
+    };
+    assert_eq!(absent.code, MEMORY_CODE_BAD_REQUEST);
+    assert_eq!(
+        unread, absent,
+        "the unread anchor answers as the absent one"
+    );
+    let resumed = read_bound_extraction_page(
+        &binding,
+        &attempt,
+        Some(format!("extraction-turns:{}", witnessed.turns[0].to_hex())),
+        None,
+    )?;
+    let turns = resumed["turns"]
+        .as_array()
+        .unwrap_or_else(|| panic!("turns is an array"));
+    assert_eq!(turns.len(), 1);
+    assert_eq!(turns[0]["turn"], witnessed.turns[2].to_hex());
+    assert!(!resumed.to_string().contains(&outside.to_hex()));
+    assert!(resumed["next"].is_null());
+    Ok(())
+}
+
+/// An old-form row holding two projects' TURNs pages one project at a time:
+/// the first page ends before the first TURN of the other project, and the
+/// next page starts there.
+#[test]
+fn an_old_form_row_pages_each_project_separately() -> ExtractionInputsPageTestResult<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Arc::new(open_extraction_inputs_vault(&dir)?);
+    let actor = dreamer(&vault)?;
+    stand_steward_grant(&vault, actor, &STEWARD_VERBS)?;
+    let witnessed = witness_extraction_turns(&vault, &["call me owen", "yuki likes tea"])?;
+    let project = EntityId::now();
+    settle_extraction_rows_in_project(
+        &vault,
+        &[witnessed.turns[1], witnessed.messages[1]],
+        project,
+    )?;
+    let id = enqueue_old_form_extraction_attempt(
+        &vault,
+        witnessed.conversation,
+        &witnessed.turns,
+        QUEUE_NOW,
+    )?;
+    let admitted = admit_extraction_attempt(&vault, id, QUEUE_NOW)?;
+    let binding = bind_extraction(&vault, &admitted)?;
+    let attempt = extraction_attempt_hex(id);
+    let first = read_bound_extraction_page(&binding, &attempt, None, None)?;
+    let served = first["turns"]
+        .as_array()
+        .unwrap_or_else(|| panic!("turns is an array"));
+    assert_eq!(served.len(), 1);
+    assert_eq!(served[0]["turn"], witnessed.turns[0].to_hex());
+    assert_eq!(
+        first["next"],
+        json!(format!("extraction-turns:{}", witnessed.turns[0].to_hex()))
+    );
+    let second = read_bound_extraction_page(
+        &binding,
+        &attempt,
+        first["next"].as_str().map(str::to_owned),
+        None,
+    )?;
+    let served = second["turns"]
+        .as_array()
+        .unwrap_or_else(|| panic!("turns is an array"));
+    assert_eq!(served.len(), 1);
+    assert_eq!(served[0]["turn"], witnessed.turns[1].to_hex());
+    assert!(second["next"].is_null());
     Ok(())
 }
