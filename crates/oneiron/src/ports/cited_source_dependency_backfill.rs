@@ -665,7 +665,7 @@ impl Vault {
             }
             if state.stale {
                 counts.stale_source += 1;
-                return Ok(CitedSource::Removed);
+                return Ok(CitedSource::Other);
             }
             return Ok(CitedSource::Live);
         }
