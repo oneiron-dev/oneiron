@@ -1667,4 +1667,5 @@ fn branch_gap_write_refuses_evidence_that_moved_after_the_read() -> Result<()> {
 
 mod history;
 mod redirty;
+mod signed_birth;
 mod support;

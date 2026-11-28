@@ -530,13 +530,18 @@ impl VerifiedEvidenceSet {
     /// an owner purge keeps that history, and a value-only recovery that
     /// rebuilds the MESSAGE's document stales `citing`. Gap-queue rows are not
     /// entities and record neither. A row with no MESSAGE span (an
-    /// inline-text TURN, a cited CLAIM) depends on its source itself.
+    /// inline-text TURN, a cited CLAIM) depends on its source itself. A
+    /// signed `citing`'s birth copy depends on the same sources (see
+    /// [`Self::record_signed_birth_dependencies_in_txn`]).
     pub(crate) fn record_message_dependencies_in_txn(
         &self,
         vault: &Vault,
         txn: &mut heed::RwTxn<'_>,
         citing: &EntityId,
     ) -> Result<()> {
+        // Resolved before any edge: a pin whose birth does not resolve fails
+        // the write whole (SIGNED-BIRTH-MESSAGE-SOURCES-UNREGISTERED).
+        let birth = signed_birth_in_txn(vault, txn, citing)?;
         for span in self.rows.iter().flat_map(|row| &row.messages) {
             crate::ports::record_derived_edge_in_txn(&vault.store, txn, citing, &span.message)?;
             #[cfg(feature = "sync")]
@@ -558,6 +563,9 @@ impl VerifiedEvidenceSet {
                 crate::ports::record_derived_edge_in_txn(&vault.store, txn, citing, &source)?;
             }
         }
+        if let Some(birth) = &birth {
+            self.record_signed_birth_dependencies_in_txn(vault, txn, citing, birth)?;
+        }
         // A claim drawn from a kept copy of mail the provider deleted is
         // checked again, as the claims drawn before the delete were (fix list
         // row 15414).
@@ -569,8 +577,38 @@ impl VerifiedEvidenceSet {
             .collect();
         crate::mail_pack::claim_recheck::owe_claim_recheck_for_cited_in_txn(vault, txn, &cited)?;
         // READ-LINEAGE L1 hook 3: the cited MESSAGEs' sources bind the row
-        // that cites them.
-        crate::source_audience::raise_floors_in_txn(vault, txn, [*citing])
+        // that cites them, and a signed row's birth copy, whose dependencies
+        // were registered here too.
+        crate::source_audience::raise_floors_in_txn(
+            vault,
+            txn,
+            std::iter::once(*citing).chain(birth),
+        )
+    }
+    /// SIGNED-BIRTH-MESSAGE-SOURCES-UNREGISTERED: a signed (MACHINE) CLAIM's
+    /// `machine.birth` copy carries its whole first body, so it depends on the
+    /// same sources as the CLAIM: each cited MESSAGE, and the source of each
+    /// row with no MESSAGE span. Erasing one withdraws the birth through the
+    /// dependent walk, as it withdraws the CLAIM. The birth records no
+    /// citation floor (that would hold the MESSAGE's history while the birth
+    /// reads) and owes no recheck of its own.
+    fn record_signed_birth_dependencies_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+        citing: &EntityId,
+        birth: &EntityId,
+    ) -> Result<()> {
+        for span in self.rows.iter().flat_map(|row| &row.messages) {
+            crate::ports::record_derived_edge_in_txn(&vault.store, txn, birth, &span.message)?;
+        }
+        for row in self.rows.iter().filter(|row| row.messages.is_empty()) {
+            let source = row.locator.source_id();
+            if source != *citing && source != *birth {
+                crate::ports::record_derived_edge_in_txn(&vault.store, txn, birth, &source)?;
+            }
+        }
+        Ok(())
     }
     pub(super) fn check_pins(&self, resources: &BranchResources<'_>) -> Result<()> {
         for row in &self.rows {
@@ -735,4 +773,24 @@ fn first_try_marker(
 ) -> Result<(EntityId, Option<crate::ClaimBody>)> {
     let marker = super::conflict_open_marker_id(conflict, attempt)?;
     Ok((marker, vault.get_claim(&marker)?))
+}
+
+/// The signed birth the trusted pin of `claim` names, or `None` for an
+/// unsigned CLAIM (no pin). A pin whose history does not resolve fails with
+/// the history's own typed error (`ClaimError::MachineClaimHistoryIncomplete`
+/// or `InvalidMachineClaimProof`), which names no row content, so the write
+/// fails closed (SIGNED-BIRTH-MESSAGE-SOURCES-UNREGISTERED).
+fn signed_birth_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    claim: &EntityId,
+) -> Result<Option<EntityId>> {
+    let pin = crate::claim::history_projection::pin_key(*claim);
+    if vault.store.vault_meta.get(txn, &pin)?.is_none() {
+        return Ok(None);
+    }
+    crate::claim::history_projection::machine_history_rows(&vault.store, txn, *claim)?
+        .birth
+        .event_id()
+        .map(Some)
 }

@@ -720,3 +720,18 @@ pub fn invalid_relationship_error(relationship: EntityId, found: Option<u8>) -> 
 pub fn executor_error_park(error: &Error) -> (crate::dreamer_runner::DreamerParkCause, bool) {
     crate::dreamer_wake::executor_error_park_for_test(error)
 }
+
+/// [`consolidate_unbound_turn`] over a TURN the caller witnessed (with
+/// [`super::nightly::witness_turn`]), so the caller holds the MESSAGE the
+/// landed CLAIMs were learnt from (SIGNED-BIRTH-MESSAGE-SOURCES-UNREGISTERED).
+///
+/// # Errors
+///
+/// As [`consolidate_unbound_turn`].
+pub fn consolidate_witnessed_turn(
+    vault: &Vault,
+    turn: EntityId,
+    reply: &str,
+) -> Result<UnboundPass> {
+    consolidate_witnessed_turns(vault, turn, &[], reply)
+}
