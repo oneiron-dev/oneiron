@@ -311,6 +311,7 @@ impl Vault {
             secs: order.request.maximum_secs,
             result: order
                 .result
+                .filter(|_| false)
                 .map(|binding| crate::gpu_job::GpuJobResultBinding {
                     artifact: binding.artifact,
                     task: binding.task,
