@@ -2,18 +2,22 @@
 //! `McpCodeModeVerbs` (its `AgentVerbDoor` impl) and `run_code_mode_verb` are its call surface.
 //! The code_mode_verbs root defines `McpCodeModeVerbs`; `oneiron::code_run` owns the verb records.
 
+use super::super::static_admission::{StaticCaller, StaticCheck, StaticRefusal, static_admission};
 use super::*;
 
 mod caller_code;
-#[cfg(oneiron_test_support)]
+#[cfg(any(test, oneiron_test_support))]
 mod test_door;
 mod verb_call;
 
-use self::caller_code::{
-    caller_code_refused, caller_code_run_refusal, caller_code_verb_refusal, caller_speech_binding,
-};
+use self::caller_code::{caller_code_refused, caller_speech_binding};
 #[cfg(oneiron_test_support)]
 pub(crate) use self::test_door::admit_run_call_for_test;
+#[cfg(test)]
+pub(crate) use self::test_door::{
+    admit_outer_skill_call_for_test, admit_recorded_verb_for_test, admit_run_call_on_door_for_test,
+    admit_run_row_for_test, admit_session_read_for_test,
+};
 pub(crate) use self::verb_call::code_mode_line;
 pub(super) use self::verb_call::{execute_code_mode_verb, execute_step_verdict};
 
@@ -243,9 +247,10 @@ impl AgentVerbDoor for McpCodeModeVerbs {
         // next call (FIX 10633): release what that answer kept now, so a
         // read's renderer turn cannot survive into this call.
         self.answer_recorded();
-        if self.author == RunAuthor::Caller
-            && let Some(reason) = caller_code_verb_refusal(call.verb)
-        {
+        if let Err(StaticRefusal::CallerCode(reason)) = static_admission(
+            StaticCaller::connector(&self.actor).authored(self.author),
+            StaticCheck::CallerCodeAgentRow(call.verb),
+        ) {
             return Ok(Err(caller_code_refused(reason)));
         }
         // A read of one of the caller's own runs' results: this door holds
@@ -393,16 +398,16 @@ impl AgentVerbDoor for McpCodeModeVerbs {
     }
 
     /// A call a caller's own code makes is refused what no direct call
-    /// reaches first (`caller_code_run_refusal`); then it meets the checks
+    /// reaches first (`StaticCheck::CallerCodeRunCall`); then it meets the checks
     /// every call the run serves itself meets ([`Self::admit_bound_run_call`]).
     fn admit_run_call(
         &self,
         call: RunCall,
     ) -> Result<Option<ScopedReadActorKey>, AgentVerbRefusal> {
-        if self.author == RunAuthor::Caller
-            && let RunCall::Bridge(effect) = call
-            && let Some(reason) = caller_code_run_refusal(effect)
-        {
+        if let Err(StaticRefusal::CallerCode(reason)) = static_admission(
+            StaticCaller::connector(&self.actor).authored(self.author),
+            StaticCheck::CallerCodeRunCall(call),
+        ) {
             return Err(caller_code_refused(reason));
         }
         self.admit_bound_run_call(call)
@@ -470,9 +475,10 @@ impl AgentVerbDoor for McpCodeModeVerbs {
     /// row's recorded answer stay at the generic Read check: the original
     /// arguments are not available here.
     fn admit_recorded_verb(&self, verb: AgentVerb) -> Result<(), AgentVerbRefusal> {
-        if self.author == RunAuthor::Caller
-            && let Some(reason) = caller_code_verb_refusal(verb)
-        {
+        if let Err(StaticRefusal::CallerCode(reason)) = static_admission(
+            StaticCaller::connector(&self.actor).authored(self.author),
+            StaticCheck::CallerCodeAgentRow(verb),
+        ) {
             return Err(caller_code_refused(reason));
         }
         let refused = |error: McpGatewayError| AgentVerbRefusal {
@@ -561,7 +567,7 @@ impl AgentVerbDoor for McpCodeModeVerbs {
 /// A run's desktop row is refused: no direct door serves the host's desktop
 /// guest (FIX CODE-MODE-LENDING-W2).
 fn desktop_row_refusal(verb: AgentVerb) -> Result<(), McpGatewayError> {
-    if !verb.as_str().starts_with("self.desktop.") {
+    if static_admission(StaticCaller::row_only(), StaticCheck::DesktopRow(verb)).is_ok() {
         return Ok(());
     }
     Err(McpGatewayError::new(
