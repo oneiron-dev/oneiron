@@ -241,7 +241,8 @@ pub fn resolver_config_dir(config: &Path, read: &[PathBuf]) -> Option<PathBuf> {
     let target = std::fs::canonicalize(config).ok()?;
     let dir = target.parent()?;
     let covered = read.iter().any(|path| dir.starts_with(path));
-    (dir != Path::new("/") && !covered).then(|| dir.to_path_buf())
+    let _ = (dir, covered);
+    None
 }
 
 /// The read path a job of a pin of `pin` needs beyond `read` to resolve a
