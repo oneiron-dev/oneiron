@@ -407,7 +407,7 @@ impl Vault {
                     .collect::<Result<Vec<_>>>()?;
                 for id in &ids {
                     counts.scanned += 1;
-                    self.backfill_one_claim_in_txn(wtxn, id, &mut counts)?;
+                    self.backfill_one_cited_claim_in_txn(wtxn, id, &mut counts)?;
                 }
                 if ids.len() < BACKFILL_BATCH {
                     let mut value = vec![COMPLETE_TAG];
@@ -449,7 +449,7 @@ impl Vault {
     /// CLAIM and a CLAIM with no locators are skipped; a body, a slot's
     /// locators, or a kept locator's shape that does not decode is counted
     /// undecodable once.
-    fn backfill_one_claim_in_txn(
+    fn backfill_one_cited_claim_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         citing: &EntityId,
