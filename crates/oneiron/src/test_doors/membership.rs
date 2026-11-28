@@ -1,37 +1,31 @@
 //! A shared vault's member grants, for integration tests (primitive A, slice
-//! 6.4f: the Steward arm of the run reader).
+//! 6.4f: the Steward arm of the run reader; PLAN L3-35: the role a sender's
+//! send checks in by).
 
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::federation::{
-    FederationGrant, FederationGrantPreset, FederationGrantRole, FederationGrantScope,
-    encode_federation_grant_body,
+    FederationGrant, FederationGrantRole, FederationGrantScope, encode_federation_grant_body,
+    role_preset,
 };
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
 
 /// Stands `member`'s live grant at `role` over shared vault `vault_id`, at
-/// the scope the vault's policy resolves for the role, as a founding grant
-/// is written. Only the Steward and Member roles are served here.
+/// the role's preset and the scope the vault's policy resolves for the role,
+/// as a founding grant is written (`initialize_shared_vault`).
 ///
 /// # Errors
 ///
-/// Another role (`InvalidConfig`), and the vault's.
+/// A delegate role, which is no membership (`InvalidConfig`), and the
+/// vault's.
 pub fn stand_member_grant(
     vault: &Vault,
     member: EntityId,
     vault_id: u64,
     role: FederationGrantRole,
 ) -> Result<EntityId> {
-    let preset = match role {
-        FederationGrantRole::Steward => FederationGrantPreset::Steward,
-        FederationGrantRole::Member => FederationGrantPreset::Member,
-        _ => {
-            return Err(Error::InvalidConfig(format!(
-                "this door stands Steward and Member grants, not {role:?}"
-            )));
-        }
-    };
+    let preset = role_preset(role)?;
     let scope = {
         let txn = vault.store.env.read_txn()?;
         vault.grant_default_scope_in_txn(&txn, role, vault_id, member)?
