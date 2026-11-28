@@ -50,6 +50,7 @@ impl Memory<'_> {
             }
             let mut pack = MemoryPack {
                 items: Vec::new(),
+                held: Vec::new(),
                 scope_honesty,
                 retrieval_meta,
                 pack_version: MEMORY_PACK_VERSION,
@@ -57,6 +58,7 @@ impl Memory<'_> {
                 narrowing: Box::new(receipt),
                 retrieval_run_id: None,
                 residence: None,
+                bar: None,
             };
             pack.stamp_residence(home::local_residence(self.vault, None));
             return Ok(Some(pack));
@@ -113,6 +115,7 @@ impl Memory<'_> {
         }
         let mut pack = MemoryPack {
             items,
+            held: Vec::new(),
             scope_honesty,
             retrieval_meta,
             pack_version: MEMORY_PACK_VERSION,
@@ -120,6 +123,7 @@ impl Memory<'_> {
             narrowing: Box::new(receipt),
             retrieval_run_id: None,
             residence: None,
+            bar: None,
         };
         pack.stamp_residence(home::local_residence(self.vault, Some(&selection)));
         Ok(Some(pack))

@@ -160,6 +160,7 @@ impl Memory<'_> {
         auto_supersede: bool,
         in_writer: &'a dyn Fn(&heed::RoTxn<'_>) -> Result<(), Error>,
         birth: Option<&'a crate::provenance::birth::RowBirth>,
+        explicit_prior: Option<EntityId>,
     ) -> MemoryResult<ClaimWrite<'a>> {
         self.verified_actor_class()?;
         let id = id_from_optional_hex(self.vault, input.id.as_deref())?;
@@ -220,11 +221,12 @@ impl Memory<'_> {
         // txn opens. The authority is `supersede_claim_in_txn`'s guard, inside
         // that txn — and a refusal there rolls the staged replacement back
         // with it.
-        let prior = if auto_supersede {
+        let implicit = if auto_supersede {
             self.find_prior_claim(&key, &id, beside_stated)?
         } else {
             None
         };
+        let prior = explicit_prior.or(implicit);
         let mut write = ClaimWrite {
             input,
             id,
@@ -247,10 +249,12 @@ impl Memory<'_> {
         };
         // A deterministic id replays only the same belief. A changed belief
         // gets a fresh id and the existing gated supersession path (FIX 8793).
+        // A correction keeps the claim it names as its prior: the row at the
+        // colliding id is an earlier try of that correction, not its target.
         if let Some(existing) = self.vault.get_claim(&id)? {
             if !claim_replay_content_matches(&existing, &write) {
                 write.id = EntityId::now();
-                write.prior = Some(id);
+                write.prior = explicit_prior.or(Some(id));
             } else if write.prior.is_some() && self.vault.machine_history_pinned(&id)? {
                 // A projected signed row cannot be put in place again. Keep
                 // its identity for admission, but propose a fresh replacement.

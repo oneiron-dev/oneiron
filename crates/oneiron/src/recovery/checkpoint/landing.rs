@@ -139,7 +139,6 @@ impl Vault {
             Some(opened) => opened.carry_erasures(erased),
             None => erased.clone(),
         };
-        let payload_opened = opened.is_some();
         // Every body instance the rows name, through the plan the claim keys
         // share, so one fork copies both: missing refuses by name, retired
         // takes its rows out (KS-2A).
@@ -511,17 +510,17 @@ impl Vault {
             opaque_responses: opaque.landed,
             credential_notes,
             pad_object_notes: Vec::new(),
-            // Until KS7-6, a bare restore's erasures after the cut reach it
-            // only through the compartments it opened (FIX 4753).
-            erasure_note: (bare && !payload_opened).then(|| BARE_ERASURE_NOTE.to_owned()),
+            // A bare restore has no live vault to check its records against,
+            // so every bare restore carries the note (H5, F5).
+            erasure_note: bare.then(|| BARE_ERASURE_NOTE.to_owned()),
         };
         Ok((made, forked, vault, report))
     }
 }
 
-/// What a bare restore's receipt says when no compartment carried the
-/// source's erasures after the cut to it (FIX 4753).
-const BARE_ERASURE_NOTE: &str = "erasures after the cut not applied";
+/// A bare restore has no live vault to check its records against, so every
+/// bare restore carries this note (H5, F5).
+const BARE_ERASURE_NOTE: &str = "Records erased after this backup was taken may be back. This restore had no live vault to check them against.";
 
 /// Refuses a row with no header, which the index rebuild refuses anyway; a
 /// body the local identity refusal turns away; an AUTHORITY_LOG row whose

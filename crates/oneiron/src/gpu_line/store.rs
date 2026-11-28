@@ -23,6 +23,17 @@ const LINES: SideTable<EntityId, GpuLine, Named> = SideTable::new(&side_table::G
 const PERIODS: SideTable<(EntityId, u32), GpuLinePeriod, Named> =
     SideTable::new(&side_table::GPU_LINE_PERIOD);
 
+/// Whether a stored `GPU_LINE_PERIOD` value holds a cohort seed still sealed at `now_ms`: the
+/// get view withholds the seed until the period's `end_ms` (`doors::view_in_txn`), and the
+/// whole-vault export withholds the whole row until then (Engine ANSWER LE-ARCHIVE-PERIOD-SEED
+/// = A). Bytes that do not read as a period count as sealed.
+pub(crate) fn period_row_seals_seed(value: &[u8], now_ms: u64) -> bool {
+    match PERIODS.decode_value(value) {
+        Ok(period) => period.cohort_seed.is_some() && now_ms < period.end_ms,
+        Err(_) => true,
+    }
+}
+
 impl PeriodAllocation {
     /// The host allocation the installer installs for this period.
     #[must_use]
@@ -56,6 +67,23 @@ pub fn line_in_txn(
     project: &EntityId,
 ) -> crate::Result<Option<GpuLine>> {
     LINES.get(&vault.store, txn, project)
+}
+
+/// Whether a GPU line names the offer `offer`. Such an offer is line-managed: a job starts on
+/// it only through the one start gate, under a unit claim of a line (design pass 32 r2, 5.3).
+///
+/// # Errors
+///
+/// A store read failure.
+pub fn offer_line_managed_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    offer: &str,
+) -> crate::Result<bool> {
+    Ok(LINES
+        .scan(&vault.store, txn)?
+        .iter()
+        .any(|(_, line)| line.offers.iter().any(|name| name == offer)))
 }
 
 /// Writes `line` as its project's row.

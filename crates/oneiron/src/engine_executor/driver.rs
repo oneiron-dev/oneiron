@@ -15,9 +15,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// Engine-native executor driver.
 pub struct EngineNativeExecutor<'a> {
     pub(super) storage: ExecutorStorage<'a>,
-    pub(super) backend: &'a dyn LlmBackend,
+    pub(super) task_model: Option<(&'a dyn LlmBackend, &'a BudgetLease)>,
     pub(super) seat: Option<&'a ModelSeat>,
-    pub(super) lease: &'a BudgetLease,
     pub(super) runtime: &'a mut dyn JsCodeModeRuntime,
     pub(super) gated_write: &'a GatedActorWrite<'a>,
     pub(super) legibility: Option<ExecutorLegibility<'a>>,
@@ -35,6 +34,7 @@ pub struct EngineNativeExecutor<'a> {
     pub(super) request_fold_words: Vec<FoldWordRef>,
     /// The host's compaction seat for this run, when it keeps one.
     pub(super) compaction: Option<&'a mut super::compaction::RunCompaction>,
+    pub(super) window_outgrown_ends_run: bool,
     /// Feedback mode: each program is type-checked beside its run, and its
     /// check comes back with the step, never waited on or acted on.
     pub(super) code_check: Option<&'a super::code_check::TypeFeedback>,
@@ -67,47 +67,32 @@ impl<'a> EngineNativeExecutor<'a> {
         runtime: &'a mut dyn JsCodeModeRuntime,
         gated_write: &'a GatedActorWrite<'a>,
     ) -> Self {
-        Self {
-            result_share: vault.result_share(),
-            context_holds: Vec::new(),
-            request_fold_words: Vec::new(),
-            storage: ExecutorStorage::Canonical(vault),
-            backend,
-            seat: None,
-            lease,
+        Self::on_storage(
+            ExecutorStorage::Canonical(vault),
+            Some((backend, lease)),
             runtime,
             gated_write,
-            legibility: None,
-            output_context: OutputWorkingContext::default(),
-            output_run: None,
-            output_decay: OutputDecayPolicy {
-                overview_after_turns: 2,
-                stub_after_turns: 5,
-            },
-            compaction: None,
-            code_check: None,
-            step_checks: std::sync::Mutex::default(),
-            self_brief: None,
-            cache_horizon: None,
-            next_witness_order: AtomicU64::new(0),
-            #[cfg(test)]
-            fail_before_implicit_speak_once: false,
-        }
+        )
     }
 
-    /// Binds a run to an already-acquired live off-record session
+    /// Binds the caller-source entry without a model backend or budget lease
+    /// (FIX EXECUTE-CALLER-CODE).
+    #[must_use]
+    pub fn for_caller_source(
+        vault: &'a Vault,
+        runtime: &'a mut dyn JsCodeModeRuntime,
+        gated_write: &'a GatedActorWrite<'a>,
+    ) -> Self {
+        Self::on_storage(
+            ExecutorStorage::Canonical(vault),
+            None,
+            runtime,
+            gated_write,
+        )
+    }
+
+    /// Binds a model-backed run to the live session's mode-aware storage route
     /// (ONE-1729/P4b).
-    ///
-    /// Every artifact this run produces — replay record, config and terminal
-    /// markers, generated scripts, observations, runtime outputs, raw output
-    /// bytes, and its turns — follows the session's mode-aware route: the
-    /// overlay while the room is off record, ordinary base storage after the
-    /// same live session flips on record. There is no executor-specific base
-    /// bypass and no durable session row.
-    ///
-    /// The run's `crate::off_record::SessionWriteRoute` is captured HERE,
-    /// at run entry (R-20260807-02 rider 2), which is why this constructor is
-    /// fallible where the canonical one is not.
     pub fn for_off_record_session(
         session: &'a OffRecordSession<'a>,
         backend: &'a dyn LlmBackend,
@@ -116,14 +101,38 @@ impl<'a> EngineNativeExecutor<'a> {
         gated_write: &'a GatedActorWrite<'a>,
     ) -> EngineExecutorResult<Self> {
         let storage = ExecutorStorage::for_session(session, gated_write.actor().entity_ref())?;
-        Ok(Self {
+        Ok(Self::on_storage(
+            storage,
+            Some((backend, lease)),
+            runtime,
+            gated_write,
+        ))
+    }
+
+    /// Binds the caller-source entry to the live session's mode-aware storage
+    /// route (FIX EXECUTE-CALLER-CODE).
+    pub fn for_off_record_caller_source(
+        session: &'a OffRecordSession<'a>,
+        runtime: &'a mut dyn JsCodeModeRuntime,
+        gated_write: &'a GatedActorWrite<'a>,
+    ) -> EngineExecutorResult<Self> {
+        let storage = ExecutorStorage::for_session(session, gated_write.actor().entity_ref())?;
+        Ok(Self::on_storage(storage, None, runtime, gated_write))
+    }
+
+    fn on_storage(
+        storage: ExecutorStorage<'a>,
+        task_model: Option<(&'a dyn LlmBackend, &'a BudgetLease)>,
+        runtime: &'a mut dyn JsCodeModeRuntime,
+        gated_write: &'a GatedActorWrite<'a>,
+    ) -> Self {
+        Self {
             result_share: storage.result_share(),
             context_holds: Vec::new(),
             request_fold_words: Vec::new(),
             storage,
-            backend,
+            task_model,
             seat: None,
-            lease,
             runtime,
             gated_write,
             legibility: None,
@@ -134,6 +143,7 @@ impl<'a> EngineNativeExecutor<'a> {
                 stub_after_turns: 5,
             },
             compaction: None,
+            window_outgrown_ends_run: false,
             code_check: None,
             step_checks: std::sync::Mutex::default(),
             self_brief: None,
@@ -141,7 +151,7 @@ impl<'a> EngineNativeExecutor<'a> {
             next_witness_order: AtomicU64::new(0),
             #[cfg(test)]
             fail_before_implicit_speak_once: false,
-        })
+        }
     }
 
     /// Bind the already-resolved run seat. The executor applies the pin to
@@ -215,6 +225,15 @@ impl<'a> EngineNativeExecutor<'a> {
             self.output_decay = decay;
         }
         self.compaction = Some(seat);
+        self
+    }
+
+    /// A host whose runs take no compaction seat ends a run whose window outgrew its model:
+    /// the turn records a terminal window_outgrown marker, and every later entry answers that
+    /// refusal without asking the model again (FIX CODE-MODE-LENDING-W6).
+    #[must_use]
+    pub fn with_window_outgrown_terminal(mut self) -> Self {
+        self.window_outgrown_ends_run = true;
         self
     }
 

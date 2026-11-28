@@ -179,6 +179,7 @@ fn end_of(end: &JobEnd) -> (Option<String>, Option<String>) {
         JobEnd::Exited { code } => ("exited", Some(code.to_string())),
         JobEnd::Signalled { signal } => ("signalled", Some(signal.to_string())),
         JobEnd::TimeLimit => ("time_limit", None),
+        JobEnd::Continued => ("continued", None),
         JobEnd::MemoryLimit => ("memory_limit", None),
         JobEnd::DiskLimit => ("disk_limit", None),
         JobEnd::Stopped => ("stopped", None),

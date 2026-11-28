@@ -531,6 +531,7 @@ impl RunGuests {
                     return Ok(Err(AgentVerbRefusal {
                         hook_notice: None,
                         code: refused.code,
+                        reason_codes: refused.reason_codes,
                     }));
                 }
             };
@@ -702,6 +703,7 @@ impl RunGuests {
             return Err(AgentVerbRefusal {
                 hook_notice: None,
                 code: BrowserError::Unbound.code().to_owned(),
+                reason_codes: Vec::new(),
             });
         }
         Ok(())
@@ -733,7 +735,8 @@ impl RunGuests {
     }
 
     /// The run's guest manifests, each with the pressure its guest shows
-    /// now (FIX 8013).
+    /// now (FIX 8013). Test-only, as its one caller is.
+    #[cfg(test)]
     pub(crate) fn manifests(&self) -> Vec<Value> {
         let browser = self
             .browser

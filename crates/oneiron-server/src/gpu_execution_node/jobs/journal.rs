@@ -92,6 +92,16 @@ pub enum JournalEvent {
     /// The key's payload directory was removed, after its acknowledgement
     /// and the keep time: its outputs can no longer be fetched.
     Cleaned,
+    /// A session's renewal (pass 34, 2.5; row W1), written on the run's
+    /// first key: the signed submit of the next chunk's key, which names
+    /// this key in `continues`, moves the run's cutoff from `from_boot_ns`,
+    /// the end of the paid time so far, to `cutoff_boot_ns`. The chunk's key
+    /// gets no record of its own: it never holds a lease or starts anything.
+    Renewed {
+        submit: SignedJobSubmit,
+        from_boot_ns: u64,
+        cutoff_boot_ns: u64,
+    },
 }
 
 impl JournalEvent {
@@ -109,6 +119,7 @@ impl JournalEvent {
             Self::Hashed { .. } => "hashed",
             Self::Acknowledged => "acknowledged",
             Self::Cleaned => "cleaned",
+            Self::Renewed { .. } => "renewed",
         }
     }
 }
@@ -169,6 +180,22 @@ impl KeyLaunch {
     }
 }
 
+/// One paid chunk that continues a session's run, as its first key's
+/// `renewed` record holds it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Renewal {
+    /// The chunk's own key.
+    pub key: String,
+    pub submit: SignedJobSubmit,
+    /// Where the chunk's paid time begins: the end of the chunk before.
+    pub from_boot_ns: u64,
+    /// Where it ends: the run's cutoff once this chunk was paid.
+    pub cutoff_boot_ns: u64,
+    pub at_ms: u64,
+    /// The sequence of the `renewed` record.
+    pub seq: u64,
+}
+
 /// One key as the journal holds it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NodeKey {
@@ -193,6 +220,9 @@ pub struct NodeKey {
     pub acknowledged_at_ms: Option<u64>,
     /// Whether the key's payload directory was removed.
     pub cleaned: bool,
+    /// The chunks that continue this key's run, oldest first: empty for a
+    /// job and for a session that was never renewed.
+    pub renewals: Vec<Renewal>,
     /// The sequence of the key's newest record.
     pub seq: u64,
     /// The boot of the key's newest record.
@@ -220,6 +250,7 @@ impl NodeKey {
             other_compute_pids: Vec::new(),
             acknowledged_at_ms: None,
             cleaned: false,
+            renewals: Vec::new(),
             seq: record.seq,
             boot_id: record.boot_id.clone(),
             updated_at_ms: record.at_ms,
@@ -279,6 +310,15 @@ impl NodeKey {
     pub fn is_ended(&self) -> bool {
         self.state == JobState::Ended
     }
+
+    /// Whether the run may take a renewal now: it launched and has no end
+    /// and no ending cause yet.
+    #[must_use]
+    pub fn renewable(&self) -> bool {
+        matches!(self.state, JobState::Launching | JobState::Running)
+            && self.ending_cause.is_none()
+            && self.launch.is_some()
+    }
 }
 
 /// A record that breaks the journal's rules: a damaged history.
@@ -308,6 +348,8 @@ pub enum JournalWriteError {
 #[derive(Debug, Clone, Default)]
 pub struct KeyTable {
     keys: BTreeMap<String, NodeKey>,
+    /// Each renewed chunk's key, to the first key of the run it continues.
+    chunks: BTreeMap<String, String>,
     last_seq: u64,
 }
 
@@ -321,6 +363,34 @@ impl KeyTable {
     /// Every key, in key order.
     pub fn iter(&self) -> impl Iterator<Item = &NodeKey> {
         self.keys.values()
+    }
+
+    /// A renewed chunk's key: the first key of the run it continues, and the
+    /// chunk's place in that run (1 for the first renewal).
+    #[must_use]
+    pub fn chunk(&self, key: &str) -> Option<(&NodeKey, u32)> {
+        let first = self.keys.get(self.chunks.get(key)?)?;
+        let place = first
+            .renewals
+            .iter()
+            .position(|renewal| renewal.key == key)?;
+        Some((first, u32::try_from(place).ok()?.saturating_add(1)))
+    }
+
+    /// The key that holds `key`'s run: the key itself, or for a renewed
+    /// chunk the run's first key.
+    #[must_use]
+    pub fn holder(&self, key: &str) -> Option<&NodeKey> {
+        self.keys
+            .get(key)
+            .or_else(|| self.chunk(key).map(|(first, _)| first))
+    }
+
+    /// Every renewed chunk's key with its run's first key, in key order.
+    pub fn chunk_keys(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.chunks
+            .iter()
+            .map(|(chunk, first)| (chunk.as_str(), first.as_str()))
     }
 
     /// The newest record's sequence.
@@ -355,9 +425,19 @@ impl KeyTable {
     /// sequence, or a move the key's state does not allow. Nothing changes.
     pub fn apply(&mut self, record: &JournalRecord) -> Result<(), JournalMoveError> {
         let next = self.check(record)?;
-        self.last_seq = record.seq;
-        self.keys.insert(record.key.clone(), next);
+        self.commit(record, next);
         Ok(())
+    }
+
+    /// Puts a checked record's key in the table, and a renewal's chunk key
+    /// in the chunk index.
+    fn commit(&mut self, record: &JournalRecord, next: NodeKey) {
+        self.last_seq = record.seq;
+        if let JournalEvent::Renewed { submit, .. } = &record.event {
+            self.chunks
+                .insert(submit.submit.key.clone(), record.key.clone());
+        }
+        self.keys.insert(record.key.clone(), next);
     }
 
     /// The key as it would be after `record`.
@@ -369,7 +449,9 @@ impl KeyTable {
             from: current.map_or_else(|| "nothing".to_owned(), |key| format!("{:?}", key.state)),
             event: record.event.name(),
         };
-        if record.seq <= self.last_seq {
+        // A renewed chunk's key takes no record of its own: its run's records
+        // are its first key's.
+        if record.seq <= self.last_seq || self.chunks.contains_key(&record.key) {
             return Err(refuse());
         }
         if let Some(current) = current
@@ -398,7 +480,11 @@ impl KeyTable {
                 next.state = JobState::Held;
             }
             (JournalEvent::Accepted { submit }, Some(JobState::Held)) => {
-                if submit.submit.key != record.key || submit.submit.issuer != record.issuer {
+                // A renewal is never accepted as a run of its own.
+                if submit.submit.key != record.key
+                    || submit.submit.issuer != record.issuer
+                    || submit.submit.continues.is_some()
+                {
                     return Err(refuse());
                 }
                 next.submit = Some(submit.clone());
@@ -496,6 +582,51 @@ impl KeyTable {
             {
                 next.cleaned = true;
             }
+            (
+                JournalEvent::Renewed {
+                    submit,
+                    from_boot_ns,
+                    cutoff_boot_ns,
+                },
+                Some(JobState::Launching | JobState::Running),
+            ) => {
+                let chunk = &submit.submit;
+                let renews = next.ending_cause.is_none()
+                    && chunk.continues.as_deref() == Some(record.key.as_str())
+                    && chunk.issuer == record.issuer
+                    && chunk.key != record.key
+                    && !self.keys.contains_key(&chunk.key)
+                    && !self.chunks.contains_key(&chunk.key)
+                    && chunk.maximum_secs > 0
+                    // The chunk is exactly its signed maximum long.
+                    && chunk
+                        .maximum_secs
+                        .checked_mul(1_000_000_000)
+                        .and_then(|chunk_ns| from_boot_ns.checked_add(chunk_ns))
+                        == Some(*cutoff_boot_ns)
+                    && next
+                        .launch
+                        .as_ref()
+                        .is_some_and(|launch| launch.boot_id == record.boot_id);
+                // The chunk begins where the paid time ends, and the cutoff
+                // only moves forward.
+                let Some(launch) = next
+                    .launch
+                    .as_mut()
+                    .filter(|launch| renews && launch.cutoff_boot_ns == *from_boot_ns)
+                else {
+                    return Err(refuse());
+                };
+                launch.cutoff_boot_ns = *cutoff_boot_ns;
+                next.renewals.push(Renewal {
+                    key: chunk.key.clone(),
+                    submit: submit.clone(),
+                    from_boot_ns: *from_boot_ns,
+                    cutoff_boot_ns: *cutoff_boot_ns,
+                    at_ms: record.at_ms,
+                    seq: record.seq,
+                });
+            }
             _ => return Err(refuse()),
         }
         Ok(next)
@@ -585,8 +716,7 @@ impl JobJournal {
         let payload = serde_json::to_vec(&record)
             .map_err(|error| JournalWriteError::Encode(error.to_string()))?;
         self.file.append(&payload)?;
-        self.table.last_seq = record.seq;
-        self.table.keys.insert(record.key.clone(), next);
+        self.table.commit(&record, next);
         Ok(self
             .table
             .keys

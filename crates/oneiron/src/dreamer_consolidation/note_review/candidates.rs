@@ -40,6 +40,7 @@ impl CallSources for NoteSources<'_> {
     fn shown(&self, id: EntityId) -> Option<SourceShown<'_>> {
         (id == self.note.id).then(|| SourceShown {
             text: Some(self.note.markdown.as_str()),
+            one_line_fenced: false,
             project: Some(self.note.project),
         })
     }
@@ -131,6 +132,12 @@ pub(super) fn note_candidate(
     let candidate =
         ClaimCandidate::new(predicate, ClaimSubject::Entity(subject), value, confidence)
             .with_scope(Value::Map(fields));
+    // NOTE-REVIEW-CLAIM-DROPS-NOTE-WORLD: born in the NOTE's world, as a
+    // TURN's beliefs are born in their branch's (executor/extraction.rs).
+    let candidate = match note.world {
+        Some(world) => candidate.with_world(world),
+        None => candidate,
+    };
     let facts = crate::dreamer_consolidation::conflict::candidate_facts(&candidate)?;
     let claim_id = crate::dreamer_consolidation::conflict::deterministic_claim_id(
         run.attempt_id,

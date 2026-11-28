@@ -13,6 +13,7 @@ use crate::gpu_execution_node::jobs::job_unit::{
 };
 use crate::gpu_execution_node::jobs::{
     EndRecord, JobKeyId, JobUnit, JobUnitError, JobUnitPhase, JobUnitStatus, LaunchFile, NodeClock,
+    RenewRefusal,
 };
 
 /// What the scripted service manager does with the next start.
@@ -77,6 +78,10 @@ struct UnitsState {
     /// Every signal delivered, in order: the unit and the signal's name.
     signals: Vec<(JobKeyId, String)>,
     probe: ScopeCapabilities,
+    /// Each unit's cutoff as its renewals moved it (row W1), and whether a
+    /// renewal is taken.
+    cutoffs: BTreeMap<JobKeyId, u64>,
+    renewing: bool,
 }
 
 /// The service manager, scripted. It writes `ended.json` as the unit's root
@@ -103,8 +108,25 @@ impl ScriptedJobUnits {
                 next_start: ScriptedStart::Run,
                 signals: Vec::new(),
                 probe: Self::kernel_scope(),
+                cutoffs: BTreeMap::new(),
+                renewing: true,
             }),
         })
+    }
+
+    /// The cutoff the key's unit holds after its renewals: `None` while no
+    /// renewal moved it, so it stays where the launch armed it.
+    #[must_use]
+    pub fn renewed_cutoff(&self, key: &str) -> Option<u64> {
+        locked(&self.state)
+            .cutoffs
+            .get(&JobKeyId::for_key(key))
+            .copied()
+    }
+
+    /// Whether the scope takes a renewal (false: it answers unavailable).
+    pub fn set_renewing(&self, renewing: bool) {
+        locked(&self.state).renewing = renewing;
     }
 
     /// The signals delivered to the key's unit, in order.
@@ -216,6 +238,32 @@ impl ScriptedJobUnits {
         );
     }
 
+    /// The end step wrote the end record, as [`Self::exit`] with 0 does, but
+    /// the unit is still stopping: its phase is `Stopping` and its control
+    /// group is not empty yet, so the release check waits for it.
+    pub fn exit_while_stopping(&self, key: &str) {
+        self.end_unit(key, &ScriptedEnd::exited("0"));
+        locked(&self.state).units.insert(
+            JobKeyId::for_key(key),
+            ScriptedUnit {
+                phase: JobUnitPhase::Stopping,
+                cgroup_empty: false,
+            },
+        );
+    }
+
+    /// The stopping unit is gone: inactive with an empty control group, so
+    /// the release check runs. The end record stays as written.
+    pub fn finish_stopping(&self, key: &str) {
+        locked(&self.state).units.insert(
+            JobKeyId::for_key(key),
+            ScriptedUnit {
+                phase: JobUnitPhase::Inactive,
+                cgroup_empty: true,
+            },
+        );
+    }
+
     /// The unit is gone with no end record (the end step left none).
     pub fn vanish(&self, key: &str) {
         locked(&self.state).units.insert(
@@ -293,6 +341,23 @@ impl ScriptedJobUnits {
 impl JobUnit for ScriptedJobUnits {
     fn probe(&self) -> ScopeCapabilities {
         locked(&self.state).probe.clone()
+    }
+
+    /// Moves the unit's cutoff forward, never back, as the systemd scope's
+    /// root handoff does.
+    fn renew(&self, unit: &JobKeyId, cutoff_boot_ns: u64) -> Result<(), RenewRefusal> {
+        let mut state = locked(&self.state);
+        let running = state
+            .units
+            .get(unit)
+            .is_some_and(|scripted| scripted.phase == JobUnitPhase::Active);
+        // As root's handoff: only a running unit's cutoff moves.
+        if !state.answering || !state.renewing || !running {
+            return Err(RenewRefusal::Unit(Self::unavailable(unit)));
+        }
+        let held = state.cutoffs.entry(unit.clone()).or_insert(cutoff_boot_ns);
+        *held = (*held).max(cutoff_boot_ns);
+        Ok(())
     }
 
     fn start(&self, unit: &JobKeyId) -> Result<(), JobUnitError> {

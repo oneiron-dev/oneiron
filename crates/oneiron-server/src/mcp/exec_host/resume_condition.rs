@@ -1,4 +1,4 @@
-//! The condition an automatic re-entry of a parked `execute_code` run
+//! The condition an automatic re-entry of a parked `execute` run
 //! carries to its host (FIX 4606), and what the host answers it.
 //!
 //! A re-entry is readied for one wait at one replay generation. A caller's
@@ -7,17 +7,16 @@
 //! record again once the single flight and the run permit are the
 //! re-entry's own. A record that moved runs no batch for that re-entry.
 
-use oneiron::Vault;
 use oneiron::code_run::{CodeRunReplayGeneration, WaitKey};
 use oneiron::engine_executor::{EngineExecutorOutcome, code_run_position};
+use oneiron::{EntityId, Vault};
 
-/// The wait and replay generation one automatic re-entry was readied for
-/// (FIX 4606), taken from the registration it was readied from. A caller's
-/// own call carries none.
+/// What must still exist when the host takes a resumed run's single flight.
+/// An automatic re-entry also names its parked wait and replay generation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct McpCodeRunResumeCondition {
-    wait: WaitKey,
-    generation: CodeRunReplayGeneration,
+    run_id: EntityId,
+    parked: Option<(WaitKey, CodeRunReplayGeneration)>,
 }
 
 impl McpCodeRunResumeCondition {
@@ -25,7 +24,19 @@ impl McpCodeRunResumeCondition {
     /// stood at `generation`.
     #[must_use]
     pub(crate) const fn new(wait: WaitKey, generation: CodeRunReplayGeneration) -> Self {
-        Self { wait, generation }
+        Self {
+            run_id: wait.run,
+            parked: Some((wait, generation)),
+        }
+    }
+
+    /// A caller's own resume can take any current generation, but never
+    /// starts a new run when the handle no longer resolves.
+    pub(crate) const fn existing(run_id: EntityId) -> Self {
+        Self {
+            run_id,
+            parked: None,
+        }
     }
 
     /// Whether the run's committed record still stands where the re-entry
@@ -34,15 +45,20 @@ impl McpCodeRunResumeCondition {
     /// included, does not stand there.
     #[must_use]
     pub fn stands(&self, vault: &Vault) -> bool {
-        match code_run_position(vault, self.wait.run) {
+        let Some((wait, generation)) = self.parked else {
+            return vault
+                .get_code_run_replay_record(&self.run_id)
+                .is_ok_and(|record| record.is_some());
+        };
+        match code_run_position(vault, self.run_id) {
             Ok(Some(position)) => {
-                position.generation == self.generation && position.parked_wait == Some(self.wait)
+                position.generation == generation && position.parked_wait == Some(wait)
             }
             Ok(None) => false,
             Err(error) => {
                 tracing::warn!(
                     %error,
-                    run = %self.wait.run.to_hex(),
+                    run = %self.run_id.to_hex(),
                     "a parked MCP code run's record did not read again; its re-entry runs nothing"
                 );
                 false

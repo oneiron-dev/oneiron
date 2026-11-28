@@ -13,8 +13,8 @@
 
 use oneiron::check_in::{ActClass, VerbActClass, verb_act_class};
 use oneiron_server::mcp::{
-    MCP_EXECUTE_CODE_TOOL, MCP_INVOKE_ACTION_TOOL, MCP_READ_RESULT_TOOL, MCP_SETUP_TOOL,
-    McpSurfaceMode, registered_surface, try_registered_surface_with_execution,
+    MCP_EXECUTE_TOOL, MCP_INVOKE_ACTION_TOOL, MCP_RESUME_TOOL, MCP_SETUP_TOOL, McpSurfaceMode,
+    registered_surface, try_registered_surface_with_execution,
 };
 use serde_json::{Value, json};
 
@@ -23,7 +23,7 @@ use serde_json::{Value, json};
 mod engine_stack;
 
 /// Every registered listing: both endpoints, with and without a verified
-/// code host (which adds `execute_code` and `read_result`).
+/// code host (which advertises `execute` and `resume`).
 fn listings() -> Vec<(String, &'static Value)> {
     let mut all = Vec::new();
     for mode in McpSurfaceMode::ALL {
@@ -79,8 +79,8 @@ fn ruled_hints(class: Option<VerbActClass>) -> Option<Value> {
 /// The hints the ruled table gives the tool listed as `name`.
 fn ruled_hints_for_tool(name: &str) -> Option<Value> {
     match name {
-        MCP_SETUP_TOOL | MCP_READ_RESULT_TOOL => Some(json!({ "readOnlyHint": true })),
-        MCP_EXECUTE_CODE_TOOL | MCP_INVOKE_ACTION_TOOL => None,
+        MCP_SETUP_TOOL => Some(json!({ "readOnlyHint": true })),
+        MCP_EXECUTE_TOOL | MCP_RESUME_TOOL | MCP_INVOKE_ACTION_TOOL => None,
         verb => ruled_hints(verb_act_class(verb)),
     }
 }
@@ -178,8 +178,7 @@ fn an_unstated_verb_and_the_code_doors_carry_no_hints() {
         for tool in entries(listing) {
             let name = name_of(tool);
             let no_class = matches!(verb_act_class(name), None | Some(VerbActClass::Unstated))
-                && name != MCP_SETUP_TOOL
-                && name != MCP_READ_RESULT_TOOL;
+                && name != MCP_SETUP_TOOL;
             if no_class {
                 unstated += 1;
                 assert!(
@@ -188,7 +187,7 @@ fn an_unstated_verb_and_the_code_doors_carry_no_hints() {
                 );
             }
         }
-        for door in [MCP_EXECUTE_CODE_TOOL, MCP_INVOKE_ACTION_TOOL] {
+        for door in [MCP_EXECUTE_TOOL, MCP_RESUME_TOOL, MCP_INVOKE_ACTION_TOOL] {
             if let Some(tool) = entries(listing).iter().find(|tool| tool["name"] == door) {
                 assert!(tool.get("annotations").is_none(), "{label}: {door}");
             }

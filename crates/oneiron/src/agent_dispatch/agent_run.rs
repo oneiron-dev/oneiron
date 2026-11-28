@@ -31,6 +31,7 @@ use crate::attempt_queue::{
 };
 use crate::dreamer_runner::{DREAMER_RUNNER_ATTEMPT_KIND, decode_dreamer_attempt_payload};
 use crate::error::Result;
+use crate::work_order::decider::{DeciderReply, PassAsks, SlotAsk};
 
 /// How far up a run tree its Q&A thread is looked for.
 const MAX_TREE_DEPTH: usize = 64;
@@ -91,13 +92,37 @@ impl AgentDispatcher<'_> {
 
     /// Claims one agent run by id, as the resident pump claims its runs.
     /// `None` when the row is no longer a ready run of this pump's, or
-    /// another worker holds it.
+    /// another worker holds it. A run's first claim places it by the rule
+    /// alone ([`Self::claim_agent_run_placed`] with no decision model).
     pub fn claim_agent_run(
         &self,
         id: AttemptId,
         lease_owner: &str,
         now: u64,
     ) -> Result<Option<AgentRun>> {
+        self.claim_agent_run_placed(id, lease_owner, now, &|_| DeciderReply::NoModel)
+    }
+
+    /// [`Self::claim_agent_run`], with a root run's first claim placed first
+    /// (row P4, `super::run_placement`): `decide` is the host's decision
+    /// ladder, which asks the PLACE slot's named decider outside every
+    /// transaction. A run placed on another machine is left for it, and the
+    /// claim answers `None`. A placement that fails is logged, and the run is
+    /// claimed here as before.
+    pub fn claim_agent_run_placed(
+        &self,
+        id: AttemptId,
+        lease_owner: &str,
+        now: u64,
+        decide: &dyn Fn(&SlotAsk) -> DeciderReply,
+    ) -> Result<Option<AgentRun>> {
+        if let Err(error) = self.place_agent_run(id, now, &PassAsks::through(decide)) {
+            tracing::warn!(
+                attempt = %crate::entity_id::bytes_to_hex_lower(id.as_bytes()),
+                kind = ?error.kind(),
+                "an agent run's placement failed; it is claimed where it was dispatched"
+            );
+        }
         let queue = AttemptQueue::new(self.vault);
         let mut txn = self.vault.store.env.write_txn()?;
         let Some(row) = queue.get_in_write_txn(&txn, id)? else {
@@ -135,7 +160,7 @@ impl AgentDispatcher<'_> {
         let fence = match take_agent_run_lease_in_txn(self.vault, &mut txn, &row, now)? {
             AgentRunLeaseTake::NoRunTask => None,
             AgentRunLeaseTake::Taken(fence) => Some(fence),
-            AgentRunLeaseTake::Closing | AgentRunLeaseTake::LeftForCloud => return Ok(None),
+            AgentRunLeaseTake::Closing | AgentRunLeaseTake::LeftForPlacement => return Ok(None),
             AgentRunLeaseTake::HeldElsewhere
             | AgentRunLeaseTake::Settled
             | AgentRunLeaseTake::Unreadable => {

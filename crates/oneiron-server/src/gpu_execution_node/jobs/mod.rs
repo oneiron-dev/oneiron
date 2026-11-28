@@ -65,7 +65,9 @@ pub use job_unit::{
     EndRecord, JobKeyId, JobUnit, JobUnitError, JobUnitPhase, JobUnitStatus, LaunchFile, NodeClock,
     RenewRefusal, SystemNodeClock, scope_missing,
 };
-pub use journal::{EndingCause, JobJournal, JournalEvent, JournalRecord, KeyTable, NodeKey};
+pub use journal::{
+    EndingCause, JobJournal, JournalEvent, JournalRecord, KeyTable, NodeKey, Renewal,
+};
 pub use journal_file::{
     JournalDamage, JournalEpoch, JournalFile, JournalOpening, JournalWriterLock,
 };
@@ -75,7 +77,7 @@ pub use node_parts::{
     StagingNotBuilt,
 };
 pub use readiness::{DRAIN_RULE_DEFAULT, DrainPick, drain_rule_default};
-pub use receipt::{ReceiptClock, measured_secs, receipt_of, sign_receipt};
+pub use receipt::{ReceiptClock, chunk_receipt_of, measured_secs, receipt_of, sign_receipt};
 #[cfg(target_os = "linux")]
 pub use serving::ServedNodeJobs;
 pub use staging::{MirrorStager, StagingRefusal, TemplateMirrors};
@@ -109,6 +111,10 @@ struct NodeBook {
     floors: BTreeMap<String, Box<dyn FloorLease>>,
     /// Keys whose staging worker runs now.
     staging: BTreeSet<String>,
+    /// The cutoff the scope took for each renewed session run (row W1), by
+    /// its first key. Empty after a start, so each live renewed run's
+    /// cutoff is asked of the scope once again.
+    armed_cutoffs: BTreeMap<String, u64>,
 }
 
 struct NodeJobsShared {

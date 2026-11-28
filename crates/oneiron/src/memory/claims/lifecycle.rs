@@ -114,6 +114,121 @@ impl Memory<'_> {
         self.commit_one(input, true, None)
     }
 
+    /// Commits one claim that corrects a claim the caller wrote: the new claim
+    /// waits for the owner, and the old one closes when the owner approves it.
+    pub fn claim_correct(&self, input: &ClaimCorrectionInput) -> MemoryResult<CommitReceipt> {
+        let corrects_id = match self.resolve_ref(&input.corrects) {
+            Ok(id) => id,
+            Err(_) => {
+                return Err(MemoryError::bad_request_with(
+                    format!("corrects {:?} does not resolve to a claim", input.corrects),
+                    &["Name an Active claim you wrote on the same predicate and subject."],
+                ));
+            }
+        };
+        let Some(old_body) = self.vault.get_claim(&corrects_id)? else {
+            return Err(MemoryError::bad_request_with(
+                format!("corrects {:?} does not name a claim", input.corrects),
+                &["Name an Active claim you wrote on the same predicate and subject."],
+            ));
+        };
+        if old_body.lifecycle != ClaimLifecycleStatus::Active {
+            return Err(MemoryError::bad_request_with(
+                format!(
+                    "corrects {:?} does not name an Active claim",
+                    input.corrects
+                ),
+                &["Name an Active claim you wrote on the same predicate and subject."],
+            ));
+        }
+        let new_subject = self.resolve_ref(&input.claim.subject_ref)?;
+        if old_body.predicate != input.claim.predicate
+            || old_body.subject != crate::claim::ClaimSubject::Entity(new_subject)
+        {
+            let old_subject = subject_ref_string(&old_body.subject);
+            let hint = format!(
+                "corrects names {} on {}, but the claim is {} on {}.",
+                old_body.predicate,
+                old_subject,
+                input.claim.predicate,
+                new_subject.to_hex()
+            );
+            return Err(MemoryError::bad_request_with(
+                "a correction stays on its claim's predicate and subject",
+                &[hint.as_str()],
+            ));
+        }
+        self.check_correction_authorship(&old_body)?;
+        if declared_cardinality(&input.claim.predicate) == ClaimCardinality::Single {
+            let source = self.claim_source(&input.claim.source)?;
+            let beside_stated =
+                crate::claim::is_observed_preference(Some(source), &input.claim.predicate)
+                    || source == crate::claim::ClaimSource::Generated;
+            let world = match &input.claim.world_ref {
+                Some(world_ref) => Some(self.resolve_ref(world_ref)?),
+                None => None,
+            };
+            let relationship = input
+                .claim
+                .relationship_ref
+                .as_ref()
+                .map(|refs| {
+                    refs.iter()
+                        .map(|r| self.resolve_ref(r))
+                        .collect::<MemoryResult<crate::claim::RelationshipSet>>()
+                })
+                .transpose()?;
+            let exclude = input
+                .claim
+                .id
+                .as_deref()
+                .and_then(|raw| EntityId::from_hex(raw).ok())
+                .unwrap_or_else(EntityId::now);
+            if let Some(head) = self.correction_head_for(
+                &input.claim,
+                new_subject,
+                world,
+                relationship,
+                &exclude,
+                beside_stated,
+            )? {
+                if head != corrects_id {
+                    let head_ref = self.short_ref_or_hex(&head)?;
+                    let hint = format!("the key's current head is {head_ref}.");
+                    return Err(MemoryError::bad_request_with(
+                        "a correction names the key's current head",
+                        &[hint.as_str()],
+                    ));
+                }
+            }
+        }
+        let explicit_prior = Some(corrects_id);
+        self.commit_one_guarded_with_birth(
+            &input.claim,
+            true,
+            None,
+            || {},
+            &|_: &heed::RoTxn<'_>| Ok(()),
+            None,
+            explicit_prior,
+        )
+    }
+
+    /// Whether the claim a correction names is the caller's to correct: its
+    /// write-envelope actor is the caller, or the caller is the vault's owner.
+    fn check_correction_authorship(&self, body: &crate::claim::ClaimBody) -> MemoryResult<()> {
+        let allowed = self.acts_as_own_person() && self.is_vault_owner()?
+            || claim_envelope_actor(body) == Some(self.actor);
+        if allowed {
+            Ok(())
+        } else {
+            Err(MemoryError::bad_request_with(
+                "a correction names only a claim you wrote",
+                &["you can correct only claims you wrote; propose a new claim instead"],
+            ))
+        }
+    }
+
     /// Proposes an independent claim without implicitly replacing a peer's head.
     /// A conflict review can cite this proposal; the proposal grants no authority.
     pub fn claim_propose(&self, input: &ClaimInput) -> MemoryResult<CommitReceipt> {
@@ -244,6 +359,7 @@ impl Memory<'_> {
                 in_writer(txn)
             },
             birth,
+            None,
         )
     }
 
@@ -280,6 +396,23 @@ impl Memory<'_> {
         let id = self.resolve_ref(claim_ref)?;
         let now = self.vault.store.clock.now_recorded_at();
         before_txn();
+        if let Some((decision_ref, note)) = self.correction_waits_for_retract(&id)? {
+            let short = self.short_ref_of(&id)?;
+            return Ok(CommitReceipt {
+                claim: Some(crate::lens::RecordRef::from_id(
+                    crate::registry::ENTITY_TYPE_CLAIM,
+                    &id,
+                    short.as_deref(),
+                )),
+                claim_short_id: short.unwrap_or_else(|| id.to_hex()),
+                approval: "pending".to_owned(),
+                reason_codes: Vec::new(),
+                note: Some(note),
+                superseded_short_id: None,
+                superseded: None,
+                receipt_ref: decision_ref,
+            });
+        }
         let (approval, consent_decision_id) = self
             .with_actor_content_write_txn(|content| content.update_claim(id, |wtxn, _lane| {
             // A retraction only restricts: it reads a held history whole.
@@ -423,10 +556,65 @@ impl Memory<'_> {
             )),
             claim_short_id: short.unwrap_or_else(|| id.to_hex()),
             approval,
+            reason_codes: Vec::new(),
+            note: None,
             superseded_short_id: None,
             superseded: None,
             receipt_ref,
         })
+    }
+
+    /// Whether an agent's retract of `id` waits for its parked correction: a
+    /// parked Supersede names `id` as old with a new claim the caller wrote.
+    /// The decision ref and the wait note, storing nothing.
+    fn correction_waits_for_retract(
+        &self,
+        id: &EntityId,
+    ) -> MemoryResult<Option<(String, String)>> {
+        if self.actor_class != EdgeActorClass::Agent {
+            return Ok(None);
+        }
+        let Some(old_body) = self.vault.get_claim(id)? else {
+            return Ok(None);
+        };
+        if old_body.lifecycle != ClaimLifecycleStatus::Active {
+            return Ok(None);
+        }
+        if claim_envelope_actor(&old_body) != Some(self.actor) {
+            return Ok(None);
+        }
+        let store = &self.vault.store;
+        let txn = store.env.read_txn().map_err(Error::from)?;
+        for record in store.newest_pending_gate_consents_in_txn(&txn, 2048)? {
+            let new_id = match EntityId::from_bytes(record.claim_id) {
+                Ok(id) => id,
+                Err(_) => continue,
+            };
+            let Some(old) = self
+                .vault
+                .pending_claim_supersession_in_txn(&txn, &new_id)?
+            else {
+                continue;
+            };
+            if old != *id {
+                continue;
+            }
+            let Some(new_body) = self.vault.get_claim_in_txn(&txn, &new_id)? else {
+                continue;
+            };
+            if claim_envelope_actor(&new_body) != Some(self.actor) {
+                continue;
+            }
+            let short = self
+                .short_ref_of_in_txn(&txn, id)?
+                .unwrap_or_else(|| id.to_hex());
+            let decision_ref = format!("gate:{}", record.decision_id.to_hex());
+            let note = format!(
+                "{short} closes when the correction is approved; it stays live if the correction is rejected."
+            );
+            return Ok(Some((decision_ref, note)));
+        }
+        Ok(None)
     }
 
     #[cfg(test)]

@@ -24,9 +24,16 @@ use crate::temporal::TimeRange;
 mod doors;
 mod endpoint_index;
 mod enrolment;
+mod replication;
 pub use doors::{MeshAlpnGrant, MeshBindingIdentity, MeshMachineBinding};
 pub(crate) use endpoint_index::reindex_mesh_machine_endpoint;
 pub use enrolment::{MeshBindRefusal, MeshEnrolment, MeshEnrolmentAsk};
+pub use replication::{
+    MESH_AUTHORITY_PAGE_MAX, MESH_AUTHORITY_PART_MAX, MESH_AUTHORITY_ROW_MAX, MeshAuthorityImport,
+    MeshAuthorityPage, MeshAuthorityPart, MeshAuthorityRow, MeshAuthorityRowJoin,
+    MeshAuthorityRowRef,
+};
+use replication::{mesh_transport_seed_of, verified_mesh_authority};
 
 const DOMAIN: &str = "oneiron/mesh-machine/v1";
 const AUTH_DOMAIN: &[u8] = b"oneiron/mesh-authority/v1\0";
@@ -68,6 +75,17 @@ struct MeshAuthorityClaims {
     alpns: BTreeMap<Vec<u8>, [u8; 32]>,
     revoked: bool,
     host_key: [u8; 32],
+    /// One more than the row this host held for the MACHINE before, counted
+    /// at each write, so a replica takes a row only over an older one
+    /// (MESH-AUTHORITY-REPLICATION, REVIEW-10536 P1). A row written before
+    /// the count holds none: the signed bytes leave it out while it is zero,
+    /// so such a row still verifies.
+    #[serde(default, skip_serializing_if = "revision_unset")]
+    revision: u64,
+}
+/// Whether a binding's `revision` is unset (a row written before the count).
+fn revision_unset(revision: &u64) -> bool {
+    *revision == 0
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -247,26 +265,8 @@ impl Vault {
         else {
             return Ok(None);
         };
-        // Every ALPN grant the host signed is read, however many (FIX 7921);
-        // each must still be a valid ALPN.
-        let claims = signed.claims;
-        if claims.version != 1
-            || claims.machine != machine
-            || claims.alpns.keys().any(|alpn| !valid_alpn(alpn))
-        {
-            return Err(invalid_authority());
-        }
         let fold = self.authority_fold_readonly_in_txn(txn)?;
-        if fold.vault_root_is_conflicted()
-            || !roster_has_live_owner(&fold.roster, &AuthorityKey::Ed25519(claims.host_key))
-        {
-            return Ok(None);
-        }
-        let host = super::strong_ed25519_key(&claims.host_key)?;
-        let sig = Signature::from_slice(&signed.signature).map_err(|_| invalid_authority())?;
-        host.verify_strict(&transcript(&claims)?, &sig)
-            .map_err(|_| invalid_authority())?;
-        Ok(Some((fold, claims)))
+        Ok(verified_mesh_authority(&fold, machine, &signed)?.map(|claims| (fold, claims)))
     }
     /// Whether the pairing a binding stands on is live on this vault now: it
     /// stands ([`mesh_pairing_standing`]) and has not expired. Its start is
@@ -275,15 +275,31 @@ impl Vault {
     /// replica's clock stops while its vault is closed or its host sleeps, so
     /// a replica behind the home would read a fresh pairing as not yet begun
     /// and refuse every bind on it until its own clock caught up
-    /// (MESH-PAIRING-REPLICA-CLOCK = A, Engine 25 Nov 11:55).
+    /// (MESH-PAIRING-REPLICA-CLOCK = A, Engine 25 Nov 11:55). For the same
+    /// reason its end is judged no earlier than the newest time a live owner
+    /// signed into the fold, so a replica that slept does not keep a pairing
+    /// past its expiry for the time it was closed (MESH-REPLICA-CLOCK-LIFETIMES
+    /// = A, Engine 25 Nov 19:45). A grant is judged alike
+    /// (`mesh_grant_permits_in_txn`).
     fn mesh_pairing_live(
         &self,
         fold: &AuthorityFold,
         txn: &heed::RoTxn<'_>,
         claims: &MeshAuthorityClaims,
     ) -> Result<bool> {
-        let now = self.instant_in_txn(txn)?.secs();
-        Ok(mesh_pairing_standing(fold, claims).is_some_and(|pair| now < pair.expires_at))
+        let Some(pair) = mesh_pairing_standing(fold, claims) else {
+            return Ok(false);
+        };
+        if self.instant_in_txn(txn)?.secs() >= pair.expires_at {
+            return Ok(false);
+        }
+        let signed = super::readonly_fold::newest_owner_signed_ts_in_txn(
+            &self.store,
+            self.privacy_posture(),
+            txn,
+            fold,
+        )?;
+        Ok(signed.is_none_or(|signed| signed < pair.expires_at))
     }
     /// A fresh, single-snapshot check of signed grant, live pairing and current row.
     pub fn mesh_grant_permits(
@@ -385,14 +401,7 @@ impl Vault {
         let Some(key) = crate::identity::read_machine_signing_key_in_txn(self, &txn)? else {
             return Ok(None);
         };
-        Ok(Some((
-            machine,
-            // FIX 6669: derive straight into the guard.
-            crate::world_keys::derive_guarded(
-                "oneiron/mesh-transport-ed25519/v1",
-                &[&key.as_bytes()[..]],
-            ),
-        )))
+        Ok(Some((machine, mesh_transport_seed_of(&key))))
     }
     /// The physical machine behind an authenticated mesh endpoint, in one
     /// snapshot: the endpoint names the MACHINE, the host-signed binding and
@@ -483,10 +492,18 @@ impl Vault {
             return Ok(false);
         }
         let grant = &mint.action.claims;
+        // Its start is its presence in the signed fold and its end is judged
+        // no earlier than the newest owner-signed time, as for its pairing: a
+        // replica proves peers on the home's grants (REVIEW-10536 round 2).
         let now = self.instant_in_txn(txn)?.secs();
+        let signed = super::readonly_fold::newest_owner_signed_ts_in_txn(
+            &self.store,
+            self.privacy_posture(),
+            txn,
+            &fold,
+        )?;
         Ok(fold.slip_is_live(grant_id)
-            && now >= grant.issued_at
-            && now < grant.expires_at
+            && now.max(signed.unwrap_or(0)) < grant.expires_at
             && fold.vault_id == Some(grant.vault_id)
             && mint.signer == AuthorityKey::Ed25519(claims.host_key)
             && grant.parent_id.is_none()
@@ -504,8 +521,16 @@ impl Vault {
         &self,
         txn: &mut heed::RwTxn<'_>,
         issuer: &HostSlipIssuer,
-        claims: MeshAuthorityClaims,
+        mut claims: MeshAuthorityClaims,
     ) -> Result<()> {
+        // One up from the row held, so every replica orders this host's
+        // writes of the MACHINE; a row that does not decode counts as none.
+        let held = match MESH_AUTHORITY.get(&self.store, txn, &HexId(claims.machine)) {
+            Ok(held) => held.map_or(0, |held| held.claims.revision),
+            Err(error) if error.kind() == crate::error::ErrorKind::SideTableRow => 0,
+            Err(error) => return Err(error),
+        };
+        claims.revision = held.saturating_add(1);
         let signature = issuer.sign_mesh(&transcript(&claims)?);
         MESH_AUTHORITY.put(
             &self.store,

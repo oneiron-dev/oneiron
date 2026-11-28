@@ -13,11 +13,14 @@
 //!
 //! One booker per GPU: a GPU named in `[gpu_jobs.devices].withheld_file`
 //! belongs to another booker, whatever writes that file, and is never
-//! offered. The file is read at every ask, after the driver. On one
-//! machine, each offered GPU is owned by one Oneiron server at a time: the
-//! table holds a lock file per GPU in `owner_lock_dir` while it runs, and a
-//! GPU whose lock another server (or another vault in this process) holds
-//! reads as withheld.
+//! offered. The file is read at every ask, after the driver, on the
+//! table's one reader thread (`withheld`): an ask waits at most
+//! `WITHHELD_READ_TIMEOUT` for it, and a read that has not returned by then
+//! (a lost network mount) reads as unreadable, so nothing is offered. On
+//! one machine, each offered GPU is owned by one Oneiron server at a time:
+//! the table holds a lock file per GPU in `owner_lock_dir` while it runs,
+//! and a GPU whose lock another server (or another vault in this process)
+//! holds reads as withheld.
 //!
 //! A launched job keeps its GPU past its server's life: each launch
 //! confirmation writes the GPU's kept record (the job's key) beside its
@@ -59,9 +62,11 @@ use super::device::{DeviceSample, GpuComputeProcess, GpuDevice, GpuDeviceProbe, 
 mod drain;
 mod lease;
 mod ownership;
+mod withheld;
 
 pub use lease::GpuSlotLease;
 use ownership::kept_for;
+use withheld::WithheldListReader;
 
 /// How far a slot has come.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -154,6 +159,8 @@ struct Shared {
     probe: Arc<dyn GpuDeviceProbe>,
     offer: GpuDeviceOffer,
     disk: Option<Arc<dyn GpuJobDisk>>,
+    /// The withheld list's reader, when a file is named.
+    withheld: Option<WithheldListReader>,
     state: Mutex<State>,
 }
 
@@ -194,11 +201,13 @@ impl GpuSlotTable {
         offer: GpuDeviceOffer,
         disk: Option<Arc<dyn GpuJobDisk>>,
     ) -> Self {
+        let withheld = offer.withheld_file.clone().map(WithheldListReader::new);
         Self {
             shared: Arc::new(Shared {
                 probe,
                 offer,
                 disk,
+                withheld,
                 state: Mutex::default(),
             }),
         }
@@ -208,6 +217,16 @@ impl GpuSlotTable {
     #[must_use]
     pub fn offer(&self) -> &GpuDeviceOffer {
         &self.shared.offer
+    }
+
+    /// Reads the device IDs another booker withholds now, without probing the driver.
+    ///
+    /// # Errors
+    ///
+    /// [`GpuProbeError`] when the withheld list cannot be read.
+    #[cfg(unix)]
+    pub(crate) fn booker_withheld(&self) -> Result<BTreeSet<String>, GpuProbeError> {
+        self.shared.withheld()
     }
 
     /// Each device's temperature, power draw and memory in use now, where
@@ -229,9 +248,35 @@ impl GpuSlotTable {
     /// [`GpuProbeError`] when the driver, the withheld list, the drain file
     /// or the disk cannot be read: then nothing is offered.
     pub fn availability(&self, now_ms: u64) -> Result<GpuAvailability, GpuProbeError> {
+        self.availability_on(now_ms, None)
+    }
+
+    /// [`Self::availability`] on the given withheld list: the reading uses
+    /// it in place of the file, so a caller that already sampled the list
+    /// judges the devices on that same sample.
+    ///
+    /// # Errors
+    ///
+    /// [`GpuProbeError`] when the driver, the drain file or the disk cannot
+    /// be read: then nothing is offered.
+    pub fn availability_with_withheld(
+        &self,
+        now_ms: u64,
+        withheld: BTreeSet<String>,
+    ) -> Result<GpuAvailability, GpuProbeError> {
+        self.availability_on(now_ms, Some(withheld))
+    }
+
+    /// [`Self::availability`] on `withheld` (`None`: the list is read from
+    /// its file).
+    fn availability_on(
+        &self,
+        now_ms: u64,
+        withheld: Option<BTreeSet<String>>,
+    ) -> Result<GpuAvailability, GpuProbeError> {
         let shared = &self.shared;
         let mut state = shared.lock();
-        let reading = shared.read(&mut state)?;
+        let reading = shared.read_with(&mut state, withheld)?;
         let drained = shared.drained(&state)?;
         let disk = match &shared.disk {
             Some(disk) => Some(
@@ -618,12 +663,25 @@ impl Shared {
     /// list and the GPUs this table owns. A reading that lists one GPU id
     /// twice is refused ([`GpuProbeError::RepeatedDevice`]).
     fn read(&self, state: &mut State) -> Result<Reading, GpuProbeError> {
+        self.read_with(state, None)
+    }
+
+    /// One fresh reading on `withheld` (`None`: the withheld list is read
+    /// from its file).
+    fn read_with(
+        &self,
+        state: &mut State,
+        withheld: Option<BTreeSet<String>>,
+    ) -> Result<Reading, GpuProbeError> {
         let devices = self.probe.devices()?;
         if let Some(device_id) = repeated_device_id(&devices) {
             return Err(GpuProbeError::RepeatedDevice { device_id });
         }
         let processes = self.probe.compute_processes()?;
-        let withheld = self.withheld()?;
+        let withheld = match withheld {
+            Some(withheld) => withheld,
+            None => self.withheld()?,
+        };
         let owned = self.own_offered(state);
         Ok(Reading {
             devices,
@@ -633,21 +691,13 @@ impl Shared {
         })
     }
 
-    /// The GPUs another booker holds now.
+    /// The GPUs another booker holds now, from the reader thread within
+    /// `WITHHELD_READ_TIMEOUT`.
     fn withheld(&self) -> Result<BTreeSet<String>, GpuProbeError> {
-        let Some(path) = &self.offer.withheld_file else {
-            return Ok(BTreeSet::new());
-        };
-        let text =
-            std::fs::read_to_string(path).map_err(|error| GpuProbeError::WithheldUnreadable {
-                reason: format!("{}: {error}", path.display()),
-            })?;
-        Ok(text
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty() && !line.starts_with('#'))
-            .map(str::to_owned)
-            .collect())
+        match &self.withheld {
+            Some(reader) => reader.read(),
+            None => Ok(BTreeSet::new()),
+        }
     }
 
     /// Ends the unguarded slot under `key`, if there is one; with none, clears

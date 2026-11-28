@@ -56,6 +56,8 @@ fn order(warm: &[&str]) -> WorkOrder {
         attempts: Vec::new(),
         result: None,
         intent_key: None,
+        after: None,
+        group: None,
         ordered_at_ms: NOW,
         updated_at_ms: NOW,
         revision: 0,

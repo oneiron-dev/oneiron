@@ -155,6 +155,7 @@ fn submit(issuer: EntityId) -> JobRequest {
             },
             authority_heads: Vec::new(),
             warm: Vec::new(),
+            continues: None,
         },
         signature: [0; 64],
     })

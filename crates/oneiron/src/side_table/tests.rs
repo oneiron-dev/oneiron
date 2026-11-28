@@ -3,6 +3,7 @@ use crate::Vault;
 use crate::config::VaultConfig;
 use crate::error::ErrorKind;
 use crate::off_record::OffRecordBackendClass;
+mod residue;
 
 fn open_vault() -> (tempfile::TempDir, Vault) {
     crate::test_util::open_test_vault_with(VaultConfig::device())
@@ -408,6 +409,8 @@ fn pre_move_fixture_coverage_is_explicit() {
         "DREAMER_CONSOLIDATION_KEY_RULES",
         "DREAMER_FAILURE_RULES",
         "DREAMER_NEIGHBOURHOOD",
+        "DREAMER_PROACTIVITY_CLAIM_DIGESTS",
+        "DREAMER_PROACTIVITY_CLAIM_DIGESTS_INDEXED",
         "DREAMER_PROACTIVITY_CONFIRMED",
         "DREAMER_PROACTIVITY_JUDGE_ASKS",
         "DREAMER_PROACTIVITY_PRESENTATION",
@@ -478,6 +481,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "GPU_ALLOCATION_NODE",
         "GPU_LINE",
         "GPU_LINE_PERIOD",
+        "GPU_LINE_REFUSAL",
         "HOOKS_TASK_TICK_HOLD",
         "HOUSEKEEPING_SCHEDULE",
         "HOUSEKEEPING_WAKE",
@@ -495,6 +499,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "INGEST_HISTORY_LEDGER",
         "LANE_ECONOMY_INTENT",
         "LEARNING_SETTING",
+        "LEGAL_HOLD_SEALED_RECORD",
         "LENS_INTENT",
         "LINEAR_EFFECT_AUTHORIZED",
         "LINEAR_SYNC_LINK",
@@ -512,6 +517,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "MANAGED_DEK_MAC",
         "MANAGED_LEASE_SCOPE",
         "MODEL_OFFER_COOLDOWN",
+        "NOTE_CLAIM_DEPENDENCY_BACKFILL",
         "NOTE_PIN_REQUEST_CITING",
         "NOTE_PIN_REQUEST_CLAIM",
         "NOTE_PIN_REQUEST_SOURCE",
@@ -650,6 +656,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "SYNC_CALENDAR_ORIGIN_PENDING",
         "SYNC_DISCARDED_WORLD_ROW",
         "SYNC_MESSAGE_WRITER",
+        "SYNC_REMAT_DEPENDENCY_HOLD_START",
         "SYNC_RESIDENCE_DEVICE_WORLDS",
         "SYNC_RESIDENCE_INDEX",
         "SYNC_RESIDENCE_ITEM_BLOB",

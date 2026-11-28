@@ -1,5 +1,5 @@
 {
-  "description": "Oneiron's Codex hook lanes: bind a vault and recall at session start; queue the session's rollout for import before compaction, after each turn and at session end.",
+  "description": "Oneiron's Codex hook lanes: bind a vault at session start and name it, recalling nothing there until start recall has a relevance threshold; queue the session's rollout for import before compaction, after each turn and at session end.",
   "hooks": {
     "SessionStart": [
       {
@@ -7,7 +7,7 @@
           {
             "type": "command",
             "timeout": 15,
-            "command": "oneiron hook --host codex session-start --credential-file \"$HOME/.config/oneiron/codex-hooks.cred\""
+            "command": "oneiron hook --host codex session-start --credential-file \"$HOME/.config/oneiron/codex-hooks.cred\" --query \" \""
           }
         ]
       }

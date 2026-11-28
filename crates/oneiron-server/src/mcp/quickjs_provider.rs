@@ -13,7 +13,7 @@ use oneiron::code_run::{
 };
 use oneiron::engine_executor::{
     EngineExecutorConfig, JsCodeModeHost, JsCodeModeRuntime, JsCodeModeStep, JsCodeModeStepOutcome,
-    RunCompaction, TypeFeedback,
+    NoModelBackend, RunCompaction, TypeFeedback,
 };
 use oneiron::llm::SingleRouteBackend;
 use oneiron::llm::run_admission::{PayerPerson, RunReceiptSink};
@@ -23,6 +23,7 @@ use oneiron::{
 };
 use oneiron_agent_runtime::code_sandbox::quickjs::QuickJsRuntimeFactory;
 use oneiron_agent_runtime::code_sandbox::wasmtime_runtime::ComponentBudget;
+use oneiron_contracts::fingerprint::ContentHash;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -92,6 +93,9 @@ pub struct McpQuickJsProvider {
     model_list_backend: Option<ModelListBackend>,
     lease: BudgetLease,
     config: EngineExecutorConfig,
+    /// Task readiness (FIX EXECUTE-CALLER-CODE): the generative seat and prompt package bound.
+    /// False runs caller-source runs only.
+    task_ready: bool,
     /// Builds each run's compaction seat; none keeps every window raw.
     compaction: Option<RunCompactionSeat>,
     seat_router: Option<(SeatDecisions, String)>,
@@ -232,6 +236,48 @@ impl McpQuickJsProvider {
             model_list_backend: None,
             lease,
             config,
+            task_ready: true,
+            compaction: None,
+            seat_router: None,
+            served_router: None,
+            planner: None,
+            clock_from_first_start: false,
+            injected: None,
+            code_check: None,
+            reader_meter: None,
+            host_meter: None,
+            reader_window_tokens: None,
+            planned_route: None,
+            planned_meter: None,
+            pinned_compaction: None,
+            profiled_compaction: None,
+            browser_planner: None,
+            scoped_hosts: ScopedChildHosts::default(),
+        })
+    }
+
+    /// A provider over the verified component with no generative seat, prompt package or model
+    /// (FIX EXECUTE-CALLER-CODE): caller-source readiness only. Its backend refuses every model
+    /// call and its lease spends nothing; task entries refuse before they reach either.
+    pub fn for_caller_source(
+        runtime: Arc<QuickJsRuntimeFactory>,
+    ) -> Result<Self, oneiron::engine_executor::EngineExecutorError> {
+        let lease = carrier_lease().map_err(LlmError::from)?;
+        let config = EngineExecutorConfig::caller_source(
+            EntityId::now(),
+            CodeRunDeterminism::new(0, [0; oneiron::code_run::CODE_RUN_RNG_SEED_LEN]),
+            oneiron::engine_executor::EngineExecutorLimits::default(),
+            ContentHash::of(b""),
+        );
+        config.validate()?;
+        Ok(Self {
+            runtime,
+            backend: Arc::new(NoModelBackend),
+            model_call_backend: None,
+            model_list_backend: None,
+            lease,
+            config,
+            task_ready: false,
             compaction: None,
             seat_router: None,
             served_router: None,
@@ -411,23 +457,57 @@ impl McpQuickJsProvider {
                 None => vault.now_recorded_at().saturating_mul(1000),
             };
         }
-        // The run's stable determinism marker also binds the interpreter pin.
-        // Resume under another artifact fails the existing config-hash check.
+        config.determinism =
+            CodeRunDeterminism::new(config.determinism.frozen_unix_ms, self.run_rng_seed(run_id));
+        Ok(config)
+    }
+
+    /// One caller-source run's config (FIX EXECUTE-CALLER-CODE): the code's digest bound by
+    /// [`EngineExecutorConfig::caller_source`], with determinism and limits from the same
+    /// non-model places [`Self::run_config`] takes them. No model, prompt or seat.
+    fn source_run_config(
+        &self,
+        vault: &Vault,
+        run_id: EntityId,
+        code: &str,
+        first_start: impl FnOnce() -> oneiron::Result<Option<u64>>,
+    ) -> oneiron::Result<EngineExecutorConfig> {
+        let mut determinism = self.config.determinism;
+        if self.clock_from_first_start {
+            determinism.frozen_unix_ms = match first_start()? {
+                Some(frozen_unix_ms) => frozen_unix_ms,
+                None => vault.now_recorded_at().saturating_mul(1000),
+            };
+        }
+        determinism =
+            CodeRunDeterminism::new(determinism.frozen_unix_ms, self.run_rng_seed(run_id));
+        Ok(EngineExecutorConfig::caller_source(
+            run_id,
+            determinism,
+            self.config.limits,
+            ContentHash::of(code.as_bytes()),
+        ))
+    }
+
+    /// One run's RNG seed, for [`Self::run_config`] and [`Self::source_run_config`] alike:
+    /// the host's seed keyed over the run and the interpreter pin, so the run's stable
+    /// determinism marker binds the pin and a resume under another artifact fails the
+    /// existing config-hash check.
+    fn run_rng_seed(&self, run_id: EntityId) -> [u8; 32] {
         let mut rng = blake3::Hasher::new_keyed(&self.config.determinism.rng_seed);
         rng.update(b"oneiron:mcp-quickjs-run:v1");
         rng.update(run_id.as_bytes());
         rng.update(&self.runtime.sha256());
-        config.determinism = CodeRunDeterminism::new(
-            config.determinism.frozen_unix_ms,
-            *rng.finalize().as_bytes(),
-        );
-        Ok(config)
+        *rng.finalize().as_bytes()
     }
 }
 
 impl McpCodeModeProvider for McpQuickJsProvider {
     fn production_runtime_available(&self) -> bool {
         true
+    }
+    fn task_runtime_available(&self) -> bool {
+        self.task_ready
     }
     fn seat_decisions(&self) -> Option<&SeatDecisions> {
         self.seat_router.as_ref().map(|(decisions, _)| decisions)
@@ -601,6 +681,11 @@ impl McpCodeModeProvider for McpQuickJsProvider {
         run_id: EntityId,
         task: &str,
     ) -> oneiron::Result<EngineExecutorConfig> {
+        if !self.task_runtime_available() {
+            return Err(oneiron::Error::InvalidConfig(
+                "this code host runs no task runs".to_owned(),
+            ));
+        }
         self.run_config(vault, run_id, task, || {
             vault
                 .get_code_run_replay_record(&run_id)?
@@ -626,7 +711,49 @@ impl McpCodeModeProvider for McpQuickJsProvider {
         run_id: EntityId,
         task: &str,
     ) -> oneiron::Result<EngineExecutorConfig> {
+        if !self.task_runtime_available() {
+            return Err(oneiron::Error::InvalidConfig(
+                "this code host runs no task runs".to_owned(),
+            ));
+        }
         self.run_config(vault, run_id, task, || {
+            Ok(bound
+                .recorded_determinism(run_id)?
+                .map(|determinism| determinism.frozen_unix_ms))
+        })
+    }
+    fn source_executor_config(
+        &self,
+        vault: &Vault,
+        run_id: EntityId,
+        code: &str,
+    ) -> oneiron::Result<EngineExecutorConfig> {
+        self.source_run_config(vault, run_id, code, || {
+            vault
+                .get_code_run_replay_record(&run_id)?
+                .map(|record| {
+                    record
+                        .determinism
+                        .map(|determinism| determinism.frozen_unix_ms)
+                        .ok_or_else(|| {
+                            oneiron::Error::InvalidConfig(
+                                "code run has unknown determinism".to_owned(),
+                            )
+                        })
+                })
+                .transpose()
+        })
+    }
+    /// A session-bound caller-source run's first start is its room's record's, as a task run's
+    /// is (FIX EXECUTE-CALLER-CODE): never base's.
+    fn source_executor_config_on(
+        &self,
+        vault: &Vault,
+        bound: &GatedActorWrite<'_>,
+        run_id: EntityId,
+        code: &str,
+    ) -> oneiron::Result<EngineExecutorConfig> {
+        self.source_run_config(vault, run_id, code, || {
             Ok(bound
                 .recorded_determinism(run_id)?
                 .map(|determinism| determinism.frozen_unix_ms))
@@ -637,6 +764,11 @@ impl McpCodeModeProvider for McpQuickJsProvider {
         _vault: &Vault,
         _caller: EntityId,
     ) -> oneiron::Result<oneiron::ModelId> {
+        if !self.task_runtime_available() {
+            return Err(oneiron::Error::InvalidConfig(
+                "this code host runs no task runs".to_owned(),
+            ));
+        }
         Ok(self.config.model.clone())
     }
 }

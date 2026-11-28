@@ -129,8 +129,12 @@ facade tree over an injected transport, its per-verb input and result maps and
 its row catalog, shared by the HTTP adapter, a native adapter and the code-mode
 inject.
 
-`mcp` selects `tool-first` or `none` for each SDK row. For projected rows,
-`mcp_fields` maps each MCP argument to a field path in the typed engine input.
+`mcp` takes `none`, `facade` or `code` for each SDK row. `none` is a browser
+or scoped-child row. `facade` is served by its HTTP facade door only: no MCP
+tool, no code-mode verb, no action; the Foreign `execute_code` row. `code` is
+a code-mode verb only, answered by the run's own door: no MCP tool, no facade
+door, no action; `vault.runs.read_result`. For projected rows, `mcp_fields`
+maps each MCP argument to a field path in the typed engine input.
 `$` decodes the whole input from that argument. `=field` requires an envelope
 argument to equal that field on the decoded input. Required arguments default
 to all mapped fields; `mcp_required_fields` can narrow that set. The generated
@@ -148,11 +152,19 @@ when a credential-scoped producer must report omissions (the TASKS section).
 registration. Board, task, room, facade, and plugin catalogs are projections,
 not independently maintained name lists.
 
-`mcp_scope` is `filtered` for row-filtered board results, `target` for an
+`mcp_scope` is `filtered` for row-filtered board results, `addressed` for an
 addressed entity, and `unrestricted` for actor-wide execution. `mcp_page` can
 select a continuable producer whose output is not a vector or cursor page;
 otherwise continuation follows `page` or a vector output. Credential write
 admission follows `scope`, not a second hand-maintained list.
+
+`caller_code: "refused"` marks a row whose answer is a credential or a secret
+value (a slip, a token, a revealed secret), or one not yet shown to carry none
+(FIX CALLER-CODE-UNRESOLVED-ROWS opens each after its output type is read). A
+code-mode run whose program its caller wrote (MCP `execute`) is refused the
+row, whatever its credential holds, so no credential reaches code the caller
+sent. The generator refuses any other value of the key. A run row (one with an
+`effect`) takes no such key: the MCP code-mode door names those effects.
 
 Every row's `input` also selects its schemars input schema. MCP projects the
 same `mcp_fields` paths into that schema, including `$` and `=field`, and keeps
@@ -164,6 +176,21 @@ A bounded output supplies `page: {"rows": "rows", "cursor": "next_after"}`.
 The cursor's presence, not a full row count, decides source exhaustion. A vector
 output is an exhaustive set. MCP can split either result into retained transport
 pages; drain `meta.page.cursor` before using an engine `next_after` cursor.
+
+## Verb tree data
+
+Every verb row has a top-level `description`: one printable ASCII line ending in a period, at
+most 241 characters including the period, with no backslash, double quote or `*/`. The optional
+`example` is one non-blank line of code that calls the row's own verb by its exact name.
+
+`scripts/sdk/verb-tree/families.json` gives a non-blank line for each root with dotted descendants.
+`scripts/sdk/verb-tree/vault_capabilities.json` assigns each `vault.*` second segment to exactly
+one capability label. A PR adding a new root family or vault child must add its family line or
+label membership, respectively, or generation fails.
+
+`scripts/sdk/verb-tree/view_head.txt` and `base/<path>.txt` are the authored view; placeholders are render-time values such as `{TOTAL}` or `{note_kinds}`.
+Generation requires `{TOTAL}` in the head and each base filename and first line to name the same code-mode verb or tree call.
+`verb_tree_index.json` is generated into Oneiron's `OUT_DIR` from the code-mode fragment and these view inputs.
 
 ## Task handles
 

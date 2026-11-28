@@ -19,11 +19,13 @@ use crate::{
 use super::*;
 
 mod agent_verb_regressions;
+mod caller_source_entry;
 mod code_check;
 #[cfg(feature = "code-sandbox-wasmtime")]
 mod compaction_host;
 mod memory_rows;
 mod output_decay;
+mod recorded_producer;
 mod speech_identity_regressions;
 
 fn block_on_ready<F: Future>(future: F) -> F::Output {
@@ -139,6 +141,7 @@ fn executor_config(run_id: EntityId, limits: EngineExecutorLimits) -> EngineExec
     EngineExecutorConfig {
         run_id,
         task: "remember the project status".to_owned(),
+        caller_source_digest: None,
         prompt_package_root: prompt_package_root(),
         model: model(),
         model_locality: ModelLocality::OwnServer,

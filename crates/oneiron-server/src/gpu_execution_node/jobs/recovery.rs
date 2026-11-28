@@ -66,6 +66,7 @@ impl NodeJobs {
                     journal: None,
                     floors: BTreeMap::new(),
                     staging: BTreeSet::new(),
+                    armed_cutoffs: BTreeMap::new(),
                 }),
                 closed: AtomicBool::new(false),
                 readiness,

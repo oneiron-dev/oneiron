@@ -15,7 +15,10 @@
 //! was closed binds on a pairing the home minted meanwhile: a pairing's start
 //! is its presence in the home's signed fold, never the replica's clock,
 //! which stood still while the vault was closed (MESH-PAIRING-REPLICA-CLOCK
-//! = A, Engine 25 Nov 11:55).
+//! = A, Engine 25 Nov 11:55). Its end is judged no earlier than the newest
+//! time a live owner signed into the fold, so such a replica stops admitting
+//! on a pairing once it folds a home act signed past the pairing's expiry
+//! (MESH-REPLICA-CLOCK-LIFETIMES = A, Engine 25 Nov 19:45).
 //!
 //! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
 //! -p oneiron-server --all-features --features oneiron/test-support
@@ -41,6 +44,10 @@ const B: usize = 1;
 /// How long a replica's vault stays closed: its clock then reads about this
 /// far behind the home's.
 const REPLICA_CLOSED: Duration = Duration::from_secs(5);
+
+/// How long the short pairing of the expiry test runs, in seconds: well
+/// inside [`REPLICA_CLOSED`], so the replica's own clock stays before its end.
+const SHORT_PAIRING_SECS: u64 = 2;
 
 #[test]
 fn an_enrolled_machine_can_be_granted_every_served_protocol_and_no_other() -> TestResult {
@@ -184,5 +191,45 @@ fn a_replica_whose_vault_was_closed_binds_a_pairing_the_home_minted_meanwhile() 
     );
     b.grant(&a, JOB_ALPN)?;
     assert!(b.admits(&a, JOB_ALPN)?, "B admits A on the job protocol");
+    Ok(())
+}
+
+#[test]
+fn a_replica_behind_the_home_ends_a_pairing_at_the_newest_time_the_home_signed() -> TestResult {
+    let home = home()?;
+    let b = home.enrol(0x11)?;
+    // B's vault is closed for a while: its clock then reads about
+    // REPLICA_CLOSED behind H's, longer than the pairing below runs.
+    let b = b.reopened_after(REPLICA_CLOSED)?;
+    home.limit_pairings(SHORT_PAIRING_SECS)?;
+    let a = home.enrol_with(0x10, &[SYNC_ALPN])?;
+    let expires_at = home.pairing_expiry(&a)?;
+    home.share_history(&[&a, &b])?;
+
+    // No time H signed has reached the pairing's end: B judges it on its own
+    // clock, as before, and binds and admits A.
+    b.bind_at(&a, Vec::new())?;
+    b.grant(&a, SYNC_ALPN)?;
+    assert!(
+        b.admits(&a, SYNC_ALPN)?,
+        "with no home act signed past the pairing's end, B admits A on it"
+    );
+
+    // H signs an act once its own clock has passed the pairing's end, and B
+    // folds it while B's own clock still reads before that end.
+    home.sign_act_from(expires_at)?;
+    home.share_history(&[&b])?;
+    assert!(
+        b.vault.capability_slip_now()? < expires_at,
+        "FIXTURE: B's own clock still reads before the pairing's end"
+    );
+    assert!(
+        !b.admits(&a, SYNC_ALPN)?,
+        "B ends H's pairing at the newest time H signed, not at its own clock"
+    );
+    assert!(
+        b.bind_at(&a, Vec::new()).is_err(),
+        "B no longer binds A on the ended pairing"
+    );
     Ok(())
 }

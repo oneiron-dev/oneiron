@@ -229,17 +229,20 @@ impl Memory<'_> {
     /// rows. Its subject resolves in `reader`, the room's view a run's door
     /// opened for its caller, when it opened one. Else it resolves in a view
     /// of the room taken here, so a caller with no read key keeps the room's
-    /// aliases (FIX 5302).
+    /// aliases (FIX 5302). `credential`, when present, must admit the stamped
+    /// claim position.
     ///
     /// # Errors
     ///
-    /// As [`Self::claim_upsert_in_session`] before its rows stage.
+    /// As [`Self::claim_upsert_in_session`] before its rows stage, or the
+    /// credential does not admit the claim position.
     pub(crate) fn prepare_claim_in_session(
         &self,
         session: &OffRecordSession<'_>,
         route: &SessionWriteRoute,
         reader: Option<&SessionReadContext<'_>>,
         input: &ScopedClaimInput,
+        credential: Option<&crate::authority::VerifiedSlip>,
     ) -> MemoryResult<PreparedSessionWrite<CommitReceipt>> {
         self.admit_session_route(session, route, "vault.claims.upsert")?;
         if input.predicate == crate::claim::KEY_VALUE_PREDICATE
@@ -259,6 +262,18 @@ impl Memory<'_> {
         } = self.stamp_claim_scope(&input.scope)?;
         if input.sensitivity.is_some_and(|band| band > 3) {
             return Err(MemoryError::bad_request("sensitivity must be in 0..=3"));
+        }
+        // The connector's live ceiling is checked again when the claim stages.
+        if let Some(credential) = credential {
+            let txn = self
+                .vault
+                .store
+                .env
+                .read_txn()
+                .map_err(crate::Error::from)?;
+            self.clone()
+                .with_read_proof(credential)
+                .admit_claim_position(&txn, world, facet, project, input.sensitivity)?;
         }
         let mut annotations = serde_json::Map::from_iter([
             ("facet".into(), serde_json::Value::String(facet.to_hex())),
@@ -371,6 +386,8 @@ impl Memory<'_> {
             receipt: CommitReceipt {
                 claim_short_id: String::new(),
                 approval: approval.as_str().to_owned(),
+                reason_codes: Vec::new(),
+                note: None,
                 superseded_short_id: None,
                 receipt_ref: format!("claim:{}", id.to_hex()),
                 claim: None,

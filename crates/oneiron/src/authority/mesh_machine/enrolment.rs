@@ -25,6 +25,7 @@ use super::super::setting_keys::MESH_GRANT_MAX_TTL;
 use super::super::slip_vault::{random_slip_id, require_host};
 use super::super::{AuthorityOp, MachineEnrolmentRequest, SlipClaims, strong_ed25519_key};
 use super::*;
+use crate::consent::AuthenticatedOwner;
 
 /// What a machine link's redemption binds on the mesh for the machine it
 /// enrols: its mesh identity, the one protocol it is granted now, and the
@@ -42,18 +43,22 @@ impl MeshEnrolmentAsk<'_> {
     /// The scope the binding's pairing slip carries: the mesh verbs of
     /// `granted` and of every valid ALPN of the ceiling.
     fn ceiling_scope(&self) -> Scope {
-        let mut scope = Scope::top();
-        scope.verbs = ScopeAxis::Some(
-            self.ceiling
-                .iter()
-                .copied()
-                .chain([self.granted])
-                .filter(|alpn| valid_alpn(alpn))
-                .map(mesh_verb)
-                .collect(),
-        );
-        scope
+        mesh_ceiling_scope(self.ceiling.iter().copied().chain([self.granted]))
     }
+}
+
+/// The scope a binding's pairing slip carries: the mesh verb of every valid
+/// ALPN of `alpns`.
+fn mesh_ceiling_scope<'a>(alpns: impl IntoIterator<Item = &'a [u8]>) -> Scope {
+    let mut scope = Scope::top();
+    scope.verbs = ScopeAxis::Some(
+        alpns
+            .into_iter()
+            .filter(|alpn| valid_alpn(alpn))
+            .map(mesh_verb)
+            .collect(),
+    );
+    scope
 }
 
 /// Why a redemption's mesh binding was not made. The pairing stands, and no
@@ -247,7 +252,30 @@ impl Vault {
         ask: MeshEnrolmentAsk<'_>,
         at_least_until: u64,
     ) -> Result<[u8; 32]> {
-        let machine = request.machine;
+        self.mint_mesh_pairing_in_txn(
+            txn,
+            issuer,
+            request.vault_id,
+            (request.machine, request.machine_key),
+            ask.ceiling_scope(),
+            at_least_until,
+        )
+    }
+
+    /// A pairing slip of vault `vault_id` held by `holder`'s MACHINE under
+    /// its machine key, with `scope`, running as long as the owner's mesh
+    /// grant ceiling (`mesh.grant.max_ttl_secs`, one year by default) and
+    /// never ending before `at_least_until`. Answers its slip id.
+    fn mint_mesh_pairing_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        issuer: &HostSlipIssuer,
+        vault_id: [u8; 32],
+        holder: (EntityId, [u8; 32]),
+        scope: Scope,
+        at_least_until: u64,
+    ) -> Result<[u8; 32]> {
+        let (machine, machine_key) = holder;
         let now = self.instant_in_txn(txn)?.secs();
         let ceiling = MESH_GRANT_MAX_TTL
             .read_in_txn(self, txn, &[], None)?
@@ -259,11 +287,11 @@ impl Vault {
             issuer,
             SlipClaims {
                 slip_id: random_slip_id(),
-                vault_id: request.vault_id,
+                vault_id,
                 parent_id: None,
                 holder_ref: machine.to_hex(),
-                binding_key: request.machine_key,
-                scope: ask.ceiling_scope(),
+                binding_key: machine_key,
+                scope,
                 issued_at: now,
                 expires_at,
                 ttl_secs: expires_at.saturating_sub(now),
@@ -282,6 +310,82 @@ impl Vault {
             },
         )?;
         Ok(pairing.claims.slip_id)
+    }
+
+    /// Why [`Self::pair_own_mesh_machine_as_owner`] refuses an install whose own
+    /// profile no owner answered, and the owner's step that answers it.
+    pub const PAIR_SELF_UNANSWERED: &str = "this install's own MACHINE has no answered \
+        profile, so no replica could prove it: the owner first answers it on this install \
+        (POST /v1/owner/machines/answer with {\"machine\": \"<this MACHINE, 32 hex>\", \
+        \"answer\": \"yours\"}), then pairs it";
+
+    /// Pairs this install's own MACHINE as a machine of its vault
+    /// (PLAN-HOME-ISSUER-MESH-PROOF, R6 1.5). It mints a pairing slip held by
+    /// that MACHINE under its machine key, carrying the mesh verb of every
+    /// protocol of `ceiling`, as a link's redemption mints one for the machine
+    /// it enrols.
+    ///
+    /// The home never redeems a link of its own, so nothing else pairs it.
+    /// With no pairing, no other replica can bind it, and no node proves a home
+    /// that issues it jobs ([`Self::mesh_peer_machine`]).
+    ///
+    /// Answers the body with which the owner binds this MACHINE on each other
+    /// replica (`vault.mesh.bind_machine` there), both proofs included and
+    /// with no address. It binds and grants nothing here; the grants stay the
+    /// owner's own acts on each replica. Each call mints a new pairing. The
+    /// owner's proof is revalidated in the write.
+    ///
+    /// # Errors
+    ///
+    /// `invalid_authority` for an install with no machine identity yet, a
+    /// vault no root roots, or an issuer that is not this vault's host. Also
+    /// an owner proof that no longer stands, and store errors.
+    pub fn pair_own_mesh_machine_as_owner(
+        &self,
+        issuer: &HostSlipIssuer,
+        owner: &AuthenticatedOwner,
+        ceiling: &[&[u8]],
+    ) -> Result<MeshMachineBinding> {
+        let identity = self.mesh_binding_identity_as_owner(owner)?;
+        let mut txn = self.store.env.write_txn()?;
+        owner.revalidate_in_txn(self, &txn)?;
+        // A replica proves a MACHINE only by a profile its owner answered
+        // (`proving_profile`); a serving start enrols this install as
+        // `unanswered`, so a pairing minted before the answer would bind and
+        // grant on every replica and still prove nothing there.
+        if self
+            .authority_view_readonly_in_txn(&txn)?
+            .machine_proof_key(identity.machine)
+            != Some(identity.device_key)
+        {
+            return Err(crate::error::Error::Record(
+                crate::error::RecordError::AuthorityRefused(Self::PAIR_SELF_UNANSWERED),
+            ));
+        }
+        let fold = self.authority_fold_readonly_in_txn(&txn)?;
+        require_host(&fold, issuer)?;
+        let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
+        let pairing_slip_id = self.mint_mesh_pairing_in_txn(
+            &mut txn,
+            issuer,
+            vault_id,
+            (identity.machine, identity.device_key),
+            mesh_ceiling_scope(ceiling.iter().copied()),
+            0,
+        )?;
+        txn.commit()?;
+        Ok(MeshMachineBinding {
+            machine: identity.machine,
+            address: MeshMachineAddress {
+                endpoint_key: identity.endpoint_key,
+                direct_addrs: Vec::new(),
+                relay_url: None,
+            },
+            device_key: identity.device_key,
+            pairing_slip_id,
+            device_proof: identity.device_proof,
+            transport_proof: identity.transport_proof,
+        })
     }
 
     /// [`Self::re_pair_enrolled_in_txn`] in a savepoint of `txn` that lands

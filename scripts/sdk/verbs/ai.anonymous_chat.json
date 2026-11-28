@@ -10,5 +10,6 @@
   "scope": "Read",
   "act_class": "reversible_work",
   "section": false,
-  "openapi": true
+  "openapi": true,
+  "caller_code": "refused"
 }

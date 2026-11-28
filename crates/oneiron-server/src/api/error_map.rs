@@ -274,6 +274,15 @@ pub(super) fn core_engine_error(message: &'static str, error: oneiron::Error) ->
                 None => refusal,
             }
         }
+        // The owner's delete or erase named a record they chose to restrict
+        // (Q1 = A): a conflict under its own state, with the ruling's words.
+        ErrorKind::RecordRestricted => ApiError::new(
+            error.to_string(),
+            ApiErrorDetails::InvalidState {
+                state: Some("restricted".to_owned()),
+            },
+            ["Lift the restriction to delete it."],
+        ),
         // KS-6: a credential's custody key does not open, or custody could
         // not take a new one: the vault's state, as the facade answers it;
         // the message names the credential and its way out, never a byte.

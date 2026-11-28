@@ -28,13 +28,13 @@ async fn quickjs_code_mode_recall_takes_call_mode_and_refuses_a_deadline_out_of_
         "The heron lantern hangs by the north gate.",
     )
     .await;
-    let args = mcp_merge_args(
-        mcp_endpoint_envelope(actor, "read_memory"),
-        json!({"run_ref": "quickjs-call-mode", "task": "recall the heron lantern in a call"}),
-    );
-    let (_, body) = route_json(
-        mode.server.clone(),
-        mcp_endpoint_call_request("/mcp", credential, "call", "execute_code", args),
+    // No MCP tool starts a task run anymore: the kept task handler enters it, rendering
+    // the old task shape (FIX EXECUTE-CALLER-CODE).
+    let body = execute_task_run_for_test(
+        &mode.server,
+        credential,
+        "quickjs-call-mode",
+        "recall the heron lantern in a call",
     )
     .await;
     assert!(body.get("error").is_none(), "{body}");

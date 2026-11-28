@@ -6,7 +6,9 @@ use crate::Vault;
 use crate::error::{Error, Result, SyncError};
 use crate::sync::bridge::Materializer;
 use crate::sync::types::{WindowKey, parse_window_key_str};
-use crate::sync::window_rows::{REMAT_MARKER, REPLAY_REMAT_MARKER_PROVENANCE, WindowEntityHexKey};
+use crate::sync::window_rows::{
+    REMAT_DEPENDENCY_HOLD_START, REMAT_MARKER, REPLAY_REMAT_MARKER_PROVENANCE, WindowEntityHexKey,
+};
 
 fn window_entity_key(window_key: &str, id: &crate::entity_id::EntityId) -> WindowEntityHexKey {
     WindowEntityHexKey {
@@ -108,6 +110,31 @@ pub(in crate::sync) fn set_replay_remat_marker_in_txn(
     Ok(())
 }
 
+/// Sets a replay marker and, only if no marker stood, starts the hold for a parent project
+/// or the message a project was born from that this replica does not hold yet.
+/// An existing marker keeps its start; if it has no start (such as an older binary's
+/// marker or a batch-rollback replay marker), the hold reads as a breach.
+pub(in crate::sync) fn set_project_dependency_hold_marker_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    window_key: &str,
+    id: &crate::entity_id::EntityId,
+    mutation_recorded_at: u64,
+) -> Result<()> {
+    let key = window_entity_key(window_key, id);
+    let marker_present = REMAT_MARKER.contains(&vault.store, wtxn, &key)?;
+    set_replay_remat_marker_in_txn(vault, wtxn, window_key, id)?;
+    if !marker_present {
+        REMAT_DEPENDENCY_HOLD_START.put(
+            &vault.store,
+            wtxn,
+            &key,
+            &mutation_recorded_at.to_le_bytes(),
+        )?;
+    }
+    Ok(())
+}
+
 /// Sets a replay/quarantine-origin `rm:w:{window}:{entity_hex}` marker in
 /// its own write transaction.
 pub(in crate::sync) fn set_replay_remat_marker(
@@ -131,6 +158,7 @@ pub(in crate::sync) fn clear_remat_marker_in_txn(
     let key = window_entity_key(window_key, id);
     REMAT_MARKER.delete(&vault.store, wtxn, &key)?;
     REPLAY_REMAT_MARKER_PROVENANCE.delete(&vault.store, wtxn, &key)?;
+    REMAT_DEPENDENCY_HOLD_START.delete(&vault.store, wtxn, &key)?;
     Ok(())
 }
 
@@ -163,7 +191,27 @@ pub(in crate::sync) fn clear_replay_remat_marker_in_txn(
     }
     REMAT_MARKER.delete(&vault.store, wtxn, &key)?;
     REPLAY_REMAT_MARKER_PROVENANCE.delete(&vault.store, wtxn, &key)?;
+    REMAT_DEPENDENCY_HOLD_START.delete(&vault.store, wtxn, &key)?;
     Ok(true)
+}
+
+/// [`clear_replay_remat_marker_in_txn`] for an edge wait that settled (its
+/// edge written, ignored or quarantined), except that a marker carrying an
+/// entity's dependency hold start stays, start and all: the edge and the
+/// entity share the marker, and only the entity's own settlement (its healing
+/// write, a terminal refusal or its tombstone's purge) discharges the hold and
+/// its clock (review round 2 of #10565).
+pub(in crate::sync) fn clear_edge_wait_remat_marker_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    window_key: &str,
+    id: &crate::entity_id::EntityId,
+) -> Result<bool> {
+    let key = window_entity_key(window_key, id);
+    if REMAT_DEPENDENCY_HOLD_START.contains(&vault.store, wtxn, &key)? {
+        return Ok(false);
+    }
+    clear_replay_remat_marker_in_txn(vault, wtxn, window_key, id)
 }
 
 /// Lists DISTINCT windows currently flagged needs-rematerialization.
@@ -215,15 +263,115 @@ pub(crate) fn pending_remat_entities(vault: &Vault, window_key: &str) -> Result<
     Ok(entities)
 }
 
+/// How one window's surviving `rm:` markers read after a forward pass.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WindowMarkerClass {
+    /// No marker row at all survives for the window.
+    NonePending,
+    /// Every survivor is a proven replay marker for an id the caller still
+    /// waits on, with a hold start inside the allowed age.
+    AllMatch,
+    /// Any other survivor, including a missing, malformed, or expired hold start.
+    Unclassified,
+}
+
+/// Classifies one window's surviving `rm:` markers in one read
+/// transaction: `NonePending` when no row survives, `AllMatch` when every
+/// row is a canonical replay marker with exact provenance whose id the caller
+/// still waits on. A present id that still owes an edge wait sourced at it,
+/// a missing or malformed hold start, a start in the future,
+/// or an age over `sync.remat.dependency_hold_max_secs` is a breach
+/// (`Unclassified`), as is any other survivor that does not match.
+/// Raw marker iteration lets malformed rows classify as breaches, not read errors.
+/// The age is measured against the vault's committed clock floor (or this
+/// store's clock if later), the same floor the hold start was stamped from,
+/// so a clock that steps back never reads a fresh hold as one in the future.
+pub(crate) fn classify_window_markers(
+    vault: &Vault,
+    window_key: &str,
+    matches: impl Fn(crate::entity_id::EntityId) -> bool,
+) -> Result<WindowMarkerClass> {
+    let rtxn = vault.store.env.read_txn()?;
+    let now = crate::ports::job_recorded_at_in_txn(&vault.store, &rtxn)?;
+    let exact = format!("{REMAT_MARKER_PREFIX}{window_key}");
+    if vault.store.sync_state.get(&rtxn, &exact)?.is_some() {
+        return Ok(WindowMarkerClass::Unclassified);
+    }
+    let prefix = format!("{REMAT_MARKER_PREFIX}{window_key}:");
+    let mut any = false;
+    let mut max_hold_secs = None;
+    for entry in vault.store.sync_state.prefix_iter(&rtxn, &prefix)? {
+        let (key, value) = entry?;
+        any = true;
+        let suffix = &key[prefix.len()..];
+        let matched = crate::entity_id::EntityId::from_hex(suffix)
+            .ok()
+            .filter(|id| id.to_hex() == suffix);
+        let Some(id) = matched else {
+            return Ok(WindowMarkerClass::Unclassified);
+        };
+        if &*value != [1u8].as_slice() {
+            return Ok(WindowMarkerClass::Unclassified);
+        }
+        let entity_key = window_entity_key(window_key, &id);
+        let sidecar = REPLAY_REMAT_MARKER_PROVENANCE.get_bytes(&vault.store, &rtxn, &entity_key)?;
+        if sidecar.as_deref() != Some([1u8].as_slice()) {
+            return Ok(WindowMarkerClass::Unclassified);
+        }
+        if !matches(id) {
+            return Ok(WindowMarkerClass::Unclassified);
+        }
+        // An id this replica already holds (an older revision) that still owes
+        // an edge wait sourced at it waits on more than its own missing
+        // dependency: that wait vetoes the hold (review round 2 of #10565).
+        // While the id itself is absent, every edge sourced at it waits on it
+        // first; a wait that outlasts its landing vetoes from then on.
+        if crate::ports::EntityStoreRead::port_entity_present(&vault.store, &rtxn, &id)?
+            && crate::sync::bridge::has_pending_source_in_txn(vault, &rtxn, window_key, &id)?
+        {
+            return Ok(WindowMarkerClass::Unclassified);
+        }
+        let Some(age) = REMAT_DEPENDENCY_HOLD_START
+            .get_lenient(&vault.store, &rtxn, &entity_key)?
+            .and_then(|bytes| now.checked_sub(u64::from_le_bytes(bytes)))
+        else {
+            return Ok(WindowMarkerClass::Unclassified);
+        };
+        let max = match max_hold_secs {
+            Some(max) => max,
+            None => {
+                let max = crate::deletion::setting_keys::REMAT_DEPENDENCY_HOLD_MAX_SECS
+                    .read_in_txn(vault, &rtxn, &[], None)?
+                    .value;
+                max_hold_secs = Some(max);
+                max
+            }
+        };
+        if age > max {
+            return Ok(WindowMarkerClass::Unclassified);
+        }
+    }
+    if any {
+        Ok(WindowMarkerClass::AllMatch)
+    } else {
+        Ok(WindowMarkerClass::NonePending)
+    }
+}
+
 /// Outcome of a [`drain_remat_markers`] pass.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RematDrainReport {
     /// Windows whose markers ALL cleared (every flagged entity's purge
     /// succeeded).
     pub drained: Vec<String>,
-    /// Windows with at least one marker still set after the pass — a purge
-    /// keeps failing, the flagged entity's tombstone is missing from the
-    /// loaded doc, or a marker row does not parse (fail closed).
+    /// Windows still flagged after the pass whose every surviving marker is a
+    /// bounded project-dependency hold (the forward pass logged its WARN):
+    /// WARN-grade, tried again by the next drain; past
+    /// `sync.remat.dependency_hold_max_secs` such a window moves to `still_pending`.
+    pub held: Vec<String>,
+    /// Windows still flagged after the pass that do not qualify as held.
+    /// A purge may keep failing, the flagged entity's tombstone may be missing
+    /// from the loaded doc, or a marker row may not parse (fail closed).
     /// ERROR-grade: hard-deleted content may still be live locally.
     pub still_pending: Vec<String>,
 }
@@ -232,8 +380,9 @@ pub struct RematDrainReport {
 /// flagged window. Each entity-scoped marker is cleared (inside
 /// `forward_rematerialize`) only when that entity's own purge succeeds —
 /// or, for ONE-1147 batch-failure markers, when its actual healing write
-/// lands; a window with any surviving marker stays flagged and is reported
-/// in `still_pending`.
+/// lands. A window with any surviving marker stays flagged. Windows with only
+/// bounded project-dependency holds after a clean pass are reported in `held`;
+/// other flagged windows are reported in `still_pending`.
 pub fn drain_remat_markers(
     vault: &Arc<Vault>,
     user_id: &str,
@@ -293,16 +442,27 @@ fn drain_remat_windows(
             }
             Err(err) => return Err(err),
         };
-        crate::sync::window::forward_rematerialize(vault, &doc, materializer, &window_key)?;
-        let still_flagged = pending_remat_windows(vault)?.contains(&window);
-        if still_flagged {
-            tracing::error!(
-                window = %window,
-                "rm drain: tombstone purge still failing — hard-deleted content may be live (GDPR SLA breach signal)"
-            );
-            report.still_pending.push(window);
-        } else {
-            report.drained.push(window);
+        let (_, verdict) = crate::sync::window::forward_rematerialize_classified(
+            vault,
+            &doc,
+            materializer,
+            &window_key,
+        )?;
+        // One read after the pass decides (review round 1 of #10565): a
+        // replay that settles the window between two reads can never turn a
+        // drained window into a breach.
+        match classify_window_markers(vault, &window, |_| true)? {
+            WindowMarkerClass::NonePending => report.drained.push(window),
+            WindowMarkerClass::AllMatch if verdict == Some(WindowMarkerClass::AllMatch) => {
+                report.held.push(window);
+            }
+            WindowMarkerClass::AllMatch | WindowMarkerClass::Unclassified => {
+                tracing::error!(
+                    window = %window,
+                    "rm drain: tombstone purge still failing — hard-deleted content may be live (GDPR SLA breach signal)"
+                );
+                report.still_pending.push(window);
+            }
         }
     }
     Ok(report)

@@ -1,12 +1,14 @@
-//! The work orders' Setting key (pass 34, 4.7 and 6.3; the lead's POLICY AS SETTINGS, 25 Nov
-//! 00:04): how many times each class of attempt end is retried, and the wait first. Its
-//! default is pass 34's table 4.7 as a value, not as code.
+//! The work orders' Setting keys (pass 34, 4.7 and 6.3; the lead's POLICY AS SETTINGS, 25 Nov
+//! 00:04): how many times each class of attempt end is retried, and the wait first, whose
+//! default is pass 34's table 4.7 as a value, not as code; and each named running cap (row Q5),
+//! whose default is no cap.
 
 use crate::Vault;
 use crate::error::Result;
-use crate::setting::Kind;
+use crate::setting::{AbsentEnd, ItemDomain, Kind};
 
 use super::after::RetryPolicy;
+use super::caps::is_cap_name;
 
 /// Pass 34's table 4.7.
 fn table_4_7() -> RetryPolicy {
@@ -35,6 +37,31 @@ crate::setting::setting_keys! {
     pub(crate) ORDER_WARM_KEYS_MAX: u32 = "jobs.orders.warm_keys_max" {
         kind: Kind::new(order_warm_keys_max).lower(),
     };
+    /// A named running cap (item: the cap's name, as orders list it in limits.caps): the most
+    /// orders that name it and hold a live attempt at once, a seat count, a family's share or a
+    /// tool's slots. None is no cap. A lower cap is the tighter; no cap is the loosest.
+    pub(crate) JOBS_CAPS: Option<u32> = "jobs.caps" {
+        kind: Kind::new(no_cap).lower_or_absent(AbsentEnd::Loosest),
+        item: Some(ItemDomain { name: "running cap names", admits: is_cap_name }),
+    };
+}
+
+/// A cap's default: none.
+const fn no_cap() -> Option<u32> {
+    None
+}
+
+/// The cap named `name` in force, read in `txn` at the vault scope; `None` is no cap.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(super) fn running_cap_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    name: &str,
+) -> Result<Option<u32>> {
+    Ok(JOBS_CAPS.read_in_txn(vault, txn, &[], Some(name))?.value)
 }
 
 /// The retry policy in force, read in `txn` at the vault scope.

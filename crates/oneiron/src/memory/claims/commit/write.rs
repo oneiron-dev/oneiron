@@ -31,6 +31,7 @@ impl Memory<'_> {
             &|_: &heed::RoTxn<'_>| Ok(()),
             None,
             true,
+            None,
         )
     }
 
@@ -42,6 +43,7 @@ impl Memory<'_> {
         before_txn: impl FnOnce(),
         in_writer: &dyn Fn(&heed::RoTxn<'_>) -> Result<(), Error>,
         birth: Option<&crate::provenance::birth::RowBirth>,
+        explicit_prior: Option<EntityId>,
     ) -> MemoryResult<CommitReceipt> {
         self.commit_claim_write(
             input,
@@ -51,6 +53,7 @@ impl Memory<'_> {
             in_writer,
             birth,
             false,
+            explicit_prior,
         )
     }
 
@@ -63,7 +66,12 @@ impl Memory<'_> {
         in_writer: &dyn Fn(&heed::RoTxn<'_>) -> Result<(), Error>,
         birth: Option<&crate::provenance::birth::RowBirth>,
         skip_exact_hook_replay: bool,
+        explicit_prior: Option<EntityId>,
     ) -> MemoryResult<CommitReceipt> {
+        // An attached session's write that names no project lands in its folder's project
+        // (RECALL-SESSION-PROJECT), before the prior-head key and the admission read it.
+        let placed = self.placed_in_session_project(input);
+        let input = placed.as_ref().unwrap_or(input);
         refuse_typed_claim_family(input)?;
         // ABC row 22: every claim door that commits here (claim_upsert,
         // commit, claim_propose and the scoped admission) measures the claim
@@ -72,7 +80,8 @@ impl Memory<'_> {
         let _ = self
             .vault
             .measure_limit(crate::limit_ask::EngineLimit::ClaimInputJsonBytes, bytes);
-        let write = self.resolve_claim_write(input, auto_supersede, in_writer, birth)?;
+        let write =
+            self.resolve_claim_write(input, auto_supersede, in_writer, birth, explicit_prior)?;
         before_txn();
         let lane = self.core_write_lane()?;
 

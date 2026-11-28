@@ -7,7 +7,9 @@
 //! planner's admission stands, and no model is pinned. The call spends on
 //! the caller's run (`fill_writer_line`, CALLS row) and is sent once; its
 //! real usage is its record. It holds no credential of its own, and never
-//! an owner's.
+//! an owner's. An MCP run's browser names no payer, so its Fill that reaches
+//! generation is refused: a connector's run spends on no host meter
+//! (CODE-MODE-LENDING-RUN-SPEND = A).
 //!
 //! The text it wrote is typed only once one yes/no `ai.verdict` of the
 //! run's own caller, through the same door its routine steps take, answers
@@ -66,12 +68,15 @@ pub(super) struct RunFieldWriter {
 impl RunFieldWriter {
     /// The writer for one browser call of `asker` (`fill_writer_line`,
     /// CALLS row): on the run's own line where the run's door bound one (an
-    /// agent's run, with the payer it bills), else on code mode's own meter,
-    /// the one a run's executor steps spend on. A host with
-    /// neither has no writer for the call.
-    /// A caller whose door bound no line bills the payer of `run`, the
+    /// agent's run, with the payer it bills). An agent's run or a credential
+    /// call whose door bound none falls to code mode's own meter, the one a
+    /// run's executor steps spend on, billing the payer of `run`, the
     /// attached live run, where it has one (FIX 8902), read for this call
-    /// (LIVE-RUN-BROWSER-FILL-PAYER-FALLBACK).
+    /// (LIVE-RUN-BROWSER-FILL-PAYER-FALLBACK). An MCP run's browser
+    /// (`VerdictAsker::Connector`) bills only a payer it can name: `run`
+    /// must answer one, else the writer is refused, since a connector's run
+    /// spends on no host meter (CODE-MODE-LENDING-RUN-SPEND = A). A host with
+    /// neither line nor meter has no writer for the call.
     pub(super) fn new(
         server: &Arc<SyncServer>,
         runtime: &tokio::runtime::Handle,
@@ -80,9 +85,8 @@ impl RunFieldWriter {
     ) -> Self {
         let line = match asker {
             VerdictAsker::Agent(_, Some(line)) => Ok(line.clone()),
-            VerdictAsker::Agent(_, None)
-            | VerdictAsker::Connector(_)
-            | VerdictAsker::Credential(..) => host_line(server, run),
+            VerdictAsker::Agent(_, None) | VerdictAsker::Credential(..) => host_line(server, run),
+            VerdictAsker::Connector(_) => connector_line(server, run),
         };
         Self {
             server: Arc::clone(server),
@@ -102,15 +106,6 @@ fn host_line(
     server: &SyncServer,
     run: Option<&LiveRunPayer>,
 ) -> Result<RunAdmission, FieldWriteError> {
-    let no_meter = || {
-        FieldWriteError::Unavailable(
-            "no meter funds the run's field writer: its door bound no line and code mode lends none"
-                .to_owned(),
-        )
-    };
-    let host = server.code_execution_host().ok_or_else(no_meter)?;
-    let native = host.engine_native().ok_or_else(no_meter)?;
-    let meter = native.provider().host_meter().ok_or_else(no_meter)?;
     let payer = match run {
         Some(run) => run
             .funding(server.vault())
@@ -120,7 +115,50 @@ fn host_line(
     Ok(server
         .ai
         .model_runtime()
-        .funded_run(FIELD_WRITER_RUN, meter, payer))
+        .funded_run(FIELD_WRITER_RUN, code_mode_meter(server)?, payer))
+}
+
+/// An MCP run's browser call: the writer billing only a payer it can name
+/// (CODE-MODE-LENDING-RUN-SPEND = A). `run`, the attached live run, must be
+/// `Some` and its funding must answer a payer; a payer fault refuses with
+/// its reason as `host_line` refuses. No run or no payer is refused: an MCP
+/// run's field writer has no payer, and a connector's run spends on no host
+/// meter. With a payer it bills that payer on code mode's meter, as
+/// `host_line` does with `Some(payer)`.
+fn connector_line(
+    server: &SyncServer,
+    run: Option<&LiveRunPayer>,
+) -> Result<RunAdmission, FieldWriteError> {
+    let payer = match run {
+        Some(run) => run
+            .funding(server.vault())
+            .map_err(|fault| FieldWriteError::Refused(fault.to_string()))?,
+        None => None,
+    };
+    let Some(payer) = payer else {
+        return Err(FieldWriteError::Refused(
+            "an MCP run's field writer has no payer to bill: a connector's run spends on no host meter"
+                .to_owned(),
+        ));
+    };
+    Ok(server.ai.model_runtime().funded_run(
+        FIELD_WRITER_RUN,
+        code_mode_meter(server)?,
+        Some(payer),
+    ))
+}
+
+/// Code mode's own meter, the one a run's executor steps spend on.
+fn code_mode_meter(server: &SyncServer) -> Result<oneiron::BudgetGuard, FieldWriteError> {
+    let no_meter = || {
+        FieldWriteError::Unavailable(
+            "no meter funds the run's field writer: its door bound no line and code mode lends none"
+                .to_owned(),
+        )
+    };
+    let host = server.code_execution_host().ok_or_else(no_meter)?;
+    let native = host.engine_native().ok_or_else(no_meter)?;
+    native.provider().host_meter().ok_or_else(no_meter)
 }
 
 impl FieldWriter for RunFieldWriter {

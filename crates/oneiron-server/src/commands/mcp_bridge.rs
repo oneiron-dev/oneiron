@@ -37,15 +37,17 @@
 //! #surface).
 //!
 //! Unless the operator names `--surface`, the bridge asks the server once,
-//! before the first request, which endpoint to use: `/mcp` (`setup_oneiron`
-//! and `execute_code`) when `/mcp`'s `initialize` says this credential may
+//! before the first request, which endpoint to use: `/mcp` (`setup_oneiron`,
+//! `execute` and `resume`) when `/mcp`'s `initialize` says this credential may
 //! run code there, which needs a bound code host and a credential
-//! `execute_code` admits, and `/mcp/tool-first` otherwise. The listing alone
-//! cannot say it: `/mcp` lists `execute_code` to every credential alike.
+//! `execute` admits, and `/mcp/tool-first` otherwise. The listing alone
+//! cannot say it: a ready host lists `execute` and `resume` regardless of
+//! the credential's execute admission.
 
 use std::collections::HashMap;
 use std::io::{self, BufRead, Read, Write};
-use std::sync::{Arc, Condvar, Mutex, PoisonError};
+use std::path::PathBuf;
+use std::sync::{Arc, Condvar, Mutex, Once, PoisonError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -57,6 +59,8 @@ use crate::cli::{McpArgs, McpSurface, McpTransport};
 
 mod bridge_auth;
 mod call_meta;
+mod carrier_content;
+pub(crate) mod credential_origin;
 mod link;
 mod wake;
 
@@ -283,6 +287,11 @@ pub fn mcp(args: McpArgs) -> anyhow::Result<()> {
     for call in in_flight {
         let _ = call.join();
     }
+    // The bridge ends, so its origin record goes with it: a hook uses an
+    // origin only while a bridge that wrote it runs (credential_origin).
+    if let Some(credential) = args.credential_file.as_deref() {
+        credential_origin::forget(credential);
+    }
     Ok(())
 }
 
@@ -415,6 +424,21 @@ struct Bridge {
     pending_calls: Mutex<HashMap<CallKey, String>>,
     /// The client capabilities this session negotiated (FIX 7969).
     client_session: ClientSession,
+    /// Fold a `tools/call` answer's board carrier frame into its text
+    /// content (`--carrier-in-content`).
+    carrier_in_content: bool,
+    /// The paired credential file and this bridge's normalized origin, to
+    /// record once the vault first admits the bridge
+    /// ([`credential_origin`]): on the first answer to the client that has
+    /// no `error` key. A record not written stops only the hook.
+    origin_record: Option<OriginRecord>,
+}
+
+/// The origin record one bridge writes, once.
+struct OriginRecord {
+    credential: PathBuf,
+    origin: String,
+    written: Once,
 }
 
 impl Bridge {
@@ -448,7 +472,20 @@ impl Bridge {
             // process the bridge starts, in either mode.
             named_env: vec![args.secret_env.clone(), args.binding_key_env.clone()],
             pending_calls: Mutex::new(HashMap::new()),
-            client_session: ClientSession::default(),
+            client_session: ClientSession::attached_to(
+                args.workspace
+                    .as_deref()
+                    .and_then(crate::workspace_identity::WorkspaceIdentity::of_session_folder),
+            ),
+            carrier_in_content: args.carrier_in_content,
+            origin_record: args
+                .credential_file
+                .as_deref()
+                .map(|credential| OriginRecord {
+                    credential: credential.to_owned(),
+                    origin: base.clone(),
+                    written: Once::new(),
+                }),
         })
     }
 
@@ -484,9 +521,14 @@ impl Bridge {
         let (deadline, tool) = self.deadline_for(&message);
         let until = Instant::now() + deadline;
         let key = pending_call_key(&message);
+        // Whether this request is a `tools/call`: only such an answer may
+        // carry a board frame into its content, and `message` is dropped
+        // before the answer comes back.
+        let tools_call = message.get("method").and_then(Value::as_str) == Some("tools/call");
         let offered = ClientSession::offered(&message);
         let own = named_invocation(&message);
-        let named = self.client_session.name_on_call(&mut message);
+        let named = self.client_session.name_on_call(&mut message)
+            || self.client_session.name_on_initialize(&mut message);
         // A call naming its own invocation keeps it; one naming none goes
         // under a pending same call's, else a fresh one.
         let added = with_invocation(&mut message, || {
@@ -497,9 +539,25 @@ impl Bridge {
         .or_else(|| named.then(|| serde_json::to_vec(&message).ok()).flatten());
         // What the bridge adds never takes a call past the least body the
         // server reads, which the line is within: such a call goes as the
-        // client wrote it, under only the invocation it named itself.
+        // client wrote it, under only the invocation it named itself. A call
+        // the bridge named its session's folder on is refused instead: sent
+        // without that name it would read with no folder's project (review
+        // round 1 of #10559).
         let (body, sent) = match added {
             Some(body) if body.len() <= MAX_FRAME_BYTES => (body, named_invocation(&message)),
+            Some(_) if named => {
+                let id = message.get("id")?;
+                return Some(Err(rpc_error(
+                    id,
+                    -32600,
+                    "frame_too_large",
+                    &format!(
+                        "with the session's folder named, this message passes {MAX_FRAME_BYTES} \
+                         bytes; it was not sent"
+                    ),
+                    None,
+                )));
+            }
             _ => (line.into_bytes(), own),
         };
         let reply = self.post(body, until, deadline, tool);
@@ -507,12 +565,25 @@ impl Bridge {
         drop(message);
         let id = id?;
         Some(match reply.and_then(|reply| reply.answer_to(&id)) {
-            Ok(answer) => {
+            Ok(mut answer) => {
                 if let Some(key) = key {
                     self.note_answer(key, sent.as_deref(), &answer);
                 }
                 if let Some(offered) = offered {
                     self.client_session.note_initialize(offered, &answer);
+                }
+                if self.carrier_in_content {
+                    carrier_content::mark_forged_carried_blocks(&mut answer, tools_call);
+                    carrier_content::place_carrier_frame(&mut answer, tools_call);
+                }
+                // The vault admitted the bridge: this credential file goes
+                // to this origin from here on (credential_origin).
+                if let Some(record) = &self.origin_record
+                    && answer.get("error").is_none()
+                {
+                    record.written.call_once(|| {
+                        let _ = credential_origin::record(&record.credential, &record.origin);
+                    });
                 }
                 Ok(answer)
             }

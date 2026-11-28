@@ -3,8 +3,28 @@
 //! `HostSelfDispatcher` state is defined by `code_run::dispatcher`.
 
 use super::*;
+use crate::code_run::AgentVerbDoor;
 
 impl HostSelfDispatcher<'_> {
+    /// [`Self::admit_run_call`] for `call`'s effect, after the bound door
+    /// admits the exact run row `call` was made through when its effect is
+    /// shared by several rows (FIX EXECUTE-CALLER-CODE).
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::admit_run_call`].
+    pub(crate) fn admit_self_call(
+        &self,
+        call: &SelfCall,
+    ) -> Result<std::result::Result<Option<ScopedReadActorKey>, AgentVerbRefusal>> {
+        if let (Some(row), Some(door)) = (call.shared_effect_row(), &self.agent_verbs)
+            && let Err(refusal) = door.admit_run_row(row)
+        {
+            return Ok(Err(refusal));
+        }
+        self.admit_run_call(RunCall::Bridge(call.effect()))
+    }
+
     /// Asks the bound door to admit one call the run serves itself. A run
     /// whose host binds no door admits it as its own.
     ///
@@ -18,6 +38,37 @@ impl HostSelfDispatcher<'_> {
         &self,
         call: RunCall,
     ) -> Result<std::result::Result<Option<ScopedReadActorKey>, AgentVerbRefusal>> {
+        self.admit_door_call(self.agent_verbs.as_deref(), call, false)
+    }
+
+    /// [`Self::admit_run_call`] for `call`, a `self.skills.call`. The outer
+    /// call a credential-bound host projection entered for its caller
+    /// (`outer`) is that caller's own: the bound door admits it with
+    /// [`crate::code_run::AgentVerbDoor::admit_outer_skill_call`]. The
+    /// skill's body's own calls are admitted as run calls.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::admit_run_call`].
+    pub(crate) fn admit_skill_call(
+        &self,
+        call: &SelfCall,
+        outer: bool,
+    ) -> Result<std::result::Result<Option<ScopedReadActorKey>, AgentVerbRefusal>> {
+        let outer = outer && matches!(call, SelfCall::SkillsCall(_));
+        self.admit_door_call(
+            self.agent_verbs.as_deref(),
+            RunCall::Bridge(call.effect()),
+            outer,
+        )
+    }
+
+    fn admit_door_call(
+        &self,
+        door: Option<&dyn AgentVerbDoor>,
+        call: RunCall,
+        outer_skill_call: bool,
+    ) -> Result<std::result::Result<Option<ScopedReadActorKey>, AgentVerbRefusal>> {
         // A slip-woken program's call holds only while its slip admits it
         // (FIX 8717), door or none.
         if let RunCall::Bridge(effect) = call
@@ -26,20 +77,24 @@ impl HostSelfDispatcher<'_> {
             return Ok(Err(AgentVerbRefusal {
                 hook_notice: None,
                 code,
+                reason_codes: Vec::new(),
             }));
         }
-        let Some(door) = &self.agent_verbs else {
+        let Some(door) = door else {
             return Ok(Ok(None));
         };
         // Speech is admitted with where this run's storage lands it.
         let admitted = match call {
+            RunCall::Bridge(SelfEffect::SkillsCall) if outer_skill_call => {
+                door.admit_outer_skill_call()
+            }
             RunCall::Bridge(effect) if effect.is_speech() => {
                 door.admit_run_speech(effect, self.storage.speech_destination())
             }
             RunCall::Bridge(_) | RunCall::RecordedOutput => door.admit_run_call(call),
         };
         if let Err(refusal) = &admitted
-            && let Some(rejected) = gate_rejection(&refusal.code)
+            && let Some(rejected) = gate_rejection(&refusal.code, &refusal.reason_codes)
         {
             return Err(rejected);
         }
@@ -77,13 +132,82 @@ impl HostSelfDispatcher<'_> {
     }
 
     /// Whether the guest reads again the answer a recorded call got, served
-    /// from `rows` (FIX 7703): a resumed pending step's call, answered from
-    /// its row. The bound door admits the read as it rules now, as at a
-    /// write's kept answer. The answer must also not stay on this device
-    /// for the door's caller now. A refusal of either withholds it.
-    pub(crate) fn releases_recorded_answer(&self, rows: Option<&[EntityId]>) -> bool {
-        admit_recorded_answer(self.agent_verbs.as_deref()).is_ok()
+    /// from `rows` (FIX 7703). The bound door admits both the read and its
+    /// producer (FIX CODE-MODE-LENDING-W11), and the answer must not stay
+    /// on this device for the door's caller now.
+    pub(crate) fn releases_recorded_answer(
+        &self,
+        rows: Option<&[EntityId]>,
+        producer: RecordedProducer,
+    ) -> bool {
+        let door = self.agent_verbs.as_deref();
+        admit_recorded_answer(door).is_ok()
+            && matches!(self.admit_recorded_producer(door, producer), Ok(Ok(())))
             && matches!(self.withholds_retained(rows), Ok(false))
+    }
+
+    /// Rechecks the producer's door admission without dispatching it.
+    ///
+    /// # Errors
+    ///
+    /// A program-authority read fails, or the bridge admission returns a
+    /// gate-word refusal as a gate rejection.
+    pub(crate) fn admit_recorded_producer(
+        &self,
+        door: Option<&dyn AgentVerbDoor>,
+        producer: RecordedProducer,
+    ) -> Result<std::result::Result<(), AgentVerbRefusal>> {
+        let Some(door) = door else {
+            return Ok(Ok(()));
+        };
+        match producer {
+            RecordedProducer::Descriptor => Ok(Ok(())),
+            RecordedProducer::Unidentified => Ok(Err(AgentVerbRefusal {
+                hook_notice: None,
+                code: RECORDED_ANSWER_UNIDENTIFIED.to_owned(),
+                reason_codes: Vec::new(),
+            })),
+            RecordedProducer::Bridge {
+                effect,
+                row,
+                outer_skill_call,
+            } => {
+                if let Some(row) = row
+                    && let Err(refusal) = door.admit_run_row(row)
+                {
+                    return Ok(Err(refusal));
+                }
+                self.admit_door_call(Some(door), RunCall::Bridge(effect), outer_skill_call)
+                    .map(|admitted| admitted.map(drop))
+            }
+            RecordedProducer::Verb(verb) => {
+                if let Some(code) = self.program_authority_refusal(verb.as_str())? {
+                    return Ok(Err(AgentVerbRefusal {
+                        hook_notice: None,
+                        code,
+                        reason_codes: Vec::new(),
+                    }));
+                }
+                // The storage route, not the verb's name, tells a room call
+                // from the same verb served through a canonical tool.
+                if matches!(self.storage, ExecutorStorage::Session(_))
+                    && self.scoped_child_spec().is_none()
+                {
+                    return Ok(if verb.session_read().is_some() {
+                        door.admit_session_read(verb).map(drop)
+                    } else if verb.overlay_write() {
+                        door.admit_session_write(verb).map(drop)
+                    } else {
+                        Err(AgentVerbRefusal {
+                            hook_notice: None,
+                            code: crate::code_run::AGENT_VERB_SESSION_BOUND.to_owned(),
+                            reason_codes: Vec::new(),
+                        })
+                    });
+                }
+                Ok(door.admit_recorded_verb(verb))
+            }
+        }
     }
 
     /// The values base custody holds now, which a recorded call's row is
@@ -162,7 +286,7 @@ impl HostSelfDispatcher<'_> {
             let read_as = if matches!(call, SelfCall::AgentVerb(_)) {
                 None
             } else {
-                match self.admit_run_call(RunCall::Bridge(call.effect()))? {
+                match self.admit_self_call(&call)? {
                     Ok(read_as) => read_as,
                     Err(refusal) => {
                         return Ok((
@@ -170,7 +294,7 @@ impl HostSelfDispatcher<'_> {
                                 hook_notice: None,
                                 effect: call.effect(),
                                 outcome: refusal.code,
-                                reason_codes: Vec::new(),
+                                reason_codes: refusal.reason_codes,
                             }),
                             None,
                         ));
@@ -196,12 +320,19 @@ pub(super) fn admit_recorded_answer(
 }
 
 /// The gate rejection a door's refusal is when it is spelled as a gate's
-/// outcome word, as `admit_run_call` says.
-pub(super) fn gate_rejection(code: &str) -> Option<crate::Error> {
+/// outcome word, as `admit_run_call` says. It keeps each of the door's
+/// `reason_codes` that is a gate's own stable code, so the guest learns why
+/// the gate refused (FIX CODE-MODE-DENIAL-REASONS); a gate rejection holds
+/// only those static codes, and any other code the door gave is not a gate's.
+pub(super) fn gate_rejection(code: &str, reason_codes: &[String]) -> Option<crate::Error> {
     crate::error::GateDenialOutcome::parse(code).map(|outcome| {
         crate::Error::Gate(crate::error::GateError::GateWriteRejected {
             outcome: outcome.as_str(),
-            reason_codes: Vec::new(),
+            reason_codes: reason_codes
+                .iter()
+                .filter_map(|reason| crate::error::GateDenialReason::from_code(reason))
+                .map(crate::error::GateDenialReason::as_str)
+                .collect(),
         })
     })
 }

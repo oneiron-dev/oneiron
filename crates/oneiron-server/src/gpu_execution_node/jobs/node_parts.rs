@@ -142,6 +142,17 @@ pub trait NodeAdmission: Send + Sync {
     /// The local controls now.
     fn controls(&self) -> NodeControls;
 
+    /// The local controls and the owner's machine policy now, from one read,
+    /// for one readiness tick (row READINESS-NOT-RUN-AT-OFFER). The default
+    /// reads the controls alone, with no file and no policy.
+    fn readiness_snapshot(&self) -> crate::gpu_execution_node::node::NodeSnapshot {
+        crate::gpu_execution_node::node::NodeSnapshot {
+            settings: Ok(None),
+            controls: self.controls(),
+            policy: None,
+        }
+    }
+
     /// Whether the node's own job grant, the issuer's job grant and the
     /// issuer's standing are live in the node's own fold now, and the issuer
     /// is one of the node's `issuers`.
@@ -209,6 +220,21 @@ pub trait NodeAdmission: Send + Sync {
     /// readiness check reads (pass 34, 7.3). The default names none.
     fn template_mirrors(&self) -> Vec<(String, PathBuf)> {
         Vec::new()
+    }
+
+    /// A session template's longest run from its launch, in seconds (pass
+    /// 34, 2.5; row W1): only a run of such a template takes a renewal.
+    /// `None` for a job template or a template the node does not hold, and
+    /// by default.
+    fn template_session_max_secs(&self, template: &str) -> Option<u64> {
+        let _ = template;
+        None
+    }
+
+    /// The job unit's stop grace, in seconds: the cutoff stops a unit this
+    /// long before its cutoff time, so a renewal must come before then.
+    fn stop_grace_secs(&self) -> u64 {
+        crate::gpu_execution_node::node_settings::STOP_GRACE_SECS_DEFAULT
     }
 }
 
@@ -290,6 +316,32 @@ pub trait NodeDevices: Send + Sync {
     ///
     /// Why the devices cannot be read.
     fn probe(&self) -> Result<(), String>;
+
+    /// The readiness check's device probe on the withheld list it was given:
+    /// a fresh reading of every device answers, whether the machine is
+    /// paused or drained (a look, not a hold). The default judges the
+    /// devices as [`NodeDevices::probe`] does and ignores the list.
+    ///
+    /// # Errors
+    ///
+    /// Why the devices cannot be read, or why the given list did not read.
+    fn probe_with_withheld(
+        &self,
+        withheld: Result<BTreeSet<String>, String>,
+    ) -> Result<(), String> {
+        let _ = withheld;
+        self.probe()
+    }
+
+    /// The devices another booker withholds now, read without probing the
+    /// driver. The default withholds none.
+    ///
+    /// # Errors
+    ///
+    /// Why the withheld list could not be read.
+    fn booker_withheld(&self) -> Result<BTreeSet<String>, String> {
+        Ok(BTreeSet::new())
+    }
 
     /// The temperature, power draw and memory in use of each of
     /// `device_ids` now, where the probe gives them, for a breadcrumb line.
@@ -403,6 +455,10 @@ impl NodeAdmission for ExecutionNode {
         ExecutionNode::controls(self)
     }
 
+    fn readiness_snapshot(&self) -> crate::gpu_execution_node::node::NodeSnapshot {
+        ExecutionNode::snapshot(self)
+    }
+
     fn issuer_live(&self, issuer: EntityId) -> Result<(), IssuerNotLive> {
         ExecutionNode::issuer_live(self, issuer).map_err(|reason| {
             let refusal = match self.authority_for(issuer) {
@@ -467,6 +523,21 @@ impl NodeAdmission for ExecutionNode {
 
     fn template_signal(&self, template: &str) -> Option<String> {
         ExecutionNode::template_signal(self, template)
+    }
+
+    fn template_session_max_secs(&self, template: &str) -> Option<u64> {
+        let settings = ExecutionNode::settings(self).ok().flatten()?;
+        settings
+            .templates
+            .get(template)
+            .and_then(crate::gpu_execution_node::node_settings::NodeTemplate::session_max_secs)
+    }
+
+    fn stop_grace_secs(&self) -> u64 {
+        ExecutionNode::settings(self).ok().flatten().map_or(
+            crate::gpu_execution_node::node_settings::STOP_GRACE_SECS_DEFAULT,
+            |settings| settings.stop_grace_secs,
+        )
     }
 
     fn template_mirrors(&self) -> Vec<(String, PathBuf)> {
@@ -543,6 +614,23 @@ impl NodeDevices for GpuSlotTable {
         self.availability(oneiron_base::unix_millis_now())
             .map(drop)
             .map_err(|error| format!("devices_unreadable: {error}"))
+    }
+
+    fn probe_with_withheld(
+        &self,
+        withheld: Result<BTreeSet<String>, String>,
+    ) -> Result<(), String> {
+        match withheld {
+            Ok(withheld) => self
+                .availability_with_withheld(oneiron_base::unix_millis_now(), withheld)
+                .map(drop)
+                .map_err(|error| format!("devices_unreadable: {error}")),
+            Err(why) => Err(format!("devices_unreadable: {why}")),
+        }
+    }
+
+    fn booker_withheld(&self) -> Result<BTreeSet<String>, String> {
+        GpuSlotTable::booker_withheld(self).map_err(|error| error.to_string())
     }
 
     fn samples(&self, device_ids: &[String]) -> Vec<DeviceSample> {

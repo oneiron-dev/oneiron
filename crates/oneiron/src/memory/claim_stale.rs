@@ -10,6 +10,8 @@ use super::read_lane::fold_receipt;
 use super::support::*;
 use super::*;
 
+use std::collections::HashSet;
+
 use crate::claim::{
     ClaimDemotionAction, ClaimDemotionRung, ClaimLifecycleStatus, ClaimReadStatus, PointRead,
     ScopedReadResult,
@@ -156,7 +158,10 @@ impl Memory<'_> {
     /// stale claims. Non-empty `project_refs` keep only the claims stamped
     /// with one of those projects or a project below one, as recall's
     /// scope does; that only narrows. The receipt states requested,
-    /// ceiling and applied.
+    /// ceiling and applied. After them, the caller's own held claims under
+    /// the same selectors fill any slots left, each marked `held` and
+    /// admitted by the caller's Recorded lane; the receipt does not count
+    /// them (AGENT-TRIAL-OWN-HELD-WRITES-HIDDEN).
     pub fn claim_list_filtered(
         &self,
         request: &ClaimFilteredListRequest,
@@ -221,6 +226,33 @@ impl Memory<'_> {
             Some(receipt) => receipt,
             None => lane.read_receipt(filter.as_ref(), 0)?,
         };
+        if views.len() < request.limit {
+            let subject_claims = request
+                .subject_ref
+                .as_ref()
+                .map(|_| ids.iter().copied().collect::<HashSet<_>>());
+            let seen: HashSet<_> = views.iter().map(|view| view.claim_ref.as_str()).collect();
+            // The stale selector the read applied, under the actor ceiling.
+            let include_stale = receipt.applied.include_stale;
+            let held = self
+                .with_read_filter(request.filter.as_ref())
+                .own_held_claims(
+                    |id, body| {
+                        (include_stale || !body.stale)
+                            && request
+                                .predicate
+                                .as_ref()
+                                .is_none_or(|p| body.predicate == *p)
+                            && lifecycle.is_none_or(|lifecycle| body.lifecycle == lifecycle)
+                            && subject_claims.as_ref().is_none_or(|ids| ids.contains(id))
+                            && projects.matches(body.scope_project)
+                            && !seen.contains(id.to_hex().as_str())
+                    },
+                    request.limit - views.len(),
+                )?;
+            views.extend(held);
+        }
+        self.fill_pending_corrections(&mut views)?;
         Ok(ScopedReadResult {
             value: views,
             receipt,
@@ -230,7 +262,10 @@ impl Memory<'_> {
     /// Reads one claim as retrieval would surface it, under the caller's
     /// retrieval filter met with the actor ceiling. `None` when absent,
     /// withheld, or stamped outside non-empty `project_refs` (and every
-    /// project below them); the receipt says which axes narrowed.
+    /// project below them); the receipt says which axes narrowed. A claim
+    /// the lane withholds that is the caller's own held claim is served
+    /// marked `held`, admitted by the caller's Recorded lane, and when stale
+    /// only if the applied filter includes stale claims.
     pub fn claim_read_filtered(
         &self,
         request: &ClaimFilteredReadRequest,
@@ -257,9 +292,109 @@ impl Memory<'_> {
             },
             None => None,
         };
+        let mut view = match view {
+            Some(view) => Some(view),
+            None => self
+                .with_read_filter(request.filter.as_ref())
+                .own_held_claims(
+                    |claim, body| {
+                        *claim == id
+                            && (receipt.applied.include_stale || !body.stale)
+                            && projects.matches(body.scope_project)
+                    },
+                    1,
+                )?
+                .into_iter()
+                .next(),
+        };
+        if let Some(view) = view.as_mut() {
+            self.fill_pending_corrections(std::slice::from_mut(view))?;
+        }
         Ok(ScopedReadResult {
             value: view,
             receipt,
         })
+    }
+
+    /// The parked corrections by the old claim they close: old id to the new
+    /// claim id and its tray decision ref, newest tray entry first.
+    fn pending_corrections_map(
+        &self,
+    ) -> MemoryResult<
+        std::collections::HashMap<crate::entity_id::EntityId, (crate::entity_id::EntityId, String)>,
+    > {
+        let mut map = std::collections::HashMap::new();
+        let store = &self.vault.store;
+        let txn = store.env.read_txn().map_err(Error::from)?;
+        for record in store.newest_pending_gate_consents_in_txn(&txn, 2048)? {
+            let new_id = match crate::entity_id::EntityId::from_bytes(record.claim_id) {
+                Ok(id) => id,
+                Err(_) => continue,
+            };
+            let Some(old) = self
+                .vault
+                .pending_claim_supersession_in_txn(&txn, &new_id)?
+            else {
+                continue;
+            };
+            map.entry(old)
+                .or_insert_with(|| (new_id, format!("gate:{}", record.decision_id.to_hex())));
+        }
+        Ok(map)
+    }
+
+    /// Marks each view a parked correction waits on, when the caller wrote
+    /// the correction and its Recorded lane admits it: a correction's tray
+    /// entry is its writer's to read, as a held mark is. The lane admits the
+    /// corrections uncharged; only those marked are charged to the caller's
+    /// read exposure (L8-65) and listed as producers of the answer.
+    fn fill_pending_corrections(&self, views: &mut [ClaimView]) -> MemoryResult<()> {
+        if views.is_empty() {
+            return Ok(());
+        }
+        let map = self.pending_corrections_map()?;
+        if map.is_empty() {
+            return Ok(());
+        }
+        let mut waiting = Vec::new();
+        for (index, view) in views.iter().enumerate() {
+            let Ok(old) = crate::entity_id::EntityId::from_hex(&view.claim_ref) else {
+                continue;
+            };
+            if let Some((new_id, decision_ref)) = map.get(&old) {
+                waiting.push((index, *new_id, decision_ref.clone()));
+            }
+        }
+        if waiting.is_empty() {
+            return Ok(());
+        }
+        let reads: Vec<_> = waiting
+            .iter()
+            .map(|(_, new_id, _)| PointRead::id(*new_id))
+            .collect();
+        let lane = self.read_lane(ClaimReadStatus::Recorded)?;
+        let admitted = lane.read_uncharged(&reads)?;
+        let mut served = Vec::new();
+        for ((index, new_id, decision_ref), row) in waiting.into_iter().zip(admitted.value) {
+            let Some(bytes) = row
+                .as_ref()
+                .filter(|row| row.entity_type == ENTITY_TYPE_CLAIM)
+                .and_then(|row| row.body.as_deref())
+            else {
+                continue;
+            };
+            let body = crate::claim::decode_claim_body(bytes, true)?;
+            if !self.is_own_write(&body) {
+                continue;
+            }
+            views[index].pending_correction = Some(PendingCorrection {
+                claim_ref: new_id.to_hex(),
+                decision_ref,
+            });
+            served.push(new_id);
+        }
+        lane.charge_served(served.iter().copied());
+        self.produced_from(served);
+        Ok(())
     }
 }

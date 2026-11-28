@@ -205,6 +205,7 @@ mod residence_doors;
 mod result_doors;
 mod retrieval_doors;
 pub(super) mod role_picks;
+mod workspace_project_doors;
 // FIX 13274: the owner reviews and settles a retained document-copy edit.
 mod repo_copy_edit_doors;
 mod root_request_doors;
@@ -297,6 +298,10 @@ pub(crate) use host_doors::{
     ai_video_as_owner, ai_video_cancel_as_owner, ai_video_cancel_for_run, ai_video_for_agent_run,
     ai_video_for_run, ai_video_poll_as_owner, ai_video_poll_for_run, vault_hooks_replay_as_owner,
 };
+// The integration tests' door to the media doors on a code-mode run's line
+// (FIX CODE-MODE-LENDING-W1).
+#[cfg(oneiron_test_support)]
+pub(crate) use host_doors::media_door_on_run_line_for_test;
 pub(crate) use identity::*;
 pub(crate) use invocations::*;
 use invoke::*;

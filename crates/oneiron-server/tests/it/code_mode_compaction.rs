@@ -336,6 +336,7 @@ fn run_long_task(dir: &Path, model_url: &str, context_tokens: u64) -> (Value, Ve
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "FIX EXECUTE-TASK-FORM-IGNORED-COMPACTION-TESTS: starts a task run through the retired MCP execute_code tool; no wire entry starts a task run since EXECUTE-CALLER-CODE PR D, and it comes back with the task form's entry (Orchestrator EXECUTE-TASK-FORM-GAP)"]
 async fn a_long_served_run_compacts_by_itself_and_finishes() {
     let fake = FakeLlm::start(Vec::new(), Some(Reply::Computed(Arc::new(answer)))).await;
     let dir = tempfile::tempdir().unwrap();
@@ -424,6 +425,7 @@ async fn a_long_served_run_compacts_by_itself_and_finishes() {
 /// every call. Sized by the input, the first pass seals the shorter prefix
 /// the seat holds, and the run finishes.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "FIX EXECUTE-TASK-FORM-IGNORED-COMPACTION-TESTS: starts a task run through the retired MCP execute_code tool; no wire entry starts a task run since EXECUTE-CALLER-CODE PR D, and it comes back with the task form's entry (Orchestrator EXECUTE-TASK-FORM-GAP)"]
 async fn a_window_whose_escapes_outgrow_the_seat_compacts_as_a_shorter_prefix() {
     let fake = FakeLlm::start(Vec::new(), Some(Reply::Computed(Arc::new(nul_answer)))).await;
     let dir = tempfile::tempdir().unwrap();

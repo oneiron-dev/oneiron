@@ -98,6 +98,10 @@ pub(in crate::gpu_execution_node::jobs) use payload_dir::trusted_work_dir;
 
 use git_process::{GitChild, GitView};
 use payload_dir::payload_dir_owned;
+pub use payload_dir::{
+    WorkDirAccess, WorkDirFault, WorkDirUnsafe, WorkDirVerdict, work_dir_verdict,
+    work_dir_verdict_for,
+};
 
 /// The checkout's directory name inside a key's payload directory.
 pub const CHECKOUT_DIR_NAME: &str = "checkout";

@@ -70,6 +70,22 @@
 //! a worker with no device would see every GPU. A worker that runs on no
 //! GPU names `"-1"`.
 //!
+//! `[gpu_jobs.host_allocation]` funds this server's host account, which every offer's job reserves
+//! on, from the owner's own config (R6-VAULT-MACHINE-FUNDING = A). With no supervisor to deliver
+//! an allocation, a self-hosted server's account starts empty and every start answers that the
+//! host has delivered none. At each start the server grants the account `units` of `unit`, which
+//! must be the `cost_unit` of one of the offers above, as the walletless allocation `id`. The
+//! account lives in memory until the durable allocation ledger is wired, so every start begins
+//! with the full `units` again: one process, one budget. A managed server refuses the section at
+//! start: its supervisor funds its account.
+//!
+//! ```toml
+//! [gpu_jobs.host_allocation]
+//! id = "own-gpu"
+//! units = 3600
+//! unit = "credit-micros"
+//! ```
+//!
 //! ```toml
 //! [gpu_jobs.devices]
 //! offered = ["GPU-0b3c5f52-6e1d-4a8e-9f0a-2d7c1e4b8a61"]
@@ -104,7 +120,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use oneiron::gpu_job::{GpuOffer, PriceShape};
-use oneiron::llm::run_admission::{KeyCustody, LeaseUnit, OfferRoute, PaidConnector, Payer};
+use oneiron::llm::run_admission::{
+    AllocationRef, KeyCustody, LeaseUnit, OfferRoute, PaidConnector, Payer, is_gpu_line_allocation,
+};
 use oneiron::{EntityId, ModelLocality};
 use serde::{Deserialize, Serialize};
 
@@ -125,6 +143,9 @@ pub const VAULT_MACHINE_SUBMIT_WINDOW_SECS: u64 = 300;
 pub const VAULT_MACHINE_RECHECK_HORIZON_SECS: u64 = 900;
 /// How long one job protocol call to a node may take, the dial included.
 pub const VAULT_MACHINE_CALL_TIMEOUT_SECS: u64 = 10;
+/// The generation of a `[gpu_jobs.host_allocation]` grant: each start's host account is fresh and
+/// holds it once.
+pub const HOST_ALLOCATION_GENERATION: u64 = 1;
 
 /// `[gpu_jobs]` as written.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
@@ -140,6 +161,17 @@ pub(crate) struct GpuJobsFile {
     vault_machine: VaultMachineFile,
     #[serde(default)]
     devices: Option<GpuDevicesFile>,
+    #[serde(default)]
+    host_allocation: Option<HostAllocationFile>,
+}
+
+/// `[gpu_jobs.host_allocation]` as written.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HostAllocationFile {
+    id: String,
+    units: u64,
+    unit: String,
 }
 
 /// `[gpu_jobs.vault_machine]` as written.
@@ -221,6 +253,22 @@ pub struct GpuJobsSettings {
     pub vault_machine: VaultMachineSettings,
     /// The GPUs of this machine it offers to the vault's GPU jobs.
     pub devices: GpuDeviceOffer,
+    /// The allocation a self-hosted server grants its own host account at start; `None`, the
+    /// default, grants none.
+    pub host_allocation: Option<HostAllocationSettings>,
+}
+
+/// The one allocation `[gpu_jobs.host_allocation]` names (R6-VAULT-MACHINE-FUNDING = A): granted
+/// to the host account at each start, walletless.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HostAllocationSettings {
+    /// The allocation's id, at [`HOST_ALLOCATION_GENERATION`].
+    pub reference: AllocationRef,
+    /// Units granted to this server's host account at each start; the account lives in memory
+    /// until the durable allocation ledger is wired.
+    pub units: u64,
+    /// One offer's `cost_unit`: a job holds only on an allocation in its offer's unit.
+    pub unit: LeaseUnit,
 }
 
 impl Default for GpuJobsSettings {
@@ -231,6 +279,7 @@ impl Default for GpuJobsSettings {
             offers: BTreeMap::new(),
             vault_machine: VaultMachineSettings::default(),
             devices: GpuDeviceOffer::default(),
+            host_allocation: None,
         }
     }
 }
@@ -350,12 +399,54 @@ impl GpuJobsFile {
             .into_iter()
             .map(|(name, file)| Ok((name.clone(), file.resolve(&name)?)))
             .collect::<anyhow::Result<_>>()?;
+        let host_allocation = self
+            .host_allocation
+            .map(|file| file.resolve(&offers))
+            .transpose()?;
         Ok(GpuJobsSettings {
             default_maximum_secs,
             step_secs,
             offers,
             vault_machine: self.vault_machine.resolve()?,
             devices: self.devices.unwrap_or_default().resolve()?,
+            host_allocation,
+        })
+    }
+}
+
+impl HostAllocationFile {
+    fn resolve(
+        self,
+        offers: &BTreeMap<String, GpuOfferSettings>,
+    ) -> anyhow::Result<HostAllocationSettings> {
+        anyhow::ensure!(
+            plain_name(&self.id),
+            "gpu_jobs.host_allocation.id must be a plain name: not empty, no whitespace"
+        );
+        let reference = AllocationRef {
+            id: self.id,
+            generation: HOST_ALLOCATION_GENERATION,
+        };
+        anyhow::ensure!(
+            !is_gpu_line_allocation(&reference),
+            "gpu_jobs.host_allocation.id names a GPU line's allocation, which only its claims draw on"
+        );
+        anyhow::ensure!(
+            self.units > 0,
+            "gpu_jobs.host_allocation.units must be greater than zero"
+        );
+        let unit = LeaseUnit::new(self.unit)
+            .map_err(|error| anyhow::anyhow!("gpu_jobs.host_allocation.unit: {error}"))?;
+        anyhow::ensure!(
+            offers
+                .values()
+                .any(|offer| offer.offer.connector.cost_unit == unit),
+            "gpu_jobs.host_allocation.unit must be the cost_unit of a [gpu_jobs.offers] offer"
+        );
+        Ok(HostAllocationSettings {
+            reference,
+            units: self.units,
+            unit,
         })
     }
 }
@@ -552,6 +643,8 @@ impl GpuOfferFile {
                 route,
                 locality: ModelLocality::ThirdParty,
                 payer: Payer::Host,
+                // The backend's name; a job records it as the backend it keeps
+                // (`GpuOffer::backend`, design pass 33, 8.1).
                 credential_binding: Some(self.backend.clone()),
                 catalog_revision: Some(self.catalog_revision),
                 custody: KeyCustody::T0,

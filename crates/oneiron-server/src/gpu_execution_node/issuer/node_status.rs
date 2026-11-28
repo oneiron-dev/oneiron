@@ -9,14 +9,14 @@ use std::time::Duration;
 use oneiron::EntityId;
 use oneiron::task_verb::sdk::{
     MachineNodeAnswer, MachineNodeView, MachineScopeClass, MachineScopeReport, MachineStatusItem,
-    MachineStatusReply, MachineTemplateOffer,
+    MachineStatusReply, MachineTemplateOffer, MachineWarmKeyFact,
 };
 
 use super::job_refusal_code;
 use super::node_client::{JobNodeClient, NodeCallError};
 use super::register::issuer_machine;
 use crate::gpu_execution_node::wire::{
-    JobAnswer, JobRequest, NodeAnswer, ScopeClass, ScopeReport, TemplateOffer,
+    JobAnswer, JobRequest, NodeAnswer, ScopeClass, ScopeReport, TemplateOffer, WarmKeyFact,
 };
 use crate::server::SyncServer;
 
@@ -159,7 +159,9 @@ pub fn node_view(answer: Result<JobAnswer, NodeCallError>, asked_at_ms: u64) -> 
     }
 }
 
-fn node_answer(node: NodeAnswer) -> MachineNodeAnswer {
+/// The one view of a node's `Node` answer: what `vault.machines.status` shows, and what the
+/// work-order loop's machine facts are read from (`work_order_host.rs` `facts_of_answer`).
+pub(crate) fn node_answer(node: NodeAnswer) -> MachineNodeAnswer {
     MachineNodeAnswer {
         enabled: node.enabled,
         paused: node.paused,
@@ -173,6 +175,19 @@ fn node_answer(node: NodeAnswer) -> MachineNodeAnswer {
         swept: node.swept,
         boot_id: node.boot_id,
         engine_version: node.engine_version,
+        warm: node.warm.into_iter().map(warm_key_fact).collect(),
+    }
+}
+
+fn warm_key_fact(fact: WarmKeyFact) -> MachineWarmKeyFact {
+    MachineWarmKeyFact {
+        key: fact.key,
+        present: fact.present,
+        mapped: fact.mapped,
+        cache: fact.cache,
+        bytes: fact.bytes,
+        last_used_ms: fact.last_used_ms,
+        uses: fact.uses,
     }
 }
 

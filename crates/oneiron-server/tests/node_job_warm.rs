@@ -295,6 +295,7 @@ caches = ["target:a", "target:b", "target:c"]
                 generation: 1,
             },
             authority_heads: Vec::new(),
+            continues: None,
             warm: warm.iter().map(|key| (*key).to_owned()).collect(),
         };
         SignedJobSubmit::sign(submit, ScriptedSigner::new(self.issuer).as_ref())

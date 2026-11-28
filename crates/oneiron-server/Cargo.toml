@@ -254,8 +254,10 @@ libc = "0.2"
 dirs = "6"
 # `net`: the EXL3 worker's native channel passes its input region's
 # descriptor with SCM_RIGHTS (models/native_exl3). `time`: the vault_machine
-# connector's boot clock (gpu_execution_node/issuer/clock.rs).
-rustix = { version = "1.1", features = ["fs", "net", "process", "time"] }
+# connector's boot clock (gpu_execution_node/issuer/clock.rs). `thread`: the
+# work directory judgement takes the engine's file access on a thread of its
+# own (gpu_execution_node/jobs/staging/payload_dir.rs).
+rustix = { version = "1.1", features = ["fs", "net", "process", "thread", "time"] }
 # A job's checkout: the `git archive` stream of the pinned commit, unpacked
 # beneath the key's payload directory (gpu_execution_node/jobs/staging.rs).
 # The version the workspace already builds.
@@ -713,6 +715,12 @@ name = "core_memory_delete_check_in_ref"
 path = "tests/core_memory_delete_check_in_ref.rs"
 required-features = ["oneiron/test-support"]
 
+# The owner delete answer's remainders and its restricted refusal root on a `MemoryKeystore` too.
+[[test]]
+name = "core_memory_delete_remaining"
+path = "tests/core_memory_delete_remaining.rs"
+required-features = ["oneiron/test-support"]
+
 # The off-record room door promise tests serve the owner's root from a `MemoryKeystore` too.
 [[test]]
 name = "vault_off_record_rooms_doors"
@@ -754,6 +762,13 @@ required-features = ["oneiron/test-support", "mesh"]
 [[test]]
 name = "mesh_pairing_ceiling"
 path = "tests/mesh_pairing_ceiling.rs"
+required-features = ["oneiron/test-support", "mesh"]
+
+# A machine whose sync grant stops holding loses its open sync connection at once, every stream with it, and a
+# revoke of another machine leaves it serving (SYNC-REVOKE-CLOSES-OPEN-CONNECTION = A); the listeners need `mesh`.
+[[test]]
+name = "mesh_sync_revoke_closes_connection"
+path = "tests/mesh_sync_revoke_closes_connection.rs"
 required-features = ["oneiron/test-support", "mesh"]
 
 # The job service answers each stream of a connection on its own: a stream that never finishes

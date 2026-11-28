@@ -20,6 +20,7 @@ use super::neighbourhood::Neighbourhood;
 use super::resources::BoundBranchRead;
 use super::roles::{DREAMER_EXTRACTION_ROLE, bind_reasoning};
 use super::support::invalid_consolidation;
+use super::turn_text::writers::{TurnSpeakers, speaker_labels};
 use super::value_projection::rmpv_to_json;
 use super::watermark::decode_turn_body;
 use crate::claim::ScopedRead;
@@ -84,6 +85,12 @@ pub(crate) struct PreparedExtractionStep {
 }
 
 impl PreparedExtractionStep {
+    /// Every row the transcript was read from, for the answer-schema capture: the TURN
+    /// rows the call inputs below dedupe.
+    pub(crate) fn capture_sources(&self) -> Vec<EntityId> {
+        self.sources.clone()
+    }
+
     /// What this step's call shows beside its words, as its request names it
     /// and its record keeps it: the row behind each label, the served byte
     /// range of each piece in request order, the sources in id order, each
@@ -175,8 +182,9 @@ pub(crate) struct ExtractionStepPiece {
 /// slice, grouped by part line and co-mentioned known entities over the
 /// frozen TURN texts, and `page` must name one page of that slice's
 /// listing when it pages. Each TURN's speaker is its checked native body
-/// speaker, or unknown when the body names none, with the source speaker
-/// PERSON label beside the role as native shows it. The transcript lists
+/// speaker, or unknown when the body names none, with the PERSON labels
+/// beside the role as native shows them: an imported turn's source speaker,
+/// or a native person turn's writers. The transcript lists
 /// each cited TURN in input order under its conversation header, each
 /// named by its turn label, with the selected listing page after the
 /// first header. The transcript holds no host material; execution
@@ -298,6 +306,7 @@ pub(crate) fn prepare_bound_step(
     if scoped.scope.relationship.is_none() {
         page_rels.extend(pages[selected].member_relationships());
     }
+    let rule = TurnSpeakers::read_in(vault, txn).map_err(bound_branch_error)?;
     for (at, piece) in pieces.iter().enumerate() {
         let turn = piece.turn;
         let text = &piece.text;
@@ -318,11 +327,19 @@ pub(crate) fn prepare_bound_step(
             .get(&turn)
             .and_then(|speaker| speaker.as_deref())
             .unwrap_or("unknown");
-        let speaker = bound
-            .turn_text(turn)
-            .and_then(TurnText::source_speaker)
-            .map(|person| format!(" {}", labels.assign(LabelKind::Entity, person)))
-            .unwrap_or_default();
+        let imported = bodies
+            .get(&turn)
+            .is_some_and(|body| decode_turn_body(body).imported);
+        let people = rule
+            .people_in(
+                vault,
+                txn,
+                speakers.get(&turn).and_then(|s| s.as_deref()),
+                imported,
+                bound.turn_text(turn),
+            )
+            .map_err(bound_branch_error)?;
+        let speaker = speaker_labels(&mut labels, &people);
         transcript.push_str(&format!("[{turn_label} {role}{speaker}] {text}\n"));
     }
     let mut sources: Vec<EntityId> = labels.rows().collect();
@@ -599,10 +616,15 @@ pub(crate) async fn execute_bound_step(
     let rules = failure_rules::load(ctx.vault)?;
     let material = render_host_material(loan.material);
     let transcript = format!("{material}{}", prepared.transcript);
+    let answer_schema = {
+        let txn = ctx.vault.store.env.read_txn().map_err(crate::Error::from)?;
+        super::answer_schema::answer_schema_in_force_in_txn(ctx.vault, &txn)?
+    };
     let mut request = ConsolidationExecutor::request_over(
         &loan.call,
         loan.prompt,
         None,
+        answer_schema,
         transcript,
         &prepared.scope,
     )?;
@@ -617,6 +639,16 @@ pub(crate) async fn execute_bound_step(
         .authorize_model_role(DREAMER_EXTRACTION_ROLE, request, &loan.call.inference)?
         .into_request();
     bind_reasoning(ctx.vault, loan.call.backend, &mut request)?;
+    if answer_schema {
+        // The nightly check's capture: one row after the request is final, before the call.
+        super::answer_schema::capture::capture_turn_call(
+            ctx.vault,
+            ctx.attempt_id,
+            &request,
+            &prepared.capture_sources(),
+            ctx.now_ms / 1_000,
+        )?;
+    }
     let backend = loan.call.call_backend(Some(prepared.sources.clone()));
     #[cfg(oneiron_test_support)]
     let request_hash = request

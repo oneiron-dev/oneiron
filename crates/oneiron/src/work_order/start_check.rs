@@ -152,8 +152,8 @@ impl Vault {
     /// The start's check of an order's attempt, read in `txn` (the built start's own read
     /// and its write, hunk H1): the order is as the loop read it and its wait has not run
     /// out, the attempt is its next one under the fixed job id `job`, the requester's
-    /// authority lives, and the workload's approval covers the machine in a scope the order
-    /// allows. Nothing is held when it says no.
+    /// authority lives, its `after` and caps let it run (row Q5), and the workload's approval
+    /// covers the machine in a scope the order allows. Nothing is held when it says no.
     ///
     /// # Errors
     ///
@@ -181,6 +181,9 @@ impl Vault {
         let Some(starter) = self.order_authority_in_txn(txn, &order)? else {
             return Ok(Err(AttemptRefused::Blocked(Blocker::GrantNotLive)));
         };
+        if let Some(blocker) = self.attempt_conditions_in_txn(txn, &order)? {
+            return Ok(Err(AttemptRefused::Blocked(blocker)));
+        }
         if let (Some(machine), Some(workload_starter)) =
             (attempt.machine, order.ordered_by.starter())
         {

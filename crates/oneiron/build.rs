@@ -64,6 +64,7 @@ fn main() {
         "crates/oneiron/src/verbs/generated/run_verb_catalog.rs",
         "crates/oneiron/src/verbs/generated/sdk_generated.rs",
         "crates/oneiron/src/verbs/generated/catalog_fragment_revision.rs",
+        "crates/oneiron/src/verbs/generated/verb_tree_index.json",
         "crates/oneiron/src/verbs/generated/catalog_fragment.d.ts",
         "crates/oneiron/src/verbs/generated/code-mode.d.ts",
         "crates/oneiron/src/generated/core_verb_names.rs",

@@ -1,7 +1,7 @@
 //! Entity/claim read surface plus BM25 and neighbor queries.
 //! Split from the flat `facade.rs`; surface re-exported by [`super`].
 
-use super::read_lane::{ReadTargetSlot, fold_receipt};
+use super::read_lane::{NamedView, ReadTargetSlot, fold_receipt};
 use super::recall::*;
 use super::structural::*;
 use super::support::*;
@@ -35,6 +35,91 @@ mod receipt_page;
 
 pub use receipt_page::VaultReceiptsPage;
 pub(crate) use receipt_page::{ReceiptReader, receipts_page_for};
+
+pub(super) type HydrateRef<'r> = (&'r str, Option<(&'r str, crate::vault::ReadMode)>);
+
+/// Parses the refs without consulting the vault or the room. A room accepts
+/// its own alias grammar in addition to vault refs.
+pub(super) fn parse_hydrate_refs(refs: &[String], in_room: bool) -> Vec<HydrateRef<'_>> {
+    refs.iter()
+        .map(|supplied| {
+            // The base is resolved as it was checked: trimmed. The miss
+            // echoes the supplied string whole (REVIEW-10571 P1 2).
+            let parsed = entity_read_mode(supplied)
+                .ok()
+                .map(|(reference, mode)| (reference.trim(), mode))
+                .filter(|(base, _)| {
+                    EntityId::from_hex(base).is_ok()
+                        || crate::entity_id::parse_short_ref_syntax(base).is_ok()
+                        || (in_room && super::room_short_ref(base).is_some())
+                });
+            (supplied.as_str(), parsed)
+        })
+        .collect()
+}
+
+/// Reads the well-formed refs and keeps found targets paired with their
+/// views for asset serving. Both the views and misses keep request order.
+pub(super) fn read_hydrate_batch(
+    refs: Vec<HydrateRef<'_>>,
+    mut resolve: impl FnMut(&str, crate::vault::ReadMode) -> MemoryResult<ReadTargetSlot>,
+    read: impl FnOnce(&[ReadTargetSlot]) -> MemoryResult<ScopedReadResult<Vec<NamedView>>>,
+) -> MemoryResult<(HydrateResult, Vec<ReadTargetSlot>)> {
+    let targets = refs
+        .iter()
+        .filter_map(|(_, parsed)| *parsed)
+        .map(|(reference, mode)| resolve(reference, mode))
+        .collect::<MemoryResult<Vec<_>>>()?;
+    let ScopedReadResult { value, receipt } = read(&targets)?;
+    let mut views = Vec::with_capacity(value.len());
+    let mut found_targets = Vec::with_capacity(value.len());
+    let mut missing = Vec::new();
+    let mut slots = targets.into_iter().zip(value);
+    for (reference, parsed) in refs {
+        let reason = if parsed.is_some() {
+            let Some((target, view)) = slots.next() else {
+                // The lane answers one slot per target it was given.
+                return Err(MemoryError::new(
+                    MEMORY_CODE_INTERNAL,
+                    "the hydrate read answered fewer slots than its refs".to_owned(),
+                    &[],
+                )
+                .with_read_receipt(receipt));
+            };
+            match view {
+                Ok(Some(view)) => {
+                    found_targets.push(target);
+                    views.push(view);
+                    continue;
+                }
+                Ok(None) => HydrateMissReason::NotFound,
+                Err(refusal) => {
+                    let error = MemoryError::from(refusal);
+                    if error.code != MEMORY_CODE_NOT_FOUND {
+                        return Err(error.with_read_receipt(receipt));
+                    }
+                    HydrateMissReason::NotFound
+                }
+            }
+        } else {
+            HydrateMissReason::Malformed
+        };
+        missing.push(HydrateMiss {
+            reference: reference.to_owned(),
+            reason,
+        });
+    }
+    Ok((
+        HydrateResult {
+            read: ScopedReadResult {
+                value: views,
+                receipt,
+            },
+            missing,
+        },
+        found_targets,
+    ))
+}
 
 const SNIPPET_MAX_CHARS: usize = 160;
 
@@ -89,6 +174,32 @@ pub struct ClaimView {
     /// this read already admitted: labelled with its served value.
     #[serde(default)]
     pub claim: Option<crate::lens::RecordRef>,
+    /// The pending consent and its reasons, when this proposal is held and
+    /// the reader is its writer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub held: Option<HeldMark>,
+    /// The pending correction waiting on this claim, when one is parked and
+    /// the reader wrote it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_correction: Option<PendingCorrection>,
+}
+
+/// The tray entry holding a proposed claim for consent.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct HeldMark {
+    /// Why the claim is held.
+    pub reason_codes: Vec<String>,
+    /// The tray entry's `gate:<decision hex>` reference.
+    pub decision_ref: String,
+}
+
+/// A parked correction waiting on an old claim.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PendingCorrection {
+    /// 32-hex id of the new claim.
+    pub claim_ref: String,
+    /// The tray entry's `gate:<decision hex>` reference.
+    pub decision_ref: String,
 }
 
 #[doc(hidden)]
@@ -260,6 +371,27 @@ impl Memory<'_> {
             })
             .collect::<MemoryResult<Vec<_>>>()?;
         self.hydrated(&lane, refs, &targets, "does not resolve", whole_body)
+    }
+
+    /// Reads `vault.hydrate`: returns found views and lists the unresolved
+    /// refs. A missing or withheld record has the same `not_found` reason.
+    pub fn hydrate_found(&self, refs: &[String]) -> MemoryResult<HydrateResult> {
+        let refs = parse_hydrate_refs(refs, false);
+        let lane = self
+            .read_lane(ClaimReadStatus::Recorded)?
+            .with_live_grant_receipts();
+        let (mut result, found_targets) = read_hydrate_batch(
+            refs,
+            |reference, mode| self.read_target(reference, mode),
+            |targets| self.read_named_views(&lane, targets),
+        )?;
+        self.serve_hydrated_assets(
+            &lane,
+            &found_targets,
+            &mut result.read.value,
+            &mut result.read.receipt,
+        )?;
+        Ok(result)
     }
 
     /// One hydrate read: every view, or `NOT_FOUND` naming the first ref that
@@ -731,7 +863,30 @@ impl Memory<'_> {
         self.claim_view(id, body)
     }
 
+    /// [`Self::served_claim_view`] without the claim's birth: `made_by` and
+    /// `for_org` are `None`. The birth is read through a scoped point read,
+    /// which charges the claim to the reader's read exposure (L8-65), so a
+    /// door that tests a view before it decides to serve it tests this one,
+    /// then builds [`Self::served_claim_view`] for the claims it returns
+    /// alone (the own held lists).
+    pub(super) fn claim_view_without_birth(
+        &self,
+        id: &EntityId,
+        body: &ClaimBody,
+    ) -> MemoryResult<ClaimView> {
+        self.claim_view_in(id, body, false)
+    }
+
     fn claim_view(&self, id: &EntityId, body: &ClaimBody) -> MemoryResult<ClaimView> {
+        self.claim_view_in(id, body, true)
+    }
+
+    fn claim_view_in(
+        &self,
+        id: &EntityId,
+        body: &ClaimBody,
+        with_birth: bool,
+    ) -> MemoryResult<ClaimView> {
         // A claim whose parts read as a secret together serves none of them.
         let secret = crate::batch::export::claim_reads_as_secret(body);
         let served = |value: &rmpv::Value| {
@@ -753,7 +908,11 @@ impl Memory<'_> {
             serde_json::Value::String(text) => claim.with_label(text),
             other => claim.with_label(&other.to_string()),
         };
-        let made_by = self.collection_view(id)?.and_then(|view| view.made_by);
+        let made_by = if with_birth {
+            self.collection_view(id)?.and_then(|view| view.made_by)
+        } else {
+            None
+        };
         let for_org = self.claim_for_org(made_by.as_ref())?;
         Ok(ClaimView {
             claim: Some(claim),
@@ -779,6 +938,14 @@ impl Memory<'_> {
             valid_to: body.valid_to,
             salience: body.salience,
             stale: body.stale,
+            // The tray's reasons are the writer's own and the tray reader's
+            // (`vault.writes.pending`); every other reader sees no mark.
+            held: if body.approval == ClaimApprovalStatus::Proposed && self.is_own_write(body) {
+                self.held_mark(id)?
+            } else {
+                None
+            },
+            pending_correction: None,
         })
     }
 

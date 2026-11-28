@@ -24,7 +24,6 @@ use crate::cli::{
 use crate::config::ServeConfig;
 use crate::config::{ServeArgs, SyncServerConfig, resolve_serve_config};
 use crate::managed;
-use crate::server::SyncServer;
 use crate::skills_pack::{self, OutputMode};
 
 /// `oneiron api …`: the bash-native lane. It is curl-backed rather than a
@@ -48,6 +47,9 @@ mod token_operator;
 pub use self::token_operator::{TokenOperatorArgs, token_operator};
 
 pub use self::api::api;
+/// `oneiron project …`: the owner's folder-to-PROJECT binding, over `oneiron api`'s transport.
+mod project;
+pub use self::project::{project, workspace_bind_request, workspace_unbind_request};
 mod mcp_bridge;
 pub use self::mcp_bridge::mcp;
 // Runtime files and the import queue are Unix-only.
@@ -171,8 +173,8 @@ use self::serve::serve_with_config;
 pub(crate) use self::serve::spawn_fact_hooks;
 pub(crate) use self::serve::stop_requested;
 pub(crate) use self::serve::{
-    BuiltEmbedder, DRAIN_GRACE, build_embedder, build_server, sign_root_project,
-    start_desktop_workers,
+    BuiltEmbedder, DRAIN_GRACE, build_embedder, build_server, construct_sync_server,
+    joined_store_awaits_home, sign_root_project, start_desktop_workers,
 };
 pub use self::serve::{OpenedServedVault, open_served_vault};
 mod dreamer;
@@ -245,13 +247,48 @@ pub fn provenance(args: ProvenanceArgs) -> anyhow::Result<()> {
 /// The command is intentionally not an HTTP route: possession of the host's
 /// local vault and issuer key is the admission. No bearer-only credential is
 /// revived and no root slip or signing key is printed.
+///
+/// It prints the owner's pairing link, which a client redeems at
+/// `/v1/core/pairing/redeem`. With `--redeem`, this process redeems the link
+/// itself at once with a fresh connection key, as `token read` does, and
+/// prints the owner's own credential in `token read`'s form instead: for an
+/// owner at the box with no client to redeem it. The link is then never
+/// printed, and the slip is logged and revoked by its id like every paired
+/// slip.
 pub fn token_bootstrap(args: TokenBootstrapArgs) -> anyhow::Result<()> {
-    let link = token_bootstrap_link(&args)?;
-    println!("{link}");
+    let BootstrapLink {
+        origin,
+        owner,
+        vault,
+        issuer,
+        link,
+    } = issue_bootstrap_link(&args)?;
+    let owner = owner.to_hex();
+    let printed = if args.redeem {
+        serde_json::to_string_pretty(&redeem_link_here(&vault, &issuer, &link, &owner, "human")?)?
+    } else {
+        oneiron::authority::format_pinned_pairing_link(
+            &origin,
+            &link.code,
+            &owner,
+            link.pin.as_ref(),
+        )
+    };
+    println!("{printed}");
     Ok(())
 }
 
-fn token_bootstrap_link(args: &TokenBootstrapArgs) -> anyhow::Result<String> {
+/// The first owner's pairing link, issued on the stopped vault, with what
+/// redeeming it here needs.
+struct BootstrapLink {
+    origin: String,
+    owner: oneiron::EntityId,
+    vault: oneiron::Vault,
+    issuer: oneiron::authority::HostSlipIssuer,
+    link: oneiron::authority::PairingLink,
+}
+
+fn issue_bootstrap_link(args: &TokenBootstrapArgs) -> anyhow::Result<BootstrapLink> {
     anyhow::ensure!(
         !args.serve.managed_by_hypnos,
         "managed vaults pair through their supervisor; local bootstrap is self-host only"
@@ -303,12 +340,13 @@ fn token_bootstrap_link(args: &TokenBootstrapArgs) -> anyhow::Result<String> {
             comm: None,
         },
     )?;
-    Ok(oneiron::authority::format_pinned_pairing_link(
-        &origin,
-        &link.code,
-        &owner.to_hex(),
-        link.pin.as_ref(),
-    ))
+    Ok(BootstrapLink {
+        origin,
+        owner,
+        vault,
+        issuer,
+        link,
+    })
 }
 
 /// What `token read` and `token agent` print: the credential in the SDK's
@@ -685,7 +723,6 @@ fn mint_paired_credential(
     lifetime_secs: u64,
     comm: Option<oneiron::agent_dispatch::CommReach>,
 ) -> anyhow::Result<PairedCredential> {
-    use ed25519_dalek::{Signer, SigningKey};
     let mut scope = oneiron::federation::Scope::top();
     scope.verbs = oneiron::federation::ScopeAxis::Some(verbs);
     let pairing_principal = oneiron::authority::PairingPrincipal {
@@ -710,6 +747,21 @@ fn mint_paired_credential(
             pairing_principal,
         )?,
     };
+    redeem_link_here(vault, issuer, &link, principal, actor_class)
+}
+
+/// Redeems `link` in this process at once with a fresh connection key, for
+/// `principal` as `actor_class`: the doors `/v1/core/pairing/redeem` uses,
+/// on the stopped vault. The credential holds the key's seed, so it is
+/// printed once and kept by the caller.
+fn redeem_link_here(
+    vault: &oneiron::Vault,
+    issuer: &oneiron::authority::HostSlipIssuer,
+    link: &oneiron::authority::PairingLink,
+    principal: &str,
+    actor_class: &str,
+) -> anyhow::Result<PairedCredential> {
+    use ed25519_dalek::{Signer, SigningKey};
     let key = SigningKey::generate(&mut rand_core::OsRng);
     let binding_key = key.verifying_key().to_bytes();
     let transcript = oneiron::authority::pairing_binding_transcript_pinned(
@@ -793,11 +845,27 @@ pub fn token_pair(args: TokenPairArgs) -> anyhow::Result<()> {
         )
     );
     eprintln!(
-        "the pairing link expires at unix second {}; its slip may message: {}",
-        link.expires_at,
-        link.comm.as_str()
+        "{}",
+        pairing_link_notice(link.expires_at, link.comm.as_str())
     );
     Ok(())
+}
+
+/// The stderr line `token pair` prints beside the link
+/// (PAIRING-LINK-EXPIRY-ON-VAULT-INSTANT). The link's end is a second on the
+/// vault's clock, the authority plane's clock: it does not advance while the
+/// server is stopped, and a start resumes it from its last saved reading
+/// (review r1 of #10570), so it can read behind this host's clock and is no
+/// measure of the server's running time. The line says so, and gives the life
+/// on that clock.
+fn pairing_link_notice(expires_at: u64, comm: &str) -> String {
+    format!(
+        "the pairing link expires at vault-clock second {expires_at}: one pairing code life \
+         (pairing.code.ttl_secs, one hour unless set) after its issue, measured on the vault \
+         clock, which does not advance while the server is stopped and resumes from its last \
+         saved reading when it starts, so it can read behind this host's clock; its slip may \
+         message: {comm}"
+    )
 }
 
 /// Revokes one previously minted token by its id.
@@ -1032,7 +1100,9 @@ pub async fn revoke(args: RevokeArgs) -> anyhow::Result<()> {
             ),
             e => anyhow::anyhow!("open vault {} failed: {e}", config.vault_path.display()),
         })?;
-    let server = SyncServer::new(Arc::new(vault), config.sync_server_config())
+    // A joined store before its first sync boots with no host issuer here
+    // too, so an offline revoke roots nothing (REVIEW-10532 round 2).
+    let server = construct_sync_server(Arc::new(vault), &config, config.sync_server_config())
         .map_err(|e| anyhow::anyhow!("sync server init failed: {e}"))?;
 
     let revoked = server

@@ -235,6 +235,17 @@ crate::side_table::side_tables! {
     /// One emitted proactivity digest, keyed by its content-derived id. Key: hash32.
     DREAMER_PROACTIVITY_DIGEST: VaultMeta b"dreamer:proactivity:digest:v1:" LegacyJson Authored [accepts: crate::dreamer_runner::dreamer_proactivity_digest_accepts_masked]
         [restore: content] [family: unclassified] [tier: canonical];
+    /// Each stored proactivity digest under every CLAIM it copied a proposal of
+    /// (PROACTIVITY-DIGEST-COPY-ERASURE): the CLAIM's erase looks its digests up
+    /// here. Key: id16(claim) + hash32(digest locator).
+    DREAMER_PROACTIVITY_CLAIM_DIGESTS: VaultMeta b"dreamer:proactivity:claim_digests:v1:" Raw
+        // Payload family: Id-only membership indexes, restored with the rows they index.
+        [restore: content] [family: structure] [tier: canonical];
+    /// Marker that every proactivity digest stored before
+    /// `DREAMER_PROACTIVITY_CLAIM_DIGESTS` existed has been indexed there
+    /// (PROACTIVITY-DIGEST-COPY-ERASURE). Key: ().
+    DREAMER_PROACTIVITY_CLAIM_DIGESTS_INDEXED: VaultMeta b"dreamer:proactivity:claim_digests_indexed:v1" Raw
+        [restore: content] [family: unclassified] [tier: canonical];
     /// Time (u64 BE) of the last digest that delivered judge asks to one recipient. Key: id16.
     DREAMER_PROACTIVITY_JUDGE_ASKS: VaultMeta b"dreamer:proactivity:judge_asks:v1:" Raw
         [restore: content] [family: unclassified] [tier: canonical];

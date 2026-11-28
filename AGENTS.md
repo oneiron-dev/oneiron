@@ -7,9 +7,10 @@ public.
 - Consumer boundary: `CLAUDE.md`. Products are built on top of the engine, never inside it: no
   product names, prompt/persona text, or product-branded modules in engine code.
 - Review guidance: `REVIEW.md`.
-- HTTP API reference for `oneiron-server`: `oneiron.skills.md` (over 70KB, too big for one read). Fetch
-  it by tier heading, not by line number: `## Tier-1: Endpoint Activation Index`, `## Tier-2:
-  Endpoint Details`, `## Tier-3: Schemas And Error Catalog`.
+- HTTP API reference for `oneiron-server`: `oneiron.skills.md` (over 70KB, too big for one read). Find
+  the tier by its heading (`## Tier-1: Endpoint Activation Index`, `## Tier-2: Endpoint Details`,
+  `## Tier-3: Schemas And Error Catalog`) and read the range for the endpoint or schema you need;
+  follow a line citation only when it names this revision.
 
 ## Use the engine from an agent
 
@@ -99,8 +100,9 @@ path dependency into the vendored `crates/heed`.
 
 ## Code map
 
-Read `docs/CODEMAP.md` first (one row per crate, then each crate's top-level modules with layout,
-size bucket and purpose), then search `docs/codemap/<crate>.md` for the owning module or type.
+For an unfamiliar area, start at `docs/CODEMAP.md` (one row per crate, then each crate's top-level
+modules with layout, size bucket and purpose), then search `docs/codemap/<crate>.md` for the owning
+module or type. When you already know the owning module, go straight to it.
 File paths in a crate map are relative to `crates/<crate>/`. The maps cover `crates/` only; the
 macOS app lives at `apps/macos/src-tauri/` and is linked from the overview.
 
@@ -119,8 +121,8 @@ live line counts without changing the maps. The map is a source summary, not a c
 proof of which features compile.
 
 For a narrow lookup, use `rg -n 'gate/evaluate|GateError' docs/codemap/oneiron.md`, then open the
-matching path under `crates/oneiron/`. Do not load a large crate map (especially
-`docs/codemap/oneiron.md`) whole.
+matching path under `crates/oneiron/`. For a crate-wide question, read the sections it covers;
+`docs/codemap/oneiron.md` is about 1.9 MB, too big to load whole.
 
 Size and dependency questions without `tokei` or `cargo-modules` (`rg` is present):
 

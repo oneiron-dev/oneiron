@@ -182,6 +182,12 @@ crate::side_table::side_tables! {
     /// materialization batch fails. Key: yyyy-mm ":" hex32 (entity id).
     SYNC_REMAT_MARKER: SyncState b"rm:w:" Raw
         [restore: content] [family: unclassified] [tier: canonical];
+    /// When the marker's entity first waited for a parent project or the message a project was
+    /// born from that this replica does not hold yet, as u64 little-endian seconds of the store
+    /// clock. Written with the marker, cleared with it.
+    /// Key: yyyy-mm ":" hex32 (entity id).
+    SYNC_REMAT_DEPENDENCY_HOLD_START: SyncState b"rmh:w:" Raw
+        [restore: content] [family: unclassified] [tier: canonical];
     /// Sidecar on a rm:w: marker proving it originated from replay/quarantine (not a delete-safety
     /// purge failure), so terminal quarantine may discharge it. Key: yyyy-mm ":" hex32 (entity id).
     SYNC_REPLAY_REMAT_MARKER_PROVENANCE: SyncState b"rmp:w:" Raw
@@ -430,6 +436,10 @@ crate::side_table::side_tables! {
     /// run. Key: ().
     DELETION_ROW_FENCE_BACKFILLED: VaultMeta b"deletion.row_fence.v1.backfilled" Raw
         [restore: content] [family: unclassified] [tier: canonical];
+    /// Marker that the one-time NOTE-dependency backfill for pre-N1 NOTE-review CLAIMs has run.
+    /// Key: (). Value: in-progress cursor + counters, or complete counters.
+    NOTE_CLAIM_DEPENDENCY_BACKFILL: VaultMeta b"dreamer.note_claim_dependency.v1.backfill" Raw
+        [restore: content] [family: unclassified] [tier: canonical];
     /// Immutable account/organization owner binding used to scope hosted derivation caches for this
     /// vault. Key: ().
     DERIVATION_OWNER: VaultMeta b"derivation:owner:v1" Raw
@@ -663,6 +673,12 @@ crate::side_table::side_tables! {
     /// A customer legal hold naming records or gate-decision partitions (OF-470). Key: id16
     /// (hold).
     LEGAL_HOLD_ROW: VaultMeta b"legal_hold:row:v1:" Named
+        [restore: live] [family: unclassified] [tier: canonical];
+    /// Which records a customer hold's sealed capture holds: one empty row per (hold, record,
+    /// capture), written in the writer that seals (placement, widening, each prospective seal;
+    /// never for a Missed seal or a host order). Dropped with the hold's copy. Key: id16 (hold)
+    /// + id16 (record) + id16 (capture).
+    LEGAL_HOLD_SEALED_RECORD: VaultMeta b"legal_hold:sealed_record:v1:" Raw
         [restore: live] [family: unclassified] [tier: canonical];
     /// Tracker-mirror outbox marker. Key: id16.
     LINEAR_TASK_DIRTY: VaultMeta b"linear.task_dirty.v1/" Raw Engine

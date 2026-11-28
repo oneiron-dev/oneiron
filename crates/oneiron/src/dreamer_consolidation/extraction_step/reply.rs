@@ -154,6 +154,7 @@ impl CallSources for BoundReplySources<'_> {
         let piece = self.pieces.iter().find(|piece| piece.turn == turn)?;
         Some(SourceShown {
             text: Some(&piece.text),
+            one_line_fenced: false,
             project: None,
         })
     }

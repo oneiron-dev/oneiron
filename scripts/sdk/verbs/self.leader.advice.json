@@ -1,5 +1,6 @@
 {
   "name": "self.leader.advice",
+  "description": "Returns the host planner's top team suggestions for the bound leader's task without starting work.",
   "input": "crate::code_run::LeaderAdviceInput",
   "output": "crate::agent_dispatch::LeaderAdvice",
   "scope": "Read",

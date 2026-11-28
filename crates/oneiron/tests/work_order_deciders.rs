@@ -153,6 +153,9 @@ fn rig() -> Rig {
     vault
         .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
         .expect("enroll the install");
+    // The handle holds the host's root, as a serving host does: the owner's
+    // setting acts this install carries are then proven, and land.
+    vault.hold_checkpoint_root_signer(Arc::new(issuer));
     let (owner_actor, proof) = embedded_owner(&vault).expect("embedded owner proof");
     Rig {
         _dir: dir,
@@ -290,6 +293,8 @@ impl Rig {
             attempts: Vec::new(),
             result: None,
             intent_key: None,
+            after: None,
+            group: None,
             ordered_at_ms: NOW,
             updated_at_ms: NOW,
             revision: 0,

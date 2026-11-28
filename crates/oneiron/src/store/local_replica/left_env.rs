@@ -134,6 +134,7 @@ static LEAVE_KEPT_FAMILIES: &[&SideTableDecl] = &[
     // Legal holds: definitions and logs.
     &side_table::LEGAL_HOLD_ROW,
     &side_table::LEGAL_HOLD_EVENT,
+    &side_table::LEGAL_HOLD_SEALED_RECORD,
     &side_table::LEGAL_HOLD_HOST_ROW,
     &side_table::LEGAL_HOLD_HOST_PROSPECTIVE,
     &side_table::LEGAL_HOLD_HOST_PROSPECTIVE_OUTBOX,
@@ -170,6 +171,7 @@ static LEAVE_KEPT_FAMILIES: &[&SideTableDecl] = &[
     &side_table::RECEIPT_FAMILY_INDEX_VERSION,
     &side_table::GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE,
     &side_table::DELETION_ROW_FENCE_BACKFILLED,
+    &side_table::NOTE_CLAIM_DEPENDENCY_BACKFILL,
     &side_table::ORIGIN_CAS_BACKFILL,
     &side_table::SCOPE_STAMP_SWEEP_DONE,
     &side_table::SCOPE_POLICY_SWEEP_DONE,

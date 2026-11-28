@@ -82,6 +82,7 @@ impl<'a> ContextPackBuilder<'a> {
                 vector_completed: false,
                 temporal_hints: Vec::new(),
                 cited_messages: std::collections::HashMap::new(),
+                bar_similarity: std::collections::HashMap::new(),
                 pack: super::super::empty_pack::skipped_by_profile_pack(),
                 telemetry_run_id: None,
                 telemetry: match self.session {
@@ -843,6 +844,7 @@ impl<'a> ContextPackBuilder<'a> {
                 vector_completed: pipeline_output.vector_completed,
                 temporal_hints: pipeline_output.temporal_hints,
                 cited_messages: pipeline_output.cited_messages,
+                bar_similarity: pipeline_output.bar_similarity,
                 pack: ContextPack {
                     capabilities,
                     l2_base,

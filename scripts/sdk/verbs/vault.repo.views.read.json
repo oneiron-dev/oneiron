@@ -16,5 +16,6 @@
   "host_door_lists": true,
   "host_door_caller": true,
   "host_door_session": true,
-  "openapi": true
+  "openapi": true,
+  "caller_code": "refused"
 }

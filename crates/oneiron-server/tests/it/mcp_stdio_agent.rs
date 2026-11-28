@@ -2121,10 +2121,10 @@ fn a_tool_call_runs_as_its_credential_and_one_naming_another_actor_is_refused() 
     }
 }
 
-/// With no `--surface`, the bridge forwards to `/mcp`, the code-mode pair
-/// (`setup_oneiron`, `execute_code`), when `/mcp`'s `initialize` says this
+/// With no `--surface`, the bridge forwards to `/mcp`, the code-mode door
+/// (`setup_oneiron`, `execute`, `resume`), when `/mcp`'s `initialize` says this
 /// credential may run code; to `/mcp/tool-first` otherwise, even when `/mcp`
-/// lists `execute_code` (Astra: a read-only agent was pinned to a door it
+/// lists `execute` (Astra: a read-only agent was pinned to a door it
 /// could not use); and a named `--surface` is used as named, with nothing
 /// asked (ARCH-0028; drift E4). Before, it was always `/mcp/tool-first`. A probe
 /// the server never answers ends each call that waited on it within that
@@ -2150,7 +2150,8 @@ fn the_bridge_takes_the_code_mode_pair_only_for_a_credential_that_may_run_code()
         let seen: Seen = Arc::new(Mutex::new(Vec::new()));
         let mut listed = vec![json!({ "name": "setup_oneiron" })];
         if code_host {
-            listed.push(json!({ "name": "execute_code" }));
+            listed.push(json!({ "name": "execute" }));
+            listed.push(json!({ "name": "resume" }));
         }
         let port = fake_mcp_server(Arc::clone(&seen), Value::Array(listed), Some(admitted));
         let origin = format!("http://127.0.0.1:{port}");

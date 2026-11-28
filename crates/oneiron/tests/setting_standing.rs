@@ -446,3 +446,30 @@ fn standing_approval_is_the_owners_yes_over_the_owners_row_and_never_reaches_und
         "the pin decides"
     );
 }
+
+/// The bound on the dependency-hold WARN of the GDPR breach signal is the owner's own value
+/// (GDPR-HOLD-BOUND = A): the owner's standing approval does not cover it, so an agent's
+/// widening under a live standing line still waits on the owner (review round 1 of #10563).
+#[test]
+fn standing_approval_never_lands_an_agents_widening_of_the_remat_hold_bound() {
+    const HOLD: &str = "sync.remat.dependency_hold_max_secs";
+    let fx = Fixture::rooted();
+    let trusted = fx.agent();
+    fx.grant(trusted, &[SET, GET, &set_line(HOLD), &widen_line(HOLD)]);
+
+    let asked = call(
+        &fx.as_agent(trusted),
+        SET,
+        set(HOLD, vault_scope(), json!(31_536_000)),
+    );
+    assert_eq!(
+        status(&asked),
+        "pending",
+        "the standing line does not reach the hold bound: {asked}"
+    );
+    assert_ne!(
+        get(&fx.as_owner(), HOLD, json!([]))["value"],
+        json!(31_536_000),
+        "the year-long bound is not in force"
+    );
+}

@@ -15,7 +15,7 @@ use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState}
 use crate::claim::ScopedReadActorKey;
 use crate::code_run::storage::ExecutorStorage;
 use crate::code_run::{
-    AgentVerbAnswer, CompareKnown, RunCall, SelfAgentSpawnCall, SelfAgentSpawnResult, SelfCall,
+    AgentVerbAnswer, CompareKnown, SelfAgentSpawnCall, SelfAgentSpawnResult, SelfCall,
     SelfDeniedResult, SelfDispatchOutcome, SelfEffect, SelfFailedResult, SelfTaskRefusalResult,
     SelfTaskRefuseCall,
 };
@@ -537,16 +537,22 @@ impl<'a> HostSelfDispatcher<'a> {
 
     /// `tasks.consult.result` (DOOR-063): the addressed peer's run lands its
     /// answer or abstention on the consult TASK, as the run's own actor. The
-    /// run must hold its live lease, and the read lane its door admitted the
+    /// run must hold a live lease, and the read lane its door admitted the
     /// call with must read the TASK, the result and every evidence or reason
-    /// ref, in one snapshot; the lease is read again after them. Whether this
-    /// actor is the peer the consult addressed, and every other landing rule,
-    /// is the engine's. A refusal answers as a typed failure the script can
-    /// read.
+    /// ref, in one snapshot. Then the consult must be the TASK that lease
+    /// names, or one addressed to this run's actor as a running child, whose
+    /// inbox input no attempt leases (`lands_from_run`); the lease is read
+    /// again after them. Whether this actor is the peer the consult
+    /// addressed, and every other landing rule, is the engine's. A refusal
+    /// answers as a typed failure the script can read.
+    /// While the consult's ConsultAssignee fact has not landed here, a run
+    /// that `may_park` parks until it does; a host call, which cannot park,
+    /// gets the landing's own invalid-state refusal.
     pub(super) fn dispatch_consult_result(
         &self,
         call: ConsultLandRequest,
         read_as: Option<ScopedReadActorKey>,
+        may_park: bool,
     ) -> Result<SelfDispatchOutcome> {
         let refused = |message: &str, fix: &str| {
             failed(
@@ -574,13 +580,33 @@ impl<'a> HostSelfDispatcher<'a> {
                 "Cite only refs your read lane reads, then land again.",
             ));
         }
+        let leased = match self.agent_parent {
+            Some(parent) => DreamerRunnerStore::new(vault)
+                .status(parent)?
+                .ok_or_else(invalid)?
+                .attempt
+                .task_ref
+                .as_deref()
+                .map(crate::EntityId::from_hex)
+                .transpose()?,
+            None => None,
+        };
+        let lands = crate::task_verb::run_rows::consult_result::lands_from_run;
+        if !lands(vault, task, leased, self.actor.entity_ref())? {
+            return Ok(refused(
+                "a consult lands only on the TASK this run leased, or addressed to this running child",
+                "Land each consult from the run its TASK leased to you, or from the child it addresses.",
+            ));
+        }
         // A lease lost while the refs were read lands nothing.
         self.task_host_binding()?.ok_or_else(invalid)?;
         let memory = vault.memory(self.actor.entity_ref(), self.actor.actor_class());
-        match memory.consult_assignee_park(task) {
-            Ok(Some(wait)) => return Ok(SelfDispatchOutcome::DurableWait(wait)),
-            Ok(None) => {}
-            Err(error) => return Ok(failed(SelfEffect::ConsultResult, error)),
+        if may_park {
+            match memory.consult_assignee_park(task) {
+                Ok(Some(wait)) => return Ok(SelfDispatchOutcome::DurableWait(wait)),
+                Ok(None) => {}
+                Err(error) => return Ok(failed(SelfEffect::ConsultResult, error)),
+            }
         }
         let receipt = match memory.land_consult_result(task, &input) {
             Ok(receipt) => receipt,
@@ -599,11 +625,14 @@ impl<'a> HostSelfDispatcher<'a> {
     /// admitted (the room's participant, the off-record line, a step past a
     /// write that did not meet its receipt, the bound door), then resolves
     /// the lease its skill runs under. The skill itself runs on the
-    /// executor's host, which alone holds a runtime to run it on.
+    /// executor's host, which alone holds a runtime to run it on. `outer`:
+    /// the call is the one a credential-bound host projection entered for
+    /// its caller ([`Self::admit_skill_call`]).
     pub(crate) fn admit_skill_call_for_executor_run(
         &self,
         site: ExecutorCallSite<'_>,
         call: &SelfCall,
+        outer: bool,
     ) -> Result<std::result::Result<CallableSkillLease, SelfDispatchOutcome>> {
         let effect = call.effect();
         self.storage.answered(|| {
@@ -617,14 +646,14 @@ impl<'a> HostSelfDispatcher<'a> {
                     ..refused
                 })));
             }
-            let read_as = match self.admit_run_call(RunCall::Bridge(effect))? {
+            let read_as = match self.admit_skill_call(call, outer)? {
                 Ok(read_as) => read_as,
                 Err(refusal) => {
                     return Ok(Err(SelfDispatchOutcome::Denied(SelfDeniedResult {
                         hook_notice: None,
                         effect,
                         outcome: refusal.code,
-                        reason_codes: Vec::new(),
+                        reason_codes: refusal.reason_codes,
                     })));
                 }
             };

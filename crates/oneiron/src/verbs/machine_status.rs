@@ -207,6 +207,32 @@ pub struct MachineNodeAnswer {
     pub swept: bool,
     pub boot_id: String,
     pub engine_version: String,
+    /// Its warm keys (pass 34, 4.1; row P2), each with what the node knows
+    /// of its path; nothing about a key's content. Left out when empty, so
+    /// an answer without warm keys reads as before.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warm: Vec<MachineWarmKeyFact>,
+}
+
+/// One warm key a node reports (pass 34, 4.1; row P2).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MachineWarmKeyFact {
+    pub key: String,
+    /// A template maps the key to a path, and the path exists now.
+    pub present: bool,
+    /// A template maps the key to a path; a key no template maps is
+    /// remembered from use alone, a hint.
+    pub mapped: bool,
+    /// Its path is a cache: absent is a cold start, and the cache budget
+    /// may remove it.
+    pub cache: bool,
+    /// What its path held at the last cache pass; 0 when not measured.
+    pub bytes: u64,
+    /// When an attempt that listed it last ended with exit 0, or when the
+    /// node first found its path.
+    pub last_used_ms: Option<u64>,
+    /// How many attempts that listed it ended with exit 0.
+    pub uses: u64,
 }
 
 /// One template a node holds.

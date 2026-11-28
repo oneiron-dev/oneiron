@@ -1,0 +1,17 @@
+{
+  "name": "vault.mesh.pair_self",
+  "description": "Pair this install's own MACHINE for the owner, under a pairing whose ceiling is every served protocol; answers the binding body each other replica takes, and binds or grants nothing here.",
+  "input": "crate::task_verb::sdk::EmptyRequest",
+  "output": "crate::task_verb::sdk::MeshMachineBinding",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.mesh.pair_self\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "openapi": true,
+  "scope": "Write",
+  "act_class": "unstated",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "owner"
+}

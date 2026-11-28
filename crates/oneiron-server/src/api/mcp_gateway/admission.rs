@@ -33,7 +33,7 @@ pub(super) fn mcp_surface_unavailable(
 ///    scope of its own.
 ///
 /// The fourth is the ONE-1704 B3 close: this admission no longer answers `Ok`
-/// for every non-verb call. `execute_code` builds an actor-wide gated write, so
+/// for every non-verb call. `execute` and `resume` build an actor-wide gated write, so
 /// it cannot be narrowed downstream; under a world- OR facet-narrowed
 /// credential it is refused here, fail-closed, with the two axes enforced
 /// independently, and so is every verb row marked `unrestricted`. The one
@@ -55,20 +55,20 @@ pub(crate) fn mcp_admit_scoped_call(
         // ceiling row by row (`mcp_scoped_tasks_section`), so it is the one
         // call a narrowed credential may make unchanged.
         McpValidatedToolArgs::Setup(_) => return Ok(()),
-        // Unreachable from either registered wire surface (B1/B2), and refused
-        // here too rather than admitted by omission.
-        McpValidatedToolArgs::ExecuteCode(_) => {
-            return mcp_admit_unscoped_execution(actor, crate::mcp::MCP_EXECUTE_CODE_TOOL, "name");
+        // `execute` and `resume` run as the credential's own actor under
+        // the run's gates: no verb or scope narrows them downstream, so
+        // there is nothing to scope here either.
+        McpValidatedToolArgs::Execute(_) => {
+            return mcp_admit_unscoped_execution(actor, crate::mcp::MCP_EXECUTE_TOOL, "name");
         }
-        // It reads only what execute_code ran, so it is admitted as that is.
-        McpValidatedToolArgs::ReadResult(_) => {
-            return mcp_admit_unscoped_execution(actor, crate::mcp::MCP_READ_RESULT_TOOL, "name");
+        McpValidatedToolArgs::Resume(_) => {
+            return mcp_admit_unscoped_execution(actor, crate::mcp::MCP_RESUME_TOOL, "name");
         }
         // The wrapper never routes around the connector's allow-list: the
         // verb it runs is admitted by name too. An action runs under the
         // credential's own slip and read key, so no world or facet a
         // registration narrows to rides it: a narrowed connector is refused,
-        // as for execute_code.
+        // as for execute.
         McpValidatedToolArgs::InvokeAction(action) => {
             mcp_admit_bound_tool(actor, &action.verb).map_err(|error| error.with_field("verb"))?;
             return mcp_admit_unscoped_execution(actor, crate::mcp::MCP_INVOKE_ACTION_TOOL, "name");
@@ -79,12 +79,11 @@ pub(crate) fn mcp_admit_scoped_call(
 }
 
 /// Whether this credential may start a code run here: a bound code host,
-/// and everything an `execute_code` call meets before its program is read.
-/// `/mcp` lists `execute_code` to every credential alike, so the listing
-/// cannot say this; `initialize` does, and the stdio bridge picks its
-/// endpoint by it.
+/// and everything an `execute` call meets before its program is read.
+/// `initialize` says this per credential, and the stdio bridge picks its
+/// endpoint by it; the listing alone cannot.
 pub(crate) fn mcp_execute_code_admitted(server: &Arc<SyncServer>, actor: &McpCallContext) -> bool {
-    let tool = crate::mcp::MCP_EXECUTE_CODE_TOOL;
+    let tool = crate::mcp::MCP_EXECUTE_TOOL;
     server.code_execution_host().is_some()
         && mcp_admit_bound_tool(actor, tool).is_ok()
         && mcp_admit_unscoped_execution(actor, tool, "name").is_ok()
@@ -103,21 +102,9 @@ pub(crate) fn mcp_admit_scoped_verb(
     mcp_admit_verb_scope(server, tool, arguments, actor)
 }
 
-/// A verb a bound host operation runs on its own behalf: a browser batch's
-/// routine decisions are `ai.verdict` calls. The batch's own binding carries
-/// it, so only the verb's scope is admitted here, never a tool binding.
-pub(crate) fn mcp_admit_step_verb(
-    server: &Arc<SyncServer>,
-    tool: crate::mcp::McpGeneratedVerbTool,
-    arguments: &crate::mcp::McpVerbArguments,
-    actor: &McpCallContext,
-) -> Result<(), McpGatewayError> {
-    mcp_admit_verb_scope(server, tool, arguments, actor)
-}
-
 /// One verb-table row a code run serves itself (`vault.search`,
 /// `vault.claims.put`, …). No tool carries it, so the bound-verb ceiling names it by
-/// its row name. Its world/facet axis is the run's: `execute_code` admits no
+/// its row name. Its world/facet axis is the run's: `execute` admits no
 /// narrowed credential.
 pub(crate) fn mcp_admit_run_verb(
     actor: &McpCallContext,
@@ -138,7 +125,10 @@ pub(crate) fn mcp_admit_host_verb(
     mcp_admit_unscoped_execution(actor, verb.as_str(), "name")
 }
 
-fn mcp_admit_bound_tool(actor: &McpCallContext, tool_name: &str) -> Result<(), McpGatewayError> {
+pub(crate) fn mcp_admit_bound_tool(
+    actor: &McpCallContext,
+    tool_name: &str,
+) -> Result<(), McpGatewayError> {
     if actor.admits_tool(tool_name) {
         return Ok(());
     }
@@ -248,8 +238,8 @@ fn mcp_admit_unscoped_execution(
 fn mcp_called_tool_name(args: &McpValidatedToolArgs) -> &'static str {
     match args {
         McpValidatedToolArgs::Setup(_) => crate::mcp::MCP_SETUP_TOOL,
-        McpValidatedToolArgs::ExecuteCode(_) => crate::mcp::MCP_EXECUTE_CODE_TOOL,
-        McpValidatedToolArgs::ReadResult(_) => crate::mcp::MCP_READ_RESULT_TOOL,
+        McpValidatedToolArgs::Execute(_) => crate::mcp::MCP_EXECUTE_TOOL,
+        McpValidatedToolArgs::Resume(_) => crate::mcp::MCP_RESUME_TOOL,
         McpValidatedToolArgs::InvokeAction(_) => crate::mcp::MCP_INVOKE_ACTION_TOOL,
         McpValidatedToolArgs::Verb(verb) => verb.tool.name,
     }
@@ -584,7 +574,7 @@ pub(super) fn mcp_pre_resolution_wrong_root(
     mode: McpSurfaceMode,
     name: &str,
 ) -> Option<McpGatewayError> {
-    if name == crate::mcp::MCP_EXECUTE_CODE_TOOL {
+    if name == crate::mcp::MCP_EXECUTE_TOOL || name == crate::mcp::MCP_RESUME_TOOL {
         return None;
     }
     let surface = server.mcp_surface(mode).ok()?;
@@ -610,7 +600,8 @@ pub(super) fn mcp_validated_call_args(
 ) -> Result<McpValidatedToolArgs, McpGatewayError> {
     let surface = server.mcp_surface(mode).map_err(mcp_surface_unavailable)?;
     let Some(tool) = surface.resolve(&params.name) else {
-        if params.name == crate::mcp::MCP_EXECUTE_CODE_TOOL {
+        if params.name == crate::mcp::MCP_EXECUTE_TOOL || params.name == crate::mcp::MCP_RESUME_TOOL
+        {
             return Err(mcp_code_host_unbound());
         }
         // A canonical verb under the wrong root is refused with its
@@ -646,10 +637,7 @@ pub(super) fn mcp_code_host_unbound() -> McpGatewayError {
     McpGatewayError::new(
         -32020,
         crate::mcp::MCP_CODE_HOST_UNBOUND_CODE,
-        format!(
-            "{tool} has no verified production runtime on this server; no run was created",
-            tool = crate::mcp::MCP_EXECUTE_CODE_TOOL,
-        ),
+        "execute and resume have no verified production runtime on this server; no run was created",
     )
     .with_field("name")
 }

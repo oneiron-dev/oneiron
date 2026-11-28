@@ -1,5 +1,6 @@
 {
   "name": "self.inbox.concern",
+  "description": "Reads one agent health concern card and its run tree by handle for a recipient or vault owner.",
   "input": "crate::dreamer_runner::maintenance::agent_health::ConcernCardRequest",
   "output": "crate::dreamer_runner::maintenance::agent_health::AgentHealthCardView",
   "call": "memory.concern_card(&input)?",

@@ -228,6 +228,7 @@ pub mod gpu_job;
 pub mod gpu_line;
 pub mod ingest;
 pub mod job_dispatch;
+pub mod job_history;
 pub mod job_workload;
 pub mod linkedin_connector;
 pub mod linkedin_lead_preload;
@@ -259,6 +260,7 @@ pub mod run_tree;
 pub mod runtime_hooks;
 pub mod self_heal;
 pub mod session_lifecycle;
+pub mod session_project;
 pub mod wave_orchestration;
 // ===== Dreamer & skills ===== background consolidation, tournaments, inbox, cleanup; skills loop
 pub mod autoreason_campaign;

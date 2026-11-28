@@ -20,6 +20,7 @@ use super::super::topology_delete_intent::{
     TopologyDeletePhase, clear_own_topology_delete_in_txn, reserve_topology_delete_in_txn,
 };
 use super::DeleteEntityOutcome;
+use super::remaining::file_body_digests_in_txn;
 
 impl Vault {
     /// Scrubs the body shell of a soft delete, publishes its tombstone, and
@@ -86,6 +87,7 @@ impl Vault {
         // restores from old bundles until they age out (DEC-0006); only
         // an erase destroys them (the hard arm's purge). Its delete time
         // bounds how long a pin change still rewraps them.
+        let released_file_digests = file_body_digests_in_txn(&self.store, &wtxn, id)?;
         let (existed, had_vector, _ledger_changed) =
             self.soft_erase_active_store_in_txn(&mut wtxn, id, false, None)?;
         if existed && reason == DeleteReason::UserDelete {
@@ -214,6 +216,7 @@ impl Vault {
             sweep_key: None,
             turn_program_details: turn_program_details.to_vec(),
             version_release: false,
+            released_file_digests,
         });
     }
 
@@ -272,7 +275,7 @@ impl Vault {
         // empty commit settles nothing — see the latch below).
         let mut authority_settled = crdt_persisted;
 
-        let soft_complete_at = if matches!(
+        let (soft_complete_at, released_file_digests) = if matches!(
             reason,
             DeleteReason::GdprDelete | DeleteReason::PolicyDelete
         ) {
@@ -328,6 +331,7 @@ impl Vault {
             let scrub_is_the_linearization_point = !authority_settled;
             let mut changed = vec![*id];
             changed.extend(crate::note::erase_citations_in_txn(self, &mut wtxn, id)?);
+            let released_file_digests = file_body_digests_in_txn(&self.store, &wtxn, id)?;
             let (existed, had_vector, _ledger_changed) = self.soft_erase_active_store_in_txn(
                 &mut wtxn,
                 id,
@@ -409,9 +413,9 @@ impl Vault {
             if existed {
                 self.notify_local_delete_materialized(&changed);
             }
-            self.store.clock.now_recorded_at()
+            (self.store.clock.now_recorded_at(), released_file_digests)
         } else {
-            tombstone_complete_at
+            (tombstone_complete_at, Vec::new())
         };
         // The second post-publication window: soft-erase committed, purge not
         // yet open. Same law, separately pinned.
@@ -425,6 +429,7 @@ impl Vault {
             crdt_persisted,
             authority_settled,
             soft_complete_at,
+            released_file_digests,
         })
     }
 }
@@ -435,4 +440,5 @@ pub(super) struct DeleteHardSetup {
     pub(super) crdt_persisted: bool,
     pub(super) authority_settled: bool,
     pub(super) soft_complete_at: u64,
+    pub(super) released_file_digests: Vec<[u8; 32]>,
 }

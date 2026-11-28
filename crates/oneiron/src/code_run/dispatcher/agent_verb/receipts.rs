@@ -190,14 +190,21 @@ pub(super) enum KeptWrite {
 /// The refusal a write's kept answer stands under, if any. A receipt's first
 /// row is its call's answer; the rows after it are the rulings on reading that
 /// answer back, each a refusal or the admitted read that reconciled one, so
-/// the answer stands refused while the last of them is a refusal.
+/// the answer stands refused while the last of them is a refusal. A refusal
+/// is the ruling whose reason codes start with the receipt's marker; the
+/// door's own codes follow it (FIX CODE-MODE-DENIAL-REASONS), and a ruling
+/// written before them holds the marker alone.
 pub(super) fn standing_refusal(receipt: &CodeRunReplayRecord) -> Option<&CodeRunBridgeCall> {
     let ruling = receipt.bridge_calls.get(1..)?.last()?;
     let Ok(SelfDispatchOutcome::Denied(refused)) = decode_self_dispatch_outcome(&ruling.outcome)
     else {
         return None;
     };
-    (refused.reason_codes == [KEPT_ANSWER_REFUSED]).then_some(ruling)
+    refused
+        .reason_codes
+        .first()
+        .is_some_and(|code| code == KEPT_ANSWER_REFUSED)
+        .then_some(ruling)
 }
 
 /// Whether a write row met its receipt: it is the receipt's call with the

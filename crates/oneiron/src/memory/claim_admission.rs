@@ -56,7 +56,16 @@ impl Memory<'_> {
         proposed: bool,
     ) -> MemoryResult<Vec<CommitOutcome>> {
         if !proposed {
-            return self.commit_scoped_batch(claims);
+            // An omitted project in vault.commit keeps the root default, even for an
+            // attached session whose single claim writes use its folder's project.
+            let unplaced = self.session_placement.map(|_| Self {
+                session_placement: None,
+                ..self.clone()
+            });
+            return unplaced
+                .as_ref()
+                .unwrap_or(self)
+                .commit_scoped_batch(claims);
         }
         let row = "vault.claims.seed";
         Ok(claims
@@ -154,6 +163,7 @@ impl Memory<'_> {
                 self.scoped_claim_check(txn, &prepared, &lane)
             },
             Some(&prepared.birth),
+            None,
         )
     }
 
@@ -252,8 +262,8 @@ impl Memory<'_> {
     /// then resolves all four (OF-464; canon cross-arch-0002a §5.8): the
     /// world and facet this handle's credential is bound to
     /// (`with_birth_position`), else the base WORLD and the vault default
-    /// FACET while it is a stored FACET; `all` relationships; the root's
-    /// default PROJECT. An omitted facet with no stored default is refused,
+    /// FACET while it is a stored FACET; `all` relationships; the session's
+    /// project or the root default. An omitted facet with no stored default is refused,
     /// naming `scope_facet_id`. A stated axis resolves as sent. The writer
     /// still judges the whole position under the caller's credential, so a
     /// stamp never widens what the caller may write.
@@ -285,7 +295,9 @@ impl Memory<'_> {
         };
         let project = match &scope.scope_project_id {
             Some(reference) => self.resolve_ref(reference)?,
-            None => crate::claim::default_project_id(),
+            None => self
+                .session_placement
+                .unwrap_or_else(crate::claim::default_project_id),
         };
         let relationship = match &scope.scope_relationship_id {
             None | Some(ClaimRelationships::All(AllRelationships::All)) => None,
@@ -335,7 +347,7 @@ impl Memory<'_> {
         Ok(())
     }
 
-    fn admit_claim_position(
+    pub(super) fn admit_claim_position(
         &self,
         txn: &heed::RoTxn<'_>,
         world: EntityId,

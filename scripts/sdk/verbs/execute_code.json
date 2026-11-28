@@ -1,6 +1,6 @@
 {
   "name": "execute_code",
-  "description": "Run foreign JavaScript or TypeScript with only scoped record snapshots and inert, receipted proposals in the isolated tier; no host writes, credentials or network grant are lent. Its type feedback rides beside the answer or refusal.",
+  "description": "Run your JavaScript or TypeScript as written, with no model, in the isolated Foreign proposal tier: scoped record snapshots in, inert receipted proposals out; no live verbs, host writes or credentials. Type feedback rides beside the answer.",
   "input": "crate::memory::foreign_code::ForeignCodeRunRequest",
   "output": "crate::memory::foreign_code::ForeignCodeRunResult",
   "call": "crate::task_verb::sdk::host_only(memory, \"execute_code\", &input)?",
@@ -13,7 +13,9 @@
   "host_door": true,
   "host_door_lists": true,
   "host_door_session": true,
+  "mcp": "facade",
   "mcp_scope": "filtered",
   "openapi": true,
-  "host_door_proof": "foreign_code"
+  "host_door_proof": "foreign_code",
+  "caller_code": "refused"
 }

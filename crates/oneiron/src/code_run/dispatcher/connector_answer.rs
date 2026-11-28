@@ -22,24 +22,24 @@ impl HostSelfDispatcher<'_> {
         request: ConnectorAnswerRequest,
         site: Option<ExecutorCallSite<'_>>,
     ) -> Result<SelfDispatchOutcome> {
-        let refused = |code: String| {
+        let refused = |code: String, reason_codes: Vec<String>| {
             SelfDispatchOutcome::Denied(SelfDeniedResult {
                 hook_notice: None,
                 effect: SelfEffect::ConnectorAnswer,
                 outcome: code,
-                reason_codes: Vec::new(),
+                reason_codes,
             })
         };
         if matches!(self.storage, ExecutorStorage::Session(_)) {
-            return Ok(refused(AGENT_VERB_SESSION_BOUND.to_owned()));
+            return Ok(refused(AGENT_VERB_SESSION_BOUND.to_owned(), Vec::new()));
         }
         let Some(door) = &self.agent_verbs else {
-            return Ok(refused(AGENT_VERB_DOOR_UNBOUND.to_owned()));
+            return Ok(refused(AGENT_VERB_DOOR_UNBOUND.to_owned(), Vec::new()));
         };
         let invocation = self.verb_invocation(&SelfCall::ConnectorAnswer(request.clone()), site)?;
         Ok(match door.connector_answer(&request, invocation)? {
             Ok(answer) => SelfDispatchOutcome::AgentVerb(answer),
-            Err(refusal) => refused(refusal.code),
+            Err(refusal) => refused(refusal.code, refusal.reason_codes),
         })
     }
 }

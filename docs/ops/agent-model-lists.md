@@ -25,7 +25,7 @@ sent; another eligible listed fallback can still answer. No exact-model-only
 shortcut replaces the normal walk.
 
 This covers the served backends carrying the actual frozen list. MCP
-`execute_code`, off-record own steps and other paths without that carrier
+`execute`, off-record own steps and other paths without that carrier
 retain their existing routing. Injected or custom providers and the planner's
 own model calls are not covered by a claim that they cannot substitute models.
 The pattern funding probe remains a probe, not a list refusal. The live

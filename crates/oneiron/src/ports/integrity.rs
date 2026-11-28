@@ -720,6 +720,17 @@ pub(super) fn withdraw_dependent_in_txn(
     }
     withdraw_words_in_txn(write, txn, dependent, worlds)
 }
+/// [`withdraw_dependent_in_txn`] for the N1b open backfill: withdraws one
+/// pre-N1 NOTE-review CLAIM whose NOTE was removed. Narrow: the backfill is
+/// the only caller outside `ports`.
+pub(crate) fn withdraw_dependent_for_backfill_in_txn(
+    write: &crate::secret_custody::CustodyWrite<'_>,
+    txn: &mut RwTxn<'_>,
+    dependent: &EntityId,
+    worlds: &CarriedWorlds,
+) -> Result<()> {
+    withdraw_dependent_in_txn(write, txn, dependent, worlds)
+}
 /// DerivedFrom is dependent→source. This hook also serves session overlays.
 pub(crate) fn record_derived_edge_in_txn(
     store: &impl ManifestDbs,

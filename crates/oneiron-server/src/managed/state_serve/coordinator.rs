@@ -58,6 +58,9 @@ async fn serve_with_handles(
     // Argv's configuration with the owner's settings file settled over it,
     // tracing started between the file's refusal and its settling.
     let (mut config, settled) = super::settings::configure(args, &managed)?;
+    // The supervisor funds a managed server's host account, never the owner's own
+    // `[gpu_jobs.host_allocation]` (R6-VAULT-MACHINE-FUNDING = A).
+    crate::gpu_host::refuse_managed_host_allocation(&config.gpu_jobs)?;
     let cors = crate::commands::build_cors_layer(&config.sync_server_config())?;
     tracing::info!(
         vault = %managed.vault_name,
