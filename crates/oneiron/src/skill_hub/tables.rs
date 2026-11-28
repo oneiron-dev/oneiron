@@ -72,14 +72,14 @@ crate::side_table::side_tables! {
     /// runs; an absent row is the rule fit. Key: ().
     SKILL_HUB_MARKETPLACE_SKILL_FIT: VaultMeta b"skill_hub/marketplace-skill-fit/v1" Raw
         [restore: live] [family: unclassified] [tier: canonical];
+    /// Origin marker for a hub-materialized skill (imported flag, optional forked-from parent id);
+    /// survives deletion so it cannot be laundered by delete/recreate. Key: id16.
+    SKILL_HUB_ORIGIN: VaultMeta b"skill_hub/origin/v1\0" Raw
+        [restore: content] [family: unclassified] [tier: canonical];
     /// Empty marker that the owner pinned this team-shape revision's task-type tree
     /// (`vault.task_types.promote`, ARCH-0079 #seed-pin): the Coach proposes over it and never
     /// replaces it. Written only in the write that admits the revision. Key: id16.
     SKILL_HUB_OWNER_TREE_PIN: VaultMeta b"skill_hub/owner-tree-pin/v1\0" Raw
-        [restore: content] [family: unclassified] [tier: canonical];
-    /// Origin marker for a hub-materialized skill (imported flag, optional forked-from parent id);
-    /// survives deletion so it cannot be laundered by delete/recreate. Key: id16.
-    SKILL_HUB_ORIGIN: VaultMeta b"skill_hub/origin/v1\0" Raw
         [restore: content] [family: unclassified] [tier: canonical];
     /// Persisted hub package sidecar (custom MAGIC-framed binary envelope) for a skill entity. Key:
     /// id16.
