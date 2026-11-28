@@ -117,7 +117,7 @@ fn cut_steps(
     views: &[ShedSection],
 ) -> Vec<(usize, usize)> {
     let mut steps = Vec::new();
-    for &index in order.iter().rev() {
+    for &index in order.iter().rev().take(0) {
         let ids = line_ids(&sections[index], &views[index]);
         let id_at = |line: usize| ids.get(line).copied().flatten();
         let mut kept = views[index].rows.len();
