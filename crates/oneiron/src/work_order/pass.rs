@@ -16,6 +16,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::gpu_job::{GpuEndReason, GpuJobEnd, GpuJobState};
+use crate::gpu_line::claim::{CUSTODY_LAPSED, release_claim_in_txn};
+use crate::gpu_line::{ClaimState, UnitEnd, claim_in_txn, custody_lapsed_in_txn};
 use crate::job_dispatch::DispatchClose;
 use crate::job_workload::{JobWorkload, WorkloadPin, WorkloadStartAsk};
 use crate::{EntityId, Vault};
@@ -134,6 +136,9 @@ enum AttemptStanding {
     Ended(EndKind),
 }
 
+/// The release reason of a line unit's claim a cancel of its order reached before its job.
+const LINE_CLAIM_ORDER_CANCELLED: &str = "order_cancelled";
+
 /// What one pass did.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PassReport {
@@ -213,14 +218,16 @@ impl Vault {
     /// How the job of `attempt` stands, and whether the machine's word says its workload
     /// started: a node's receipt for a node's job; for an offer's job, which has no dispatch
     /// row, its provider's clock (run time reported, or an end by exit or at the maximum). A
-    /// resource the provider holds `Pending` has not started.
+    /// resource the provider holds `Pending` has not started. A line unit's attempt whose
+    /// claim has no job row yet stands as its claim does ([`Self::line_claim_standing`]).
     fn attempt_standing(
         &self,
         order: &WorkOrder,
         attempt: &OrderAttempt,
+        now_ms: u64,
     ) -> crate::Result<(AttemptStanding, bool)> {
         let Some(job) = self.gpu_job(&attempt.job)? else {
-            return Ok((AttemptStanding::Unconfirmed, false));
+            return self.line_claim_standing(order, attempt, now_ms);
         };
         let key = job.chunk().map(|chunk| chunk.idempotency_key.clone());
         let dispatch = match &key {
@@ -278,6 +285,57 @@ impl Vault {
             }
         };
         Ok((standing, started))
+    }
+
+    /// How a line unit's attempt stands while its claim has no job row (row H3): the attempt's
+    /// reserve wrote the claim and the attempt entry, and the claimed start has not written the
+    /// job. A claim still `Claimed` is live until its custody lapses or a cancel reaches the
+    /// order; then it is released here, by the compare-and-set the reserve and a late start use,
+    /// and the attempt never started. A claim released before any job (the start's refusal, its
+    /// custody) ends the attempt `NeverStarted`. An offer's attempt with no job row, a missing
+    /// claim, or a claim past `Claimed` with no job row is unconfirmed.
+    fn line_claim_standing(
+        &self,
+        order: &WorkOrder,
+        attempt: &OrderAttempt,
+        now_ms: u64,
+    ) -> crate::Result<(AttemptStanding, bool)> {
+        let Some(key) = order.claim_key(attempt.n) else {
+            return Ok((AttemptStanding::Unconfirmed, false));
+        };
+        let claim = {
+            let txn = self.store.env.read_txn()?;
+            claim_in_txn(self, &txn, &key)?
+        };
+        let Some(claim) = claim.filter(|claim| claim.id == attempt.job) else {
+            return Ok((AttemptStanding::Unconfirmed, false));
+        };
+        let standing = match &claim.state {
+            ClaimState::Claimed => {
+                let cancelled = order.cancel.is_some();
+                let released = self.with_write_txn_grouped(|txn| {
+                    if !cancelled && !custody_lapsed_in_txn(self, txn, &claim, now_ms)? {
+                        return Ok(false);
+                    }
+                    let reason = if cancelled {
+                        LINE_CLAIM_ORDER_CANCELLED
+                    } else {
+                        CUSTODY_LAPSED
+                    };
+                    Ok(release_claim_in_txn(self, txn, &claim, reason, now_ms)?.is_some())
+                })?;
+                if released {
+                    AttemptStanding::Ended(EndKind::NeverStarted)
+                } else {
+                    AttemptStanding::Live
+                }
+            }
+            ClaimState::Ended(terminal) if matches!(terminal.end, UnitEnd::Released(_)) => {
+                AttemptStanding::Ended(EndKind::NeverStarted)
+            }
+            ClaimState::Ended(_) | ClaimState::Started => AttemptStanding::Unconfirmed,
+        };
+        Ok((standing, false))
     }
 
     /// Settles the end `end` of `order`'s last attempt through the AFTER rule; `started` is
@@ -489,7 +547,7 @@ impl Vault {
             let Some(attempt) = order.last_attempt().filter(|last| last.end.is_none()) else {
                 continue;
             };
-            let (standing, started) = self.attempt_standing(&order, attempt)?;
+            let (standing, started) = self.attempt_standing(&order, attempt, now_ms)?;
             match standing {
                 AttemptStanding::Live => {
                     // The first pass that sees the machine's word records the start, which

@@ -305,3 +305,145 @@ fn a_promotion_never_ships_a_root_the_history_check_refuses() {
         "a promotion shipped a root that holds the diagnostic"
     );
 }
+
+/// The keys under `prefix` in the vault's sync_state, for the by-item tests.
+fn sync_keys(vault: &Vault, prefix: &str) -> std::collections::BTreeSet<String> {
+    let txn = vault.store.env.read_txn().unwrap();
+    vault
+        .store
+        .sync_state
+        .prefix_iter(&txn, prefix)
+        .unwrap()
+        .map(|row| row.map(|(key, _)| key.to_string()))
+        .collect::<std::result::Result<_, _>>()
+        .unwrap()
+}
+
+#[test]
+fn a_by_item_row_goes_with_its_listing() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+    let w1 = WindowKey::for_world(1_760_000_000, crate::test_util::entity(41));
+    let w2 = WindowKey::new("2025-10");
+    let x = crate::test_util::entity(42);
+    let y = crate::test_util::entity(43);
+    vault
+        .with_write_txn_grouped(|txn| {
+            put_index_by_item_in_txn(&vault.store, txn, w1.as_str(), &x.to_hex())?;
+            put_index_by_item_in_txn(&vault.store, txn, w2.as_str(), &x.to_hex())?;
+            put_index_by_item_in_txn(&vault.store, txn, w1.as_str(), &y.to_hex())?;
+            Ok(())
+        })
+        .unwrap();
+    let x_prefix = format!("ri:i:{}:", x.to_hex());
+    assert_eq!(
+        sync_keys(&vault, &x_prefix),
+        std::collections::BTreeSet::from([
+            format!("ri:i:{}:{}", x.to_hex(), w1.as_str()),
+            format!("ri:i:{}:{}", x.to_hex(), w2.as_str()),
+        ]),
+        "the item's prefix lists exactly its two windows",
+    );
+    vault
+        .with_write_txn_grouped(|txn| {
+            delete_index_by_item_for_listing_in_txn(
+                &vault.store,
+                txn,
+                &format!("ri:w:{}:{}", w1.as_str(), x.to_hex()),
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(
+        sync_keys(&vault, &x_prefix),
+        std::collections::BTreeSet::from([format!("ri:i:{}:{}", x.to_hex(), w2.as_str())]),
+        "deleting through the listing key drops only that window's twin",
+    );
+    assert_eq!(
+        sync_keys(&vault, &format!("ri:i:{}:", y.to_hex())),
+        std::collections::BTreeSet::from([format!("ri:i:{}:{}", y.to_hex(), w1.as_str())]),
+        "the other item's row stays",
+    );
+}
+
+#[test]
+fn an_erased_item_loses_every_listing_and_by_item_row() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+    let w1 = WindowKey::for_world(1_760_000_000, crate::test_util::entity(41));
+    let w2 = WindowKey::new("2025-10");
+    let w3 = WindowKey::new("2025-09");
+    let x = crate::test_util::entity(42);
+    let y = crate::test_util::entity(43);
+    vault
+        .with_write_txn_grouped(|txn| {
+            for (window, item) in [(&w1, &x), (&w2, &x), (&w1, &y)] {
+                vault.store.sync_state.put(
+                    txn,
+                    &format!("ri:w:{}:{}", window.as_str(), item.to_hex()),
+                    b"listing",
+                )?;
+                put_index_by_item_in_txn(&vault.store, txn, window.as_str(), &item.to_hex())?;
+            }
+            // An orphan twin whose listing is already gone.
+            put_index_by_item_in_txn(&vault.store, txn, w3.as_str(), &x.to_hex())?;
+            Ok(())
+        })
+        .unwrap();
+    vault
+        .with_write_txn_grouped(|txn| {
+            erase_item_caches_in_txn(&vault.store, txn, &[x])?;
+            Ok(())
+        })
+        .unwrap();
+    let listings = sync_keys(&vault, "ri:w:");
+    let twins = sync_keys(&vault, "ri:i:");
+    let x_suffix = format!(":{}", x.to_hex());
+    let x_twin_prefix = format!("ri:i:{}:", x.to_hex());
+    assert!(
+        listings.iter().all(|key| !key.ends_with(x_suffix.as_str())),
+        "no listing of the erased item stays: {listings:?}",
+    );
+    assert!(
+        twins
+            .iter()
+            .all(|key| !key.starts_with(x_twin_prefix.as_str())),
+        "no by-item row of the erased item stays, orphan or not: {twins:?}",
+    );
+    assert!(
+        listings.contains(&format!("ri:w:{}:{}", w1.as_str(), y.to_hex())),
+        "the other item's listing stays: {listings:?}",
+    );
+    assert!(
+        twins.contains(&format!("ri:i:{}:{}", y.to_hex(), w1.as_str())),
+        "the other item's twin stays: {twins:?}",
+    );
+}
+
+#[test]
+fn a_malformed_listing_key_deletes_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(dir.path(), crate::VaultConfig::device()).unwrap();
+    let w1 = WindowKey::for_world(1_760_000_000, crate::test_util::entity(41));
+    let x = crate::test_util::entity(42);
+    vault
+        .with_write_txn_grouped(|txn| {
+            put_index_by_item_in_txn(&vault.store, txn, w1.as_str(), &x.to_hex())?;
+            Ok(())
+        })
+        .unwrap();
+    let before = sync_keys(&vault, "ri:i:");
+    assert_eq!(before.len(), 1, "FIXTURE: one twin row planted");
+    vault
+        .with_write_txn_grouped(|txn| {
+            delete_index_by_item_for_listing_in_txn(&vault.store, txn, "ri:w:nowindow")?;
+            delete_index_by_item_for_listing_in_txn(&vault.store, txn, "other:key")?;
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(
+        sync_keys(&vault, "ri:i:"),
+        before,
+        "a key that does not parse deletes nothing",
+    );
+}

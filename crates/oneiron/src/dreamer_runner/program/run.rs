@@ -265,13 +265,18 @@ impl Vault {
 
     /// Settles a finished program in one lease-fenced commit: the run's
     /// final committed state is its result, the queue row names it, and the
-    /// RUN row keeps it. A lease that moved settles nothing.
+    /// RUN row keeps it. A lease that moved settles nothing. With `ends`
+    /// (its entry answered no pending stage), the same commit ends a
+    /// project run ([RSI-PROJECT-WORKFLOW]): its program is disarmed, so no
+    /// later due time wakes it; a program armed for no project keeps
+    /// waking.
     pub(crate) fn settle_turn_program_run(
         &self,
         attempt: &AttemptRecord,
         code_run: EntityId,
         generation: &CodeRunReplayGeneration,
         now: u64,
+        ends: bool,
     ) -> Result<()> {
         let owner = leased_parts(attempt)?.to_owned();
         let result_ref = format!("code-run:{}", code_run.to_hex());
@@ -299,7 +304,11 @@ impl Vault {
                 settled_at: now,
             };
             run.frontier = Some(frontier);
-            RUN.put(self, wtxn, &code_run, &run)
+            RUN.put(self, wtxn, &code_run, &run)?;
+            if ends {
+                super::project_run::end_project_run_in_txn(self, wtxn, attempt.id)?;
+            }
+            Ok(())
         })?;
         self.store.notify_attempt_observers();
         Ok(())
@@ -418,12 +427,16 @@ pub(crate) fn bind_program_write_in_txn(
 /// Settles a program's verb write into its step, in the commit that keeps
 /// its receipt's answer. The write already ran, so nothing here can fail
 /// that commit: a step that cannot be recorded is logged and the receipt
-/// stays committed.
+/// stays committed. A write the door `refused` halts the run's bridge, so
+/// this commit also ends a project run ([RSI-PROJECT-WORKFLOW]): its
+/// program is disarmed, and no later due time wakes it; a disarm that
+/// cannot be written is logged.
 pub(crate) fn settle_program_write_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     write: &ProgramWrite,
     result_digest: [u8; 32],
+    refused: bool,
     now: u64,
 ) {
     let step = TurnProgramStep {
@@ -440,6 +453,15 @@ pub(crate) fn settle_program_write_in_txn(
             kind = ?error.kind(),
             receipt = %write.receipt.to_hex(),
             "a program write's step was not settled; its receipt stands"
+        );
+    }
+    if refused
+        && let Err(error) = super::project_run::end_project_run_in_txn(vault, wtxn, write.attempt)
+    {
+        tracing::warn!(
+            kind = ?error.kind(),
+            receipt = %write.receipt.to_hex(),
+            "a project run whose write was refused was not disarmed; its next wake is refused"
         );
     }
 }

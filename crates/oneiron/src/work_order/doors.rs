@@ -111,6 +111,73 @@ fn only_own_rank_option(mut order: WorkOrder) -> WorkOrder {
     order
 }
 
+impl Vault {
+    /// The work order `id`, read in `txn`.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub(crate) fn work_order_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+    ) -> crate::Result<Option<WorkOrder>> {
+        WORK_ORDERS.get(&self.store, txn, id)
+    }
+
+    /// Writes `order`, a new line unit's work order, `Open` at revision 0 and holding nothing
+    /// (the reserve's door, row H3).
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub(crate) fn put_new_work_order_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        order: &WorkOrder,
+    ) -> crate::Result<()> {
+        WORK_ORDERS.put(&self.store, txn, &order.id, order)
+    }
+
+    /// `order` as `caller` reads it, with its last attempt's receipt: the reserve's door's
+    /// answer for a waiting unit (row H3).
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub(crate) fn work_order_view_as_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        caller: VerbGrantCaller,
+        order: WorkOrder,
+        replayed: bool,
+    ) -> crate::Result<WorkOrderView> {
+        self.order_view_in_txn(txn, order_seen_by(caller, order), replayed)
+    }
+
+    /// Order `id` as `caller` reads it, with its last attempt's receipt; `None` when the order
+    /// is gone or `caller` does not reach it (an agent reads only an order it made).
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub(crate) fn reached_work_order_view_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        caller: VerbGrantCaller,
+        id: &EntityId,
+    ) -> crate::Result<Option<WorkOrderView>> {
+        match WORK_ORDERS.get(&self.store, txn, id)? {
+            Some(order) if reaches(caller, &order) => Ok(Some(self.order_view_in_txn(
+                txn,
+                order_seen_by(caller, order),
+                false,
+            )?)),
+            _ => Ok(None),
+        }
+    }
+}
+
 /// Whether `caller` may read or cancel `order`: the owner any, an agent one it made.
 pub(super) fn reaches(caller: VerbGrantCaller, order: &WorkOrder) -> bool {
     match caller {
@@ -160,7 +227,7 @@ pub fn order_work_as(
         OrderCharge::Offer { .. } => {}
         OrderCharge::Line { .. } => {
             return Err(bad_request(
-                "a line unit is ordered with vault.arms.units.reserve, which writes its claim",
+                "a line unit is ordered with vault.arms.units.reserve and a wait, which judges the line",
             ));
         }
     }
@@ -317,14 +384,7 @@ pub fn ordered_view_as(
     let vault = memory.vault();
     let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
     let caller = memory.verb_grant_caller_admits_in_txn(&txn, owner, ORDER_VERB)?;
-    match WORK_ORDERS.get(&vault.store, &txn, order)? {
-        Some(order) if reaches(caller, &order) => Ok(Some(vault.order_view_in_txn(
-            &txn,
-            order_seen_by(caller, order),
-            false,
-        )?)),
-        _ => Ok(None),
-    }
+    Ok(vault.reached_work_order_view_in_txn(&txn, caller, order)?)
 }
 
 /// `vault.jobs.orders.get`: one order, as `memory`'s caller may read it.

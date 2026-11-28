@@ -112,6 +112,12 @@ pub enum Blocker {
     MachineRefuses {
         reason: String,
     },
+    /// A line unit's reserve refused for a reason waiting does not clear (an arm or rung that
+    /// closed, a contract, a maximum, an offer or a machine the line does not hold). `reason`
+    /// leads with the reserve's own code (`rung_closed: ...`), as the reserve answers it.
+    LineRefuses {
+        reason: String,
+    },
 
     // Capacity: cleared by waiting; every running attempt has a hard cutoff, so the time is
     // known when the machine reports it.
@@ -137,6 +143,12 @@ pub enum Blocker {
     CapFull {
         cap: String,
         running: u32,
+    },
+    /// A line unit's reserve refused for a reason that clears by itself or by the line's
+    /// people (a period not begun, a rung under review, a forecast not written, a seat lapsed,
+    /// machines that have not answered). `reason` leads with the reserve's own code.
+    LineNotReady {
+        reason: String,
     },
     RetryNotBefore {
         ms: u64,
@@ -236,6 +248,7 @@ impl Blocker {
             Self::WarmKeyMissing { .. } => "warm_key_missing",
             Self::WorldNotResident => "world_not_resident",
             Self::MachineRefuses { .. } => "machine_refuses",
+            Self::LineRefuses { .. } => "line_refuses",
             Self::DeviceBusy { .. } => "device_busy",
             Self::MemoryBusy { .. } => "memory_busy",
             Self::ThreadsBusy { .. } => "threads_busy",
@@ -243,6 +256,7 @@ impl Blocker {
             Self::KeepHeadroom => "keep_headroom",
             Self::After { .. } => "after",
             Self::CapFull { .. } => "cap_full",
+            Self::LineNotReady { .. } => "line_not_ready",
             Self::RetryNotBefore { .. } => "retry_not_before",
             Self::AttemptUnconfirmed { .. } => "attempt_unconfirmed",
             Self::DeciderWait { .. } => "decider_wait",
@@ -289,6 +303,7 @@ impl Blocker {
             | Self::NotTheIssuer { .. } => Clearing::Standing,
             Self::MachineMissing
             | Self::NoMachine
+            | Self::LineRefuses { .. }
             | Self::NoScope { .. }
             | Self::ScopeNotAllowed { .. }
             | Self::NoDevice { .. }
@@ -305,6 +320,7 @@ impl Blocker {
             | Self::KeepHeadroom => Clearing::Capacity,
             Self::After { .. }
             | Self::CapFull { .. }
+            | Self::LineNotReady { .. }
             | Self::RetryNotBefore { .. }
             | Self::AttemptUnconfirmed { .. }
             | Self::DeciderWait { .. } => Clearing::Condition,

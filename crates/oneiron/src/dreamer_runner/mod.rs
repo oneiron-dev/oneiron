@@ -82,8 +82,8 @@ pub(crate) use self::program::PROGRAM_TIMER_JOB;
 #[cfg(oneiron_test_support)]
 pub(crate) use self::program::stop_sends_in_own_writer;
 pub use self::program::{
-    ArmTurnProgram, DisarmTurnProgram, LandedTurnRef, ProgramRecipePin, ProgramTrigger,
-    TurnProgramAdmissionOutcome, TurnProgramAdmissionReceipt, TurnProgramDrain,
+    ArmTurnProgram, DisarmTurnProgram, ExpectedSkillRevision, LandedTurnRef, ProgramRecipePin,
+    ProgramTrigger, TurnProgramAdmissionOutcome, TurnProgramAdmissionReceipt, TurnProgramDrain,
     TurnProgramRegistration,
 };
 pub(crate) use self::program::{
@@ -108,6 +108,9 @@ pub(crate) use self::program::{
 // FIX 11906: the project a turn program's code run sends in, for browser
 // consent.
 pub(crate) use self::program::program_run_project_in_txn;
+// [RSI-PROJECT-WORKFLOW]: a project run's end, for the program runtime and
+// the dispatcher's refused stages.
+pub(crate) use self::program::{answer_is_pending, end_project_run_in_txn};
 // DOOR-141 PR3a/PR3b: a turn program's reads, for its host doors and the SDK.
 pub use self::program::{
     OwedWakeHoldView, ProgramAdmissionOutcomeView, ProgramCheckpointCallView,
