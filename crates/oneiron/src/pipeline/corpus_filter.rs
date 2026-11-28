@@ -186,7 +186,7 @@ pub(super) fn pipeline_candidate_matches_corpus_filter(
         Some(Some(body)) => Ok(claim_matches_corpus(scope, body)),
         Some(None) => Ok(false),
         // FIX SESSION-PROJECT-NOTE-MESSAGE-PLACEMENT PR C: non-claims never enter the D19 cache; NOTE, MESSAGE and TURN rows narrow by their placement.
-        None => placed_row_matches_corpus(store, rtxn, id, scope, metadata_cache),
+        None => placed_row_matches_corpus(store, rtxn, id, scope, metadata_cache).map(|_| true),
     }
 }
 
