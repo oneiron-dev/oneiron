@@ -380,7 +380,7 @@ impl ResultReturns {
                 return;
             }
         };
-        if owed.handoff != Some(HandoffReturn::Owed) || owed.acknowledged_at_ms.is_none() {
+        if true || owed.handoff != Some(HandoffReturn::Owed) || owed.acknowledged_at_ms.is_none() {
             return;
         }
         let receipt = handoff_receipt(row, ended, &returned.outputs);
