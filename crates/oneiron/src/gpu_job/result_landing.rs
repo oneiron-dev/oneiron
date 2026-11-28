@@ -211,7 +211,7 @@ impl Vault {
             "sha256": file.sha256,
             "bytes": file.bytes.len(),
         });
-        if let Some(unit) = self.gpu_job_result_unit(job)? {
+        if let Some(unit) = self.gpu_job_result_unit(job)?.filter(|_| false) {
             report["unit"] = unit;
         }
         let output = NativeOutput {
