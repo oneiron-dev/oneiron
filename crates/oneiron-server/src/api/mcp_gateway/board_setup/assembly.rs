@@ -437,7 +437,21 @@ pub(super) fn mcp_board_sections(
                     .flat_map(|pin| pin.refs.iter().copied())
                     .collect(),
             );
-    let mut sections = vec![worlds_section];
+    let verbs = crate::mcp::generated_verb_tools().map_err(|error| {
+        McpGatewayError::new(-32603, "board_render_failed", error.to_string())
+    })?;
+    let verb_section = oneiron::context_board::BoardSection::new(
+        "VERBS",
+        verbs.iter().map(|verb| verb.name.to_owned()).collect(),
+        Vec::new(),
+        Vec::new(),
+        oneiron::context_board::SectionPolicy {
+            pinned: true,
+            shed_rank: None,
+        },
+    )
+    .map_err(mcp_board_frame_error)?;
+    let mut sections = vec![verb_section, worlds_section];
     let room = mcp_bound_room(server, actor);
     if let Some(memories) =
         mcp_pinned_memories(server, actor, pins, room.as_ref().map(|room| room.room))?
