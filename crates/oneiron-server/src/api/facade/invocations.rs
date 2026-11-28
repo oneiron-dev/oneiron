@@ -297,7 +297,7 @@ pub(crate) enum DoorClaim {
 /// replay: a kept reply would answer a same-id retry after the owner took the
 /// role away, with only the verb Grant judged. A same-id retry runs the admit
 /// again, role first; its intent key then replays the seat already made and
-/// writes nothing.
+/// writes nothing. A graduation (`.families.graduate`) is the same.
 /// An experiment arm's writes (`vault.arms.admit`, `.forecast`, `.verdict`,
 /// `.review`) answer the arm, and each door judges the caller's role on the
 /// arm's line before its intent replay, as the seat's does: a same-id retry
@@ -342,7 +342,7 @@ pub(crate) enum DoorClaim {
 /// the owner took the line role away (review round 2 of #10646). A same-id
 /// retry is answered with none of the first card; a new read judges the line
 /// again.
-const UNKEPT_REPLY_VERBS: [&str; 22] = [
+const UNKEPT_REPLY_VERBS: [&str; 23] = [
     "vault.inquire",
     "vault.inquiry.edge.prepare_join",
     "vault.members.accept_with_inquiry_edge",
@@ -358,6 +358,7 @@ const UNKEPT_REPLY_VERBS: [&str; 22] = [
     oneiron::experiment_arm::ARMS_UNITS_CANCEL_VERB,
     oneiron::gpu_line::VAULT_GPU_LINES_GET,
     oneiron::gpu_line::VAULT_GPU_LINES_FAMILIES_ADMIT,
+    oneiron::gpu_line::VAULT_GPU_LINES_FAMILIES_GRADUATE,
     "vault.jobs.workloads.get",
     "vault.jobs.workloads.list",
     oneiron::task_verb::sdk::MACHINE_STATUS_VERB,

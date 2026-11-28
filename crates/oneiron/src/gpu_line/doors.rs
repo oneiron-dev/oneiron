@@ -130,7 +130,7 @@ impl From<GpuLineError> for MemoryError {
 
 /// The view of `line` at `now_ms` in `txn`: its period record, minted or
 /// previewed, with the cohort seed withheld until the period ends.
-fn view_in_txn(
+pub(super) fn view_in_txn(
     vault: &crate::Vault,
     txn: &heed::RoTxn<'_>,
     line: GpuLine,
@@ -155,7 +155,7 @@ fn view_in_txn(
 
 /// The period the next mint of `minted`'s line makes: the one after the
 /// period that holds now, or period 0 before it starts.
-fn next_mint_index(minted: &MintedLine) -> Result<u32, GpuLineError> {
+pub(super) fn next_mint_index(minted: &MintedLine) -> Result<u32, GpuLineError> {
     minted.period.as_ref().map_or(Ok(0), |period| {
         period
             .index
@@ -200,7 +200,7 @@ fn seat_timing(
 /// demand's `seat_cap`, none on an interest track the line does not pin
 /// (LE-6: interest seats are the owner's), and no cap for new ideas, which
 /// the period's slots bound.
-fn lead_seat_cap(policy: &BudgetPolicy, track: Track) -> Option<u32> {
+pub(super) fn lead_seat_cap(policy: &BudgetPolicy, track: Track) -> Option<u32> {
     match track {
         Track::NewIdea => None,
         track if track == policy.pinned_track => Some(policy.pinned_seat_cap),
@@ -210,7 +210,7 @@ fn lead_seat_cap(policy: &BudgetPolicy, track: Track) -> Option<u32> {
 }
 
 /// The name a refusal gives `track`.
-fn track_name(track: Track) -> &'static str {
+pub(super) fn track_name(track: Track) -> &'static str {
     match track {
         Track::Demand => "demand",
         Track::Interest => "interest",
@@ -219,7 +219,7 @@ fn track_name(track: Track) -> &'static str {
 }
 
 /// The live seats of `track` on `line`.
-fn live_seats(line: &GpuLine, track: Track) -> usize {
+pub(super) fn live_seats(line: &GpuLine, track: Track) -> usize {
     line.families
         .iter()
         .filter(|seat| seat.lapsed_from_period.is_none() && seat.track == track)

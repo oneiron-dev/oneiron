@@ -1,5 +1,5 @@
 //! The GPU line doors (design pass 32, section 5): `vault.gpu.lines.set`,
-//! `.get` and `.families.admit`. The engine decides (`oneiron::gpu_line`):
+//! `.get`, `.families.admit` and `.families.graduate`. The engine decides (`oneiron::gpu_line`):
 //! the door admits the caller through the lane economy's door kit
 //! (`verb_grant_caller`) and calls the engine act. The period record names
 //! its allocation; its standing is a fold over the line's claims in the
@@ -10,8 +10,9 @@
 use std::sync::Arc;
 
 use oneiron::gpu_line::{
-    GpuLineError, GpuLineFamilyAdmitRequest, GpuLinePolicy, GpuLineRef, GpuLineSetWire,
-    GpuLineView, VAULT_GPU_LINES_FAMILIES_ADMIT, VAULT_GPU_LINES_GET, VAULT_GPU_LINES_SET,
+    GpuLineError, GpuLineFamilyAdmitRequest, GpuLineFamilyGraduateRequest, GpuLinePolicy,
+    GpuLineRef, GpuLineSetWire, GpuLineView, VAULT_GPU_LINES_FAMILIES_ADMIT,
+    VAULT_GPU_LINES_FAMILIES_GRADUATE, VAULT_GPU_LINES_GET, VAULT_GPU_LINES_SET,
 };
 
 use super::support::Listed;
@@ -94,6 +95,22 @@ pub(crate) async fn vault_gpu_lines_families_admit(
         auth,
         VAULT_GPU_LINES_FAMILIES_ADMIT,
         move |_, memory, owner| Ok(memory.admit_gpu_line_family(owner, &input, now_ms())?),
+    )
+    .await
+}
+
+/// `vault.gpu.lines.families.graduate`: moves a new-idea family with a
+/// confirmed promote to demand (a lead) or interest (the owner).
+pub(crate) async fn vault_gpu_lines_families_graduate(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: GpuLineFamilyGraduateRequest,
+) -> Listed<GpuLineView> {
+    verb_grant_door(
+        server,
+        auth,
+        VAULT_GPU_LINES_FAMILIES_GRADUATE,
+        move |_, memory, owner| memory.graduate_gpu_line_family(owner, &input, now_ms()),
     )
     .await
 }

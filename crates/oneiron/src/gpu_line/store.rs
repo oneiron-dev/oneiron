@@ -5,16 +5,18 @@
 //! The mint reads the line's own rows and nothing else (section 4.3): the
 //! tally of each family's results and cost inside the window comes from the
 //! line's arm rows and claims. Row M2-A defines its shape
-//! ([`SettledTally`]); row M2-E fills it. Until then every family scores the
-//! base rate. No generic team receipt, no seed and no unattributed seconds
-//! (EM-15) is an input.
-use std::collections::BTreeMap;
+//! ([`SettledTally`](super::SettledTally)); row M2-E fills it
+//! (`super::tally`). No generic team receipt, no seed and no unattributed
+//! seconds (EM-15) is an input.
+use std::collections::BTreeSet;
 
 use rand_core::RngCore;
 
 use super::cohort::cohort_seed_commit;
 use super::fold::{GpuLine, GpuLinePeriod, PeriodAllocation, PeriodClockError};
-use super::mint::{MintError, SettledTally, mint_period};
+use super::graduate::promoted_seats_in_txn;
+use super::mint::{MintError, mint_period};
+use super::tally::settled_tallies_in_txn;
 use crate::llm::run_admission::{Allocation, AllocationRef, LeaseUnit};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Vault};
@@ -166,23 +168,6 @@ pub(super) fn newest_minted_in_txn(
         .map(|(_, index)| *index))
 }
 
-/// What the line's own rows inside the window of period `index` say about
-/// each family seated on `line`, following a seat through `replaces` (the
-/// family's project is the same). The join over arm rows and claims is row
-/// M2-E's; until it lands no family has a tally.
-///
-/// # Errors
-///
-/// A store read failure.
-pub fn settled_tallies_in_txn(
-    _vault: &Vault,
-    _txn: &heed::RoTxn<'_>,
-    _line: &GpuLine,
-    _index: u32,
-) -> crate::Result<BTreeMap<EntityId, SettledTally>> {
-    Ok(BTreeMap::new())
-}
-
 /// The period of `line` that holds `now_ms`: `Ok(None)` before period 0.
 fn current_index(line: &GpuLine, now_ms: u64) -> Result<Option<u32>, MintError> {
     match line.period_index(now_ms) {
@@ -250,11 +235,26 @@ pub fn mint_first_in_txn(
         record.cohort_seed = Some(seed);
     }
     PERIODS.put(&vault.store, wtxn, &(*project, index), &record)?;
+    // A new idea with a confirmed promote does not lapse (section 4.1): it
+    // may still graduate. It draws nothing meanwhile (`funded_in`).
+    let new_idea_periods = line.budget.new_idea_periods;
+    let lapse_due = line.families.iter().any(|seat| {
+        seat.lapsed_from_period.is_none()
+            && seat
+                .lapses_from(new_idea_periods)
+                .is_some_and(|lapse| lapse <= index)
+    });
+    let promoted = if lapse_due {
+        promoted_seats_in_txn(vault, wtxn, project)?
+    } else {
+        BTreeSet::new()
+    };
     let mut lapsed = false;
     for seat in &mut line.families {
         if seat.lapsed_from_period.is_none()
-            && let Some(lapse) = seat.lapses_from(line.budget.new_idea_periods)
+            && let Some(lapse) = seat.lapses_from(new_idea_periods)
             && lapse <= index
+            && !promoted.contains(&seat.seat)
         {
             seat.lapsed_from_period = Some(lapse);
             lapsed = true;

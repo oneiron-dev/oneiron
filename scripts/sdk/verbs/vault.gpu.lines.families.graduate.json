@@ -1,0 +1,16 @@
+{
+  "name": "vault.gpu.lines.families.graduate",
+  "description": "Moves a new-idea family of a lane's GPU line to demand (a lead) or interest (the owner) once an arm of its seat holds an independently confirmed promote. The seat keeps its id and history; its new floor starts with the next mint.",
+  "input": "crate::gpu_line::GpuLineFamilyGraduateRequest",
+  "output": "crate::gpu_line::GpuLineView",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.gpu.lines.families.graduate\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "act_class": "unstated",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "verb_grant_caller"
+}
