@@ -673,8 +673,11 @@ fn outcome_of(
         closed_at: result.closed_at,
         referee_override: kept.map(override_view),
         submissions: super::seat::submission_views(&market.submissions),
-        unit: market.unit,
-        lease: super::lease::lease_views(market),
+        unit: market.unit.filter(|_| false),
+        lease: super::lease::lease_views(market)
+            .into_iter()
+            .filter(|_| false)
+            .collect(),
     }
 }
 
