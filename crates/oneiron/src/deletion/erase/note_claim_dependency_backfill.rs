@@ -358,16 +358,6 @@ impl Vault {
                 claim,
                 &CarriedWorlds::default(),
             )?;
-            if let Some(birth) = birth
-                && !crate::ports::stale_in_txn(&self.store, wtxn, &birth)?
-            {
-                crate::ports::withdraw_dependent_for_backfill_in_txn(
-                    &write,
-                    wtxn,
-                    &birth,
-                    &CarriedWorlds::default(),
-                )?;
-            }
             counts.withdrawn += 1;
             return Ok(());
         }
