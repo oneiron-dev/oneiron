@@ -264,6 +264,40 @@ impl Fixture {
         Ok((claim, *artifact))
     }
 
+    /// Files a real step from `source` and returns the content ASSET holding
+    /// its response's bytes. The answer names `source`, so each step's bytes,
+    /// and so its content-addressed ASSET, are its own.
+    fn response_asset_from(&self, writer: EntityId, source: EntityId) -> TestResult<EntityId> {
+        let before: BTreeSet<_> = self
+            .vault
+            .entities_by_type(ENTITY_TYPE_ASSET)?
+            .into_iter()
+            .collect();
+        let answer = format!(
+            "{} {}",
+            source.to_hex(),
+            "The rest of the window. ".repeat(DREAMER_STEP_INLINE_RESPONSE_MAX_BYTES / 16)
+        );
+        file_compaction_step(
+            &self.vault,
+            "chat-compaction",
+            EntityId::now(),
+            writer,
+            vec![source],
+            &answer,
+        )?;
+        let new: Vec<_> = self
+            .vault
+            .entities_by_type(ENTITY_TYPE_ASSET)?
+            .into_iter()
+            .filter(|id| !before.contains(id))
+            .collect();
+        let [asset] = new.as_slice() else {
+            return Err(format!("expected one new content ASSET, got {new:?}").into());
+        };
+        Ok(*asset)
+    }
+
     fn finding_from(&self, claim: EntityId) -> TestResult<EntityId> {
         Ok(file_finding_notice(&self.vault, claim, self.person, AT)?)
     }
@@ -397,6 +431,22 @@ fn a_compaction_response_leaves_with_its_sources() -> TestResult {
     let (_, withheld) = f.file_step_from(writer, f.w_claim)?;
     let (_, twin) = f.file_step_from(writer, f.base_claim)?;
     f.assert_narrowed("the W-sourced compaction response", withheld, twin)
+}
+
+/// REVIEW-10629 round 2: the response's bytes also sit in a content ASSET
+/// stamped with the base world; that ASSET leaves only beside its response
+/// artifact's sources, as the artifact does.
+#[test]
+fn a_compaction_response_asset_leaves_with_its_sources() -> TestResult {
+    let f = open()?;
+    let writer = f.compactor()?;
+    let withheld = f.response_asset_from(writer, f.w_claim)?;
+    let twin = f.response_asset_from(writer, f.base_claim)?;
+    assert_ne!(
+        withheld, twin,
+        "FIXTURE: each step's bytes have their own ASSET"
+    );
+    f.assert_narrowed("the W-sourced compaction response ASSET", withheld, twin)
 }
 
 #[test]

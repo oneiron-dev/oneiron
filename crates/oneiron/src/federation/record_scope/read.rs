@@ -130,7 +130,10 @@ impl Vault {
     /// source would not. The sync member gate applies the same rule (FIX
     /// SELECTOR-SCOPE-SUMMARY-WORDS). An epoch summary is a root too: its
     /// `DerivedFrom` targets, walked transitively through each target's own
-    /// word sources. The epoch fence stays a separate conjunct.
+    /// word sources. The epoch fence stays a separate conjunct. A filed
+    /// compaction step's response bytes, as the content ASSET of its
+    /// response artifact's version, are a root as well
+    /// ([`Self::fence_word_sources_in`]).
     pub(super) fn word_source_fence_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -144,7 +147,7 @@ impl Vault {
         use crate::scope_summary::WordSources;
 
         // The roots this fence judges: every row whose words came from others.
-        let mut pending = match crate::scope_summary::word_sources_in(self, txn, &id, raw) {
+        let mut pending = match self.fence_word_sources_in(txn, &id, raw) {
             Ok(WordSources::Own) => return Ok(true),
             Ok(WordSources::Unresolved) | Err(Error::InvalidClaimBody(_)) => return Ok(false),
             Ok(WordSources::From(sources)) => sources,
@@ -187,7 +190,7 @@ impl Vault {
             {
                 return Ok(false);
             }
-            match crate::scope_summary::word_sources_in(self, txn, &source, &source_raw) {
+            match self.fence_word_sources_in(txn, &source, &source_raw) {
                 Ok(WordSources::Own) => {}
                 Ok(WordSources::From(nested)) => pending.extend(nested),
                 Ok(WordSources::Unresolved) | Err(Error::InvalidClaimBody(_)) => return Ok(false),
@@ -195,6 +198,34 @@ impl Vault {
             }
         }
         Ok(true)
+    }
+
+    /// The word sources [`Self::word_source_fence_in`] walks for one row:
+    /// [`crate::scope_summary::word_sources_in`], except that an ASSET holding
+    /// a filed compaction step's response bytes carries the compactor's words
+    /// as its response artifact does, so its sources are every response
+    /// artifact holding those bytes, each then walked through its own
+    /// `DerivedFrom` lineage (REVIEW-10629 round 2). The scoped read
+    /// (`compaction_response_bytes_readable_in`) and the sync member gate
+    /// (`epoch_egress`) judge that ASSET by the same holders. The door reads
+    /// base, so no holder is a room's.
+    fn fence_word_sources_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        raw: &[u8],
+    ) -> Result<crate::scope_summary::WordSources> {
+        if raw.first() == Some(&crate::registry::ENTITY_TYPE_ASSET) {
+            let holders: Vec<EntityId> =
+                crate::llm::compaction_response_holders_in(&self.store.read(), txn, id, raw)?
+                    .into_iter()
+                    .map(|holder| holder.id)
+                    .collect();
+            if !holders.is_empty() {
+                return Ok(crate::scope_summary::WordSources::From(holders));
+            }
+        }
+        crate::scope_summary::word_sources_in(self, txn, id, raw)
     }
 
     /// One row as this door's Normal view judges it, for an `esign.*`
