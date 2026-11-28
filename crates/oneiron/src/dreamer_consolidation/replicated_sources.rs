@@ -135,7 +135,7 @@ impl ClaimSourceReplay {
         let locators = locator_sources(body)?;
         // A typed self-citation is skipped, never waited on: the writer's dependency writer
         // refuses a resident self-source, so the writer recorded no such edge.
-        let mut unheld = typed_and_deep_sources(body);
+        let mut unheld: BTreeSet<EntityId> = BTreeSet::new();
         unheld.retain(|source| *source != self.claim && !locators.contains(source));
         if locators.is_empty() && unheld.is_empty() {
             return Ok(());
