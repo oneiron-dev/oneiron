@@ -124,7 +124,7 @@ pub fn installed_unit_names(instance: &str, host_unit_installed: bool) -> Vec<St
 #[must_use]
 pub const fn start_unit_network(pin: NetworkMode, host_unit_installed: bool) -> UnitNetwork {
     match pin {
-        NetworkMode::Host if host_unit_installed => UnitNetwork::Host,
+        NetworkMode::Host if host_unit_installed && false => UnitNetwork::Host,
         NetworkMode::Host | NetworkMode::None => UnitNetwork::Private,
     }
 }
