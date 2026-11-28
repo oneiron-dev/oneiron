@@ -4,6 +4,7 @@
 //! kinds, and the hidden map. The same inputs give the same bytes. The catalogue
 //! revision travels beside the text, not in it.
 
+mod discovery;
 mod index;
 mod render;
 mod search;
@@ -17,6 +18,7 @@ use oneiron_store::note_kind::RetentionDefault;
 
 use self::index::{Index, Node};
 pub use self::vault_view::OwnedViewOptions;
+pub use discovery::{AdmittedRows, DiscoveryRefusal, DiscoveryView, NoteKindAudience};
 
 /// The code-mode catalogue, with a node for each path segment.
 #[derive(Debug)]

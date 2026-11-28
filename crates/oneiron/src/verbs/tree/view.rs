@@ -36,6 +36,14 @@ fn note_kinds(kinds: &[NoteKindLine]) -> String {
         .join(", ")
 }
 
+pub(super) fn discovery_note_kinds(text: &mut String, path: &str, options: &ViewOptions<'_>) {
+    if path == super::discovery::NOTE_CREATE && !options.note_kinds.is_empty() {
+        text.push_str("\n  NOTE kind is one of ");
+        text.push_str(&note_kinds(options.note_kinds));
+        text.push('.');
+    }
+}
+
 fn wrap_names(names: impl IntoIterator<Item = String>, indent: &str, lines: &mut Vec<String>) {
     let mut current = indent.to_owned();
     let mut width = text_len(indent);
@@ -151,9 +159,33 @@ impl VerbTree {
         }
     }
 
+    fn full_discovery_subtree<'a>(
+        &'a self,
+        node: &'a Node,
+        options: &ViewOptions<'_>,
+        blocks: &mut Vec<String>,
+        shown: &mut BTreeSet<&'a str>,
+    ) {
+        if let Some(row) = self.index.verbs.get(&node.path)
+            && shown.insert(node.path.as_str())
+        {
+            let mut text = self.verb_full_with(&node.path, row, true);
+            discovery_note_kinds(&mut text, &node.path, options);
+            blocks.push(text);
+        }
+        for child in node.ordered_children(options.hidden) {
+            self.full_discovery_subtree(child, options, blocks, shown);
+        }
+    }
+
     pub(super) fn render_view(&self, options: &ViewOptions<'_>) -> RenderedView {
+        self.render_view_with(options, false)
+    }
+
+    pub(super) fn render_view_with(&self, options: &ViewOptions<'_>, strict: bool) -> RenderedView {
         let mut base = Vec::new();
         let mut shown_base = BTreeSet::new();
+        let mut shown_full = BTreeSet::new();
         let mut not_shown = Vec::new();
         let kinds = note_kinds(options.note_kinds);
         for path in options.base {
@@ -173,25 +205,41 @@ impl VerbTree {
             }
             if let Some(text) = authored.filter(|_| !options.hidden.contains_key(path)) {
                 let text = text.replace("{note_kinds}", &kinds);
-                base.push(self.without_hidden_paths(&text, options.hidden));
+                if !strict || shown_full.insert(path.as_str()) {
+                    base.push(self.without_hidden_paths(&text, options.hidden));
+                }
             } else if let Some(node) = node {
                 let mut blocks = Vec::new();
-                self.full_subtree(node, options.hidden, &mut blocks);
-                base.push(self.without_hidden_paths(&blocks.join("\n\n"), options.hidden));
+                if strict {
+                    self.full_discovery_subtree(node, options, &mut blocks, &mut shown_full);
+                } else {
+                    self.full_subtree(node, options.hidden, &mut blocks);
+                }
+                if !strict || !blocks.is_empty() {
+                    base.push(self.without_hidden_paths(&blocks.join("\n\n"), options.hidden));
+                }
             }
             shown_base.insert(path.as_str());
         }
+        let base_count = if strict { shown_full.len() } else { base.len() };
         let head = self
             .index
             .head
             .trim_end()
             .replace("{TOTAL}", &grouped(self.root.visible_count(options.hidden)))
-            .replace("{BASE_COUNT}", &grouped(base.len()));
+            .replace("{BASE_COUNT}", &grouped(base_count));
         let head = self.without_hidden_paths(&head, options.hidden);
         let mut expanded = Vec::new();
         for path in options.expanded {
             if let Some(node) = self.visible_node(path, options) {
-                let block = self.expand_node(node, options.hidden);
+                let mut block = if strict {
+                    self.expand_node_with(node, options.hidden, true)
+                } else {
+                    self.expand_node(node, options.hidden)
+                };
+                if strict && node.children.is_empty() {
+                    discovery_note_kinds(&mut block, path, options);
+                }
                 expanded.push((
                     path.as_str(),
                     self.without_hidden_paths(&block, options.hidden),
@@ -201,11 +249,18 @@ impl VerbTree {
             }
         }
         let coarse = self.coarse_tree(&shown_base, options.hidden);
-        let coarse_tip = self.without_hidden_paths(
-            "Before you call one: return await verbs.expand(\"vault.mail\") \
-             shows its verbs and their fields.",
-            options.hidden,
-        );
+        let coarse_tip = if !strict
+            || (self.index.verbs.contains_key("verbs.expand")
+                && self.node_at("vault.mail").is_some())
+        {
+            self.without_hidden_paths(
+                "Before you call one: return await verbs.expand(\"vault.mail\") \
+                 shows its verbs and their fields.",
+                options.hidden,
+            )
+        } else {
+            String::new()
+        };
         let render = |keep: usize| {
             let mut text = head.clone();
             for block in &base {

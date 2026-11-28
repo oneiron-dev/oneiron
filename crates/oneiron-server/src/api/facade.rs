@@ -137,6 +137,7 @@ mod host_door_rows {
     include!(concat!(env!("OUT_DIR"), "/host_door_rows.rs"));
 }
 pub(in crate::api) use host_door_rows::needs_caller_credential;
+pub(in crate::api) use host_doors::view_owner_route_admits;
 pub(super) mod host_doors;
 mod host_trigger_doors;
 // The hosted import's verbs (ARCH-0027 #hosted-import).

@@ -340,3 +340,53 @@ pub(in crate::api::facade) fn door_admits(
         }
     }
 }
+
+/// The input-free part of the host-door preflight for discovery. Reuse the
+/// checked owner, delegate and grade arms, and the non-acting fallback for
+/// rows without a generated precheck. A different checked proof is not
+/// established by this view; leave that admission on the actual call.
+#[cfg_attr(
+    not(test),
+    allow(dead_code, reason = "dormant until 3b-2b PR 3 binds the run host door")
+)]
+pub(in crate::api) fn view_owner_route_admits(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    verb: &str,
+) -> bool {
+    if verb == "vault.export" {
+        return view_export_admits(server, auth).is_ok();
+    }
+    match Row::from_verb(verb).map(Row::proof) {
+        None
+        | Some(
+            Proof::Owner
+            | Proof::OwnerDelegate
+            | Proof::MediaOwnerGrade
+            | Proof::VideoJobOwnerGrade,
+        ) => door_admits(server, auth, verb).is_ok(),
+        Some(_) => false,
+    }
+}
+
+/// `vault.export`'s owner admission for discovery: owner grade first, as its hook admission
+/// refuses a non-owner before the door runs, then its live export admission in its own
+/// snapshot. Either failure hides the row.
+#[cfg_attr(
+    not(test),
+    allow(dead_code, reason = "dormant until 3b-2b PR 3 binds the run host door")
+)]
+fn view_export_admits(server: &SyncServer, auth: &CoreAuth) -> MemoryResult<()> {
+    if crate::api::mcp_gateway::static_admission::static_admission(
+        StaticCaller::facade(auth),
+        StaticCheck::OwnerGrade,
+    )
+    .is_err()
+    {
+        return Err(crate::api::facade::owner_binding::owner_refusal(
+            "vault.export",
+        ));
+    }
+    crate::api::facade::hooks::export_admits(server, auth)
+        .map_err(crate::api::facade::FacadeApiError::into_memory_error)
+}

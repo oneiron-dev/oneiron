@@ -40,6 +40,7 @@ mod verdict_hooks;
 mod vision;
 mod work_orders;
 
+pub(in crate::api) use self::admission::view_owner_route_admits;
 pub(super) use self::admission::*;
 pub(crate) use self::arms::*;
 pub(crate) use self::artifacts_audit::*;

@@ -24,6 +24,36 @@ pub struct OwnedViewOptions {
 }
 
 impl OwnedViewOptions {
+    pub(super) fn discovery_note_kinds(
+        &self,
+        audience: super::NoteKindAudience,
+    ) -> Vec<NoteKindLine> {
+        match audience {
+            super::NoteKindAudience::Owner => self.note_kinds.clone(),
+            super::NoteKindAudience::NonOwner => oneiron_store::note_kind::shipped()
+                .into_iter()
+                .filter(|descriptor| descriptor.context != ContextDefault::ExplicitOnly)
+                .map(|descriptor| NoteKindLine {
+                    kind: descriptor.kind,
+                    retention: descriptor.retention,
+                    archive_after_days: descriptor.archive_after_days,
+                })
+                .collect(),
+        }
+    }
+
+    pub(super) fn restrict_for_discovery(
+        &mut self,
+        tree: &super::VerbTree,
+        kinds: Vec<NoteKindLine>,
+    ) {
+        let visible = |path: &String| !path.is_empty() && tree.node_at(path).is_some();
+        self.base.retain(visible);
+        self.expanded.retain(visible);
+        self.note_kinds = kinds;
+        self.hidden.clear();
+    }
+
     /// This, hiding `hidden`: omitted verb paths and the grants they need.
     pub fn with_hidden(mut self, hidden: BTreeMap<String, String>) -> Self {
         self.hidden = hidden;
@@ -40,6 +70,21 @@ impl OwnedViewOptions {
             hidden: &self.hidden,
         }
     }
+}
+
+/// A not-shown shipped name or a possible pack kind is not safe catalogue text.
+pub(super) fn kind_mentions_are_visible(text: &str, kinds: &[NoteKindLine]) -> bool {
+    use super::render::is_word_char;
+    use oneiron_store::note_kind::{is_shipped_kind, valid_name};
+
+    text.split(|ch| !is_word_char(ch) && !matches!(ch, '.' | '/' | '-'))
+        .map(|word| word.trim_matches('.'))
+        .all(|word| {
+            let namespaced = word.split_once('/').is_some_and(|(pack, name)| {
+                !pack.is_empty() && !name.is_empty() && valid_name(word)
+            });
+            !(namespaced || is_shipped_kind(word)) || kinds.iter().any(|line| line.kind == word)
+        })
 }
 
 impl Vault {

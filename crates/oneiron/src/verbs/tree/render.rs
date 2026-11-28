@@ -20,6 +20,41 @@ pub(super) fn is_type_name(text: &str) -> bool {
     text.as_bytes().first().is_some_and(u8::is_ascii_uppercase) && text.chars().all(is_word_char)
 }
 
+// The generated signatures use identifiers for types. A quoted literal or an
+// object key with the same spelling does not introduce a type dependency.
+pub(super) fn type_references(mut text: &str) -> impl Iterator<Item = &str> {
+    std::iter::from_fn(move || {
+        loop {
+            let start = text.find(|ch| is_word_char(ch) || matches!(ch, '\'' | '"' | '`'))?;
+            text = &text[start..];
+            if let Some(quote) = text
+                .chars()
+                .next()
+                .filter(|&ch| matches!(ch, '\'' | '"' | '`'))
+            {
+                let mut escaped = false;
+                let end = text[1..].find(|ch| {
+                    if std::mem::take(&mut escaped) {
+                        return false;
+                    }
+                    escaped = ch == '\\';
+                    ch == quote
+                })?;
+                text = &text[end + 2..];
+                continue;
+            }
+            let end = text.find(|ch| !is_word_char(ch)).unwrap_or(text.len());
+            let name = &text[..end];
+            text = &text[end..];
+            let after = text.trim_start();
+            let after = after.strip_prefix('?').unwrap_or(after).trim_start();
+            if is_type_name(name) && !after.starts_with(':') {
+                return Some(name);
+            }
+        }
+    })
+}
+
 pub(super) fn text_len(text: &str) -> usize {
     text.encode_utf16().count()
 }
@@ -296,8 +331,14 @@ impl VerbTree {
     }
 
     pub(super) fn verb_full(&self, path: &str, row: &VerbRow) -> String {
+        self.verb_full_with(path, row, false)
+    }
+
+    pub(super) fn verb_full_with(&self, path: &str, row: &VerbRow, strict: bool) -> String {
         let parameters = input_parameters(&row.input);
-        let stored_result = if row.output == "unknown" {
+        let stored_result = if row.output == "unknown"
+            || (strict && !self.index.types.contains_key("StoredResult"))
+        {
             ""
         } else {
             " | StoredResult"
@@ -344,15 +385,19 @@ impl VerbTree {
         if let Some(first) = deeper.first() {
             let names = deeper[..deeper.len().min(12)].join(", ");
             let more = if deeper.len() > 12 { ", …" } else { "" };
-            lines.push(format!(
-                "  more types, by name: verbs.expand(\"{first}\")  ({names}{more})"
-            ));
+            if strict && !self.index.verbs.contains_key("verbs.expand") {
+                lines.push(format!("  more types, by name: {names}{more}"));
+            } else {
+                lines.push(format!(
+                    "  more types, by name: verbs.expand(\"{first}\")  ({names}{more})"
+                ));
+            }
         }
-        let example = row
-            .example
-            .clone()
-            .unwrap_or_else(|| self.generated_example(path, row));
-        lines.push(format!("  example: {example}"));
+        if let Some(example) = &row.example {
+            lines.push(format!("  example: {example}"));
+        } else if !strict {
+            lines.push(format!("  example: {}", self.generated_example(path, row)));
+        }
         lines.join("\n")
     }
 
@@ -373,12 +418,26 @@ impl VerbTree {
     }
 
     pub(super) fn expand_node(&self, node: &Node, hidden: &BTreeMap<String, String>) -> String {
+        self.expand_node_with(node, hidden, false)
+    }
+
+    pub(super) fn expand_node_with(
+        &self,
+        node: &Node,
+        hidden: &BTreeMap<String, String>,
+        strict: bool,
+    ) -> String {
         let children = node.ordered_children(hidden);
         if children.is_empty() && node.visible_verb(hidden) {
-            return self.verb_full(&node.path, &self.index.verbs[&node.path]);
+            return self.verb_full_with(&node.path, &self.index.verbs[&node.path], strict);
         }
+        let tip = if strict && !self.index.verbs.contains_key("verbs.expand") {
+            ""
+        } else {
+            "; verbs.expand(\"<path>\") on any of them goes one level deeper"
+        };
         let mut lines = vec![format!(
-            "{} · {} verbs · a line per child; verbs.expand(\"<path>\") on any of them goes one level deeper",
+            "{} · {} verbs · a line per child{tip}",
             node.path,
             node.visible_count(hidden),
         )];

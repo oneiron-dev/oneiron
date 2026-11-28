@@ -77,6 +77,47 @@ fn under_path(path: &str, under: &str) -> bool {
 }
 
 impl VerbTree {
+    pub(super) fn search_discovery(
+        &self,
+        query: &str,
+        under: &str,
+        limit: usize,
+        options: &ViewOptions<'_>,
+    ) -> String {
+        use super::discovery::NO_MATCH;
+
+        if self.node_at(under).is_none() {
+            return NO_MATCH.to_owned();
+        }
+        let query = query.trim();
+        let dotted = query.contains('.')
+            && query
+                .chars()
+                .all(|ch| ch == '.' || super::render::is_word_char(ch));
+        let (total, hits) = if dotted {
+            if !self.index.verbs.contains_key(query) || !under_path(query, under) {
+                return NO_MATCH.to_owned();
+            }
+            (1, (limit != 0).then_some(query).into_iter().collect())
+        } else {
+            let descriptions_only = ViewOptions {
+                base: &[],
+                ..*options
+            };
+            self.search_verbs(query, under, limit, &descriptions_only)
+        };
+        if total == 0 {
+            return NO_MATCH.to_owned();
+        }
+        let plural = if total == 1 { "" } else { "s" };
+        let mut lines = vec![format!("{total} verb{plural} match; best {}:", hits.len())];
+        lines.extend(hits.iter().filter_map(|path| self.line(path)));
+        if total > hits.len() {
+            lines.push(format!("{} more", total - hits.len()));
+        }
+        lines.join("\n")
+    }
+
     fn authored_base<'a>(&'a self, path: &str, options: &ViewOptions<'_>) -> Option<&'a str> {
         if !options.base.iter().any(|entry| entry == path) {
             return None;
