@@ -154,6 +154,14 @@ pub struct ExecutionNodeSettings {
     /// The OS account the job unit runs as.
     #[serde(default = "job_account_default")]
     pub job_account: String,
+    /// Whether a job of a template that names credentials launches only
+    /// while every template here requires the file wall (FIX
+    /// NODE-JOB-CREDENTIALS; ANSWER CREDENTIALS-SAME-UID-GUARD = A): every
+    /// job runs as the one job account, and only the Landlock wall keeps one
+    /// job out of another's files and memory. Default true; false on a node
+    /// that runs one job at a time.
+    #[serde(default = "credentials_need_walled_node_default")]
+    pub credentials_need_walled_node: bool,
     /// `jobs.readiness.every_secs`: how often the node checks itself while
     /// no attempt runs (pass 34, 7.3). The owner's row may shorten it (row
     /// P0).
@@ -183,14 +191,6 @@ pub struct ExecutionNodeSettings {
     /// file alone.
     #[serde(default = "owner_policy_default")]
     pub owner_policy: bool,
-    /// Whether a job of a template that names credentials launches only
-    /// while every template here requires the file wall (FIX
-    /// NODE-JOB-CREDENTIALS; ANSWER CREDENTIALS-SAME-UID-GUARD = A): every
-    /// job runs as the one job account, and only the Landlock wall keeps one
-    /// job out of another's files and memory. Default true; false on a node
-    /// that runs one job at a time.
-    #[serde(default = "credentials_need_walled_node_default")]
-    pub credentials_need_walled_node: bool,
     /// The most memory the node's jobs hold at once, in GiB. Absent: the machine's total.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub job_memory_gib: Option<u64>,
@@ -655,11 +655,6 @@ impl NodeTemplate {
         if self.scopes.is_empty() {
             return Err("scopes must permit at least one scope kind".to_owned());
         }
-        for name in &self.returnable {
-            if !plain_name(name, 255) {
-                return Err(format!("returnable {name:?} must be a plain file name"));
-            }
-        }
         for (name, path) in &self.credentials {
             // The service manager skips a dot file of a credential directory.
             if !plain_name(name, TEMPLATE_NAME_MAX) || name.starts_with('.') {
@@ -671,6 +666,11 @@ impl NodeTemplate {
                 return Err(format!(
                     "credentials.{name} must be an absolute path with no '..'"
                 ));
+            }
+        }
+        for name in &self.returnable {
+            if !plain_name(name, 255) {
+                return Err(format!("returnable {name:?} must be a plain file name"));
             }
         }
         if let Some(signal) = &self.checkpoint_signal

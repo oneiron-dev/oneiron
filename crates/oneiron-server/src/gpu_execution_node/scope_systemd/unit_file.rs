@@ -129,14 +129,14 @@ pub fn render_job_unit(inputs: &UnitInputs) -> String {
     );
     let _ = writeln!(text, "ExecStartPre=+{binary} job-prepare {root_args} %i");
     let _ = writeln!(text, "ExecStart={binary} job-exec %i");
+    // The job's credentials, as root's control handler staged them before
+    // the start ([`super::credentials`]); the probe unit loads none.
+    let _ = writeln!(text, "{}", super::credentials::load_credential_line());
     let _ = writeln!(
         text,
         "ExecStartPost=+{binary} job-prepare --after-exec {root_args} %i"
     );
     let _ = writeln!(text, "ExecStopPost=+{binary} job-ended {root_args} %i");
-    // The job's credentials, as root's control handler staged them before
-    // the start ([`super::credentials`]); the probe unit loads none.
-    let _ = writeln!(text, "{}", super::credentials::load_credential_line());
     for (name, value) in sandbox_properties(inputs, "%i") {
         let _ = writeln!(text, "{name}={value}");
     }

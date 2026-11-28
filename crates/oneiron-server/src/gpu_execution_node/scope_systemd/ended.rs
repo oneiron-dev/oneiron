@@ -367,8 +367,8 @@ fn disarm(context: &StepContext) {
 
 /// [`disarm`] by a checked job instance alone.
 fn disarm_instance(instance: &str) {
+    super::credentials::withdraw(instance);
     let timer = format!("{CUTOFF_UNIT_PREFIX}{instance}.timer");
     let _ = run_tool("systemctl", &["stop", "--no-block", &timer], QUERY_WAIT);
     exchange::withdraw(instance);
-    super::credentials::withdraw(instance);
 }

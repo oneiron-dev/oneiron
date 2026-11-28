@@ -429,3 +429,30 @@ fn a_credentialed_job_needs_every_template_of_the_node_walled() {
             .is_some_and(|line| line.starts_with("template probe: credentials_need_walled_node: "))
     );
 }
+
+// T11
+#[test]
+fn a_start_sweeps_away_a_copy_older_than_the_start_timeout_and_keeps_the_rest() {
+    let (uid, gid) = me();
+    let root = scratch();
+    let stale = "fedcba9876543210fedcba9876543210";
+    let recent = "00000000000000000000000000000001";
+    for instance in [INSTANCE, stale, recent] {
+        drop(fresh_dir(root.path(), instance, (uid, gid)).expect("a staged directory"));
+    }
+    std::fs::create_dir(root.path().join("not-a-job")).expect("a foreign directory");
+    // A fixed time long past, so the test reads no clock.
+    let long_ago =
+        std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000_000);
+    for instance in [INSTANCE, stale, "not-a-job"] {
+        std::fs::File::open(root.path().join(instance))
+            .and_then(|dir| dir.set_modified(long_ago))
+            .expect("an old time");
+    }
+    assert!(sweep_stale(root.path(), INSTANCE, 60).is_empty());
+    assert_eq!(
+        listing(root.path()),
+        [recent, INSTANCE, "not-a-job"],
+        "the stale copy goes; this start's, a recent one and a name that is no job stay"
+    );
+}

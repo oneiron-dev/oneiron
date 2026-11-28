@@ -20,8 +20,10 @@
 //! `/run/credentials/<unit>/`: readable by the job account alone, removed
 //! when the unit stops, and hidden from every other unit that has a mount
 //! namespace. Prepare removes the staged copy first ([`withdraw`]), so the
-//! secret is then held only there; the end step, a failed start and a stop
-//! remove it too. The workload finds the directory in `CREDENTIALS_DIRECTORY`
+//! secret is then held only there; the end step removes it too, and each
+//! later start sweeps away a copy older than the unit's start timeout, which
+//! a start that failed or was stopped before its first command left. The
+//! workload finds the directory in `CREDENTIALS_DIRECTORY`
 //! and reads it through its file wall ([`grant_exec`]).
 //!
 //! Every job runs as the one job account (FIX EXEC-UNIT-CROSS-JOB-SAME-UID),
@@ -258,8 +260,9 @@ fn copy_into(
 }
 
 /// The control handler's step just before it starts the unit of `id`: it
-/// stages the directory the unit template loads. On a node whose installed
-/// unit template predates credentials it does nothing.
+/// stages the directory the unit template loads, and sweeps away the copies
+/// older starts left ([`sweep_stale`]). On a node whose installed unit
+/// template predates credentials it does nothing.
 ///
 /// # Errors
 ///
@@ -277,23 +280,32 @@ pub fn stage_for_start(
     if !loads {
         return Ok(());
     }
-    let dir =
-        fresh_dir(Path::new(CREDENTIALS_STAGING_ROOT), id.as_str(), (0, 0)).map_err(|why| {
-            format!("credentials_not_staged: {why}: run `oneiron execution-node install` again")
-        })?;
+    let root = Path::new(CREDENTIALS_STAGING_ROOT);
+    let dir = fresh_dir(root, id.as_str(), (0, 0)).map_err(|why| {
+        format!("credentials_not_staged: {why}: run `oneiron execution-node install` again")
+    })?;
     let Some(node_file) = node_file else {
         return Ok(());
     };
-    let credentials = StepContext::open(StepArgs {
-        node_file: node_file.to_owned(),
-        engine_account: engine_account.to_owned(),
-        instance: id.as_str().to_owned(),
-        after_exec: false,
-        host_namespace_error: None,
-        stop_at_boot_ns: None,
-    })
-    .and_then(|context| launch_credentials(&context));
-    match credentials {
+    // The step's own argument parser, as the unit's root steps take them.
+    let args = [
+        "--node-file".to_owned(),
+        node_file.display().to_string(),
+        "--engine-account".to_owned(),
+        engine_account.to_owned(),
+        id.as_str().to_owned(),
+    ];
+    let context = match StepArgs::parse(&args).and_then(StepContext::open) {
+        Ok(context) => context,
+        Err(why) => {
+            journal_line!("job-control: {id}: no credential staged: {why}");
+            return Ok(());
+        }
+    };
+    for why in sweep_stale(root, id.as_str(), context.settings.unit_start_timeout_secs) {
+        journal_line!("job-control: {why}");
+    }
+    match launch_credentials(&context) {
         Ok(credentials) => {
             for why in copy_into(borrow(&dir), &credentials, 0, (0, 0)) {
                 journal_line!("job-control: {id}: credential not staged: {why}");
@@ -302,6 +314,39 @@ pub fn stage_for_start(
         Err(why) => journal_line!("job-control: {id}: no credential staged: {why}"),
     }
     Ok(())
+}
+
+/// Removes each staged copy beneath `root` but `keep`'s that is older than
+/// `older_than_secs`, the job unit's start timeout. The service manager
+/// loads a copy as its unit's start begins, and prepare then removes it, so
+/// an older copy belongs to a start that failed or was stopped before its
+/// first command. Returns what it could not remove.
+fn sweep_stale(root: &Path, keep: &str, older_than_secs: u64) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return Vec::new();
+    };
+    let now = std::time::SystemTime::now();
+    let mut faults = Vec::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        if name == keep || JobKeyId::parse(name).is_none() {
+            continue;
+        }
+        let stale = entry
+            .metadata()
+            .and_then(|found| found.modified())
+            .is_ok_and(|modified| {
+                now.duration_since(modified)
+                    .is_ok_and(|age| age.as_secs() > older_than_secs)
+            });
+        if stale && let Err(why) = withdraw_at(root, name) {
+            faults.push(why);
+        }
+    }
+    faults
 }
 
 /// The credentials of the template the key's `launch.json` names, checked
@@ -419,8 +464,8 @@ pub fn grant_exec(
     read.push(dir);
 }
 
-/// Removes the staged copy of `instance`, if any. Prepare does it first; the
-/// end step, a failed start and a stop do it again.
+/// Removes the staged copy of `instance`, if any. Prepare does it first, and
+/// the end step again.
 pub fn withdraw(instance: &str) {
     if let Err(why) = withdraw_at(Path::new(CREDENTIALS_STAGING_ROOT), instance) {
         journal_line!("credentials: {why}");
