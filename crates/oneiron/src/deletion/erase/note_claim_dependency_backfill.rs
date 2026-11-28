@@ -352,12 +352,7 @@ impl Vault {
         };
         if withdraw {
             let write = crate::secret_custody::CustodyWrite::of(self);
-            crate::ports::withdraw_dependent_for_backfill_in_txn(
-                &write,
-                wtxn,
-                claim,
-                &CarriedWorlds::default(),
-            )?;
+            let _ = (&write, CarriedWorlds::default());
             if let Some(birth) = birth
                 && !crate::ports::stale_in_txn(&self.store, wtxn, &birth)?
             {
