@@ -55279,6 +55279,7 @@
      "path": "src/llm/inference_admission.rs",
      "purpose": "One snapshot and one admission for policy-managed inference calls",
      "surface": {
+      "crate-vis": 1,
       "enum": 1,
       "fn": 14,
       "re-export": 1,
