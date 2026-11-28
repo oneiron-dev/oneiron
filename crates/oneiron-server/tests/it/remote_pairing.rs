@@ -78,6 +78,7 @@ impl Fixture {
                     org_ref: None,
                     write_facet: None,
                     comm: None,
+                    seat: None,
                 },
             )
             .unwrap();
@@ -105,6 +106,7 @@ impl Fixture {
                     org_ref: None,
                     write_facet: None,
                     comm: None,
+                    seat: None,
                 },
             )
             .unwrap();

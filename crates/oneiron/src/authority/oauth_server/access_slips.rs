@@ -185,6 +185,7 @@ impl Vault {
                 org_ref: None,
                 write_facet: None,
                 comm: OAUTH_ACCESS_SLIP_COMM,
+                seat: None,
             },
         )?;
         let binding_key = holder_key.verifying_key().to_bytes();

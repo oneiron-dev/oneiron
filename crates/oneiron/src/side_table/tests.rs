@@ -716,6 +716,9 @@ fn pre_move_fixture_coverage_is_explicit() {
         "WEAVE_WRONG_LINK_LABEL",
         "WIRE_LIMIT_QUESTION",
         "WORK_TALK_REGISTRATION",
+        // FIX MARKET-SEAT-MODEL-STAMP, out of order: open PRs fill the
+        // AUTHORITY_ gaps above.
+        "AUTHORITY_PAIRING_SEAT",
     ]
     .into_iter()
     .collect();

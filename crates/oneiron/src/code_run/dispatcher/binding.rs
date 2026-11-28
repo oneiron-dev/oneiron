@@ -112,6 +112,7 @@ impl<'a> HostSelfDispatcher<'a> {
             birth_world: None,
             planner: None,
             slip_issuer: None,
+            live_run_slip: None,
             auto_checker: None,
             replay_exposures: Vec::new(),
             assertions_created: RefCell::default(),

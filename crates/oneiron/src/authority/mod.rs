@@ -510,7 +510,7 @@ pub use slip::*;
 pub(crate) use slip_pairing::PendingInvitationLink;
 pub use slip_pairing::{
     LinkedPeer, LinkedPeerIssued, PairingDescriptor, PairingLink, PairingPinRef, PairingPrincipal,
-    PairingRedeemed, format_pairing_link, format_pinned_pairing_link,
+    PairingRedeemed, PairingSeat, format_pairing_link, format_pinned_pairing_link,
     machine_possession_transcript, pairing_binding_transcript, pairing_binding_transcript_pinned,
     parse_pairing_link, parse_pinned_pairing_link,
 };

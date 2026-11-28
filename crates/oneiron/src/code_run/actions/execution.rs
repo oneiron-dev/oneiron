@@ -128,6 +128,7 @@ impl ActionRegistry {
             live_run: None,
             planner: None,
             slip_issuer: None,
+            live_run_slip: None,
         };
         self.execute(vault, actor, principal, call, binding, None, None)
     }
@@ -148,6 +149,7 @@ impl ActionRegistry {
             live_run,
             planner,
             slip_issuer,
+            live_run_slip,
         } = binding;
         let registered = self.registered(request.verb_id.as_str())?;
         // Unbound, a run row would read past the caller's own read key.
@@ -320,6 +322,11 @@ impl ActionRegistry {
         };
         let dispatcher = match slip_issuer {
             Some(issuer) => dispatcher.with_slip_issuer(issuer),
+            None => dispatcher,
+        };
+        // The holder's slip rides only beside a lease this call holds.
+        let dispatcher = match live_run_slip.filter(|_| leased.is_some()) {
+            Some(slip_id) => dispatcher.with_live_run_slip(slip_id),
             None => dispatcher,
         };
         let mut dispatcher = dispatcher;

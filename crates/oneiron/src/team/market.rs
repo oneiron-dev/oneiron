@@ -36,6 +36,7 @@ pub use oneiron_records::team::market::{
 };
 
 pub mod referee;
+pub mod seat;
 
 /// One run's market.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -397,6 +398,7 @@ pub fn submit(
             evidence: None,
             screen: None,
             invalid: None,
+            seat: None,
         });
         Ok(())
     })

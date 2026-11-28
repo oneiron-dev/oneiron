@@ -5,6 +5,9 @@ use oneiron_verb_wire::team::pattern::TeamPattern;
 pub use oneiron_verb_wire::team::run::TeamCoverageInput;
 pub use oneiron_verb_wire::team::run::TeamDecisionInput;
 pub use oneiron_verb_wire::team::run::TeamMarketOutcome;
+pub use oneiron_verb_wire::team::run::TeamMarketSeat;
+pub use oneiron_verb_wire::team::run::TeamMarketSeatSource;
+pub use oneiron_verb_wire::team::run::TeamMarketSubmissionView;
 pub use oneiron_verb_wire::team::run::TeamMarketSubmitInput;
 pub use oneiron_verb_wire::team::run::TeamMarketVerdictInput;
 pub use oneiron_verb_wire::team::run::TeamMarketVerdictOutcome;
@@ -74,6 +77,10 @@ pub enum TeamRunAnswer {
         submission_ref: String,
         participant: String,
         at: u64,
+        /// The seat behind the candidate, frozen at its first accepted
+        /// submit; none when unknown.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        seat: Option<TeamMarketSeat>,
         /// Whether the same submission was already recorded.
         replay: bool,
     },

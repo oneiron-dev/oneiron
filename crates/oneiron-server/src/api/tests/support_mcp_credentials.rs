@@ -44,6 +44,7 @@ pub(super) fn pair_mcp_credential(
                 org_ref: None,
                 write_facet: scope.facet_ref.map(|facet| facet.to_hex()),
                 comm: None,
+                seat: None,
             },
         )
         .unwrap();

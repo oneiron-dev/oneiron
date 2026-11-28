@@ -226,6 +226,7 @@ fn mint_agent_definition_credential(
             org_ref: None,
             write_facet: None,
             comm: None,
+            seat: None,
         },
     )?;
     let key = SigningKey::generate(&mut rand_core::OsRng);

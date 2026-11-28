@@ -199,6 +199,10 @@ pub enum TeamMarketVerdictOutcome {
         score: f64,
         passed: bool,
         unknown: bool,
+        /// The seat behind the scored candidate, as its submission froze
+        /// it; none when unknown.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        seat: Option<TeamMarketSeat>,
     },
     /// A development-cohort screen: never a score or a pass.
     Screened { score: f64 },
@@ -206,8 +210,29 @@ pub enum TeamMarketVerdictOutcome {
     Invalid { reason: String },
 }
 
-/// A market team's result: the referee's, and the CEO's override beside it.
+/// The seat behind a submission: the harness its member ran in and the
+/// model behind it, frozen when the member submitted (FIX
+/// MARKET-SEAT-MODEL-STAMP). It names no credential.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct TeamMarketSeat {
+    pub harness: String,
+    pub model: String,
+    pub source: TeamMarketSeatSource,
+}
+
+/// Who named a submission's seat.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TeamMarketSeatSource {
+    /// The owner, on the pairing link of the credential that submitted: the
+    /// engine records that declaration and never observes the model.
+    OwnerPaired,
+    /// The engine's own seat receipt for the member's run.
+    HostSeat,
+}
+
+/// A market team's result: the referee's, and the CEO's override beside it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct TeamMarketOutcome {
     /// The referee's winner, by member key; none when nothing won.
@@ -218,6 +243,26 @@ pub struct TeamMarketOutcome {
     pub closed_at: u64,
     #[serde(rename = "override")]
     pub referee_override: Option<TeamOverrideView>,
+    /// Every submission with its seat beside its score, in submission
+    /// order, so a comparison groups results per model (ARCH-0079).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub submissions: Vec<TeamMarketSubmissionView>,
+}
+
+/// One submission of a closed market, as the team's result shows it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct TeamMarketSubmissionView {
+    pub submission_ref: String,
+    /// The member key it was submitted under.
+    pub participant: String,
+    /// None: unknown (a credential paired without a seat, or a run the
+    /// engine did not seat).
+    pub seat: Option<TeamMarketSeat>,
+    pub score: Option<f64>,
+    pub passed: Option<bool>,
+    /// Its sealed run had fewer tasks than the bar needs.
+    pub unknown: bool,
 }
 
 /// A CEO override, as its receipt records it.

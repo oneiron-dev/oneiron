@@ -594,6 +594,17 @@ pub struct TokenPairArgs {
     /// `vault`; a wider reach later is a new mint.
     #[arg(long, value_parser = COMM_REACHES)]
     pub comm: Option<String>,
+
+    /// The harness of the agent seat the slip is for (FIX
+    /// MARKET-SEAT-MODEL-STAMP), e.g. `claude-code`: the owner's
+    /// declaration, kept beside the slip. Needs `--seat-model` and
+    /// `--actor-class agent`.
+    #[arg(long = "seat-harness", requires = "seat_model")]
+    pub seat_harness: Option<String>,
+
+    /// The model behind that harness, e.g. `claude-opus-5-5`.
+    #[arg(long = "seat-model", requires = "seat_harness")]
+    pub seat_model: Option<String>,
 }
 
 /// The comm reaches `--comm` takes, as a slip spells them (FIX 3899).

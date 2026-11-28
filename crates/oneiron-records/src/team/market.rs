@@ -2,6 +2,7 @@
 //! `oneiron` re-exports each item at its old path.
 
 use oneiron_contracts::entity_id::EntityId;
+use oneiron_verb_wire::team::run::TeamMarketSeat;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -114,6 +115,10 @@ pub struct Submission {
     /// verdict clears it.
     #[serde(default)]
     pub invalid: Option<InvalidVerdict>,
+    /// The seat behind the candidate, frozen at its first accepted submit
+    /// (FIX MARKET-SEAT-MODEL-STAMP): none when unknown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seat: Option<TeamMarketSeat>,
 }
 
 /// The referee's contract, pinned from its sealed NOTE before the work.

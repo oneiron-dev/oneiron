@@ -170,6 +170,7 @@ fn run_embedded(
             live_run: None,
             planner: None,
             slip_issuer: None,
+            live_run_slip: None,
         },
     )?;
     Ok(PolicyActionOutcome::from_dispatch(&dispatch)?)

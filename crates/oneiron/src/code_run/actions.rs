@@ -176,6 +176,11 @@ pub struct ActionHostBinding<'a> {
     /// `self.leader.split` uses it to sign its subproject spawn; unset, that
     /// call answers `slip_issuer_unbound`.
     pub slip_issuer: Option<&'a crate::authority::HostSlipIssuer>,
+    /// The slip of the credential that holds `live_run`, as the host
+    /// verified it (FIX MARKET-SEAT-MODEL-STAMP): a member's market
+    /// submission reads the seat the owner paired that credential with.
+    /// Read only beside a held live run; nothing stores or shows the id.
+    pub live_run_slip: Option<[u8; 32]>,
 }
 pub type ActionFactory = fn(ActionBuildContext, &[ActionArgument]) -> Result<SelfCall>;
 /// How a registered verb becomes its call: a host factory, a row of the

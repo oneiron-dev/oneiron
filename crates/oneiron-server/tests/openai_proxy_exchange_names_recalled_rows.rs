@@ -97,6 +97,7 @@ fn pair_connector(
                 org_ref: None,
                 write_facet: None,
                 comm: None,
+                seat: None,
             },
         )
         .expect("proxy rows pairing link");

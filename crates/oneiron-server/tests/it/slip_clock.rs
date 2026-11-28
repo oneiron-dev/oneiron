@@ -308,6 +308,7 @@ fn mint_agent(
                 org_ref: None,
                 write_facet: None,
                 comm: None,
+                seat: None,
             },
         )
         .unwrap();

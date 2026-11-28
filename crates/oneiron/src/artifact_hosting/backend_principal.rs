@@ -123,6 +123,7 @@ impl Vault {
                 org_ref: None,
                 write_facet: None,
                 comm: Some(comm),
+                seat: None,
             },
         )?;
         Ok(ArtifactBackendPairing {
