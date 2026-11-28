@@ -68,6 +68,7 @@ impl Vault {
             principal_ref: &principal_ref,
             preferred_grant: None,
             remember_context: super::connector_remember::capture(memory),
+            run_served_person_rows: super::connector_call_code::run_served_person_rows(memory),
         };
         // The endpoint the served connector host sends this route to, as
         // this host installed it.

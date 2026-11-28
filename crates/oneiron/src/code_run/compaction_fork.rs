@@ -311,7 +311,11 @@ pub fn withdrawn_source_rows(
 
 /// Whether `source` is deleted, erased or withdrawn in `txn`; a row that
 /// cannot be read counts as withdrawn.
-fn source_row_withdrawn_in(vault: &Vault, txn: &heed::RoTxn<'_>, source: &EntityId) -> bool {
+pub(crate) fn source_row_withdrawn_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    source: &EntityId,
+) -> bool {
     vault.is_deleted_shell_in_txn(txn, source).unwrap_or(true)
         || crate::ports::stale_in_txn(&vault.store, txn, source).unwrap_or(true)
 }

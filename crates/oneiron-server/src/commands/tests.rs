@@ -1,4 +1,5 @@
 use super::*;
+use crate::server::SyncServer;
 
 /// The CORS rows above stop at "the config parsed" and "a layer was built" —
 /// neither says what a browser is told. A layer built over the right origin
@@ -1331,4 +1332,35 @@ async fn a_fresh_agent_credential_serves_mcp_when_the_vault_clock_trails_the_wal
     .await
     .unwrap();
     assert_eq!(read.status(), StatusCode::OK);
+}
+
+/// PAIRING-LINK-EXPIRY-ON-VAULT-INSTANT: `token pair`'s stderr line names the
+/// vault's clock, the link's life on that clock, and that the clock resumes
+/// from its last saved reading, so an operator never reads the number as this
+/// host's time nor the life as the server's running time (review r1 of
+/// #10570).
+#[test]
+fn pairing_link_notice_names_the_vault_clock_and_its_resume_from_the_last_saved_reading() {
+    let notice = pairing_link_notice(1_795_529_632, "vault");
+    assert!(
+        notice.starts_with("the pairing link expires at vault-clock second 1795529632: "),
+        "{notice}"
+    );
+    assert!(
+        notice.contains(
+            "(pairing.code.ttl_secs, one hour unless set) after its issue, measured on the vault clock"
+        ),
+        "{notice}"
+    );
+    assert!(
+        notice.contains("does not advance while the server is stopped"),
+        "{notice}"
+    );
+    assert!(
+        notice.contains("resumes from its last saved reading when it starts"),
+        "{notice}"
+    );
+    assert!(!notice.contains("running time"), "{notice}");
+    assert!(notice.ends_with("its slip may message: vault"), "{notice}");
+    assert!(!notice.contains("unix second"), "{notice}");
 }

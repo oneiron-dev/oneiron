@@ -122,6 +122,7 @@ mod layout_store;
 mod surfaces_tests;
 mod tasks;
 
+pub(crate) use frame::xml_text_token;
 pub use frame::{
     BoardBlockHeader, BoardBudget, BoardBudgetRequest, BoardBudgetSource, BoardFrame,
     BoardFrameError, BoardLegend, BoardPart, BoardRender, BoardRenderMetadata, BoardSection,

@@ -8,6 +8,8 @@
 use super::*;
 use crate::dreamer_consolidation::evidence::ResolvedConflictOutput;
 use crate::error::{ErrorKind, GateError};
+use crate::registry::ENTITY_TYPE_NOTE;
+use crate::vault::live_entity_row_in_txn;
 
 /// A gate refusal's outcome and reason codes, as the gate wrote them: static
 /// codes, never the candidate's text (FIX 10355).
@@ -159,18 +161,37 @@ pub(super) fn promote_one_answering(
     // not resolve at all; zero survivors is a typed rejection.
     let mut surviving: Vec<EntityId> = Vec::new();
     let mut dropped: Vec<EntityId> = Vec::new();
+    let mut unverified_cited_notes: Vec<EntityId> = Vec::new();
+    let resolution_failed =
+        |error| PromotionRejection::engine_in("evidence resolution failed", error);
+    // Classify admitted NOTEs in the same snapshot, before a purge can hide their type.
+    let unverified_txn = verified
+        .is_none()
+        .then(|| vault.store.env.read_txn())
+        .transpose()
+        .map_err(|error| resolution_failed(error.into()))?;
     for entry in &candidate.evidence_turn_refs {
-        match evidence_ref_admissible(vault, entry) {
-            Ok(true) => surviving.push(*entry),
-            Ok(false) => dropped.push(*entry),
-            Err(error) => {
-                return Err(PromotionRejection::engine_in(
-                    "evidence resolution failed",
-                    error,
-                ));
+        let admissible = match &unverified_txn {
+            Some(txn) => {
+                evidence_ref_refusal_in_txn(vault, txn, entry).map(|reason| reason.is_none())
             }
+            None => evidence_ref_admissible(vault, entry),
+        };
+        if !admissible.map_err(resolution_failed)? {
+            dropped.push(*entry);
+            continue;
+        }
+        surviving.push(*entry);
+        if let Some(txn) = &unverified_txn
+            && vault
+                .get_entity_type_in_txn(txn, entry)
+                .map_err(resolution_failed)?
+                == Some(ENTITY_TYPE_NOTE)
+        {
+            unverified_cited_notes.push(*entry);
         }
     }
+    drop(unverified_txn);
     if verified.is_some_and(|evidence| evidence.refs() != surviving) {
         return Err(PromotionRejection::guard(
             "scoped evidence differs from verified parent refs",
@@ -534,11 +555,26 @@ pub(super) fn promote_one_answering(
                     run.now_ms,
                 )
             }
-            None => crate::mail_pack::claim_recheck::owe_claim_recheck_for_cited_in_txn(
-                vault,
-                wtxn,
-                &unverified_cited,
-            ),
+            None => {
+                vault.record_note_dependencies_in_txn(
+                    wtxn,
+                    &candidate.claim_id,
+                    &unverified_cited_notes,
+                )?;
+                // The signed birth copy of the belief depends on the same NOTEs.
+                if envelope.machine_signature().is_some() {
+                    vault.record_signed_birth_note_dependencies_in_txn(
+                        wtxn,
+                        candidate.claim_id,
+                        &unverified_cited_notes,
+                    )?;
+                }
+                crate::mail_pack::claim_recheck::owe_claim_recheck_for_cited_in_txn(
+                    vault,
+                    wtxn,
+                    &unverified_cited,
+                )
+            }
         }?;
         if record_output {
             let approval = verify_landed_body(&landed, &probe_body.predicate, source)
@@ -632,6 +668,54 @@ pub(super) fn promote_one_answering(
     // predicate, source, and taint. A failure cannot roll back the committed
     // writes; it rejects the candidate, and the caller must not complete the attempt.
     verify_landed(vault, &candidate.claim_id, &probe_body.predicate, source)
+}
+
+impl Vault {
+    /// PROMOTED-CLAIM-SOURCE-DEPENDENCY-GAPS (path 1): a CLAIM learnt from a
+    /// NOTE depends on that NOTE, so the NOTE's erase withdraws it through the
+    /// dependent walk. A NOTE keeps its text under no entity document head,
+    /// so no typed citation can name it: the edge is recorded here, in the
+    /// claim's own write, as the MESSAGE words a verified promotion names are.
+    /// Every admitted NOTE must still be live in this transaction, or the write aborts.
+    pub(crate) fn record_note_dependencies_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        claim: &EntityId,
+        cited_notes: &[EntityId],
+    ) -> Result<()> {
+        for source in cited_notes {
+            if live_entity_row_in_txn(&self.store, wtxn, source)?.live_type()
+                != Some(ENTITY_TYPE_NOTE)
+            {
+                return Err(Error::InvalidClaimBody(
+                    "a NOTE the promotion cites was deleted before the write",
+                ));
+            }
+            crate::ports::record_derived_edge_in_txn(&self.store, wtxn, claim, source)?;
+        }
+        Ok(())
+    }
+
+    /// A MACHINE promotion's signed birth CLAIM carries the whole first body,
+    /// including the belief's value and NOTE refs (see `stage_machine_birth_after_candidate`
+    /// in `claim/history_store.rs`). It depends on the same NOTEs, so erasing a NOTE
+    /// withdraws both CLAIMs. `machine_history_rows` follows the trusted pin to the
+    /// birth instead of picking an entry from the target index.
+    pub(crate) fn record_signed_birth_note_dependencies_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        claim: EntityId,
+        cited_notes: &[EntityId],
+    ) -> Result<()> {
+        if cited_notes.is_empty() {
+            return Ok(());
+        }
+        let birth =
+            crate::claim::history_projection::machine_history_rows(&self.store, wtxn, claim)?
+                .birth
+                .event_id()?;
+        self.record_note_dependencies_in_txn(wtxn, &birth, cited_notes)
+    }
 }
 
 /// What a promoted claim's birth batch indexes under `val`: its index text,

@@ -241,7 +241,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | ARCH-0027 | `crates/oneiron-mail-pack/src/mail_pack/mod.rs` | s |
 | ARCH-0027 | `crates/oneiron-mesh-transport/src/files_search.rs` | s |
 | ARCH-0027 | `crates/oneiron-server/src/api/facade/files_doors/ask.rs` | s |
-| ARCH-0027 | `crates/oneiron-server/src/api/facade/hosted_import_doors.rs` | s |
+| ARCH-0027 | `crates/oneiron-server/src/api/facade/hosted_import_doors.rs` | m |
 | ARCH-0027 | `crates/oneiron-server/src/api/owner_routes/hosted_import_routes.rs` | m |
 | ARCH-0027 | `crates/oneiron-server/src/commands/history_import.rs` | L |
 | ARCH-0027 | `crates/oneiron-server/src/commands/history_import/hosted_import.rs` | L |
@@ -432,6 +432,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | ARCH-0040 | `crates/oneiron/src/workspace_roster/project/read/mod.rs` | m |
 | ARCH-0040 | `crates/oneiron/src/workspace_roster/rooms/peer_settings.rs` | s |
 | ARCH-0040 | `crates/oneiron/src/workspace_roster/rooms/thread_delete.rs` | s |
+| ARCH-0040 | `crates/oneiron-server/src/handler/mesh/sync_grant.rs` | s |
 | ARCH-0040 | `crates/oneiron-server/src/selector_release.rs` | s |
 | ARCH-0040 | `crates/oneiron-testkit/src/model/mod.rs` | m |
 | ARCH-0042 | `crates/oneiron/src/dreamer_runner/maintenance/calibration_asks.rs` | s |
@@ -460,6 +461,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | ARCH-0043 | `crates/oneiron/src/deletion/coop_delivery/leave.rs` | s |
 | ARCH-0043 | `crates/oneiron/src/deletion/coop_delivery/reply_setting.rs` | s |
 | ARCH-0043 | `crates/oneiron/src/deletion/coop_delivery/setting_answer.rs` | m |
+| ARCH-0043 | `crates/oneiron/src/dreamer_consolidation/turn_text/writers.rs` | s |
 | ARCH-0043 | `crates/oneiron/src/federation/connect_grant.rs` | m |
 | ARCH-0043 | `crates/oneiron/src/federation/delete_authority.rs` | L |
 | ARCH-0043 | `crates/oneiron/src/federation/foreign_world.rs` | s |

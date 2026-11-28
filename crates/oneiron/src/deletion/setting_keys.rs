@@ -13,6 +13,14 @@ const fn courtesy_delete_give_up_default() -> u64 {
     super::COOP_DELETION_GIVE_UP_SECS
 }
 
+const fn remat_dependency_hold_default() -> u64 {
+    86_400
+}
+
+const fn remat_dependency_hold_strictest() -> u64 {
+    0
+}
+
 crate::setting::setting_keys! {
     /// How long, in seconds, an undelivered courtesy-delete leg keeps retrying before it is
     /// `unreachable`. Seven days unless set. The wait between tries stays one minute to six
@@ -24,6 +32,16 @@ crate::setting::setting_keys! {
         kind: Kind::new(courtesy_delete_give_up_default)
             .strictest(courtesy_delete_give_up_default)
             .higher(),
+    };
+    /// How long, in seconds, the forward pass may report a WARN for a window whose replay markers
+    /// all wait for a project, or the message a project was born from, that this replica does not
+    /// hold yet, before raising the GDPR breach ERROR.
+    /// One day unless set. Only the owner changes it: an agent's change waits on the owner's
+    /// answer to that change, and the owner's standing approval does not cover it.
+    /// A row that does not decode reads 0, with no grace period beyond the start second.
+    pub(crate) REMAT_DEPENDENCY_HOLD_MAX_SECS: u64 = "sync.remat.dependency_hold_max_secs" {
+        kind: Kind::new(remat_dependency_hold_default).strictest(remat_dependency_hold_strictest),
+        standing_approval: false,
     };
     /// Whether the owner's delete of a record under a live brief share must go through the
     /// confirmed door, which shows what the delete retracts before it runs. On by default: the

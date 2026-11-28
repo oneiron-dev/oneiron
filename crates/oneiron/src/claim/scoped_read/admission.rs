@@ -123,6 +123,29 @@ impl<'a> ScopedRead<'a> {
         self
     }
 
+    /// Read only the CLAIM, NOTE, MESSAGE and TURN rows `projects` admits: the attached
+    /// session's default for a read that names no project (RECALL-SESSION-PROJECT), for a host
+    /// that builds this lane from a credential rather than a memory handle. It rides the key,
+    /// so a lane built from it keeps it; a request, never authority.
+    #[must_use]
+    pub fn within_session_projects(
+        mut self,
+        projects: crate::session_project::SessionProjects,
+    ) -> Self {
+        self.actor_key = self.actor_key.within_session_projects(projects);
+        self
+    }
+
+    /// Leave each MESSAGE and TURN this lane reads to the room rather than to the session's
+    /// projects (PLACEMENT-B-ROOM-ROWS = B). Only a room history lane takes it, where the rule is
+    /// named (`workspace_roster/rooms/history.rs`). A CLAIM and a NOTE stay narrowed, and every
+    /// other gate stays.
+    #[must_use]
+    pub(crate) fn judging_room_speech_by_room(mut self) -> Self {
+        self.actor_key.room_speech_by_room = true;
+        self
+    }
+
     /// A channel-aware door names its destination; the proof still decides whether it is allowed.
     pub(crate) fn through_channel(mut self, channel: &str) -> Self {
         self.actor_key.channel = Some(channel.to_owned());

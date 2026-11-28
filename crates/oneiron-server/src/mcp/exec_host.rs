@@ -9,8 +9,7 @@ use oneiron::agent_dispatch::{AgentDispatcher, SpawnPlanReceipt, SpendScopeId};
 use oneiron::attempt_queue::AttemptRecord;
 use oneiron::code_run::{CompactionHostBinding, GatedActorWrite, ScopedChildProfile};
 use oneiron::engine_executor::{
-    EngineExecutorConfig, EngineExecutorOutcome, EngineNativeExecutor, JsCodeModeRuntime,
-    RunCompaction, SelfBriefPort,
+    EngineExecutorConfig, EngineExecutorOutcome, JsCodeModeRuntime, RunCompaction, SelfBriefPort,
 };
 use oneiron::llm::run_admission::{PayerPerson, RunAdmission};
 use oneiron::llm::seat::{ModelSeat, SeatDecisions, SeatKind, SeatLearningContext, SeatTask};
@@ -25,7 +24,6 @@ use std::sync::OnceLock;
 use std::time::Instant;
 
 mod active_run;
-mod compaction_home;
 mod description_route;
 mod native_run;
 mod off_record_run;
@@ -44,7 +42,7 @@ pub use self::served::{CodeRunLimits, McpEngineNativeCodeHost};
 /// row. Nothing a caller sends reaches this: the key is a caller-chosen label,
 /// the identity is not.
 ///
-/// Both callers route through here: the `execute_code` durable run handle and
+/// Both callers route through here: the `execute` durable run handle and
 /// the retained edit adapter's idempotency row. There is no second derivation.
 #[must_use]
 pub fn mcp_scoped_identity_id(namespace: &str, key: &str, actor: &McpResolvedActor) -> EntityId {
@@ -97,7 +95,7 @@ pub fn mcp_scoped_identity_id(namespace: &str, key: &str, actor: &McpResolvedAct
     }
 }
 
-/// The DURABLE run id one `execute_code` handle resolves to.
+/// The DURABLE run id one `execute` handle resolves to.
 ///
 /// Deterministic, so re-calling with the same `run_ref` under the same
 /// credential scope re-enters the SAME persisted replay record — that is the
@@ -107,10 +105,20 @@ pub fn mcp_code_run_id(run_ref: &str, actor: &McpResolvedActor) -> EntityId {
     mcp_scoped_identity_id("execute_code.run", run_ref, actor)
 }
 
-/// One `execute_code` call as the injected host receives it.
+/// One code run's input as the injected host receives it (FIX EXECUTE-CALLER-CODE): a task in
+/// words, or the caller's own source.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum McpCodeRunInput<'a> {
+    /// A task in words for the REPL to carry out.
+    Task(&'a str),
+    /// The caller's own source to run as written.
+    CallerSource(&'a str),
+}
+
+/// One code run call as the injected host receives it.
 ///
 /// The actor is the RESOLVED connector actor; nothing here is caller-shaped
-/// except the task text and the run handle label.
+/// except the run input and the run handle label.
 pub struct McpCodeExecutionRequest<'a> {
     /// The vault this connector's durable run lives in. Supplied by the door
     /// the call arrived at, so the host binds no vault of its own.
@@ -120,8 +128,8 @@ pub struct McpCodeExecutionRequest<'a> {
     pub off_record_session: Option<String>,
     /// The caller's handle onto the durable run.
     pub run_ref: &'a str,
-    /// The REPL task the durable run carries out.
-    pub task: &'a str,
+    /// The run's input: a task in words, or the caller's own source.
+    pub input: McpCodeRunInput<'a>,
     /// The durable run id [`mcp_code_run_id`] derived for this handle.
     pub run_id: EntityId,
     /// The door each code-mode verb call takes: the SDK verb table under this
@@ -134,10 +142,12 @@ pub struct McpCodeExecutionRequest<'a> {
     /// The durable run's self brief, when the door lends one (FIX 17594
     /// D5): keyed by [`Self::run_id`], never the stream or a session label.
     pub brief: Option<Arc<dyn McpCodeRunSelfBrief>>,
+    /// The resource cleanup the host runs when this entry ends its run.
+    pub run_end: Option<Arc<dyn McpCodeRunEnd>>,
 }
 
 /// A code-mode durable run's self brief (FIX 17594 delivery slice D5), lent
-/// with one `execute_code` call by the door it arrived at: the port the
+/// with one `execute` call by the door it arrived at: the port the
 /// run's executor carries the brief through, and what the host does with
 /// the brief around one entry.
 ///
@@ -157,6 +167,14 @@ pub trait McpCodeRunSelfBrief: SelfBriefPort {
     fn close(&self);
 }
 
+/// What the host does once when an entry ends its run (Complete, or a window outgrown), under
+/// the run's single flight and before the run's permit is released, whether or not the caller
+/// still waits (FIX CODE-MODE-LENDING-W6).
+pub trait McpCodeRunEnd: Send + Sync {
+    /// Releases the resources held by the ended run.
+    fn end(&self);
+}
+
 impl fmt::Debug for McpCodeExecutionRequest<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("McpCodeExecutionRequest")
@@ -169,33 +187,46 @@ impl fmt::Debug for McpCodeExecutionRequest<'_> {
 
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum McpCodeExecutionError {
-    #[error("no execute_code host is bound on this server")]
+    #[error("no execute host is bound on this server")]
     HostUnbound,
     #[error(
-        "execute_code waited past limits.queue_wait_timeout_ms for a run's turn; no run was started; retry"
+        "execute waited past limits.queue_wait_timeout_ms for a run's turn; no run was started; retry"
     )]
     RunWaitedOut,
-    #[error("execute_code run binding failed: {0}")]
+    #[error("execute run binding failed: {0}")]
     RunBinding(String),
-    #[error("execute_code run failed: {0}")]
+    #[error("execute run failed: {0}")]
     Run(String),
+    /// The same run handle with other input (FIX EXECUTE-CALLER-CODE): the host's explicit input
+    /// comparison refused it before entry (P2-1), and nothing ran.
+    #[error("execute run refused: run_ref reused with other code")]
+    RunRefReused,
     /// A model call no provider answered stopped the run (FIX 3194): its
     /// step is kept, and the same `run_ref` enters it again from its next
     /// step once `retry_after` seconds have passed.
     #[error(
-        "execute_code run stopped: no provider answered a model call; call again with the same run_ref in {retry_after} s"
+        "resume stopped: no provider answered a model call; retry resume with the same run_ref in {retry_after} s"
     )]
     ProviderUnavailable { retry_after: u64 },
     /// A resumed pending step's program changed an effect step (L8-23): the entry holds with the
     /// walk's report line, and the owner answers once to re-fire or leave the drift.
-    #[error("execute_code run held with resume divergence: {0}")]
+    #[error("resume held with divergence: {0}")]
     ResumeDivergence(String),
     /// An off-record session refused an act the run took in it (FIX
     /// OFF-RECORD-RUN-POLICY-REFUSAL-500): the caller's refusal, answered as
     /// the session's other refusals are, never as a failure of the run.
     /// Entering the run again meets it again.
-    #[error("execute_code run refused: {}", .0.message)]
+    #[error("execute run refused: {}", .0.message)]
     Refused(Box<oneiron::MemoryError>),
+    /// A Task run whose window outgrew its model's limit, entered again
+    /// after it was started before `execute` ran the caller's own code (FIX
+    /// CODE-MODE-LENDING-W6): a connector's run is lent no window
+    /// compaction, so it ends with the refusal to start again, not a crash.
+    /// Entering the run again meets it again.
+    #[error(
+        "execute run refused: this run was started before execute ran the caller's own code, and its window has outgrown its model's limit; a connector's run is lent no window compaction, so start it again with execute"
+    )]
+    WindowOutgrown,
 }
 
 impl McpCodeExecutionError {
@@ -207,23 +238,38 @@ impl McpCodeExecutionError {
             Self::RunWaitedOut => "code_run_waited_out",
             Self::RunBinding(_) => "code_run_binding_failed",
             Self::Run(_) => "code_run_failed",
+            Self::RunRefReused => "run_ref_reused",
             Self::ProviderUnavailable { .. } => "model_unavailable",
             Self::ResumeDivergence(_) => "resume_divergence",
             Self::Refused(_) => "code_run_refused",
+            Self::WindowOutgrown => "code_run_window_outgrown",
         }
+    }
+
+    /// Whether this answer ends its run as completion does: entering the run again meets it
+    /// again, so the run's brief, desktop and live cards close with it (FIX CODE-MODE-LENDING-W6).
+    #[must_use]
+    pub const fn ends_run(&self) -> bool {
+        matches!(self, Self::WindowOutgrown)
     }
 }
 
-/// The server-local, INJECTED `execute_code` seam.
+/// The server-local, INJECTED `execute` seam.
 ///
 /// ONE-1704 owns the MCP bridge, not a new engine runtime: the host is bound
 /// once by route/provider wiring and this crate never evaluates anything of its
-/// own. With no host bound, `execute_code` fails CLOSED — it does not fall back
+/// own. With no host bound, `execute` fails CLOSED — it does not fall back
 /// to a gateway-local loop.
 pub trait McpCodeExecutionHost: Send + Sync {
     /// Only a host with a verified production interpreter may enter tools/list.
     fn production_runtime_available(&self) -> bool {
         false
+    }
+
+    /// Task readiness (FIX EXECUTE-CALLER-CODE): caller-source readiness plus the generative
+    /// seat and the prompt package. True for hosts that predate the split.
+    fn task_runtime_available(&self) -> bool {
+        true
     }
 
     fn execute<'a>(
@@ -233,14 +279,12 @@ pub trait McpCodeExecutionHost: Send + Sync {
         Box<dyn Future<Output = Result<EngineExecutorOutcome, McpCodeExecutionError>> + Send + 'a>,
     >;
 
-    /// [`Self::execute`] for the automatic re-entry of a run parked on a
-    /// durable wait (FIX 4606). The host takes the run's single flight and
-    /// its run permit as for any entry. Then it reads the run's record
-    /// again: a run that left the wait or the generation in `condition`
-    /// runs no batch and answers [`McpCodeRunResumed::Superseded`]. A
-    /// caller's own call goes through [`Self::execute`] and carries no
-    /// condition. The default host cannot read the record under its single
-    /// flight, so it enters nothing; the caller's next call enters the run.
+    /// A re-entry of an existing run. The host takes the run's single
+    /// flight and permit, then checks the record again. A missing record
+    /// or a run that no longer meets the automatic wait fence (FIX 4606)
+    /// runs no batch and answers [`McpCodeRunResumed::Superseded`]. The
+    /// default host cannot check the condition under its single flight,
+    /// so it enters nothing.
     fn execute_resumed<'a>(
         &'a self,
         _request: McpCodeExecutionRequest<'a>,
@@ -267,6 +311,12 @@ pub trait McpCodeModeProvider: Send + Sync {
     /// Defaults closed for fixture and custom providers.
     fn production_runtime_available(&self) -> bool {
         false
+    }
+
+    /// Task readiness (FIX EXECUTE-CALLER-CODE): caller-source readiness plus the generative
+    /// seat and the prompt package. True for providers that predate the split.
+    fn task_runtime_available(&self) -> bool {
+        true
     }
 
     /// The backend the durable REPL generates each step against.
@@ -391,6 +441,31 @@ pub trait McpCodeModeProvider: Send + Sync {
     ) -> oneiron::Result<EngineExecutorConfig> {
         self.executor_config(vault, run_id, task)
     }
+    /// The executor configuration for a caller-source run of `code` (FIX
+    /// EXECUTE-CALLER-CODE), in the vault it lives in. The default refuses: a provider that
+    /// predates the split runs task runs only.
+    fn source_executor_config(
+        &self,
+        _vault: &Vault,
+        _run_id: EntityId,
+        _code: &str,
+    ) -> oneiron::Result<EngineExecutorConfig> {
+        Err(oneiron::Error::InvalidConfig(
+            "this code-mode provider runs no caller-source runs".to_owned(),
+        ))
+    }
+    /// [`Self::source_executor_config`] for a run its host entered through `bound`, as
+    /// [`Self::executor_config_on`] is for a task run. The default answers
+    /// [`Self::source_executor_config`].
+    fn source_executor_config_on(
+        &self,
+        vault: &Vault,
+        _bound: &GatedActorWrite<'_>,
+        run_id: EntityId,
+        code: &str,
+    ) -> oneiron::Result<EngineExecutorConfig> {
+        self.source_executor_config(vault, run_id, code)
+    }
     /// The model the code-mode template runs on, read without entering a
     /// run (FIX 4659). The default reads it from the config of a run keyed
     /// by `caller`, which nothing enters; a provider that holds its template
@@ -426,7 +501,7 @@ pub trait McpCodeModeProvider: Send + Sync {
     fn seat_decisions(&self) -> Option<&SeatDecisions> {
         None
     }
-    /// Host-owned capability profile, never taken from execute_code arguments.
+    /// Host-owned capability profile, never taken from execute arguments.
     fn seat_facet(&self) -> Option<&str> {
         None
     }
@@ -716,7 +791,7 @@ impl<'a> ScopeMeter<'a> {
 }
 
 /// One entry of an engine-native run through `bound`, the write door its
-/// host bound: `execute_code`'s credential-gated door, or a leased attempt's
+/// host bound: `execute`'s credential-gated door, or a leased attempt's
 /// own dispatcher. A manifest-backed run runs on `seat`, the model seat its
 /// host bore it on (`engine_run_seat`); a run with none takes its configured
 /// model.
@@ -773,8 +848,9 @@ pub(crate) fn enter_engine_native_run(
             Some(backend) => backend.as_ref(),
             None => provider.backend(),
         };
-        return enter_on(
+        return native_run::enter_on(
             vault, provider, backend, bound, config, compaction, reactor, seat, brief, horizon,
+            false,
         );
     };
     // The lease the entry's door and planner runner were lent: one ledger.
@@ -814,7 +890,7 @@ pub(crate) fn enter_engine_native_run(
         EngineRunError::Binding("this code-mode provider cannot meter a spend scope".into())
     })?;
     let entered = if per_rung {
-        enter_on(
+        native_run::enter_on(
             vault,
             provider,
             backend.as_ref(),
@@ -825,9 +901,10 @@ pub(crate) fn enter_engine_native_run(
             seat,
             brief,
             horizon,
+            false,
         )
     } else {
-        enter_on(
+        native_run::enter_on(
             vault,
             provider,
             &LiveLeaseBackend::new(&live, backend.as_ref()),
@@ -838,6 +915,7 @@ pub(crate) fn enter_engine_native_run(
             seat,
             brief,
             horizon,
+            false,
         )
     };
     live.book_rest()
@@ -1100,49 +1178,9 @@ fn engine_seat_task(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn enter_on(
-    vault: &Vault,
-    provider: &dyn McpCodeModeProvider,
-    backend: &dyn LlmBackend,
-    bound: &GatedActorWrite<'_>,
-    config: &EngineExecutorConfig,
-    compaction: Option<&mut RunCompaction>,
-    reactor: &tokio::runtime::Runtime,
-    seat: Option<&ModelSeat>,
-    brief: Option<&dyn SelfBriefPort>,
-    horizon: Option<oneiron::idle_fold::CachedPrefixHorizon>,
-) -> Result<EngineExecutorOutcome, EngineRunError> {
-    let mut runtime = provider.runtime();
-    let runtime: &mut dyn JsCodeModeRuntime = &mut *runtime;
-    let mut routed_config = config.clone();
-    let mut executor = EngineNativeExecutor::new(vault, backend, provider.lease(), runtime, bound)
-        .with_cache_horizon(horizon);
-    if let Some(seat) = seat {
-        routed_config.model = seat.model().clone();
-        routed_config.model_locality = seat.locality();
-        routed_config.seat_effort = Some(seat.effort());
-        executor = executor.with_model_seat(seat);
-    }
-    if let Some(seat) = compaction {
-        executor = executor.with_compaction(seat);
-    }
-    if let Some(feedback) = provider.code_check() {
-        executor = executor.with_code_check(feedback);
-    }
-    // FIX 17594 (delivery slice D2): the host's self-brief port, when it
-    // lends one.
-    if let Some(port) = brief {
-        executor = executor.with_self_brief(port);
-    }
-    reactor
-        .block_on(executor.run(&routed_config))
-        .map_err(EngineRunError::Run)
-}
-
 static MCP_CODE_EXECUTION_HOST: OnceLock<Arc<dyn McpCodeExecutionHost>> = OnceLock::new();
 
-/// Binds the process's `execute_code` host. Route/provider wiring only.
+/// Binds the process's `execute` host. Route/provider wiring only.
 ///
 /// Returns `false` when a host is already bound: the seam is set once, so no
 /// request-time input can swap the substrate under a live connector.
@@ -1150,7 +1188,7 @@ pub fn bind_mcp_code_execution_host(host: Arc<dyn McpCodeExecutionHost>) -> bool
     MCP_CODE_EXECUTION_HOST.set(host).is_ok()
 }
 
-/// The bound `execute_code` host, or `None` when this process bound none.
+/// The bound `execute` host, or `None` when this process bound none.
 #[must_use]
 pub fn mcp_code_execution_host() -> Option<&'static Arc<dyn McpCodeExecutionHost>> {
     MCP_CODE_EXECUTION_HOST.get()

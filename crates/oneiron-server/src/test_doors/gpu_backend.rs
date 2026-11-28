@@ -125,6 +125,18 @@ pub fn gpu_job_worker_starts(server: &Arc<SyncServer>) -> bool {
     }
 }
 
+/// One tick of `server`'s GPU job worker, as its loop runs one with every pass
+/// admitted (`gpu_host::worker_tick`): one worker pass, then the scheduled
+/// readiness read the tick starts and does not wait for, or `None` when it
+/// started none (one already runs). Call it inside a Tokio runtime.
+pub async fn run_gpu_job_worker_tick(
+    server: &Arc<SyncServer>,
+) -> Option<tokio::task::JoinHandle<()>> {
+    let admit: crate::server::HousekeepingAdmission =
+        Arc::new(|| Some(Box::new(()) as Box<dyn Send>));
+    crate::gpu_host::worker_tick(server, &admit).await
+}
+
 /// One pass of the GPU job worker: one step of every live job, each with its
 /// outcome as text when it refused.
 pub fn step_gpu_jobs(server: &SyncServer) -> Vec<(EntityId, Result<GpuJobStepReport, String>)> {

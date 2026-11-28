@@ -20,6 +20,7 @@ mod projection_rules;
 mod py;
 mod uniffi_types;
 mod verb_table;
+mod verb_tree_index;
 
 use std::path::{Path, PathBuf};
 
@@ -39,6 +40,12 @@ const STACK_BYTES: usize = 256 << 20;
 pub const INPUTS: &[&str] = &[
     // verb_table::load_verbs (the verb table) and generate::docs::generated_artifacts (verbs.md).
     "scripts/sdk/verbs",
+    // verb_table::check_verb_tree (family lines and vault capability labels).
+    "scripts/sdk/verb-tree/families.json",
+    "scripts/sdk/verb-tree/vault_capabilities.json",
+    // verb_tree_index::verb_tree_index (the view head and base texts).
+    "scripts/sdk/verb-tree/view_head.txt",
+    "scripts/sdk/verb-tree/base",
     // facade_types::type_names (read first, before any verb file).
     "scripts/sdk/type_names.json",
     // generate::common::hand_declared('ts'), generate::emit_ts::ts_facade_module, ts_native_module, and

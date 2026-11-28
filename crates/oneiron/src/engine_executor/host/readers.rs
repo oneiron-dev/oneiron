@@ -167,7 +167,8 @@ impl RecordingJsHost<'_, '_> {
         ))
     }
 
-    /// `summarize(r, {group?, note_refs?, ...})`: every result member
+    /// `summarize(r, {group?, note_refs?, ...})`: the caller's spawn power is
+    /// checked first. Then every result member is
     /// resolved in this run and read-checked as a read of it is, in order,
     /// then each NOTE it names read as its caller reads it, then the call
     /// dispatched with them bound; the run's record keeps the guest's call. A
@@ -183,18 +184,24 @@ impl RecordingJsHost<'_, '_> {
         seq: u64,
         mut call: SelfSummarizeCall,
     ) -> Result<(SelfDispatchOutcome, Option<SelfCall>)> {
-        let denied = |code: String| {
+        let denied_with = |code: String, reason_codes: Vec<String>| {
             (
                 SelfDispatchOutcome::Denied(SelfDeniedResult {
                     hook_notice: None,
                     effect: SelfEffect::Summarize,
                     outcome: code,
-                    reason_codes: Vec::new(),
+                    reason_codes,
                 }),
                 None,
             )
         };
+        let denied = |code: String| denied_with(code, Vec::new());
         if self.gated_write.reader_child().is_none() {
+            // SPAWN-KNOB (FIX CODE-MODE-LENDING-W5): the caller's spawn power
+            // decides before any member is resolved or any NOTE is read or published.
+            if let Some(denied) = self.gated_write.summarize_spawn_refusal(&call)? {
+                return Ok((SelfDispatchOutcome::Denied(denied), None));
+            }
             let members: Vec<String> = call.members().into_iter().map(str::to_owned).collect();
             let note_refs = call.note_refs.clone().unwrap_or_default();
             let mut bound = Vec::with_capacity(members.len() + note_refs.len());
@@ -234,7 +241,8 @@ impl RecordingJsHost<'_, '_> {
             for note_ref in &note_refs {
                 let (note, text) = match self.gated_write.summarize_note_text(note_ref)? {
                     Ok(found) => found,
-                    Err(code) => return Ok(denied(code)),
+                    // The door's reason codes reach the guest with its code.
+                    Err((code, reason_codes)) => return Ok(denied_with(code, reason_codes)),
                 };
                 match self.summarize_note_member(note, &text)? {
                     Ok(member) => bound.push(member),

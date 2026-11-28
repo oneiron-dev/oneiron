@@ -259,6 +259,7 @@ impl Vault {
                 sweep_key: None,
                 turn_program_details: Vec::new(),
                 version_release: true,
+                released_file_digests: Vec::new(),
             })),
             // A cooperative restriction can keep the version after preflight.
             Some(false) => Err(Error::ConcurrentWrite(

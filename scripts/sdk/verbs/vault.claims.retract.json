@@ -1,6 +1,7 @@
 {
   "name": "vault.claims.retract",
   "description": "Retracts one active claim: a deliberate withdrawal that preserves the record.",
+  "example": "await vault.claims.retract({ claim_ref: \"cl46:fe\" });",
   "refs": [
     "/claim_ref"
   ],

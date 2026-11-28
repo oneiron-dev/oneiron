@@ -86,7 +86,7 @@ pub(super) fn drop_refired_outputs(record: &mut CodeRunReplayRecord, refired: &[
 
 /// The digest of the guest boundary a step's program runs against: its WIT
 /// world and the imports it links, in their order (FIX 7703).
-pub(super) fn guest_abi_digest(boundary: &SandboxBoundaryContract) -> [u8; 32] {
+pub(in crate::engine_executor) fn guest_abi_digest(boundary: &SandboxBoundaryContract) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new_derive_key("oneiron code-run pending step guest abi v1");
     hasher.update(boundary.wit_world().as_bytes());
     for import in boundary.linked_imports() {

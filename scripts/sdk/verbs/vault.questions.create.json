@@ -1,5 +1,6 @@
 {
   "name": "vault.questions.create",
+  "description": "Creates a standing question at version one under the caller's read scope for the host to answer.",
   "input": "crate::receipt::QuestionCreateRequest",
   "output": "crate::llm::decision::questions::QuestionRecord",
   "call": "crate::task_verb::sdk::host_only(memory, \"vault.questions.create\", &input)?",

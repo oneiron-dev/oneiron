@@ -697,7 +697,7 @@ pub(crate) fn offer() -> GpuOffer {
 }
 
 impl Rig {
-    pub(crate) async fn start() -> Self {
+    async fn start(offer: GpuOffer) -> Self {
         let mesh = Machines::start_granted(2, &[JOB_ALPN, JOB_STATUS_ALPN])
             .await
             .expect("two machines with both job protocol grants");
@@ -719,7 +719,7 @@ impl Rig {
             mesh,
             issuer,
             owner,
-            offer: offer(),
+            offer,
             permits: GpuJobPermits::new(),
             signers,
             clock,
@@ -935,8 +935,13 @@ impl Rig {
 }
 
 pub(crate) fn with_rig(test: impl FnOnce(&Rig) + Send + 'static) {
+    with_rig_offer(offer(), test);
+}
+
+/// Runs the scripted node rig with the test's offer instead of the default offer.
+pub(crate) fn with_rig_offer(offer: GpuOffer, test: impl FnOnce(&Rig) + Send + 'static) {
     run_on_engine_stack("vault-machine-connector", || async move {
-        let rig = Rig::start().await;
+        let rig = Rig::start(offer).await;
         tokio::task::block_in_place(|| test(&rig));
         rig.mesh.stop().await;
     });

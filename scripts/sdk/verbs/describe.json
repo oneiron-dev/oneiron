@@ -47,5 +47,6 @@
       "ts": "/** Describes one task's card, or the whole TASKS section when no task is named. */",
       "py": "Describes one task's card, or the whole TASKS section when no task is named."
     }
-  }
+  },
+  "caller_code": "refused"
 }

@@ -38,6 +38,23 @@
 //! slot behind a keystore that counts each call, on a handle with no keys loaded. Red, one fix
 //! undone at a time on this head: the MACHINE body rule (16 fails, the rest pass), and the slot
 //! read (18 fails, the rest pass).
+//!
+//! MESH-GRANT-TEST10-HOME-CONTROL-RED: test 10 stepped only its test clock's wall, which moves no
+//! lifetime (the authority clock follows a source's monotonic reading, and `ManualClock` gives
+//! none), so its home still proved the grant the test meant to expire; and that grant ended with
+//! its pairing, not before it. The test now moves the authority floor with the wall and ends the
+//! grant half an hour before its pairing. Red, one rule of the grant check undone at a time on
+//! this head: the end judged on the replica's own clock alone (10 fails at "the grant the home
+//! expired admits nothing here", the rest pass), and the start judged on it again (10 fails at
+//! "the grant the home has just minted admits at once", the rest pass).
+//!
+//! MESH-AUTHORITY-ROW-PARTS (review round 2 of #10536): a signed row past the bytes a page's
+//! first row may take alone (24 MiB of base64, about 60,000 grants at the longest ALPN) was left
+//! out of every page, so no replica proved that machine. The page now names it by reference and
+//! the machine reads it in parts (`Vault::mesh_authority_part`), joins them and checks the length
+//! and content hash (`MeshAuthorityRowJoin`). Test 19 sends a binding of 70,000 255-byte grants
+//! across; test 20 refuses a row the home signed again after its page, and a reference past the
+//! longest row a machine joins.
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -485,34 +502,222 @@ fn a_bare_row_keeps_the_direct_addresses_the_replica_holds() {
     );
 }
 
+/// The ALPN of the `n`th grant [`Vault::add_unminted_mesh_grants`] adds in test 19: 255 bytes,
+/// the longest an ALPN may be.
+fn longest_alpn(n: u32) -> Vec<u8> {
+    format!("{n:0>255}").into_bytes()
+}
+
+/// The parts of the row `reference` names, read from `host` until it is whole: each part taken,
+/// and how many there were.
+fn join_parts(host: &Host, reference: &MeshAuthorityRowRef) -> (MeshAuthorityRowJoin, usize) {
+    let mut join = MeshAuthorityRowJoin::start(reference.clone()).expect("a join starts");
+    let mut parts = 0;
+    while !join.is_whole() {
+        let part = host
+            .vault
+            .mesh_authority_part(reference.machine, join.offset())
+            .unwrap()
+            .expect("the home serves the next part");
+        assert!(join.take(part), "each part continues the row");
+        parts += 1;
+    }
+    (join, parts)
+}
+
+/// 19. A binding of 70,000 grants at the longest ALPN passes the bytes a page's first row may
+/// take alone, so the home names it by reference; the machine reads it in parts, the joined row
+/// matches its length and content hash, and the replica proves the machine on it. The 69,999
+/// grants beside the one `pair_and_bind` minted name ids no slip holds: the home signs them in one
+/// write (minting each would sign a growing row 70,000 times), an import judges no grant, and a
+/// read judges only the one it asks for.
+#[test]
+fn a_binding_of_seventy_thousand_grants_crosses_whole_in_parts() {
+    let host = host();
+    let (machine, proven, endpoint_key) = bound_machine(&host, 105);
+    let (other, _, _) = bound_machine(&host, 107);
+    host.vault
+        .add_unminted_mesh_grants(
+            &host.issuer,
+            machine,
+            (1..70_000u32).map(|n| (longest_alpn(n), [7; 32])),
+        )
+        .unwrap();
+
+    let page = host.vault.mesh_authority_page(None).unwrap();
+    assert_eq!(page.next, None, "one page serves both bindings");
+    assert_eq!(
+        page.rows.iter().map(|row| row.machine).collect::<Vec<_>>(),
+        vec![other],
+        "the small binding rides whole, as a machine older than the parts reads it"
+    );
+    let [reference] = page.parted.as_slice() else {
+        panic!("one binding named by reference: {:?}", page.parted.len());
+    };
+    assert_eq!(reference.machine, machine);
+    assert!(
+        reference.total.div_ceil(3) * 4 > 24 * 1024 * 1024,
+        "control: the signed row alone passes the lone row's bytes: {} bytes",
+        reference.total
+    );
+    assert!(
+        !reference.bare,
+        "its address rides whole beside the reference"
+    );
+
+    let (join, parts) = join_parts(&host, reference);
+    assert!(parts > 1, "control: the row came in {parts} parts");
+    assert_eq!(
+        host.vault
+            .mesh_authority_part(machine, reference.total)
+            .unwrap(),
+        None,
+        "nothing past its end"
+    );
+    let joined = join
+        .finish()
+        .expect("the joined row matches its length and content hash");
+
+    let (_dir, replica) = replica(&host);
+    let mut rows = page.rows.clone();
+    rows.push(joined);
+    rows.sort_by_key(|row| row.machine);
+    let import = replica.import_mesh_authority_rows(rows).unwrap();
+    assert_eq!(
+        import.written,
+        BTreeSet::from([machine, other]),
+        "{import:?}"
+    );
+    assert_eq!(
+        replica.mesh_peer_machine(endpoint_key, GRANTED).unwrap(),
+        proven,
+        "the replica proves the machine on the row that came in parts"
+    );
+}
+
+/// 20. A row the home signs again between the page that named it and its parts never joins: its
+/// parts carry another length, or other bytes under the length the page named. A part of a
+/// shorter row is refused for its length even where its bytes fit. A reference past the longest
+/// row a machine joins, or to an empty row, never starts a join.
+#[test]
+fn a_row_signed_again_after_its_page_or_past_the_cap_never_joins() {
+    let host = host();
+    let (machine, _, _) = bound_machine(&host, 109);
+    let budget = reply_bytes(&served(&host)[0]) - 1;
+    let page = host
+        .vault
+        .mesh_authority_page_within(None, budget, budget)
+        .unwrap();
+    assert!(
+        page.rows.is_empty(),
+        "control: past the bytes it may take whole"
+    );
+    let [reference] = page.parted.as_slice() else {
+        panic!("one binding named by reference: {:?}", page.parted.len());
+    };
+    assert_eq!(
+        MeshAuthorityRowRef::digest_from_text(&reference.digest_text()),
+        Some(reference.digest),
+        "the wire names the content hash and spells it back"
+    );
+    assert!(reference.digest_text().starts_with("blake3:"));
+    let (join, _) = join_parts(&host, reference);
+    assert!(
+        join.finish().is_some(),
+        "control: the row the page named joins"
+    );
+    let named_row_part = host.vault.mesh_authority_part(machine, 0).unwrap().unwrap();
+    assert_eq!(
+        named_row_part.total, reference.total,
+        "control: the first part of the row the page named"
+    );
+
+    host.vault
+        .add_unminted_mesh_grants(&host.issuer, machine, [(b"mesh/later".to_vec(), [9; 32])])
+        .unwrap();
+    let signed_again = host.vault.mesh_authority_part(machine, 0).unwrap().unwrap();
+    assert_ne!(signed_again.total, reference.total, "control: the row grew");
+    let mut join = MeshAuthorityRowJoin::start(reference.clone()).unwrap();
+    assert!(
+        !join.take(signed_again.clone()),
+        "a part of another length does not continue the row"
+    );
+    let named_its_length = MeshAuthorityRowRef {
+        total: signed_again.total,
+        ..reference.clone()
+    };
+    // A part of the shorter row against a reference that names the longer one: its bytes fit
+    // under that length, so only the length the part carries refuses it.
+    assert!(
+        named_row_part.total < named_its_length.total
+            && named_row_part.part.len() as u64 <= named_its_length.total,
+        "control: the shorter row's first part fits under the longer length"
+    );
+    let mut join = MeshAuthorityRowJoin::start(named_its_length.clone()).unwrap();
+    assert!(
+        !join.take(named_row_part),
+        "a part of a shorter row does not continue a longer one"
+    );
+    let mut join = MeshAuthorityRowJoin::start(named_its_length).unwrap();
+    assert!(join.take(signed_again), "control: the length matches");
+    assert!(
+        join.finish().is_none(),
+        "bytes other than the ones the page named do not join"
+    );
+
+    for total in [0, MESH_AUTHORITY_ROW_MAX as u64 + 1] {
+        let reference = MeshAuthorityRowRef {
+            total,
+            ..reference.clone()
+        };
+        assert!(
+            MeshAuthorityRowJoin::start(reference).is_none(),
+            "no join of a {total}-byte row"
+        );
+    }
+}
+
 /// A replica judges the home's grants as it judges their pairings: a grant's start is its
 /// presence in the signed fold, and its end comes no later than the newest time a live owner
 /// signed into it. A replica whose clock stood still while the home went on neither keeps a grant
 /// the home expired nor refuses one the home has just minted (review round 2 of #10536, FIX
-/// MESH-GRANT-REPLICA-CLOCK).
+/// MESH-GRANT-REPLICA-CLOCK). The expired grant's pairing still stands, so the replica refuses
+/// that grant for the grant's own end (FIX MESH-GRANT-TEST10-HOME-CONTROL-RED).
 #[test]
 fn a_replica_behind_the_home_judges_the_grants_on_the_signed_time() {
     const MINTED: u64 = 1_790_000_000;
+    // The grant ceiling the owner sets: half the hour that `pair_and_bind`'s pairing runs.
+    const CEILING: u64 = 1800;
+    // The home's time once it has gone on: past the re-minted grant's end, before its pairing's.
+    const LATER: u64 = MINTED + 2700;
     let clock = crate::ports::ManualClock::new(MINTED);
     let mut config = VaultConfig::default();
     config.store_clock = clock.bundle();
     let host = host_with(config);
-    let (expiring, _, expiring_key) = bound_machine(&host, 101);
-    // The owner's grant ceiling drops to an hour, and that machine's grant is minted again under
-    // it: it now ends before the pairing it rides on.
+    let (expiring, expiring_proven, expiring_key) = bound_machine(&host, 101);
+    // The owner's grant ceiling drops to half an hour, and that machine's grant is minted again
+    // under it: it now ends half an hour before the pairing it rides on.
     host.vault
         .set_setting(
             crate::setting::SettingCaller::Owner(&host.owner),
             crate::setting::SetSetting::vault_value(
                 "mesh.grant.max_ttl_secs",
-                serde_json::json!(3600),
+                serde_json::json!(CEILING),
             ),
         )
         .unwrap();
     host.vault
         .set_mesh_alpn_grant(&host.issuer, expiring, expiring_key, GRANTED, true)
         .unwrap();
-    clock.set(MINTED + 7200);
+    // The home's time goes on. Lifetimes run on the vault's authority clock, which a step of a
+    // test clock's wall alone never moves (`ManualClock` gives no monotonic reading), so its
+    // floor is moved with it, as a serving home's clock moves while it runs.
+    clock.set(LATER);
+    host.vault.advance_authority_clock_for_test(LATER).unwrap();
+    assert!(
+        host.vault.capability_slip_now().unwrap() >= LATER,
+        "FIXTURE: the home's clock reads the later time"
+    );
     let (_, fresh, fresh_key) = bound_machine(&host, 103);
     assert_eq!(
         host.vault.mesh_peer_machine(expiring_key, GRANTED).unwrap(),
@@ -525,6 +730,10 @@ fn a_replica_behind_the_home_judges_the_grants_on_the_signed_time() {
     let (_dir, replica) = replica_with(&host, behind);
     let import = replica.import_mesh_authority_rows(served(&host)).unwrap();
     assert_eq!(import.written.len(), 2, "{import:?}");
+    assert!(
+        replica.capability_slip_now().unwrap() < MINTED + CEILING,
+        "FIXTURE: the replica's own clock still reads before the expired grant's end"
+    );
     assert_eq!(
         replica.mesh_peer_machine(expiring_key, GRANTED).unwrap(),
         PeerMachine::Unknown,
@@ -534,6 +743,17 @@ fn a_replica_behind_the_home_judges_the_grants_on_the_signed_time() {
         replica.mesh_peer_machine(fresh_key, GRANTED).unwrap(),
         fresh,
         "the grant the home has just minted admits at once"
+    );
+
+    // The pairing the expired grant rode on still stands on the home at the later time: a grant
+    // minted on it again admits there. The replica refused the expired grant for its own end.
+    host.vault
+        .set_mesh_alpn_grant(&host.issuer, expiring, expiring_key, GRANTED, true)
+        .unwrap();
+    assert_eq!(
+        host.vault.mesh_peer_machine(expiring_key, GRANTED).unwrap(),
+        expiring_proven,
+        "control: the expired grant's pairing still stands on the home"
     );
 }
 

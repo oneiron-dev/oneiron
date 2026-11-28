@@ -12,5 +12,6 @@
     "unrestricted_record_scope": true
   },
   "section": false,
-  "host_door_proof": "shared_person"
+  "host_door_proof": "shared_person",
+  "caller_code": "refused"
 }

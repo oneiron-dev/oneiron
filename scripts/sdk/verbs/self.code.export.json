@@ -1,5 +1,6 @@
 {
   "name": "self.code.export",
+  "description": "Exports a readable finalized revision from the run's checkout to a Git ref when the publication grant allows it.",
   "input": "crate::memory::repo_doors::RepoExportInput",
   "output": "crate::memory::repo_doors::RepoExportOutput",
   "scope": "Write",

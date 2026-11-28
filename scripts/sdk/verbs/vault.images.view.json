@@ -23,5 +23,6 @@
       "ts": "/** The full pixels behind an image's view handle (view, crop or zoom), recorded as a pull. */",
       "py": "The full pixels behind an image's view handle (view, crop or zoom), recorded as a pull."
     }
-  }
+  },
+  "caller_code": "refused"
 }

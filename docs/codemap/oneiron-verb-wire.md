@@ -258,7 +258,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/drafter/report.rs` | src | s | 2 struct · 2 fn · 2 const | DigestDrafter, DigestDrafterItem | Moved from `crates/oneiron/src/drafter/report.rs` (lib split W1: wire types below the lib) |
 | `src/drafter/serving.rs` | src | s | 1 enum | DrafterUnservedReason | Moved from `crates/oneiron/src/drafter/serving.rs` (lib split W1: wire types below the lib) |
 | `src/drafter/types.rs` | src | m | 6 struct · 8 enum · 4 fn | DrafterActor, DrafterArtifact, DrafterArtifactFile, DrafterCorpus, DrafterCorpusFile, DrafterDependencies, DrafterHoldReason, DrafterRetrainOutcome +6 | Moved from `crates/oneiron/src/drafter/types.rs` (lib split W1: wire types below the lib) |
-| `src/dreamer_consolidation/mod.rs` | src | s | 2 mod · 6 re-export | — | — |
+| `src/dreamer_consolidation/answer_schema.rs` | src | s | 2 struct · 2 fn · 2 const | DigestAnswerSchema, DigestAnswerSchemaItem | The answer-schema line of the morning report (HOUSE-SCHEMA-SWITCH): one item per answer-schema event no… |
+| `src/dreamer_consolidation/mod.rs` | src | s | 3 mod · 10 re-export | — | — |
 | `src/dreamer_consolidation/resources/mod.rs` | src | s | 1 mod · 1 re-export | — | — |
 | `src/dreamer_consolidation/resources/nightly_link_grant.rs` | src | s | 1 struct | NightlyLinkGrantRequest | Moved from `crates/oneiron/src/dreamer_consolidation/resources/nightly_link_grant.rs` (lib split W1: wire… |
 | `src/dreamer_consolidation/thing_agent.rs` | src | s | 5 struct | ThingDecideInput, ThingDecideOutput, ThingExtractInput, ThingExtractOutput, ThingProposalRef | Moved from `crates/oneiron/src/dreamer_consolidation/thing_agent.rs` (lib split W1: wire types below the lib) |
@@ -550,7 +551,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/reads.rs` | src | s | 2 struct | ClaimListFilter, NeighborOpts | Moved from `crates/oneiron/src/memory/reads.rs` (lib split W2: wire types below the lib) |
 | `src/memory/recall/call_mode.rs` | src | s | 1 enum · 2 fn · 1 re-export | RecallEffort | Moved from `crates/oneiron/src/memory/recall/call_mode.rs` (lib split W2: wire types below the lib) |
 | `src/memory/recall/home.rs` | src | s | 1 struct · 1 enum | RecallResidenceHit, RecallResidenceSource | Moved from `crates/oneiron/src/memory/recall/home.rs` (lib split W2: wire types below the lib) |
-| `src/memory/recall/mod.rs` | src | s | 5 struct · 1 enum · 6 fn · 3 mod · 6 re-export | Effort, MemoryProvenance, RecallRequest, RecallScope, RetrievalMeta, ScopeHonesty | Moved from `crates/oneiron/src/memory/recall/mod.rs` (lib split W2: wire types below the lib) |
+| `src/memory/recall/mod.rs` | src | m | 8 struct · 3 enum · 9 fn · 1 const · 3 mod · 6 re-export | Effort, LineProvenance, MemoryProvenance, RecallBarAsk, RecallBarOutcome, RecallBarRule, RecallRequest, RecallScope +3 | Moved from `crates/oneiron/src/memory/recall/mod.rs` (lib split W2: wire types below the lib) |
 | `src/memory/recall/paid.rs` | src | s | 2 enum | RerankReport, RerankSkip | Moved from `crates/oneiron/src/memory/recall/paid.rs` (lib split W2: wire types below the lib) |
 | `src/memory/repo_doors/custody.rs` | src | s | 4 struct | RepoCheckoutBindInput, RepoCheckoutBindOutput, RepoExportInput, RepoExportOutput | Moved from `crates/oneiron/src/memory/repo_doors/custody.rs` (lib split W2: wire types below the lib) |
 | `src/memory/repo_doors/mod.rs` | src | s | 3 mod · 6 re-export | — | — |

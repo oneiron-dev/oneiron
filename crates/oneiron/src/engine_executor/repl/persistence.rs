@@ -3,6 +3,10 @@
 //! Entry: `EngineNativeExecutor::load_or_create_record`.
 //! Executor definitions belong to `engine_executor::driver` and replay rows to `code_run`.
 
+use super::super::record::{
+    caller_source_code_digest, record_caller_source, refuse_caller_source_as_task,
+    verify_caller_source,
+};
 use super::super::types::EngineExecutorError;
 use super::super::wire::heal_executor_text_tracking_repairs;
 use super::*;
@@ -45,94 +49,45 @@ impl EngineNativeExecutor<'_> {
         key: &WaitKey,
         expected: Option<CodeRunReplayGeneration>,
     ) -> EngineExecutorResult<Option<CodeRunReplayGeneration>> {
-        let Some(delivery) = self.storage.wait_delivery(key)? else {
+        let Some(resume) = self.prepare_wait_resume(record, wait, key)? else {
+            return Ok(None);
+        };
+        Ok(Some(resume.commit(
+            &self.storage,
+            self.gated_write,
+            record,
+            wait,
+            expected,
+        )?))
+    }
+
+    pub(in crate::engine_executor) fn prepare_wait_resume(
+        &self,
+        record: &CodeRunReplayRecord,
+        wait: &SelfDurableWait,
+        key: &WaitKey,
+    ) -> EngineExecutorResult<Option<WaitResume>> {
+        let Some(mut delivery) = self.storage.wait_delivery(key)? else {
             return Ok(None);
         };
         let seq = completed_step_count(record)?
             .checked_sub(1)
             .ok_or(Error::CorruptedIndex("executor replay wait without a step"))?;
         let consent = code_consent_evidence(&self.storage, record, key, seq, &delivery.reply)?;
-        let mut reply: serde_json::Value = serde_json::from_str(&delivery.reply)
+        let mut reply = serde_json::from_str(&delivery.reply)
             .map_err(|_| Error::CorruptedIndex("code-run wait delivery"))?;
-        let mut origins = delivery.origins;
         if wait.effect == SelfEffect::Summarize {
-            (reply, origins) = self.storage.delivered_summary_reply(reply, origins)?;
+            (reply, delivery.origins) = self
+                .storage
+                .delivered_summary_reply(reply, delivery.origins)?;
         }
-        // The reply reaches the run (FIX 6130) at the position of the call
-        // parked on its wait, with the origins its settler froze (FIX 7083).
-        let parked_at = record
-            .bridge_calls
-            .iter()
-            .rev()
-            .find(|call| crate::code_run::parks_on(&call.outcome, wait.wait_id))
-            .map(|call| call.seq);
-        match parked_at {
-            Some(at) => {
-                self.gated_write
-                    .read_worlds_wait_reply(record.run_id, at, origins.as_ref());
-            }
-            None => {
-                let cause = crate::code_run::ReadWorldUnknown::WaitReply;
-                self.gated_write.read_worlds_unknown(record.run_id, cause);
-            }
-        }
-        // The rows the reply was derived from, as its settler listed them,
-        // join the parked call's own (FIX 5455).
-        if let Some(rows) = &delivery.source_rows
-            && let Some(call) = record
-                .bridge_calls
-                .iter_mut()
-                .rev()
-                .find(|call| crate::code_run::parks_on(&call.outcome, wait.wait_id))
-        {
-            crate::code_run::keep_wait_rows(&mut call.outcome, rows);
-            record.invalidate_verb_rows();
-        }
-        let mut resumed = json!({
-            "schema_version": REPLAY_METADATA_SCHEMA_VERSION,
-            "wait_id": wait.wait_id.to_hex(),
-            "effect": wait.effect.as_str(),
-            "generation": key.generation,
-            "reply": reply,
-        });
-        if let Some(consent) = consent {
-            resumed["consent"] = consent;
-        }
-        let mut sink = self.storage.code_run_output_sink()?;
-        write_json(&mut sink, &resumed)?;
-        let path = resumed_output_path(seq, wait.wait_id);
-        if record.outputs.iter().any(|output| output.path == path) {
-            return Err(Error::InvalidClaimBody("duplicate executor output path").into());
-        }
-        // The reply's body is finished and pinned here, but its row, marks
-        // and descriptor are published only in the resume commit below, with
-        // the record that lists it (FIX 6592). A refusal there leaves no body
-        // occurrence, consumes nothing and keeps the wait.
-        let input_rows = crate::code_run::resident_tool_answer_rows(record, None);
-        let finished = self
-            .storage
-            .finish_code_run_output(path, sink, input_rows)?;
-        record.outputs.push(finished.output.clone());
-        let output = &finished.output;
-        let name = format!("wait{seq}");
-        match record.bindings.iter_mut().find(|held| held.name == name) {
-            Some(held) => {
-                held.handle = output.handle.clone();
-                held.path = output.path.clone();
-            }
-            None => record.bindings.push(CodeRunResultBinding::new(
-                name,
-                output.handle.clone(),
-                output.path.clone(),
-            )),
-        }
-        let generation = self
-            .storage
-            .put_code_run_wait_resume_record(record, expected, key, seq, &finished)?;
-        if let crate::code_run::ExecutorStorage::Session(_) = &self.storage {
-            self.storage.clear_wait(key)?;
-        }
-        Ok(Some(generation))
+        Ok(Some(WaitResume {
+            key: *key,
+            seq,
+            delivery,
+            reply,
+            consent,
+        }))
     }
 
     /// The ONE-1929 normalization of one reply's post-hook text. A reply it
@@ -348,14 +303,24 @@ impl EngineNativeExecutor<'_> {
     ///
     /// A run that carries a continuation binds its digest in the marker, and
     /// is only ever seeded by its fork: it never starts at step 0 here.
-    pub(super) fn load_or_create_record(
+    pub(in crate::engine_executor) fn load_or_create_record(
         &self,
         config: &EngineExecutorConfig,
         prompt_fingerprint: &str,
         continuation: Option<&ContinuationNote>,
+        caller_source_code: Option<&str>,
     ) -> EngineExecutorResult<LoadedReplayRecord> {
+        // FIX EXECUTE-CALLER-CODE: a caller-source entry passes its explicit code; the task REPL
+        // passes none.
         let continuation_digest = continuation.map(|note| &note.digest);
         if let Some(record) = self.storage.get_code_run_replay_record(&config.run_id)? {
+            // A caller-source run is never resumed as a task run: refuse before the marker
+            // check, which assumes the entry's own mode. A source entry is not guarded here: a
+            // task record fails the marker check below with the original config error, and a
+            // source record's held body is verified after it.
+            if caller_source_code.is_none() {
+                refuse_caller_source_as_task(&record)?;
+            }
             let determinism = record.determinism.ok_or_else(|| {
                 Error::InvalidConfig("engine executor code run has unknown determinism".to_owned())
             })?;
@@ -372,6 +337,20 @@ impl EngineNativeExecutor<'_> {
                 prompt_fingerprint,
                 continuation_digest,
             )?;
+            // The entry's code must hash to the digest its config binds: other code under the
+            // same run fails as a changed config, as a task rerun with another task does. The
+            // held body is verified next, before the terminal read, on every source entry, even
+            // a Complete one: the record's hash binds the digest, but only the body proves the
+            // bytes are still held.
+            if let Some(code) = caller_source_code {
+                let Some(digest) = caller_source_code_digest(config, code) else {
+                    return Err(Error::InvalidConfig(
+                        "engine executor config changed for existing run".to_owned(),
+                    )
+                    .into());
+                };
+                verify_caller_source(&self.storage, &record, digest)?;
+            }
             let generation = Some(record.generation()?);
             let terminal_status = load_terminal_status(&self.storage, &record)?;
             if prompt_binding == PromptBinding::Drifted && terminal_status.is_none() {
@@ -393,28 +372,173 @@ impl EngineNativeExecutor<'_> {
             )
             .into());
         }
+        // FIX EXECUTE-CALLER-CODE: the entry's code must hash to the digest its config binds
+        // before the record is built: otherwise creation would keep one code under another's
+        // identity.
+        if let Some(code) = caller_source_code
+            && caller_source_code_digest(config, code).is_none()
+        {
+            return Err(Error::InvalidConfig(
+                "engine executor caller-source code differs from its config digest".to_owned(),
+            )
+            .into());
+        }
         let mut record = CodeRunReplayRecord::new(config.run_id, config.determinism);
         record.birth_world = self.gated_write.birth_world();
         record_config_marker(&self.storage, &mut record, config, prompt_fingerprint, None)?;
-        // The task its host declared the caller's own, kept as a body the
-        // run owns, so its host can enter it again after a restart (FIX
-        // 4606).
-        let declared = self.gated_write.declared_caller_task(config.run_id);
-        record_caller_task(&self.storage, &mut record, config, declared)?;
+        // A caller-source run keeps no caller task: its run owns one input manifest, the
+        // source body finished below.
+        if caller_source_code.is_none() {
+            // The task its host declared the caller's own, kept as a body the
+            // run owns, so its host can enter it again after a restart (FIX
+            // 4606).
+            let declared = self.gated_write.declared_caller_task(config.run_id);
+            record_caller_task(&self.storage, &mut record, config, declared)?;
+        }
+        // The caller-source body is finished here and committed with the record's creation
+        // below, in one writer: a refusal leaves neither.
+        let finished_source = match caller_source_code {
+            Some(code) => Some(record_caller_source(&self.storage, &mut record, code)?),
+            None => None,
+        };
         // The run's clock and config are durable from its start: a process
         // that stops after the first step's writes and before its checkpoint
         // resumes under them, never under a fresh clock or another task. Its
         // replies are its actor's from the start too (FIX 5718).
         let actor = self.gated_write.actor().entity_ref();
-        let generation =
+        let generation = if let Some(finished) = &finished_source {
+            self.storage.put_owned_code_run_replay_record_with_output(
+                &record,
+                None,
+                config.run_id,
+                actor,
+                finished,
+            )?
+        } else {
             self.storage
-                .put_owned_code_run_replay_record(&record, None, config.run_id, actor)?;
+                .put_owned_code_run_replay_record(&record, None, config.run_id, actor)?
+        };
+        // A known-secret mark or an actor erase at the creation fence must prevent the first
+        // effect too: verify the committed body before returning, as on re-entry.
+        if let Some(code) = caller_source_code {
+            let Some(digest) = caller_source_code_digest(config, code) else {
+                return Err(Error::InvalidConfig(
+                    "engine executor caller-source code differs from its config digest".to_owned(),
+                )
+                .into());
+            };
+            verify_caller_source(&self.storage, &record, digest)?;
+        }
         Ok(LoadedReplayRecord {
             record,
             generation: Some(generation),
             terminal_status: None,
             prompt: PromptBinding::Unchanged,
         })
+    }
+}
+
+/// A verified wait reply, not yet consumed. Caller-source replay can check
+/// the settled call prefix before publishing it (FIX EXECUTE-CALLER-CODE).
+pub(in crate::engine_executor) struct WaitResume {
+    key: WaitKey,
+    seq: u64,
+    delivery: crate::code_run::WaitDelivery,
+    reply: serde_json::Value,
+    consent: Option<serde_json::Value>,
+}
+
+impl WaitResume {
+    pub(in crate::engine_executor) fn source_rows(&self) -> Option<&[EntityId]> {
+        self.delivery.source_rows.as_deref()
+    }
+
+    pub(in crate::engine_executor) fn commit(
+        self,
+        storage: &crate::code_run::ExecutorStorage<'_>,
+        gated: &crate::code_run::GatedActorWrite<'_>,
+        record: &mut CodeRunReplayRecord,
+        wait: &SelfDurableWait,
+        expected: Option<CodeRunReplayGeneration>,
+    ) -> crate::Result<CodeRunReplayGeneration> {
+        let Self {
+            key,
+            seq,
+            delivery,
+            reply,
+            consent,
+        } = self;
+        // The reply reaches the run (FIX 6130) at the position of the call
+        // parked on its wait, with the origins its settler froze (FIX 7083).
+        let parked_at = record
+            .bridge_calls
+            .iter()
+            .rev()
+            .find(|call| crate::code_run::parks_on(&call.outcome, wait.wait_id))
+            .map(|call| call.seq);
+        match parked_at {
+            Some(at) => {
+                gated.read_worlds_wait_reply(record.run_id, at, delivery.origins.as_ref());
+            }
+            None => {
+                let cause = crate::code_run::ReadWorldUnknown::WaitReply;
+                gated.read_worlds_unknown(record.run_id, cause);
+            }
+        }
+        // The rows the reply was derived from, as its settler listed them,
+        // join the parked call's own (FIX 5455).
+        if let Some(rows) = &delivery.source_rows
+            && let Some(call) = record
+                .bridge_calls
+                .iter_mut()
+                .rev()
+                .find(|call| crate::code_run::parks_on(&call.outcome, wait.wait_id))
+        {
+            crate::code_run::keep_wait_rows(&mut call.outcome, rows);
+            record.invalidate_verb_rows();
+        }
+        let mut resumed = json!({
+            "schema_version": REPLAY_METADATA_SCHEMA_VERSION,
+            "wait_id": wait.wait_id.to_hex(),
+            "effect": wait.effect.as_str(),
+            "generation": key.generation,
+            "reply": reply,
+        });
+        if let Some(consent) = consent {
+            resumed["consent"] = consent;
+        }
+        let mut sink = storage.code_run_output_sink()?;
+        write_json(&mut sink, &resumed)?;
+        let path = resumed_output_path(seq, wait.wait_id);
+        if record.outputs.iter().any(|output| output.path == path) {
+            return Err(Error::InvalidClaimBody("duplicate executor output path").into());
+        }
+        // The reply's body is finished and pinned here, but its row, marks
+        // and descriptor are published only in the resume commit below, with
+        // the record that lists it (FIX 6592). A refusal there leaves no body
+        // occurrence, consumes nothing and keeps the wait.
+        let input_rows = crate::code_run::resident_tool_answer_rows(record, None);
+        let finished = storage.finish_code_run_output(path, sink, input_rows)?;
+        record.outputs.push(finished.output.clone());
+        let output = &finished.output;
+        let name = format!("wait{seq}");
+        match record.bindings.iter_mut().find(|held| held.name == name) {
+            Some(held) => {
+                held.handle = output.handle.clone();
+                held.path = output.path.clone();
+            }
+            None => record.bindings.push(CodeRunResultBinding::new(
+                name,
+                output.handle.clone(),
+                output.path.clone(),
+            )),
+        }
+        let generation =
+            storage.put_code_run_wait_resume_record(record, expected, &key, seq, &finished)?;
+        if let crate::code_run::ExecutorStorage::Session(_) = storage {
+            storage.clear_wait(&key)?;
+        }
+        Ok(generation)
     }
 }
 

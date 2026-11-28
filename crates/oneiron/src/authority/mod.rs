@@ -441,9 +441,10 @@ pub use managed_owner_check::{ManagedOwnerCheck, ManagedOwnerCheckError};
 pub(crate) use managed_owner_check::{OWNER_NOT_LIVE, require_live_managed_owner_in_txn};
 pub(crate) use mesh_machine::reindex_mesh_machine_endpoint;
 pub use mesh_machine::{
-    MESH_AUTHORITY_PAGE_MAX, MeshAlpnGrant, MeshAuthorityImport, MeshAuthorityPage,
-    MeshAuthorityRow, MeshBindRefusal, MeshBindingIdentity, MeshEnrolment, MeshEnrolmentAsk,
-    MeshMachineAddress, MeshMachineAddressEnvelope, MeshMachineBinding,
+    MESH_AUTHORITY_PAGE_MAX, MESH_AUTHORITY_PART_MAX, MESH_AUTHORITY_ROW_MAX, MeshAlpnGrant,
+    MeshAuthorityImport, MeshAuthorityPage, MeshAuthorityPart, MeshAuthorityRow,
+    MeshAuthorityRowJoin, MeshAuthorityRowRef, MeshBindRefusal, MeshBindingIdentity, MeshEnrolment,
+    MeshEnrolmentAsk, MeshMachineAddress, MeshMachineAddressEnvelope, MeshMachineBinding,
 };
 pub use restored_join::RestoredEnrolmentStanding;
 // The vault as its own `/mcp`'s OAuth 2.1 authorization server (FIX 4902 slice B), and the

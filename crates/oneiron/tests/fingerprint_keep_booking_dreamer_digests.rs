@@ -564,6 +564,7 @@ fn proactivity_digests() -> Vec<ProactivityDigest> {
                     note_tombstones: None,
                     applied: None,
                     drafter: None,
+                    answer_schema: None,
                     health_cards: Vec::new(),
                     rendered: format!("digest {n}\n{}", "line ".repeat(usize::from(proposals))),
                     voice_style: presentation.voice_style.clone(),

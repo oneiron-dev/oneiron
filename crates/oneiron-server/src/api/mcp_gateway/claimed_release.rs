@@ -22,6 +22,9 @@ type Judged = (Value, Option<Vec<EntityId>>);
 tokio::task_local! {
     /// The last result a release judged while a claimed call ran.
     static JUDGED: RefCell<Option<Judged>>;
+    /// Whether `record` is disabled: the new execute/resume endpoint releases
+    /// unrecorded and records its wire shape explicitly (P1-2).
+    static SKIP_RECORD: ();
 }
 
 /// Runs `call`, a claimed `tools/call`, beside the last result a release
@@ -44,6 +47,40 @@ pub(super) fn record(result: &Value, rows: Option<&[EntityId]>) {
     let _ = JUDGED.try_with(|judged| {
         *judged.borrow_mut() = Some((result.clone(), rows.map(<[EntityId]>::to_vec)));
     });
+}
+
+/// Whether [`record`] is enabled: false inside [`without_recording`]. Release
+/// call sites check this before giving `record` a value (P1-2), so no value
+/// given to `record` carries internal steps.
+pub(super) fn recording_enabled() -> bool {
+    SKIP_RECORD.try_with(|_| ()).is_err()
+}
+
+/// Runs `release` with [`record`] disabled at its call sites, for the new
+/// execute/resume endpoint (P1-2): its internal release records nothing, so
+/// the only kept value is the wire shape it records explicitly. Legacy callers
+/// release recorded as before.
+pub(super) fn without_recording<T>(release: impl FnOnce() -> T) -> T {
+    SKIP_RECORD.sync_scope((), release)
+}
+
+/// [`capturing`] for tests: the judged value uses concrete types, since the
+/// `Judged` alias is private.
+#[cfg(test)]
+pub(crate) async fn capturing_for_test<T>(
+    call: impl Future<Output = T>,
+) -> (T, Option<(Value, Option<Vec<EntityId>>)>) {
+    capturing(call).await
+}
+
+/// [`kept`] for tests.
+#[cfg(test)]
+pub(crate) fn kept_for_test(
+    peer: PeerMachine,
+    saved: &Value,
+    judged: Option<(Value, Option<Vec<EntityId>>)>,
+) -> Option<InvocationRelease> {
+    kept(peer, saved, judged)
 }
 
 /// Mirrors the call's actual receipt stamp on its captured value, leaving

@@ -121,6 +121,10 @@ pub struct AgentVerbRefusal {
     pub code: String,
     /// A supplied host-side hook notice; the guest still sees only the code.
     pub hook_notice: Option<serde_json::Value>,
+    /// The refusal's stable reason codes, as the door that refused typed
+    /// them (FIX CODE-MODE-DENIAL-REASONS): they reach the run's denied
+    /// result beside the code. Empty when the door named none.
+    pub reason_codes: Vec<String>,
 }
 
 /// A verb-table row's refusal as its own route worded it (OF-181): the code,
@@ -208,6 +212,7 @@ pub trait AgentVerbDoor: Send + Sync {
         Ok(Err(AgentVerbRefusal {
             hook_notice: None,
             code: REVEAL_REPLAY_UNSERVED.to_owned(),
+            reason_codes: Vec::new(),
         }))
     }
 
@@ -222,6 +227,28 @@ pub trait AgentVerbDoor: Send + Sync {
         &self,
         call: RunCall,
     ) -> std::result::Result<Option<crate::claim::ScopedReadActorKey>, AgentVerbRefusal>;
+
+    /// Admits the one run row a bridge call was made through when its effect
+    /// is shared by several rows (`SelfCall::shared_effect_row`: Fold, Team,
+    /// Leader), before [`Self::admit_run_call`] admits the effect. A door that
+    /// binds rows by name checks this exact row, as the effect alone names
+    /// the whole family (FIX EXECUTE-CALLER-CODE). A door that binds no rows
+    /// by name admits every row.
+    fn admit_run_row(&self, _row: &'static str) -> std::result::Result<(), AgentVerbRefusal> {
+        Ok(())
+    }
+
+    /// Admits the outer `self.skills.call` a credential-bound host
+    /// projection entered for its caller: the caller asked for that call
+    /// itself, so it is admitted as that caller's direct call, while each
+    /// call the skill's body makes meets [`Self::admit_run_call`]. A door
+    /// that rules the same on both admits it as [`Self::admit_run_call`]
+    /// admits the bridge call.
+    fn admit_outer_skill_call(
+        &self,
+    ) -> std::result::Result<Option<crate::claim::ScopedReadActorKey>, AgentVerbRefusal> {
+        self.admit_run_call(RunCall::Bridge(SelfEffect::SkillsCall))
+    }
 
     /// Admits one speech call of the run (`effect` is `Speak`, `Think` or
     /// `Express`, its trailing bubble included) with `destination`, where
@@ -266,6 +293,7 @@ pub trait AgentVerbDoor: Send + Sync {
         Err(AgentVerbRefusal {
             hook_notice: None,
             code: AGENT_VERB_SESSION_BOUND.to_owned(),
+            reason_codes: Vec::new(),
         })
     }
 
@@ -284,7 +312,19 @@ pub trait AgentVerbDoor: Send + Sync {
         Err(AgentVerbRefusal {
             hook_notice: None,
             code: AGENT_VERB_SESSION_BOUND.to_owned(),
+            reason_codes: Vec::new(),
         })
+    }
+
+    /// Reads back a verb row's recorded answer only where this door admits
+    /// that verb now (FIX CODE-MODE-LENDING-W11). A door that rules on verb
+    /// rows only at [`Self::call`] keeps today's ruling.
+    fn admit_recorded_verb(
+        &self,
+        verb: crate::task_verb::sdk::AgentVerb,
+    ) -> std::result::Result<(), AgentVerbRefusal> {
+        let _ = verb;
+        Ok(())
     }
 
     /// Whether a result the run retained stays on this device for the door's
@@ -359,6 +399,7 @@ pub trait AgentVerbDoor: Send + Sync {
         Ok(Err(AgentVerbRefusal {
             hook_notice: None,
             code: AGENT_VERB_DOOR_UNBOUND.to_owned(),
+            reason_codes: Vec::new(),
         }))
     }
 }

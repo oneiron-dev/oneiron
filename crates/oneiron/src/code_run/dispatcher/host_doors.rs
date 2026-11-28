@@ -4,12 +4,14 @@
 use super::HostSelfDispatcher;
 use crate::EntityId;
 use crate::agent_dispatch::AgentWaitSetResult;
+use crate::claim::ScopedReadActorKey;
 use crate::code_run::{
     AgentSpawnInput, AgentSpawnOutput, LeaderSplitInput, LeaderSplitOutput, ReportBlockedInput,
     ReportBlockedOutput, SelfDispatchOutcome, TaskRefuseInput, TaskRefuseOutput,
     TaskWaitAgentsRequest,
 };
 use crate::memory::{MEMORY_CODE_INTERNAL, MemoryError, MemoryResult};
+use crate::task_verb::run_doors::{ConsultLandReply, ConsultLandRequest};
 
 impl<'a> HostSelfDispatcher<'a> {
     /// Re-enters a registered live run under the sealed lease its host held.
@@ -291,6 +293,48 @@ impl<'a> HostSelfDispatcher<'a> {
                 outcome: refusal.level.outcome(),
                 replay: refusal.replay,
             }),
+            SelfDispatchOutcome::Failed(failed) => {
+                Err(MemoryError::new(&failed.error, &failed.error, &[]))
+            }
+            _ => Err(host_result_mismatch()),
+        }
+    }
+
+    /// The host door's `tasks.consult.result`: the attached agent lands its
+    /// answer, citing its evidence, or its abstention, giving its reason, on
+    /// the consult TASK its live run leased or that addresses it as a running
+    /// child, under `read_as`, the read key of the credential that attached.
+    /// Every landing rule is the run row's (`dispatch_consult_result`), read
+    /// admission first. A host call cannot park, so while the consult's
+    /// assignee fact has not reached this device the landing refuses it as
+    /// not yet in a state to land, where a code-mode run would wait for it.
+    /// The answer is the landing and the rows it read.
+    pub fn land_consult_from_host(
+        &self,
+        input: ConsultLandRequest,
+        read_as: ScopedReadActorKey,
+    ) -> MemoryResult<(ConsultLandReply, Vec<EntityId>)> {
+        self.live_parent()?;
+        let _run_writes = self
+            .agent_lease
+            .as_ref()
+            .map(crate::skill_attribution::enter_run_writes);
+        // The call holds its leased run's tool witness open (FIX 8521).
+        let _tool = self.activity_tool();
+        if !matches!(
+            self.storage,
+            crate::code_run::storage::ExecutorStorage::Canonical(_)
+        ) {
+            return Err(MemoryError::bad_request(
+                "a live-run consult landing requires canonical live-run storage",
+            ));
+        }
+        match self.dispatch_consult_result(input, Some(read_as), false)? {
+            SelfDispatchOutcome::AgentVerb(answer) => {
+                let reply =
+                    serde_json::from_value(answer.output).map_err(|_| host_result_mismatch())?;
+                Ok((reply, answer.rows.unwrap_or_default()))
+            }
             SelfDispatchOutcome::Failed(failed) => {
                 Err(MemoryError::new(&failed.error, &failed.error, &[]))
             }

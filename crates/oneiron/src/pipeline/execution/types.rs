@@ -35,6 +35,9 @@ pub(super) struct RetrievalTxnOutput {
     /// Per TURN in `scores`, the MESSAGE rows it took the place of, best
     /// first (`PipelineBuilder::fold_messages_into_turns`).
     pub(super) cited_messages: HashMap<EntityId, Vec<EntityId>>,
+    /// Per row in `scores`, the raw cosine the recall's bar judged it by
+    /// (`PipelineBuilder::recall_bar`).
+    pub(super) bar_similarity: HashMap<EntityId, f32>,
     pub(super) capabilities: Vec<ScoredEntity>,
     pub(super) pending_vectors: Vec<PendingVectorEmbedding>,
     pub(super) claim_gate: ClaimStatusGateCache,

@@ -3,6 +3,7 @@
 //! its `corrections` child.
 
 use super::*;
+use crate::dreamer_consolidation::answer_schema::request_over_params;
 use crate::dreamer_consolidation::call_labels::{CallLabelMap, CandidateRel};
 use crate::dreamer_consolidation::extracted_people::MintNamespace;
 use crate::dreamer_consolidation::provenance::KeptDecision;
@@ -20,6 +21,7 @@ pub(in crate::dreamer_consolidation) use super::merge_resolution::{
     resolution_final_prep, resolution_spans_predicates,
 };
 
+mod answer_schema_param;
 mod cited;
 pub(in crate::dreamer_consolidation) mod corrections;
 mod decided;
@@ -27,6 +29,13 @@ mod decided;
 pub(crate) mod native_decisions_parity;
 mod quote_binding;
 mod wire;
+pub(in crate::dreamer_consolidation) use answer_schema_param::ANSWER_SCHEMA_PARAM;
+use answer_schema_param::extraction_answer_schema;
+#[cfg(oneiron_test_support)]
+pub(crate) use answer_schema_param::{
+    check_extraction_reply_for_test, extraction_answer_schema_for_test,
+    extraction_request_params_for_test,
+};
 pub(in crate::dreamer_consolidation) use cited::CitationCheck;
 use corrections::Correction;
 pub(in crate::dreamer_consolidation) use quote_binding::{QuoteBinding, bind_quote};
@@ -68,8 +77,12 @@ const MAX_TOKENS_PARAM: &str = "max_tokens";
 /// refuses some of these sampling fields. The call carries them whatever its
 /// seat's widest route is: a seat whose own server comes before a hosted rung
 /// is ThirdParty, yet its own server answers first, and the wire of the rung
-/// that answers keeps or drops them.
-fn extraction_params() -> BTreeMap<String, JsonValue> {
+/// that answers keeps or drops them. When `answer_schema` holds (a TURN
+/// extraction call), it also carries the answer schema as the own-server-only
+/// [`ANSWER_SCHEMA_PARAM`].
+pub(in crate::dreamer_consolidation) fn extraction_request_params(
+    answer_schema: bool,
+) -> Result<BTreeMap<String, JsonValue>> {
     let mut params = BTreeMap::from([
         (MAX_TOKENS_PARAM.to_owned(), json!(EXTRACTION_MAX_TOKENS)),
         ("temperature".to_owned(), json!(0.7)),
@@ -80,12 +93,15 @@ fn extraction_params() -> BTreeMap<String, JsonValue> {
         ("frequency_penalty".to_owned(), json!(0.0)),
         ("repetition_penalty".to_owned(), json!(1.0)),
     ]);
+    if answer_schema {
+        params.insert(ANSWER_SCHEMA_PARAM.to_owned(), extraction_answer_schema()?);
+    }
     let own_server_only: Vec<JsonValue> = params.keys().map(|key| json!(key)).collect();
     params.insert(
         OWN_SERVER_ONLY_PARAM.to_owned(),
         JsonValue::Array(own_server_only),
     );
-    params
+    Ok(params)
 }
 
 /// The house server's per-request prompt lookup switch (#10123): `false`
@@ -125,6 +141,7 @@ impl ConsolidationExecutor<'_> {
     /// The extraction request over one child's `transcript`, rendered with
     /// `labels` (FIX 7506): the map and the person-mint `namespace` bind
     /// into the request's identity, so its memo is read only against them.
+    /// `answer_schema` is the switch in force, read before the request builds.
     pub(in crate::dreamer_consolidation) fn extraction_request(
         call: &RoleCall<'_>,
         prompt: &ExtractionPrompt,
@@ -132,8 +149,16 @@ impl ConsolidationExecutor<'_> {
         labels: &CallLabelMap,
         scope: &oneiron_model::llm::Scope,
         namespace: &MintNamespace,
+        answer_schema: bool,
     ) -> Result<LlmRequest> {
-        let mut request = Self::request_over(call, prompt, None, transcript.to_owned(), scope)?;
+        let mut request = Self::request_over(
+            call,
+            prompt,
+            None,
+            answer_schema,
+            transcript.to_owned(),
+            scope,
+        )?;
         labels.bind_request(&mut request, Some(&namespace.identity()));
         Ok(request)
     }
@@ -164,14 +189,17 @@ impl ConsolidationExecutor<'_> {
 
     /// The extraction request over `source` in `prompt`'s words, `source_rule`
     /// before it: a NOTE review's rule is `note_classification`'s (OF-073).
-    /// It carries [`extraction_params`].
+    /// It carries [`extraction_request_params`]: a TURN extraction call with the answer
+    /// schema while the switch is in force, a NOTE review never.
     pub(in crate::dreamer_consolidation) fn request_over(
         call: &RoleCall<'_>,
         prompt: &ExtractionPrompt,
         source_rule: Option<String>,
+        answer_schema: bool,
         source: String,
         scope: &oneiron_model::llm::Scope,
     ) -> Result<LlmRequest> {
+        let params = request_over_params(source_rule.is_some(), answer_schema)?;
         let locality = call.inference.selected_locality().ok_or_else(|| {
             crate::Error::InvalidConfig("consolidation host binding needs locality".into())
         })?;
@@ -211,8 +239,8 @@ impl ConsolidationExecutor<'_> {
                     &CallPurpose::Extraction,
                     ModelTierRef("consolidation".into()),
                 ),
-                // No schema on any wire: a grammar built from one can strip
-                // the claim fields. The reply meets the contract here instead.
+                // Text: the TURN answer schema rides as an own-server body
+                // field (`ANSWER_SCHEMA_PARAM`), never as a wire schema.
                 response_format: ResponseFormat::Text,
                 locality,
                 host_keyless: keyless,
@@ -220,7 +248,7 @@ impl ConsolidationExecutor<'_> {
             }.with_purpose_defaults(),
             messages,
             tools: Vec::new(),
-            params: extraction_params(),
+            params,
             provider_options: BTreeMap::new(),
             host_segments: None,
         })

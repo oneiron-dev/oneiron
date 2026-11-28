@@ -36,7 +36,6 @@ use base64::Engine;
 use oneiron::EntityId;
 use oneiron::authority::{Destination, PeerMachine};
 use oneiron::claim::CallerLocality;
-use oneiron::sync::residence::mesh_authority_for;
 use oneiron::sync::residence::{
     AuthorityAppendPart, AuthorityAppendProgress, AuthorityAppendStage, BundlePartRead, IndexPage,
     OWN_DEVICE_GRANTS_PAGE_MAX, OwnDeviceGrantState, RESIDENCE_PAGE_REPLY_BYTES,
@@ -48,6 +47,7 @@ use oneiron::sync::residence::{
     sealed_digest_from_hex, sealed_digest_hex, sealed_generation_from_hex, sealed_generation_hex,
     selected_item_blob_with, split_authority_page, window_index_page, window_index_projection_with,
 };
+use oneiron::sync::residence::{mesh_authority_for, mesh_authority_part_for};
 use oneiron::sync::residence_operation_budgets::ResidenceOperationBudgets;
 use oneiron::sync::schema::read_window_list;
 use oneiron::sync::{SyncSelector, WindowKey, decode_sync_selector};
@@ -448,6 +448,16 @@ struct AuthorityMeshRequest {
     after: Option<String>,
 }
 
+/// A part of a mesh binding a page named by reference
+/// (MESH-AUTHORITY-ROW-PARTS): the MACHINE, a 32-hex entity id, and the byte
+/// offset the part starts at.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AuthorityMeshPartRequest {
+    machine: String,
+    offset: u64,
+}
+
 /// A part of an authority entry a page named by reference (FIX 8246): the
 /// entry's hash in base64 and the byte offset the part starts at.
 #[derive(Deserialize)]
@@ -571,6 +581,7 @@ pub(super) fn run(
             "residence.authority.checkpoint" => authority_checkpoint(server, peer, request.params),
             "residence.authority.grants" => authority_grants(server, peer, request.params),
             "residence.authority.mesh" => authority_mesh(server, peer, request.params),
+            "residence.authority.mesh.part" => authority_mesh_part(server, peer, request.params),
             "residence.authority.checkpoint.roots" => {
                 checkpoint_roots::roots(server, peer, request.params)
             }

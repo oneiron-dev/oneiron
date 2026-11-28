@@ -9,22 +9,37 @@
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron-server --all-features --test node_readiness`.
 #![cfg(all(oneiron_test_support, unix))]
 
+use std::collections::BTreeSet;
+use std::fs;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
-use oneiron::EntityId;
+use oneiron::authority::{ActSurface, MachineOwnership, MachineRole};
 use oneiron::job_workload::{
     BoundReport, BoundStrength, DeviceClaim, DeviceKind, ScopeCapabilities, Sharing,
 };
+use oneiron::machine_policy::machine_part_item;
+use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller};
+use oneiron::test_doors::steward;
+use oneiron::{EntityId, Vault};
 use oneiron_server::gpu_execution_node::jobs::{
     DRAIN_RULE_DEFAULT, IncidentKind, JobKeyId, NodeClock, NodeDevices, NodeJobs, NodeKey,
 };
+use oneiron_server::gpu_execution_node::node::{DISABLED_MARKER_EXTENSION, marker_beside};
 use oneiron_server::gpu_execution_node::wire::{
-    HoldRef, JobAnswer, JobEnd, JobReceipt, JobReserve, JobState, JobStatusAnswer, JobSubmit,
-    NetworkMode, OutputDecl, ReadinessCheck, ReadinessState, ResourceRequest, ScopeKind,
+    DeviceRelease, HoldRef, JobAnswer, JobEnd, JobReceipt, JobReserve, JobState, JobStatusAnswer,
+    JobSubmit, NetworkMode, OutputDecl, ReadinessCheck, ReadinessState, ResourceRequest, ScopeKind,
     SignedJobSubmit, SlotSelector, Starter, WorkloadPin,
 };
-use oneiron_server::gpu_execution_node::{DeviceSample, DrainClearBy, parse_sample_lines};
-use oneiron_server::test_doors::node_jobs::{ScriptedJobUnits, ScriptedNode, ScriptedSigner};
+use oneiron_server::gpu_execution_node::{
+    DeviceSample, DrainClearBy, ExecutionNode, GpuComputeProcess, GpuDevice, GpuDeviceOffer,
+    GpuDeviceProbe, GpuDeviceState, GpuProbeError, GpuSlotTable, NodeControls, parse_sample_lines,
+};
+use oneiron_server::test_doors::node_jobs::{
+    ScriptedDevices, ScriptedJobUnits, ScriptedNode, ScriptedSigner,
+};
+use serde_json::json;
 
 const TEMPLATE: &str = "open-models";
 const DIGEST: &str = "1111111111111111111111111111111111111111111111111111111111111111";
@@ -42,12 +57,165 @@ struct Fixture {
 }
 
 fn fixture() -> Fixture {
-    let dir = tempfile::tempdir().expect("temp dir");
-    let node = ScriptedNode::new(dir.path(), EntityId::now(), TEMPLATE, DIGEST, NOW_MS);
-    Fixture {
-        dir,
-        node,
-        issuer: EntityId::now(),
+    Fixture::new(tempfile::tempdir().expect("temp dir"), EntityId::now())
+}
+
+/// The process id of another booker's compute process on the GPU.
+const BOOKER_PID: u32 = 4_242;
+
+/// The slot table's driver: it exposes the fixture's scripted probe
+/// failure, and it lists the compute processes the test puts on the GPU.
+struct OfferProbe {
+    devices: Arc<ScriptedDevices>,
+    processes: Arc<Mutex<Vec<GpuComputeProcess>>>,
+}
+
+impl GpuDeviceProbe for OfferProbe {
+    fn devices(&self) -> Result<Vec<GpuDevice>, GpuProbeError> {
+        self.devices
+            .probe()
+            .map_err(|reason| GpuProbeError::Unavailable { reason })?;
+        Ok(vec![GpuDevice {
+            device_id: DEVICE.to_owned(),
+            model: "scripted".to_owned(),
+            memory_total_mib: 24 * 1024,
+        }])
+    }
+
+    fn compute_processes(&self) -> Result<Vec<GpuComputeProcess>, GpuProbeError> {
+        Ok(self
+            .processes
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone())
+    }
+}
+
+/// Uses a real node file, owner policy and slot table with scripted units and a fake clock.
+struct OfferFixture {
+    fixture: Fixture,
+    node: ExecutionNode,
+    vault: Arc<Vault>,
+    machine: EntityId,
+    slots: Arc<GpuSlotTable>,
+    withheld_file: PathBuf,
+    /// The compute processes the driver lists on the GPU.
+    processes: Arc<Mutex<Vec<GpuComputeProcess>>>,
+}
+
+impl OfferFixture {
+    /// Opens an owner carrier vault and configures the node to offer one scripted GPU.
+    fn new() -> Self {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let vault = Arc::new(
+            steward::open_owner_carrier_vault(&dir.path().join("vault"))
+                .expect("open the owner's vault"),
+        );
+        let machine = vault
+            .local_machine()
+            .expect("read the local machine")
+            .expect("a local machine")
+            .id;
+        let owner = steward::owner(&vault).expect("the owner proof");
+        vault
+            .set_machine_role(
+                &owner,
+                ActSurface::ThisInstall,
+                machine,
+                MachineRole::Owned(MachineOwnership::Yours),
+                None,
+            )
+            .expect("the owner answers that the machine is theirs");
+        let fixture = Fixture::new(dir, machine);
+        let file = fixture.dir.path().join("execution-node.toml");
+        let paths = &fixture.node.paths;
+        fs::create_dir_all(&paths.work_dir).expect("the work directory");
+        fs::write(
+            &file,
+            format!(
+                r#"[execution_node]
+enabled = true
+issuers = ["{issuer}"]
+state_dir = {state:?}
+work_dir = {work:?}
+disk_reserve_gib = 0
+state_floor_mib = 0
+"#,
+                issuer = fixture.issuer.to_hex(),
+                state = paths.state_dir,
+                work = paths.work_dir,
+            ),
+        )
+        .expect("the node file");
+        let withheld_file = fixture.dir.path().join("gpu-withheld");
+        fs::write(&withheld_file, "").expect("the empty withheld list");
+        let processes = Arc::new(Mutex::new(Vec::new()));
+        let slots = Arc::new(GpuSlotTable::new(
+            Arc::new(OfferProbe {
+                devices: Arc::clone(&fixture.node.devices),
+                processes: Arc::clone(&processes),
+            }),
+            GpuDeviceOffer {
+                offered: BTreeSet::from([DEVICE.to_owned()]),
+                withheld_file: Some(withheld_file.clone()),
+                ..GpuDeviceOffer::default()
+            },
+        ));
+        let node = ExecutionNode::new(file, Arc::clone(&vault), Arc::clone(&slots));
+        Self {
+            fixture,
+            node,
+            vault,
+            machine,
+            slots,
+            withheld_file,
+            processes,
+        }
+    }
+
+    /// Attaches the real admission and slots to the scripted job service.
+    fn open(&self) -> NodeJobs {
+        let mut parts = self.fixture.node.parts();
+        parts.admission = Arc::new(self.node.clone());
+        parts.devices = self.slots.clone();
+        NodeJobs::open(self.fixture.node.paths.clone(), parts).expect("open the job service")
+    }
+
+    /// Sets the owner's offer and verifies that the node reads it from its own vault.
+    fn owner_offers(&self, offered: bool) {
+        let owner = steward::owner(&self.vault).expect("the owner proof");
+        let outcome = self
+            .vault
+            .set_setting(
+                SettingCaller::Owner(&owner),
+                SetSetting {
+                    item: Some(machine_part_item(self.machine, DEVICE)),
+                    ..SetSetting::vault_value(
+                        "machines.devices.offered",
+                        json!({ "offered": offered, "max_claimants": 1 }),
+                    )
+                },
+            )
+            .expect("the owner's change");
+        assert!(matches!(outcome, SetSettingOutcome::Applied { .. }));
+        let snapshot = self.node.snapshot();
+        let policy = snapshot.policy.expect("the node reads owner policy");
+        assert_eq!(policy.devices[DEVICE].offered, offered);
+    }
+
+    /// Asserts that this tick found the failed driver and drained the real slot table.
+    fn assert_driver_failure(&self, jobs: &NodeJobs) {
+        let readiness = jobs.readiness();
+        assert_eq!(
+            readiness.checked_at_ms,
+            Some(self.fixture.node.clock.wall_ms())
+        );
+        assert!(matches!(
+            readiness.state,
+            ReadinessState::NotReady { check: ReadinessCheck::Devices, why }
+                if why.contains(DRIVER_DOWN)
+        ));
+        assert!(self.slots.drained().expect("read the drain").is_some());
     }
 }
 
@@ -92,6 +260,16 @@ fn sample(temperature_c: i32, power_mw: u64, memory_used_mib: u64) -> DeviceSamp
 }
 
 impl Fixture {
+    /// Sets up the scripted parts and their shared state directory.
+    fn new(dir: tempfile::TempDir, machine: EntityId) -> Self {
+        let node = ScriptedNode::new(dir.path(), machine, TEMPLATE, DIGEST, NOW_MS);
+        Self {
+            dir,
+            node,
+            issuer: EntityId::now(),
+        }
+    }
+
     /// A reserve of `key`, issued now on the node's clock.
     fn reserve(&self, key: &str) -> JobReserve {
         let now = self.node.clock.wall_ms();
@@ -215,16 +393,11 @@ fn a_machine_that_fails_its_idle_check_takes_no_new_work_and_recovers_without_a_
     let jobs = fixture.node.open();
     assert_eq!(jobs.readiness().state, ReadinessState::Unchecked);
 
-    // The driver stops answering while the machine is idle. The first check
-    // is one period after the service opened.
+    // The driver stops answering while the machine is idle. The first tick checks it.
     fixture
         .node
         .devices
         .set_idle_probe_failure(Some(DRIVER_DOWN));
-    fixture.node.clock.advance_ms(PERIOD_MS - 1_000);
-    jobs.tick();
-    assert_eq!(jobs.readiness().state, ReadinessState::Unchecked);
-    fixture.node.clock.advance_ms(1_000);
     jobs.tick();
     let failed_at = fixture.node.clock.wall_ms();
     let readiness = jobs.readiness();
@@ -304,6 +477,224 @@ fn a_machine_that_fails_its_idle_check_takes_no_new_work_and_recovers_without_a_
     assert_eq!(jobs.readiness(), readiness);
     jobs.tick();
     assert_eq!(kinds(&jobs), incidents);
+}
+
+/// The first tick checks before a period has elapsed, including after a restart.
+#[test]
+fn the_first_tick_after_the_engine_starts_checks_the_machine() {
+    let fixture = fixture();
+    let jobs = fixture.node.open();
+    fixture
+        .node
+        .devices
+        .set_idle_probe_failure(Some(DRIVER_DOWN));
+    jobs.tick();
+    let failed = jobs.readiness();
+    assert_eq!(
+        failed.state,
+        not_ready(ReadinessCheck::Devices, DRIVER_DOWN)
+    );
+    assert_eq!(failed.checked_at_ms, Some(NOW_MS));
+    assert!(fixture.node.devices.drained().is_some());
+
+    drop(jobs);
+    fixture.node.devices.set_idle_probe_failure(None);
+    fixture.node.clock.advance_ms(1_000);
+    let jobs = fixture.node.open();
+    assert_eq!(jobs.readiness(), failed);
+    jobs.tick();
+    let ready = jobs.readiness();
+    assert_eq!(ready.state, ReadinessState::Ready);
+    assert_eq!(ready.checked_at_ms, Some(NOW_MS + 1_000));
+    assert_eq!(fixture.node.devices.drained(), None);
+}
+
+/// Both a disable at the box and the following enable make a check due.
+#[test]
+fn enabling_a_disabled_node_checks_it_at_the_next_tick() {
+    let rig = OfferFixture::new();
+    let jobs = rig.open();
+    jobs.tick();
+    assert_eq!(jobs.readiness().state, ReadinessState::Ready);
+    assert_eq!(jobs.readiness().results.len(), 1);
+
+    let marker = marker_beside(rig.node.file(), DISABLED_MARKER_EXTENSION);
+    fs::write(&marker, "disabled\n").expect("disable at the box");
+    rig.fixture.node.clock.advance_ms(1_000);
+    jobs.tick();
+    let disabled = jobs.readiness();
+    assert_eq!(disabled.state, ReadinessState::Ready);
+    assert_eq!(disabled.results.len(), 2);
+    assert_eq!(disabled.checked_at_ms, Some(NOW_MS + 1_000));
+
+    rig.fixture
+        .node
+        .devices
+        .set_idle_probe_failure(Some(DRIVER_DOWN));
+    fs::remove_file(marker).expect("enable at the box");
+    rig.fixture.node.clock.advance_ms(1_000);
+    jobs.tick();
+    rig.assert_driver_failure(&jobs);
+}
+
+/// An owner's newly offered GPU and another booker's withheld list each make a check due.
+#[test]
+fn an_owner_offer_or_a_withheld_list_change_checks_at_the_next_tick() {
+    let rig = OfferFixture::new();
+    rig.owner_offers(false);
+    let jobs = rig.open();
+    jobs.tick();
+    assert_eq!(jobs.readiness().state, ReadinessState::Ready);
+
+    let fixture = &rig.fixture;
+    fixture
+        .node
+        .devices
+        .set_idle_probe_failure(Some(DRIVER_DOWN));
+    rig.owner_offers(true);
+    fixture.node.clock.advance_ms(1_000);
+    jobs.tick();
+    rig.assert_driver_failure(&jobs);
+
+    fixture.node.devices.set_idle_probe_failure(None);
+    assert_eq!(fixture.check(&jobs), ReadinessState::Ready);
+    assert_eq!(rig.slots.drained().expect("read the drain"), None);
+
+    fixture
+        .node
+        .devices
+        .set_idle_probe_failure(Some(DRIVER_DOWN));
+    fs::write(&rig.withheld_file, format!("{DEVICE}\n")).expect("the booker withholds the GPU");
+    fixture.node.clock.advance_ms(1_000);
+    jobs.tick();
+    rig.assert_driver_failure(&jobs);
+}
+
+#[test]
+fn a_withheld_list_that_is_not_a_regular_file_never_blocks_the_tick() {
+    let rig = OfferFixture::new();
+    let jobs = rig.open();
+    fs::remove_file(&rig.withheld_file).expect("remove the withheld list");
+    let made = oneiron_spawn::command("mkfifo")
+        .arg(&rig.withheld_file)
+        .status()
+        .expect("mkfifo");
+    assert!(made.success(), "mkfifo");
+
+    let slots = Arc::clone(&rig.slots);
+    let now_ms = rig.fixture.node.clock.wall_ms();
+    let (finished, outcome) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        jobs.tick();
+        let _ = finished.send(slots.availability(now_ms));
+    });
+    let error = outcome
+        .recv_timeout(Duration::from_secs(20))
+        .expect("the tick and availability returned without a writer on the FIFO")
+        .expect_err("a FIFO is not a valid withheld list");
+    let expected = format!("{}: not a regular file", rig.withheld_file.display());
+    assert!(
+        matches!(&error, GpuProbeError::WithheldUnreadable { reason } if reason == &expected),
+        "{error}"
+    );
+}
+
+/// The device probe judges the withheld list it was given, not the file as
+/// it reads now: with an unreadable file, the given list still answers.
+#[test]
+fn the_device_probe_judges_the_withheld_list_it_was_given() {
+    let rig = OfferFixture::new();
+    fs::write(&rig.withheld_file, [0xff, 0xfe]).expect("the withheld list is not UTF-8");
+    let now_ms = rig.fixture.node.clock.wall_ms();
+    let error = rig
+        .slots
+        .availability(now_ms)
+        .expect_err("the file does not read");
+    assert!(
+        matches!(error, GpuProbeError::WithheldUnreadable { .. }),
+        "{error}"
+    );
+    rig.slots
+        .availability_with_withheld(now_ms, BTreeSet::new())
+        .expect("the given empty list reads");
+}
+
+/// Another booker taking the GPU is not a failure: its process computes on
+/// the GPU, and the GPU joins the withheld list. The check that change
+/// makes due reads the GPU as withheld, not busy, passes, and leaves the
+/// machine undrained, so the node does not drain each time the fleet takes
+/// the card.
+#[test]
+fn a_gpu_another_booker_takes_while_its_process_runs_passes_the_check_it_makes_due() {
+    let rig = OfferFixture::new();
+    let jobs = rig.open();
+    jobs.tick();
+    assert_eq!(jobs.readiness().state, ReadinessState::Ready);
+    assert_eq!(jobs.readiness().results.len(), 1);
+
+    rig.processes
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .push(GpuComputeProcess {
+            device_id: DEVICE.to_owned(),
+            pid: Some(BOOKER_PID),
+        });
+    fs::write(&rig.withheld_file, format!("{DEVICE}\n")).expect("the booker withholds the GPU");
+    rig.fixture.node.clock.advance_ms(1_000);
+    jobs.tick();
+    let readiness = jobs.readiness();
+    assert_eq!(readiness.state, ReadinessState::Ready);
+    assert_eq!(readiness.checked_at_ms, Some(NOW_MS + 1_000));
+    assert_eq!(readiness.results.len(), 2);
+    assert_eq!(readiness.failed_in_a_row, 0);
+    assert_eq!(rig.slots.drained().expect("read the drain"), None);
+    assert!(
+        !kinds(&jobs)
+            .iter()
+            .any(|kind| matches!(kind, IncidentKind::Drained { .. })),
+        "a withheld GPU drains nothing: {:?}",
+        kinds(&jobs)
+    );
+    let availability = rig
+        .slots
+        .availability(rig.fixture.node.clock.wall_ms())
+        .expect("read the GPUs");
+    assert_eq!(availability.devices.len(), 1);
+    assert_eq!(availability.devices[0].state, GpuDeviceState::Withheld);
+}
+
+/// With the same offer, checks still wait for the configured period.
+#[test]
+fn with_no_change_no_second_check_runs_before_the_period() {
+    let fixture = fixture();
+    let jobs = fixture.node.open();
+    jobs.tick();
+    let first = jobs.readiness();
+    assert_eq!(first.state, ReadinessState::Ready);
+    assert_eq!(first.checked_at_ms, Some(NOW_MS));
+    assert_eq!(first.results.len(), 1);
+
+    fixture.node.clock.advance_ms(1_000);
+    jobs.tick();
+    assert_eq!(jobs.readiness(), first);
+    fixture
+        .node
+        .devices
+        .set_idle_probe_failure(Some(DRIVER_DOWN));
+    fixture.node.clock.advance_ms(PERIOD_MS - 2_000);
+    jobs.tick();
+    assert_eq!(jobs.readiness(), first);
+    assert_eq!(fixture.node.devices.drained(), None);
+
+    fixture.node.clock.advance_ms(1_000);
+    jobs.tick();
+    let second = jobs.readiness();
+    assert_eq!(
+        second.state,
+        not_ready(ReadinessCheck::Devices, DRIVER_DOWN)
+    );
+    assert_eq!(second.checked_at_ms, Some(NOW_MS + PERIOD_MS));
+    assert_eq!(second.results.len(), 2);
 }
 
 /// Section 10, Q4: the breadcrumb lines a running key's ticks wrote, with
@@ -430,6 +821,126 @@ fn no_check_runs_while_an_attempt_runs() {
         jobs.readiness().state,
         not_ready(ReadinessCheck::Devices, DRIVER_DOWN)
     );
+}
+
+/// No readiness check runs while a device release is still owed: the end
+/// record moved the key to `Ended` but its unit is still stopping, so the
+/// check waits, and the first tick after the unit is gone runs it.
+#[test]
+fn no_check_runs_while_a_device_release_is_owed() {
+    let fixture = fixture();
+    let jobs = fixture.node.open();
+    jobs.tick();
+    let first = jobs.readiness();
+    assert_eq!(first.state, ReadinessState::Ready);
+    assert_eq!(first.results.len(), 1);
+
+    let key = "job-q4/release-owed";
+    let running = fixture.run(&jobs, key);
+    assert!(
+        running
+            .launch
+            .as_ref()
+            .is_some_and(|launch| !launch.devices.is_empty()),
+        "the run holds a device lease"
+    );
+    fixture.node.admission.set_controls(NodeControls {
+        enabled: true,
+        paused: Some("paused at the box".to_owned()),
+        ..NodeControls::default()
+    });
+    fixture.node.units.exit_while_stopping(key);
+    jobs.tick();
+    let ended = wait_for(&jobs, key, |entry| entry.state == JobState::Ended);
+    assert_eq!(jobs.readiness(), first);
+    assert_eq!(ended.release, DeviceRelease::Held);
+
+    fixture.node.units.finish_stopping(key);
+    jobs.tick();
+    let released = wait_for(&jobs, key, |entry| {
+        matches!(entry.release, DeviceRelease::Confirmed { .. })
+    });
+    assert!(
+        matches!(released.release, DeviceRelease::Confirmed { .. }),
+        "the unit is gone and the release passed"
+    );
+    let idle = jobs.readiness();
+    assert_eq!(idle.state, ReadinessState::Ready);
+    assert_eq!(idle.results.len(), 2);
+}
+
+/// An offer seen during an attempt remains unchecked until an idle tick.
+#[test]
+fn a_change_while_an_attempt_runs_is_checked_at_the_first_idle_tick() {
+    let fixture = fixture();
+    let jobs = fixture.node.open();
+    jobs.tick();
+    let first = jobs.readiness();
+    assert_eq!(first.state, ReadinessState::Ready);
+
+    let key = "job-q4/offer-while-running";
+    fixture.run(&jobs, key);
+    fixture.node.admission.set_controls(NodeControls {
+        enabled: true,
+        paused: Some("paused at the box".to_owned()),
+        ..NodeControls::default()
+    });
+    fixture
+        .node
+        .devices
+        .set_idle_probe_failure(Some(DRIVER_DOWN));
+    fixture.node.clock.advance_ms(1_000);
+    jobs.tick();
+    assert_eq!(jobs.readiness(), first);
+    assert_eq!(fixture.node.devices.drained(), None);
+
+    fixture.node.units.exit(key, 0);
+    jobs.tick();
+    wait_for(&jobs, key, |entry| entry.state == JobState::Ended);
+    let idle = jobs.readiness();
+    assert_eq!(idle.state, not_ready(ReadinessCheck::Devices, DRIVER_DOWN));
+    assert_eq!(idle.checked_at_ms, Some(NOW_MS + 1_000));
+    assert_eq!(idle.results.len(), 2);
+    assert!(fixture.node.devices.drained().is_some());
+}
+
+#[test]
+fn a_change_that_goes_back_while_an_attempt_runs_is_still_checked_at_the_first_idle_tick() {
+    let fixture = fixture();
+    let jobs = fixture.node.open();
+    jobs.tick();
+    let first = jobs.readiness();
+    assert_eq!(first.state, ReadinessState::Ready);
+    assert_eq!(first.results.len(), 1);
+
+    let key = "job-q4/offer-goes-back-while-running";
+    fixture.run(&jobs, key);
+    fixture.node.admission.set_controls(NodeControls {
+        enabled: true,
+        paused: Some("paused at the box".to_owned()),
+        ..NodeControls::default()
+    });
+    fixture.node.clock.advance_ms(1_000);
+    jobs.tick();
+    assert_eq!(jobs.readiness(), first);
+    assert_eq!(fixture.node.devices.drained(), None);
+
+    fixture.node.admission.set_controls(NodeControls {
+        enabled: true,
+        ..NodeControls::default()
+    });
+    fixture
+        .node
+        .devices
+        .set_idle_probe_failure(Some(DRIVER_DOWN));
+    fixture.node.units.exit(key, 0);
+    jobs.tick();
+    wait_for(&jobs, key, |entry| entry.state == JobState::Ended);
+    let idle = jobs.readiness();
+    assert_eq!(idle.state, not_ready(ReadinessCheck::Devices, DRIVER_DOWN));
+    assert_eq!(idle.checked_at_ms, Some(NOW_MS + 1_000));
+    assert_eq!(idle.results.len(), 2);
+    assert!(fixture.node.devices.drained().is_some());
 }
 
 /// Each check names itself when it fails, the first failure in the order

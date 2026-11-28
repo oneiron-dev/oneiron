@@ -56,6 +56,7 @@ impl PipelineBuilder<'_> {
                 scores: Vec::new(),
                 score_breakdown: Vec::new(),
                 cited_messages: HashMap::new(),
+                bar_similarity: HashMap::new(),
                 capabilities: Vec::new(),
                 claim_bodies: HashMap::new(),
                 pending_vectors: Vec::new(),
@@ -308,6 +309,7 @@ impl PipelineBuilder<'_> {
                 scores: Vec::new(),
                 score_breakdown: Vec::new(),
                 cited_messages: HashMap::new(),
+                bar_similarity: HashMap::new(),
                 capabilities: Vec::new(),
                 claim_bodies: HashMap::new(),
                 pending_vectors: Vec::new(),
@@ -331,6 +333,7 @@ impl PipelineBuilder<'_> {
         let mut ppr_expand_executed = attempt.ppr_expand_executed;
         let mut scores = attempt.scores;
         let mut cited_messages = attempt.cited_messages;
+        let mut bar_similarity = attempt.bar_similarity;
         let mut revisions = attempt.revisions;
         let mut words_bound = attempt.words_bound;
         let mut capabilities = attempt.capabilities;
@@ -420,6 +423,7 @@ impl PipelineBuilder<'_> {
                 temporal_report = retry.temporal_report;
                 scores = retry.scores;
                 cited_messages = retry.cited_messages;
+                bar_similarity = retry.bar_similarity;
                 revisions = retry.revisions;
                 words_bound = retry.words_bound;
                 capabilities = retry.capabilities;
@@ -646,6 +650,7 @@ impl PipelineBuilder<'_> {
 
         let mut embedding_matches = media_evidence.matches;
         embedding_matches.retain(|id, _| scores.iter().any(|hit| hit.id == *id));
+        bar_similarity.retain(|id, _| scores.iter().any(|hit| hit.id == *id));
         Ok(PipelineOutput {
             embedding_matches,
             vector_completed: dense_completed(&diagnostics),
@@ -656,6 +661,7 @@ impl PipelineBuilder<'_> {
             scores,
             score_breakdown,
             cited_messages,
+            bar_similarity,
             capabilities,
             claim_bodies,
             pending_vectors,

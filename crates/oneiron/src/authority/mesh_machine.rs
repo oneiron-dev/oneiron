@@ -29,7 +29,9 @@ pub use doors::{MeshAlpnGrant, MeshBindingIdentity, MeshMachineBinding};
 pub(crate) use endpoint_index::reindex_mesh_machine_endpoint;
 pub use enrolment::{MeshBindRefusal, MeshEnrolment, MeshEnrolmentAsk};
 pub use replication::{
-    MESH_AUTHORITY_PAGE_MAX, MeshAuthorityImport, MeshAuthorityPage, MeshAuthorityRow,
+    MESH_AUTHORITY_PAGE_MAX, MESH_AUTHORITY_PART_MAX, MESH_AUTHORITY_ROW_MAX, MeshAuthorityImport,
+    MeshAuthorityPage, MeshAuthorityPart, MeshAuthorityRow, MeshAuthorityRowJoin,
+    MeshAuthorityRowRef,
 };
 use replication::{mesh_transport_seed_of, verified_mesh_authority};
 

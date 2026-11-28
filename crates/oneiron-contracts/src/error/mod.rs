@@ -79,6 +79,10 @@ pub enum ErrorKind {
     InvalidConfig,
     InvalidTemporalExpression,
     EntityNotFound,
+    /// The record is restricted: its owner chose to keep it stored and
+    /// unused in answer to a deletion request. Only the owner, on their own
+    /// proof, meets it (Q1 = A).
+    RecordRestricted,
     /// A memory fork names a revision whose bytes this machine no longer holds.
     HistoryNotHeld,
     AccessGrantAlreadyExists,
@@ -415,6 +419,7 @@ pub enum ErrorKind {
     InvalidProjectBody,
     InvalidProjectRoomBody,
     ProjectDependencyPending,
+    ProjectBirthPending,
     ProjectRevisionCollision,
     ProjectRevisionWrite,
     IdentityUnsettled,
@@ -507,6 +512,13 @@ pub enum Error {
     /// Requested entity does not exist.
     #[error("entity not found")]
     EntityNotFound,
+    /// The record is restricted: its owner chose to keep it stored and
+    /// unused in answer to a deletion request. Only the owner, on their own
+    /// proof, meets it (Q1 = A); every other caller keeps absence.
+    #[error(
+        "This record is restricted: you chose to keep it stored and unused in answer to a deletion request. Lift the restriction to delete it."
+    )]
+    RecordRestricted,
     /// A graph-FS memory fork names a revision of a row whose bytes this
     /// machine no longer holds (L3-39, ruling L3-39-UNRETAINED = B). Only a
     /// reader whose live read admits the row gets it, so it reveals nothing
@@ -752,6 +764,7 @@ impl Error {
             Self::InvalidConfig(_) => ErrorKind::InvalidConfig,
             Self::InvalidTemporalExpression(_) => ErrorKind::InvalidTemporalExpression,
             Self::EntityNotFound => ErrorKind::EntityNotFound,
+            Self::RecordRestricted => ErrorKind::RecordRestricted,
             Self::HistoryNotHeld => ErrorKind::HistoryNotHeld,
             Self::ConcurrentWrite(_) => ErrorKind::ConcurrentWrite,
             Self::ArithmeticOverflow(_) => ErrorKind::ArithmeticOverflow,

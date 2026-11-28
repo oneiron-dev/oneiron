@@ -417,6 +417,8 @@ enum OfferEnd {
     /// The backend ended the chunk at its maximum seconds (pass 33, 8.6), and reported its run
     /// time with the end, as with an exit: never `AtMaximum`, whose stop offers a resume.
     TimeLimit,
+    /// The machine refused or withdrew the chunk before it ran.
+    NeverStarted,
     /// Refused before any resource existed: nothing ran and nothing was charged.
     Held(String),
 }
@@ -430,6 +432,7 @@ impl OfferEnd {
             GpuEndReason::Gone => Self::Gone,
             GpuEndReason::Unconfirmed => Self::WrittenOff,
             GpuEndReason::TimeLimit => Self::TimeLimit,
+            GpuEndReason::NeverStarted => Self::NeverStarted,
         }
     }
 
@@ -455,6 +458,7 @@ impl OfferEnd {
             Self::Gone => "gone",
             Self::WrittenOff => "written_off",
             Self::TimeLimit => "time_limit",
+            Self::NeverStarted => "never_started",
             Self::Held(reason) => return ("held".to_owned(), Some(reason.clone())),
         };
         (end.to_owned(), None)
@@ -471,10 +475,10 @@ impl OfferEnd {
 /// (an agent resumes only its own job, the owner any). The run time a chunk last reported is
 /// final only for an exit or a time limit, which the provider reports with it; a stop or a
 /// cancel terminates after the last report, so its occupancy is unknown, and a lost resource's
-/// is a lower bound, shown as lost. A chunk held before any resource existed ran for nothing
-/// and charged nothing, and its whole quote went back. A chunk the owner wrote off has no
-/// confirmed end: its occupancy is unknown, and it charged what its settlement says (zero,
-/// where this host held its permit).
+/// is a lower bound, shown as lost. A held or never-started chunk occupied zero seconds, charged
+/// nothing and returned its whole quote. A chunk the owner wrote off has no confirmed end:
+/// its occupancy is unknown, and it charged what its settlement says (zero where this host held
+/// its permit).
 fn offer_attempts(job: &GpuJob) -> Vec<JobHistoryAttempt> {
     let last = job.chunks.len().saturating_sub(1);
     job.chunks
@@ -486,9 +490,9 @@ fn offer_attempts(job: &GpuJob) -> Vec<JobHistoryAttempt> {
             } else {
                 OfferEnd::last(job)?
             };
-            let held = matches!(end, OfferEnd::Held(_));
+            let never_ran = matches!(end, OfferEnd::Held(_) | OfferEnd::NeverStarted);
             // The settled units are the charged seconds times the quote's price of one second.
-            let charged_secs = if held {
+            let charged_secs = if never_ran {
                 Some(0)
             } else {
                 chunk
@@ -498,7 +502,7 @@ fn offer_attempts(job: &GpuJob) -> Vec<JobHistoryAttempt> {
             };
             let occupied_secs = match end {
                 OfferEnd::Exited | OfferEnd::TimeLimit => Some(chunk.used_secs),
-                OfferEnd::Held(_) => Some(0),
+                OfferEnd::Held(_) | OfferEnd::NeverStarted => Some(0),
                 OfferEnd::AtMaximum
                 | OfferEnd::Cancelled
                 | OfferEnd::Gone

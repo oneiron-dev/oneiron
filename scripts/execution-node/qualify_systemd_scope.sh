@@ -806,6 +806,8 @@ if [ -n "${BEFORE_INSTALL:-}" ]; then
     result a_machine_without_the_minimum_contract_offers_no_jobs FAIL "before: $(grep -c 'minimum contract' <<<"$before") refusal line(s); after: $(grep '^scope' <<<"$after" | tr '\n' ';')"
   fi
 fi
+# FIX EXEC-NODE-PROBE-TEST-GAPS: device-query cases, sourced after install.
+. "$(dirname "$0")/qualify_device_query.sh"
 for test in \
   the_engines_account_starts_only_job_units_and_only_through_the_control_socket \
   a_child_that_left_its_session_dies_when_the_leader_exits \
@@ -823,6 +825,7 @@ for test in \
   a_required_bound_the_scope_lacks_blocks_and_an_unrequired_one_is_recorded_unproven \
   a_workload_cannot_write_or_replace_its_end_record \
   the_unit_opens_the_leased_device_and_no_other \
+  "${DEVICE_QUERY_CASES[@]}" \
   a_kill_that_cannot_be_confirmed_quarantines_the_device \
   a_log_past_its_cap_keeps_its_head_and_its_newest_tail \
   a_checkpoint_notice_reaches_the_workload_and_stops_nothing \

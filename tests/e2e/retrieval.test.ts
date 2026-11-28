@@ -859,18 +859,18 @@ suite.test(test, "RETRIEVAL-04", "A world-limited reader stays clamped across re
     const visibleHydrate = await reader.call("vault.hydrate", { refs: [readable.ref], filter: { include_stale: true } });
     expect(visibleHydrate.value.map(row => row.id_hex)).toEqual([readable.id]);
     expect(visibleHydrate.value[0]!.body).toMatchObject({ val: readableText });
+    expect(visibleHydrate.missing).toEqual([]);
     retrieval04Receipt(visibleHydrate.narrowing);
     retrieval04Absent(visibleHydrate, forbidden);
-    const withheld = await reader.raw<Retrieval04Refusal>("POST", "/v1/core/facade/vault.hydrate", {
+    const mixed = await reader.raw<FacadeResult<"vault.hydrate">>("POST", "/v1/core/facade/vault.hydrate", {
       refs: [readable.ref, hidden.ref], filter: { include_stale: true },
     } satisfies FacadeInput<"vault.hydrate">);
-    expect(withheld.status).toBe(404);
-    expect(withheld.body.error.code).toBe("NOT_FOUND");
-    expect(withheld.body.value).toBeUndefined();
-    expect(withheld.body.narrowing).toBeDefined();
-    retrieval04Receipt(withheld.body.narrowing!);
-    // A hydrate error may echo the supplied ref; only server-discovered payload is forbidden here.
-    retrieval04Absent(withheld.body, [hiddenText, hiddenWorldName, hiddenWorld.id_hex]);
+    expect(mixed.status).toBe(200);
+    expect(mixed.body.value).toEqual(visibleHydrate.value);
+    expect(mixed.body.missing).toEqual([{ ref: hidden.ref, reason: "not_found" }]);
+    retrieval04Receipt(mixed.body.narrowing);
+    // A miss echoes the supplied ref, but not any server-discovered payload.
+    retrieval04Absent(mixed.body, [hiddenText, hidden.id, hiddenWorldName, hiddenWorld.id_hex]);
     const quality = await reader.call("vault.get", { entity_ref: readable.id, filter: { min_confidence: 1 } });
     expect(quality.value).toBeNull();
     readReceipt(quality.narrowing);
@@ -1007,7 +1007,7 @@ suite.test(test, "RETRIEVAL-04", "A world-limited reader stays clamped across re
     expect(claimsAfterRefusal.map(row => row.claim_ref)).toContain(hidden.id);
     expect(claimsAfterRefusal.some(row => row.predicate === "profile.retrieval_forbidden")).toBe(false);
     await engine.artifacts.json("retrieval-world-clamp.json", { before, after, visibleHydrate,
-      withheld: withheld.body, query: query.body, batch: batch.body, ownerPack: ownerPack.body,
+      mixed: mixed.body, query: query.body, batch: batch.body, ownerPack: ownerPack.body,
       pack: pack.body, afterPacks: { ownerPack: afterPacks.ownerPack.body, pack: afterPacks.pack.body },
       graphAnchor, ownerAnchor, refused: refused.body, refusedReceipt, durable, durableEdges, claimsAfterRefusal });
   } catch (error) {

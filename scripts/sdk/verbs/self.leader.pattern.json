@@ -1,5 +1,6 @@
 {
   "name": "self.leader.pattern",
+  "description": "Loads a team pattern workflow and its files by the skill ID the bound leader selects.",
   "input": "crate::code_run::LeaderPatternInput",
   "output": "crate::code_run::LeaderPatternOutput",
   "scope": "Read",

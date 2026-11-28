@@ -204,8 +204,11 @@ struct EdgeWork {
 
 /// One edge of a chunk, held until the chunk's door transaction commits.
 enum Staged {
-    /// Quarantined in the chunk, or owed its wait in the ledger.
-    Terminal(Option<EntityId>),
+    /// Quarantined or rejected in the chunk: refused for good.
+    Refused(Option<EntityId>),
+    /// Its wait moved into the ledger: it settles as a terminal quarantine's,
+    /// and is no refusal.
+    Waiting(EntityId),
     /// A healing write: the ledger count and the source's marker, once
     /// the chunk commits.
     Written(EntityId),
@@ -296,7 +299,9 @@ impl Pass<'_> {
         }
         for step in staged {
             match step {
-                Staged::Terminal(id) => self.ledger.terminal_quarantines.extend(id),
+                Staged::Refused(Some(id)) => self.ledger.refuse(id),
+                Staged::Refused(None) => {}
+                Staged::Waiting(src) => self.ledger.terminal_quarantines.push(src),
                 Staged::Written(src) => {
                     self.count += 1;
                     // ONE-1147: a healing edge write discharges the SOURCE
@@ -344,7 +349,9 @@ impl Pass<'_> {
                     err,
                     &edge.buf,
                 )?;
-                self.ledger.terminal_quarantines.extend(*terminal);
+                if let Some(id) = *terminal {
+                    self.ledger.refuse(id);
+                }
                 Ok(())
             }
             Queued::ShellPin { kind, src, tgt } => {
@@ -403,7 +410,7 @@ impl Pass<'_> {
                         // The reserved-kind rejection and its durable evidence
                         // committed in the edge txn above. Keep iterating: one
                         // forged row must not starve the other N-1 edge heals.
-                        self.ledger.terminal_quarantines.push(work.src);
+                        self.ledger.refuse(work.src);
                     }
                     Err(err) if quarantine::remote_rejection_reason(&err).is_some() => {
                         quarantine::quarantine_rejected_op(
@@ -414,7 +421,7 @@ impl Pass<'_> {
                             &err,
                             &edge.buf,
                         )?;
-                        self.ledger.terminal_quarantines.push(work.src);
+                        self.ledger.refuse(work.src);
                     }
                     Err(err) => {
                         // LOCAL failure — fail closed.
@@ -451,7 +458,7 @@ impl Pass<'_> {
             Ok(bridge::ParentOutcome::Waiting) => {
                 self.ledger.pending_dag_parent_sources.insert(src);
             }
-            Ok(bridge::ParentOutcome::Rejected) => self.ledger.terminal_quarantines.push(src),
+            Ok(bridge::ParentOutcome::Rejected) => self.ledger.refuse(src),
             Ok(bridge::ParentOutcome::Unchanged | bridge::ParentOutcome::Ignored) => {}
             Err(local) => return Err(local),
         }
@@ -619,7 +626,7 @@ fn stage(
     match &edge.queued {
         Queued::Quarantine { terminal, err } => {
             quarantine_in(vault, window_key, parent, edge.key, &edge.buf, err)?;
-            staged.push(Staged::Terminal(*terminal));
+            staged.push(Staged::Refused(*terminal));
             Ok(())
         }
         Queued::ShellPin { kind, src, tgt } => match savepoint(vault, parent, |child| {
@@ -639,7 +646,7 @@ fn stage(
                 Err(err) if out_of_room(&err) => Err(err),
                 Err(err) if quarantine::remote_rejection_reason(&err).is_some() => {
                     quarantine_in(vault, window_key, parent, edge.key, &edge.buf, &err)?;
-                    staged.push(Staged::Terminal(Some(work.src)));
+                    staged.push(Staged::Refused(Some(work.src)));
                     Ok(())
                 }
                 Err(err) => Err(err),
@@ -669,7 +676,7 @@ fn stage(
                 // its source holds clears as a terminal quarantine's does:
                 // only with no other work of the source pending (FIX 6204).
                 Ok(EdgeRematOutcome::Waiting) => {
-                    staged.push(Staged::Terminal(Some(work.src)));
+                    staged.push(Staged::Waiting(work.src));
                     Ok(())
                 }
                 Ok(EdgeRematOutcome::Quarantined) => {
@@ -677,7 +684,7 @@ fn stage(
                     // landed in the edge's savepoint above. Keep iterating:
                     // one forged row must not starve the other N-1 edge
                     // heals.
-                    staged.push(Staged::Terminal(Some(work.src)));
+                    staged.push(Staged::Refused(Some(work.src)));
                     Ok(())
                 }
             }

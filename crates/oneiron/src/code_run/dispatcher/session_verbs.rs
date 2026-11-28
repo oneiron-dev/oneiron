@@ -36,39 +36,65 @@ mod hooks;
 
 use crate::code_run::storage::ExecutorStorage;
 use crate::code_run::types::{
-    AGENT_VERB_DOOR_UNBOUND, AgentVerbAnswer, SelfAgentVerbCall, SelfCall, SelfDeniedResult,
-    SelfDispatchOutcome, SelfEffect,
+    AGENT_VERB_DOOR_UNBOUND, AgentVerbAnswer, AgentVerbRefusal, SelfAgentVerbCall, SelfCall,
+    SelfDeniedResult, SelfDispatchOutcome, SelfEffect,
 };
 use crate::error::{Error, Result};
-use crate::memory::{SessionAnswer, SessionRead};
+use crate::memory::{MemoryError, SessionAnswer, SessionRead};
 
 use super::{ExecutorCallSite, HostSelfDispatcher};
 
 /// Why a read in a room gives no answer: one typed reason per cause, and the
-/// one place each becomes the stable code the guest reads.
+/// one place each becomes the stable code and the reason codes the guest
+/// reads.
 enum SessionReadRefusal {
     /// The run's host binds no door to admit the read for a caller.
     Unbound,
-    /// The door refused the read for its caller, with its own code.
-    Door(String),
-    /// The read itself refused, with its own Memory code.
-    Read(String),
+    /// The door refused the read for its caller, with its own code and the
+    /// reason codes it typed.
+    Door {
+        code: String,
+        reason_codes: Vec<String>,
+    },
+    /// The read itself refused, with its own Memory code and reason codes.
+    Read {
+        code: String,
+        reason_codes: Vec<String>,
+    },
 }
 
 impl SessionReadRefusal {
-    fn code(self) -> String {
-        match self {
-            Self::Unbound => AGENT_VERB_DOOR_UNBOUND.to_owned(),
-            Self::Door(code) | Self::Read(code) => code,
+    /// The door's refusal of the read, its reason codes kept (FIX
+    /// CODE-MODE-DENIAL-REASONS; review round 2 of #10553: they were
+    /// dropped).
+    fn door(refusal: AgentVerbRefusal) -> Self {
+        Self::Door {
+            code: refusal.code,
+            reason_codes: refusal.reason_codes,
+        }
+    }
+
+    /// The read's own refusal, its Memory reason codes kept, as a direct
+    /// call's refusal keeps them.
+    fn read(refused: MemoryError) -> Self {
+        Self::Read {
+            code: refused.code,
+            reason_codes: refused.reason_codes,
         }
     }
 
     fn denied(self, effect: SelfEffect) -> SelfDispatchOutcome {
+        let (outcome, reason_codes) = match self {
+            Self::Unbound => (AGENT_VERB_DOOR_UNBOUND.to_owned(), Vec::new()),
+            Self::Door { code, reason_codes } | Self::Read { code, reason_codes } => {
+                (code, reason_codes)
+            }
+        };
         SelfDispatchOutcome::Denied(SelfDeniedResult {
             hook_notice: None,
             effect,
-            outcome: self.code(),
-            reason_codes: Vec::new(),
+            outcome,
+            reason_codes,
         })
     }
 }
@@ -109,7 +135,7 @@ impl HostSelfDispatcher<'_> {
         let key = match &self.agent_verbs {
             Some(door) => door
                 .admit_session_read(call.verb)
-                .map_err(|refusal| SessionReadRefusal::Door(refusal.code)),
+                .map_err(SessionReadRefusal::door),
             None => Err(SessionReadRefusal::Unbound),
         };
         let key = match key {
@@ -127,8 +153,53 @@ impl HostSelfDispatcher<'_> {
                     AgentVerbAnswer::new(output, Some(rows)).with_hooks(hooks),
                 ));
             }
-            Err(refused) => SessionReadRefusal::Read(refused.code),
+            Err(refused) => SessionReadRefusal::read(refused),
         };
         Ok(refused.denied(SelfEffect::AgentVerb))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Review round 2 of #10553: a room read the read itself refused reached
+    /// the guest with its Memory code alone. Its reason codes now ride with
+    /// it, in the order the read gave them, as a direct call's refusal keeps
+    /// them (FIX CODE-MODE-DENIAL-REASONS).
+    #[test]
+    fn a_refused_room_read_keeps_the_reads_reason_codes() {
+        let mut refused = MemoryError::new("FORBIDDEN", "the room refused the read", &["ask"]);
+        refused.reason_codes = vec![
+            "gate.rooms.upkeep.voice".to_owned(),
+            "read.revoked".to_owned(),
+        ];
+        assert_eq!(
+            SessionReadRefusal::read(refused).denied(SelfEffect::AgentVerb),
+            SelfDispatchOutcome::Denied(SelfDeniedResult {
+                hook_notice: None,
+                effect: SelfEffect::AgentVerb,
+                outcome: "FORBIDDEN".to_owned(),
+                reason_codes: vec![
+                    "gate.rooms.upkeep.voice".to_owned(),
+                    "read.revoked".to_owned(),
+                ],
+            })
+        );
+    }
+
+    /// A run whose host binds no door still reads as unbound, with no reason
+    /// of its own.
+    #[test]
+    fn an_unbound_room_read_names_no_reason() {
+        assert_eq!(
+            SessionReadRefusal::Unbound.denied(SelfEffect::AgentVerb),
+            SelfDispatchOutcome::Denied(SelfDeniedResult {
+                hook_notice: None,
+                effect: SelfEffect::AgentVerb,
+                outcome: AGENT_VERB_DOOR_UNBOUND.to_owned(),
+                reason_codes: Vec::new(),
+            })
+        );
     }
 }

@@ -17,7 +17,7 @@ use crate::{EntityId, Vault};
 use super::blocker::Blocker;
 use super::caps::{RunningCaps, caps_problem};
 use super::fit::{MachineFacts, scope_allowed};
-use super::group::{admit_group_member_in_txn, replay_keeps_group_cap_in_txn};
+use super::group::{admit_group_member_in_txn, replay_is_same_member_in_txn};
 use super::pass::OrderFit;
 use super::place::place;
 use super::record::{
@@ -119,7 +119,8 @@ pub(super) fn reaches(caller: VerbGrantCaller, order: &WorkOrder) -> bool {
     }
 }
 
-/// Whether `order` was made from the same request as `input` by the same caller.
+/// Whether `order` was made from the same request as `input` by the same caller, but for its
+/// group, which [`replay_is_same_member_in_txn`] reads.
 fn same_request(order: &WorkOrder, input: &WorkOrderRequest, by: &OrderedBy) -> bool {
     order.ordered_by.actor() == by.actor()
         && order.workload == input.workload
@@ -131,7 +132,6 @@ fn same_request(order: &WorkOrder, input: &WorkOrderRequest, by: &OrderedBy) -> 
         && order.retry_on == input.retry_on
         && order.result == input.result
         && order.after == input.after
-        && order.group == input.group.map(|request| request.member())
 }
 
 /// `vault.jobs.order`: `memory`'s caller orders one pinned workload at `now_ms`. The order is
@@ -200,7 +200,7 @@ pub fn order_work_as(
                     });
                 if let Some(order) = earlier {
                     if same_request(&order, input, &by)
-                        && replay_keeps_group_cap_in_txn(vault, txn, input.group.as_ref())?
+                        && replay_is_same_member_in_txn(vault, txn, &order, input.group.as_ref())?
                     {
                         let view =
                             vault.order_view_in_txn(txn, order_seen_by(caller, order), true)?;
@@ -225,17 +225,19 @@ pub fn order_work_as(
             {
                 return Ok(Err(refused));
             }
-            let new_group = match &input.group {
+            // A group the request starts takes the order's id.
+            let id = EntityId::now();
+            let (member, new_group) = match &input.group {
                 Some(request) => {
-                    match admit_group_member_in_txn(vault, txn, request, &by, caller, now_ms)? {
-                        Ok(row) => row,
+                    match admit_group_member_in_txn(vault, txn, request, id, &by, caller, now_ms)? {
+                        Ok((member, row)) => (Some(member), row),
                         Err(refused) => return Ok(Err(refused)),
                     }
                 }
-                None => None,
+                None => (None, None),
             };
             let order = WorkOrder {
-                id: EntityId::now(),
+                id,
                 ordered_by: by,
                 workload: input.workload.clone(),
                 request: row.pin.request,
@@ -256,7 +258,7 @@ pub fn order_work_as(
                 result: input.result,
                 intent_key: input.intent_key.clone(),
                 after: input.after,
-                group: input.group.map(|request| request.member()),
+                group: member,
                 ordered_at_ms: now_ms,
                 updated_at_ms: now_ms,
                 revision: 0,

@@ -28,7 +28,7 @@ use crate::memory::read_capture::ReadCapture;
 use crate::runtime_hooks::VerbHookStop;
 use crate::task_verb::sdk::AgentVerb;
 
-use super::{ExecutorCallSite, ExecutorReply, HostSelfDispatcher};
+use super::{ExecutorCallSite, ExecutorReply, HostSelfDispatcher, RecordedProducer};
 
 use self::receipts::{
     KEPT_ANSWER_REFUSED, KeptWrite, MEDIA_STEP_TRAPPED, PROVIDER_UNAVAILABLE, VERB_HOOK_HIDDEN,
@@ -143,6 +143,7 @@ impl HostSelfDispatcher<'_> {
                 return Ok(answered(Err(AgentVerbRefusal {
                     hook_notice: None,
                     code: AGENT_VERB_SESSION_BOUND.to_owned(),
+                    reason_codes: Vec::new(),
                 })));
             }
             return self.dispatch_session_write(call, site);
@@ -151,6 +152,7 @@ impl HostSelfDispatcher<'_> {
             return Ok(answered(Err(AgentVerbRefusal {
                 hook_notice: None,
                 code: AGENT_VERB_DOOR_UNBOUND.to_owned(),
+                reason_codes: Vec::new(),
             })));
         };
         // A write carries the run's TASK creator, so a TASK it creates runs
@@ -271,6 +273,7 @@ impl HostSelfDispatcher<'_> {
                     answered(Err(AgentVerbRefusal {
                         hook_notice: None,
                         code: VERB_HOOK_HIDDEN.to_owned(),
+                        reason_codes: Vec::new(),
                     }))
                 }
                 // A skip or an ask stopped the write before it ran: the receipt
@@ -383,10 +386,10 @@ impl HostSelfDispatcher<'_> {
     /// flight, or one that needs reconciliation.
     ///
     /// The kept answer is a result the run recorded: `door` rules on reading
-    /// it back, as on the run's other recorded outputs, and a run whose
-    /// host binds no door reads its own. Its refusal stands on the receipt
-    /// until an admitted read of the answer reconciles it, so no later
-    /// attempt of the step goes on past it either.
+    /// it back, as on the run's other recorded outputs, and also rules on
+    /// the verb that produced it. A run whose host binds no door reads its
+    /// own. A refusal stands on the receipt until an admitted read of the
+    /// answer reconciles it, so no later attempt of the step goes past it.
     fn kept_write_answer(
         &self,
         door: Option<&dyn AgentVerbDoor>,
@@ -399,13 +402,22 @@ impl HostSelfDispatcher<'_> {
                 "agent verb write is in flight or needs reconciliation",
             ));
         };
-        if let Err(refusal) = super::admit_recorded_answer(door) {
-            let rejected = super::gate_rejection(&refusal.code);
+        let admitted = match super::admit_recorded_answer(door) {
+            Ok(()) => self.admit_recorded_producer(door, RecordedProducer::of_row(row, false))?,
+            Err(refusal) => Err(refusal),
+        };
+        if let Err(refusal) = admitted {
+            let rejected = super::gate_rejection(&refusal.code, &refusal.reason_codes);
+            // The receipt's marker first, then the door's own codes, so every
+            // later attempt the refusal stands for answers as this one does
+            // (FIX CODE-MODE-DENIAL-REASONS).
             let ruling = SelfDispatchOutcome::Denied(SelfDeniedResult {
                 hook_notice: None,
                 effect: SelfEffect::AgentVerb,
                 outcome: refusal.code.clone(),
-                reason_codes: vec![KEPT_ANSWER_REFUSED.to_owned()],
+                reason_codes: std::iter::once(KEPT_ANSWER_REFUSED.to_owned())
+                    .chain(refusal.reason_codes.iter().cloned())
+                    .collect(),
             });
             let ruling = CodeRunBridgeCall::record(0, &SelfCall::AgentVerb(call), &ruling, 0, 0)?;
             self.append_ruling(&receipt, ruling)?;
@@ -590,17 +602,27 @@ fn kept_refusal(row: &CodeRunBridgeCall) -> Result<SelfDeniedResult> {
     else {
         return Err(Error::CorruptedIndex("agent verb receipt refusal"));
     };
-    if let Some(rejected) = super::gate_rejection(&refused.outcome) {
+    if let Some(rejected) = super::gate_rejection(&refused.outcome, &refused.reason_codes) {
         return Err(rejected);
     }
+    // The refusal keeps the reason codes its door gave, stored after the
+    // receipt's own `kept_answer_refused` marker, so a replay answers as the
+    // live call did (FIX CODE-MODE-DENIAL-REASONS). The marker is the
+    // receipt's, not the door's: a row that holds it alone answers with no
+    // reason, as before.
     Ok(SelfDeniedResult {
-        reason_codes: Vec::new(),
+        reason_codes: refused
+            .reason_codes
+            .into_iter()
+            .filter(|code| code != KEPT_ANSWER_REFUSED)
+            .collect(),
         ..refused
     })
 }
 
-/// A refusal reaches the guest as its stable code alone; the host or prompt
-/// layer words it.
+/// A refusal reaches the guest as its stable code and the reason codes its
+/// door typed (FIX CODE-MODE-DENIAL-REASONS); the host or prompt layer
+/// words them.
 fn answered(
     outcome: std::result::Result<AgentVerbAnswer, AgentVerbRefusal>,
 ) -> SelfDispatchOutcome {
@@ -610,7 +632,7 @@ fn answered(
                 hook_notice: refusal.hook_notice,
                 effect: SelfEffect::AgentVerb,
                 outcome: refusal.code,
-                reason_codes: Vec::new(),
+                reason_codes: refusal.reason_codes,
             })
         },
         SelfDispatchOutcome::AgentVerb,

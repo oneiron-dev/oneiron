@@ -186,6 +186,66 @@ fn short_refs_in(vault: &oneiron::Vault, body: &[u8]) -> Option<Vec<EntityId>> {
     short_refs_named(vault, &value)
 }
 
+/// The verb whose miss echoes read as no ref and no id at release
+/// (REVIEW-10571 P1 1): `vault.hydrate` echoes each unresolved ref back in
+/// `missing[].ref`, the caller's own string, with `not_found` for absent
+/// and withheld alike, so a miss reveals nothing about which records
+/// exist. A release scan that judged those echoes as rows the answer
+/// names would withhold the views the verb promised, or tell a withheld
+/// row from an absent one.
+pub(crate) const HYDRATE_VERB: &str = "vault.hydrate";
+
+/// The copy of a `vault.hydrate` answer `value` a release scan reads
+/// instead: each `missing[].ref` cleared to the empty string, every reason
+/// and every found view kept as it is. `None` when no miss names a ref, so
+/// the answer scans whole as before.
+pub(crate) fn hydrate_misses_cleared(value: &serde_json::Value) -> Option<serde_json::Value> {
+    let missing = value.get("missing")?.as_array()?;
+    if !missing
+        .iter()
+        .any(|miss| miss.get("ref").is_some_and(serde_json::Value::is_string))
+    {
+        return None;
+    }
+    let mut scan = value.clone();
+    for miss in scan
+        .get_mut("missing")
+        .and_then(serde_json::Value::as_array_mut)
+        .into_iter()
+        .flatten()
+    {
+        if let Some(reference) = miss
+            .get_mut("ref")
+            .filter(|reference| reference.is_string())
+        {
+            *reference = serde_json::Value::String(String::new());
+        }
+    }
+    Some(scan)
+}
+
+/// The copy of a `vault.hydrate` call's input `params` a release scan reads
+/// instead: each supplied `refs` entry cleared to the empty string, as its
+/// miss echo is ([`hydrate_misses_cleared`]). The answer's listed rows
+/// still judge what it derived from. `None` when no entry names a ref.
+pub(crate) fn hydrate_input_refs_cleared(params: &serde_json::Value) -> Option<serde_json::Value> {
+    let refs = params.get("refs")?.as_array()?;
+    if !refs.iter().any(serde_json::Value::is_string) {
+        return None;
+    }
+    let mut scan = params.clone();
+    for reference in scan
+        .get_mut("refs")
+        .and_then(serde_json::Value::as_array_mut)
+        .into_iter()
+        .flatten()
+        .filter(|reference| reference.is_string())
+    {
+        *reference = serde_json::Value::String(String::new());
+    }
+    Some(scan)
+}
+
 /// The rows `value` names by short ref, keys included; `None` when one names
 /// no row.
 pub(crate) fn short_refs_named(

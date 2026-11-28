@@ -56,22 +56,29 @@ Start the server again: `oneiron serve --config <config>`.
 
 `oneiron mcp` forwards to `http://127.0.0.1:9090`, where `oneiron serve`
 listens by default; pass `--url` (or set `ONEIRON_URL`) only if your server
-listens elsewhere. `--surface tool-first` is the endpoint that lists one tool
-per exported verb (`/mcp/tool-first`); `--surface primary` is the code-mode
-endpoint (`/mcp`: `setup_oneiron` and `execute_code`). Both also list
-`invoke_action`, which runs an app action with its live run (`liveRun`; see
-owner-actions.md). Without `--surface`,
+listens elsewhere. `--surface tool-first` is the endpoint that lists the verbs
+as tools, plus `invoke_action`, `execute` and `resume` (`/mcp/tool-first`);
+`--surface primary` is the code-mode endpoint (`/mcp`: `setup_oneiron`,
+`invoke_action`, `execute` and `resume`). `invoke_action` runs an app action
+with its live run (`liveRun`; see owner-actions.md). Without `--surface`,
 `oneiron mcp` asks the server at its first request and takes `/mcp` when the
-server has a bound code host (`[models.code_mode]`) and the credential may run
-code (a full-access agent; a read-only or propose-only one may not),
-`/mcp/tool-first` otherwise. You choose it here; the agent cannot change it.
+server has a bound code host and the credential is admitted to `execute`,
+`/mcp/tool-first` otherwise. A verified caller-source host can bind without
+`[models.code_mode]`. `execute` requires Read, not Write, and each verb still
+checks its own permissions. You choose the surface here; the agent cannot
+change it.
 
 **Claude Code** (`-s user` makes it available in every project):
 
 ```bash
 claude mcp add -s user oneiron -- oneiron mcp --surface tool-first \
-  --credential-file ~/.config/oneiron/claude-code.cred
+  --credential-file ~/.config/oneiron/claude-code.cred --workspace .
 ```
+
+`--workspace .` attaches the session to the folder Claude Code runs in: a read
+that names no project reads the project you bound to that folder, and none in a
+folder with no project bound (see "Which project a session reads" in
+[Claude Code hooks](claude-code-hooks.md)).
 
 Or install the Oneiron plugin for Claude Code
 ([`plugins/claude-code/`](../../plugins/claude-code/)). It carries this same

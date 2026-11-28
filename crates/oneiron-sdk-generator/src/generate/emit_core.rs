@@ -456,14 +456,17 @@ type CatalogRole = fn(&Generator, &Dict) -> Result<bool, GenerateError>;
 /// Each `AgentVerb` role method and the rows it selects, in the list's order.
 const CATALOG_ROLES: &[(&str, CatalogRole)] = &[
     ("is_facade", |generator, row| {
-        // `r.get('context', 'memory') == 'memory' or r['name'] in BOARD_HOST_NAMES`
-        Ok(context_is(row, "memory") || {
-            let name = item(row, "name")?;
-            generator
-                .board_host_names
-                .iter()
-                .any(|board| board.py_eq(name))
-        })
+        // `r.get('context', 'memory') == 'memory' or r['name'] in BOARD_HOST_NAMES`; a code-only row has no
+        // facade door (FIX EXECUTE-CALLER-CODE).
+        Ok(
+            (context_is(row, "memory") && !super::code_only_row(row)) || {
+                let name = item(row, "name")?;
+                generator
+                    .board_host_names
+                    .iter()
+                    .any(|board| board.py_eq(name))
+            },
+        )
     }),
     ("is_browser", |generator, row| {
         // `r['name'] in {row['name'] for row in BROWSER_ROWS}`
@@ -475,7 +478,16 @@ const CATALOG_ROLES: &[(&str, CatalogRole)] = &[
         name.check_hashable("a set element")?;
         Ok(browser.iter().any(|browser| browser.py_eq(name)))
     }),
-    ("is_mcp", |_, row| Ok(!get_is(row, "mcp", "none"))),
+    ("is_mcp", |_, row| Ok(super::mcp_tool_row(row))),
+    // A row code mode serves: every row but one served by its HTTP facade door only (FIX EXECUTE-CALLER-CODE).
+    ("is_code_mode", |_, row| Ok(!super::facade_only_row(row))),
+    // A row whose answer is a credential or a secret value (FIX EXECUTE-CALLER-CODE): code a caller wrote never
+    // receives it, whatever its credential holds.
+    ("refused_to_caller_code", |_, row| {
+        Ok(row
+            .get("caller_code")
+            .is_some_and(|value| value.is_str("refused")))
+    }),
     ("is_section", |_, row| Ok(item(row, "section")?.truthy())),
     ("continuable", |_, row| {
         // `r.get('mcp_page', 'page' in r or r['output'].startswith('Vec<'))`: the default is evaluated first.
@@ -958,7 +970,12 @@ mod tests {
     use crate::generate::{CORE_VERB_NAMES, Generator};
 
     /// A scratch tree whose only verb files are `rows` (name, extra JSON members), each a minimal callable row.
-    fn tree(label: &str, rows: &[(&str, &str)]) -> PathBuf {
+    fn tree(
+        label: &str,
+        rows: &[(&str, &str)],
+        families: &str,
+        vault_capabilities: &str,
+    ) -> PathBuf {
         let root = std::env::temp_dir().join(format!(
             "oneiron-sdk-generator-emit-core-{label}-{}",
             std::process::id()
@@ -967,9 +984,17 @@ mod tests {
         let verbs = root.join("scripts/sdk/verbs");
         fs::create_dir_all(&verbs).expect("a scratch tree");
         fs::write(root.join("scripts/sdk/type_names.json"), "{}\n").expect("type_names.json");
+        let verb_tree = root.join("scripts/sdk/verb-tree");
+        fs::create_dir_all(&verb_tree).expect("a verb tree");
+        fs::write(verb_tree.join("families.json"), families).expect("families.json");
+        fs::write(
+            verb_tree.join("vault_capabilities.json"),
+            vault_capabilities,
+        )
+        .expect("vault_capabilities.json");
         for (name, extra) in rows {
             let text = format!(
-                r#"{{"name": "{name}", "input": "In", "output": "Out", "call": "call(memory, &input)?", "scope": "Read", "act_class": "read", "section": false{extra}}}"#
+                r#"{{"name": "{name}", "description": "Reads a fixture.", "input": "In", "output": "Out", "call": "call(memory, &input)?", "scope": "Read", "act_class": "read", "section": false{extra}}}"#
             );
             fs::write(verbs.join(format!("{name}.json")), text).expect("a verb file");
         }
@@ -999,7 +1024,12 @@ mod tests {
     #[test]
     fn check_core_verb_names_refuses_what_the_table_lacks() {
         // The Python generator's `SystemExit` texts (a list prints its `repr`).
-        let root = tree("missing-rows", &[("cancel", ""), ("tasks.create", "")]);
+        let root = tree(
+            "missing-rows",
+            &[("cancel", ""), ("tasks.create", "")],
+            r#"{"tasks":"Tasks."}"#,
+            "{}",
+        );
         let generator = Generator::rows_only(&root).expect("the module level");
         let error = check_core_verb_names(&generator).expect_err("a refusal");
         assert_eq!(
@@ -1011,7 +1041,12 @@ mod tests {
         );
         fs::remove_dir_all(&root).expect("cleanup");
         let rows: Vec<(&str, &str)> = CORE_VERB_NAMES.iter().map(|name| (*name, "")).collect();
-        let root = tree("missing-defaults", &rows);
+        let root = tree(
+            "missing-defaults",
+            &rows,
+            r#"{"tasks":"Tasks.","reveal":"Reveal.","self":"Self.","vault":"Vault."}"#,
+            r#"{"Capabilities":["calendar","channel_identities"]}"#,
+        );
         let generator = Generator::rows_only(&root).expect("the module level");
         let error = check_core_verb_names(&generator).expect_err("a refusal");
         assert_eq!(

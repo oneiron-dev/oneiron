@@ -6,19 +6,20 @@ description: Use the person's Oneiron vault as long-term memory across coding se
 # Oneiron: your vault as memory
 
 The Oneiron plugin connects this session to the person's vault through MCP.
-The `oneiron` MCP server gives you the vault's verbs as tools, one tool per
-verb, under the agent credential the person minted for this client. That
+The `oneiron` MCP server gives you the vault's verbs as tools, plus `execute`
+and `resume` when the vault binds a code host, under the agent credential the
+person minted for this client. That
 credential decides what you may read and write. The vault checks it on every
 call; you never name your own identity.
 
 Session hooks may run beside you: Codex and Copilot read them from this
 package, and Cursor from the separate Oneiron Cursor plugin, which also
 carries Cursor's `oneiron` server. Once the person has set them up, a
-session opens with a line naming the vault they bound and a short recall for
-the project, and the session's log is handed to the vault as the session
-goes. They do not recall for each prompt. Without them nothing recalls on
-its own and nothing hands the log over. Either way, recall when you need it,
-and save what is worth keeping yourself.
+session opens with a line naming the vault they bound, and the session's log
+is handed to the vault as the session goes. They recall nothing, at start or
+for each prompt. Without them nothing hands the log over. Either way, call
+`vault.recall` yourself when the work needs what the vault holds (Recall,
+below), and save what is worth keeping yourself.
 
 ## Recall
 

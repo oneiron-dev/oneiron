@@ -29,10 +29,14 @@ use super::place::place;
 use super::rank::rank;
 use super::record::{
     AttemptEnd, CancelWhy, EndKind, GiveUpWhy, OrderAttempt, OrderLimits, OrderState, SlotDecision,
-    WORK_ORDERS, WaitRule, WorkOrder, attempt_job_id,
+    WorkOrder, attempt_job_id,
 };
 use super::setting_keys::retry_policy_in_txn;
 use super::start_check::OrderAttemptRef;
+
+mod blocked;
+mod order_rows;
+use blocked::{closing_state, earliest_clear};
 
 /// The node refusals inside a launch that clear by trying again (4.7): a busy device, an
 /// authority fold that had not caught up. Any other launch refusal is a changed pin.
@@ -196,70 +200,6 @@ fn unknown_machine(machine: EntityId) -> MachineFacts {
 }
 
 impl Vault {
-    /// Every work order of this vault.
-    ///
-    /// # Errors
-    ///
-    /// Storage errors.
-    pub fn work_orders(&self) -> crate::Result<Vec<WorkOrder>> {
-        self.work_orders_in_txn(&self.store.env.read_txn()?)
-    }
-
-    /// [`Self::work_orders`] in the caller's read transaction, for a read that joins the orders
-    /// to other rows of one snapshot (`vault.jobs.history`).
-    pub(crate) fn work_orders_in_txn(
-        &self,
-        txn: &heed::RoTxn<'_>,
-    ) -> crate::Result<Vec<WorkOrder>> {
-        WORK_ORDERS
-            .iter_from(&self.store, txn, &[])?
-            .map(|row| row.map(|(_, order)| order))
-            .collect()
-    }
-
-    /// One work order.
-    ///
-    /// # Errors
-    ///
-    /// Storage errors.
-    pub fn work_order(&self, id: &EntityId) -> crate::Result<Option<WorkOrder>> {
-        WORK_ORDERS.get(&self.store, &self.store.env.read_txn()?, id)
-    }
-
-    /// Writes `order` if its stored row is still at `order.revision`, bumping it, and settles
-    /// in the same write each `vault.jobs.orders.wait` the write reaches. Every change of an
-    /// order's state and attempts comes through here. Returns false, writing nothing, when
-    /// another write came first.
-    pub(super) fn put_work_order_in_txn(
-        &self,
-        txn: &mut heed::RwTxn<'_>,
-        order: &mut WorkOrder,
-        now_ms: u64,
-    ) -> crate::Result<bool> {
-        let stored = WORK_ORDERS.get(&self.store, txn, &order.id)?;
-        if stored.as_ref().map(|row| row.revision) != Some(order.revision) {
-            return Ok(false);
-        }
-        order.revision += 1;
-        order.updated_at_ms = now_ms;
-        WORK_ORDERS.put(&self.store, txn, &order.id, order)?;
-        self.settle_order_waits_in_txn(txn, stored.as_ref(), order, now_ms)?;
-        Ok(true)
-    }
-
-    /// Applies `change` to the order as read and writes it if nobody wrote it since; false
-    /// when another write came first.
-    pub(super) fn update_work_order(
-        &self,
-        order: &WorkOrder,
-        now_ms: u64,
-        change: impl FnOnce(&mut WorkOrder),
-    ) -> crate::Result<bool> {
-        let mut next = order.clone();
-        change(&mut next);
-        self.with_write_txn_grouped(|txn| self.put_work_order_in_txn(txn, &mut next, now_ms))
-    }
-
     /// How the job of `attempt` stands, and whether the machine's word says its workload
     /// started: a node's receipt for a node's job; for an offer's job, which has no dispatch
     /// row, its provider's clock (run time reported, or an end by exit or at the maximum). A
@@ -310,6 +250,7 @@ impl Vault {
                     GpuEndReason::Exited => EndKind::Exited { code: 0 },
                     GpuEndReason::AtMaximum | GpuEndReason::TimeLimit => EndKind::TimeLimit,
                     GpuEndReason::Cancelled => EndKind::Stopped,
+                    GpuEndReason::NeverStarted => EndKind::NeverStarted,
                     GpuEndReason::Gone => EndKind::Lost,
                     // The owner wrote the job off (door 10): its end stays unknown.
                     GpuEndReason::Unconfirmed => EndKind::WrittenOff,
@@ -745,73 +686,4 @@ pub fn allowed_machines(limits: &OrderLimits, workload: &JobWorkload) -> Vec<Ent
     } else {
         limits.machines.clone()
     }
-}
-
-/// The terminal state `order` takes when blocked by `blocked` at `now_ms`, if it does not wait.
-fn closing_state(
-    order: &WorkOrder,
-    blocked: &[BlockedOn],
-    authority_ended: bool,
-    now_ms: u64,
-) -> Option<OrderState> {
-    if authority_ended {
-        return Some(OrderState::Cancelled {
-            why: CancelWhy::AuthorityEnded,
-        });
-    }
-    // Every allowed machine reports a reason no wait clears: refused at once (1.3).
-    let mut by_machine: BTreeMap<Option<&str>, Vec<Blocker>> = BTreeMap::new();
-    for on in blocked {
-        by_machine
-            .entry(on.machine.as_deref())
-            .or_default()
-            .push(on.blocker.clone());
-    }
-    let machine_rows: Vec<&Vec<Blocker>> = by_machine
-        .iter()
-        .filter(|(machine, _)| machine.is_some())
-        .map(|(_, reasons)| reasons)
-        .collect();
-    let order_level_never = by_machine
-        .get(&None)
-        .is_some_and(|reasons| reasons.iter().any(|blocker| !blocker.clears_by_waiting()));
-    let every_machine_never = !machine_rows.is_empty()
-        && machine_rows
-            .iter()
-            .all(|reasons| reasons.iter().any(|blocker| !blocker.clears_by_waiting()));
-    if order_level_never || every_machine_never {
-        return Some(OrderState::GivenUp {
-            why: GiveUpWhy::NeverFits {
-                blocked: blocked.to_vec(),
-            },
-        });
-    }
-    let wait_ended = order.wait == WaitRule::No || order.wait_ran_out(now_ms);
-    // An unconfirmed attempt is never a reason to give up: it waits for its end (I3).
-    let unconfirmed = blocked
-        .iter()
-        .any(|on| matches!(on.blocker, Blocker::AttemptUnconfirmed { .. }));
-    if wait_ended && !unconfirmed {
-        return Some(OrderState::GivenUp {
-            why: GiveUpWhy::WaitEnded {
-                blocked: blocked.to_vec(),
-            },
-        });
-    }
-    None
-}
-
-/// The earliest time one machine's every reason clears by itself, over the machines whose
-/// reasons all carry a time.
-fn earliest_clear(blocked: &[BlockedOn]) -> Option<u64> {
-    let mut by_machine: BTreeMap<Option<&str>, Option<u64>> = BTreeMap::new();
-    for on in blocked {
-        let at = on.blocker.clears_at_ms();
-        let entry = by_machine.entry(on.machine.as_deref()).or_insert(Some(0));
-        *entry = match (*entry, at) {
-            (Some(known), Some(at)) => Some(known.max(at)),
-            _ => None,
-        };
-    }
-    by_machine.into_values().flatten().min()
 }

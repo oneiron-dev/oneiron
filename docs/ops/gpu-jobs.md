@@ -187,7 +187,9 @@ at_maximum = "stop"           # required for this backend
   it and any other offer with it.
 - A job is billed the occupied time of the attempt's leases, as the node
   measured it, and never more than the issuer's own bracket or the quote's
-  maximum. A key that never started bills zero.
+  maximum. A key that never started settles zero, including overhead; the job
+  reads `ended` / `never_started` (or `cancelled` for a cancel), and the node
+  part names the machine's end.
 
 ## Pinned workloads (the vault's own machines)
 

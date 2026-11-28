@@ -59,9 +59,15 @@ const MESH_AUTHORITY_PAGE_BYTES: usize = 8 * 1024 * 1024;
 
 /// The base64 bytes a page's first row may take alone: three quarters of
 /// that reply, room for the 26,000 grants of 255-byte ALPNs review round 2 of
-/// #10536 measured, twice over. A signed row past it is left out; serving it
-/// in parts is FIX MESH-AUTHORITY-ROW-PARTS.
+/// #10536 measured, twice over. A signed row past it is named by reference
+/// and read in parts (`parts`, MESH-AUTHORITY-ROW-PARTS).
 const MESH_AUTHORITY_LONE_ROW_BYTES: usize = 24 * 1024 * 1024;
+
+mod parts;
+pub use parts::{
+    MESH_AUTHORITY_PART_MAX, MESH_AUTHORITY_ROW_MAX, MeshAuthorityPart, MeshAuthorityRowJoin,
+    MeshAuthorityRowRef,
+};
 
 /// One host-signed binding as a home holds it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -80,12 +86,25 @@ pub struct MeshAuthorityRow {
 /// One page of the bindings a home holds, in MACHINE id order.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct MeshAuthorityPage {
-    /// The bindings, each after the one before it.
+    /// The bindings carried whole, each after the one before it.
     pub rows: Vec<MeshAuthorityRow>,
+    /// The bindings named by reference, each after the one before it, for
+    /// the machine to read in parts ([`Vault::mesh_authority_part`]): a
+    /// signed row that passes the lone row's bytes beside its address. A
+    /// machine older than MESH-AUTHORITY-ROW-PARTS reads `rows` alone and
+    /// misses only these, as it did when the page left them out.
+    pub parted: Vec<MeshAuthorityRowRef>,
     /// The MACHINE the next page starts after, while the home holds bindings
     /// past this page; `None` once this page reached the last one. A row the
     /// page left out is behind it too, so no row holds the scan back.
     pub next: Option<EntityId>,
+}
+
+impl MeshAuthorityPage {
+    /// How many bindings the page serves, whole and by reference.
+    fn served(&self) -> usize {
+        self.rows.len() + self.parted.len()
+    }
 }
 
 /// What one import did with each binding a home served.
@@ -206,10 +225,12 @@ impl Vault {
     /// [`MESH_AUTHORITY_PAGE_MAX`] and as many as fit the page's encoded
     /// bytes, each as stored with its MACHINE row's address. A row past
     /// them starts a page of its own, which it may fill alone up to the
-    /// lone row's bytes. A binding that does not verify here, one whose
-    /// MACHINE carries no address, and one whose signed row alone passes the
-    /// lone row's bytes, is left out. An address that passes them beside its
-    /// row is served bare, without its direct addresses: the binding's
+    /// lone row's bytes. A signed row that passes the lone row's bytes beside
+    /// its address is named by reference (`parted`), its address inline, and
+    /// read in parts ([`Vault::mesh_authority_part`]). A binding that does
+    /// not verify here, and one whose MACHINE carries no address, is left
+    /// out. An address that passes the bytes left beside its row or
+    /// reference is served bare, without its direct addresses: the binding's
     /// signature covers only its endpoint key. The caller has already
     /// admitted the machine it serves (`residence.authority.mesh`).
     ///
@@ -246,7 +267,7 @@ impl Vault {
         let mut last = None;
         for row in rows {
             let (HexId(machine), authority) = row?;
-            if page.rows.len() >= MESH_AUTHORITY_PAGE_MAX {
+            if page.served() >= MESH_AUTHORITY_PAGE_MAX {
                 page.next = last;
                 break;
             }
@@ -255,25 +276,42 @@ impl Vault {
                 last = Some(machine);
                 continue;
             };
-            let Some((encoded, bare)) =
-                served_address(&address, authority.len(), lone.max(budget))?
-            else {
-                last = Some(machine);
-                continue;
-            };
-            let size = base64_len(authority.len()) + base64_len(encoded.len());
-            if !page.rows.is_empty() && bytes.saturating_add(size) > budget {
+            // Whole while the row and its address fit a page's first row;
+            // by reference otherwise, its address beside the reference.
+            let (encoded, bare, size, parted) =
+                match served_address(&address, authority.len(), lone.max(budget))? {
+                    Some((encoded, bare)) => {
+                        let size = base64_len(authority.len()) + base64_len(encoded.len());
+                        (encoded, bare, size, false)
+                    }
+                    None => match served_address(&address, 0, budget)? {
+                        Some((encoded, bare)) => {
+                            let size = base64_len(encoded.len());
+                            (encoded, bare, size, true)
+                        }
+                        None => {
+                            last = Some(machine);
+                            continue;
+                        }
+                    },
+                };
+            if page.served() > 0 && bytes.saturating_add(size) > budget {
                 page.next = last;
                 break;
             }
             bytes = bytes.saturating_add(size);
             last = Some(machine);
-            page.rows.push(MeshAuthorityRow {
-                machine,
-                authority,
-                address: encoded,
-                bare,
-            });
+            if parted {
+                page.parted
+                    .push(MeshAuthorityRowRef::of(machine, &authority, encoded, bare));
+            } else {
+                page.rows.push(MeshAuthorityRow {
+                    machine,
+                    authority,
+                    address: encoded,
+                    bare,
+                });
+            }
         }
         Ok(page)
     }

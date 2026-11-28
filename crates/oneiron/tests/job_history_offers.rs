@@ -388,6 +388,38 @@ fn a_chunk_refused_before_it_ran_charges_nothing_and_returns_its_quote() {
 }
 
 #[test]
+fn a_never_started_offer_attempt_has_no_charge_and_returns_its_quote() {
+    let rig = rig();
+    let quote = rig.quote(100, None);
+    let admission = admission(&quote.job, quote.units);
+    rig.gpu.state().create_refused = Some("not available".to_owned());
+    let mut job = rig.start(&quote, &admission);
+    // A signed submit refusal writes this state without filling the chunk's settlement.
+    job.state = GpuJobState::Ended {
+        reason: GpuEndReason::NeverStarted,
+    };
+    let inputs = HistoryInputs {
+        jobs: &[job],
+        claims: &[],
+        periods: &[],
+        orders: &[],
+        observations: &[],
+        unattributed: &[],
+    };
+    let filter = JobHistoryRequest::default()
+        .filter()
+        .expect("a valid request");
+
+    let history = project(&inputs, &filter, HistoryViewer::Owner);
+    let attempt = only(&history);
+    assert_eq!(attempt.end, "never_started");
+    assert_eq!(attempt.end_reason, None);
+    assert_eq!(attempt.occupied_secs, Some(0));
+    assert_eq!(attempt.charged_secs, Some(0));
+    assert_eq!(attempt.returned_secs, Some(quote.quantity));
+}
+
+#[test]
 fn a_cancel_before_any_status_leaves_the_occupancy_unknown() {
     let rig = rig();
     let quote = rig.quote(100, None);
