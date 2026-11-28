@@ -138,6 +138,14 @@ where
         + Send
         + 'static,
 {
+    // FIX MARKET-SEAT-MODEL-STAMP: the slip of the credential that holds
+    // the live run, read only on a call that names one; a member's market
+    // submission looks up the seat the owner paired it with.
+    let live_run_slip = bound
+        .live_run
+        .as_ref()
+        .and(bound.replay_auth.verified_slip())
+        .map(|slip| slip.claims().slip_id);
     let ActionBound {
         replay_auth,
         actor,
@@ -147,13 +155,6 @@ where
         surface,
         live_run,
     } = bound;
-    // FIX MARKET-SEAT-MODEL-STAMP: the slip of the credential that holds
-    // the live run, read only on a call that names one; a member's market
-    // submission looks up the seat the owner paired it with.
-    let live_run_slip = live_run
-        .as_ref()
-        .and(replay_auth.verified_slip())
-        .map(|slip| slip.claims().slip_id);
     let door = Arc::new(FacadeRowDoor::new(
         server,
         headers,
