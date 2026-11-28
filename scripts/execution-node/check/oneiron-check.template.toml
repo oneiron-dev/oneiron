@@ -1,0 +1,41 @@
+# The `oneiron-check` template: a cargo check of a pushed oneiron commit as an Oneiron job, cold, with no network
+# (docs/ops/execution-node-mirror-and-check.md). Append this table to the node's /etc/oneiron/execution-node.toml
+# (root:root 0644). The node reads the file at each admission, so no restart is needed. Run `oneiron execution-node
+# install` again only if max_secs is now above the unit's RuntimeMaxSec (scope_systemd/install.rs).
+#
+# Sources of the figures:
+# - max_secs, memory_gib, disk_gib and cpu_threads: the fleet's own lane-check booking (lanes/okc_then_render.sh:
+#   27-28G, 6 threads, up to 3 h), as FLEET-TOOL-PARITY.md section 2 row 5 lists them. These are not new limits.
+# - tasks_max: the code's default (node_settings.rs TASKS_MAX_DEFAULT).
+# - max_devices = 0: a check claims no device (a CPU-only pin has `request.devices = []`).
+# - require: mel's GPU template (STAGE0-METIS-STEPS.md step 3): the kernel holds the file wall, the closed network and
+#   the memory cap, or the job is blocked.
+# - CARGO_BUILD_JOBS = cpu_threads, so cargo starts no more compilers than the unit's CPU share runs.
+#
+# The contract a pin of this template names is the entry itself: contract_path =
+# "scripts/execution-node/check/oneiron_check.sh", and contract_sha256 = that file's sha256 ON MAIN. A head that
+# edits the check script is then refused at staging (`contract_changed`), so it is never checked by its own script.
+[execution_node.templates.oneiron-check]
+repo = "/srv/oneiron-mirrors/oneiron-check.git"
+entries = ["scripts/execution-node/check/oneiron_check.sh"]
+interpreter = ["/bin/bash", "--noprofile", "--norc"]
+read = ["/opt/oneiron/toolchains", "/srv/oneiron-check/vendor"]
+env = { ONEIRON_CHECK_TOOLCHAINS = "/opt/oneiron/toolchains", ONEIRON_CHECK_VENDOR = "/srv/oneiron-check/vendor", CARGO_BUILD_JOBS = "6" }
+kind = "job"
+scopes = ["host"]
+network = ["none"]
+require = ["file_wall:kernel", "network_closed:kernel", "memory_cap:kernel"]
+returnable = ["verdict.json"]
+max_secs = 10800
+memory_gib = 28
+disk_gib = 60
+cpu_threads = 6
+max_devices = 0
+tasks_max = 4096
+
+# Each argument is name=value, and its whole value matches the pattern (node_settings.rs param_pattern).
+[execution_node.templates.oneiron-check.params]
+packages = '[a-z0-9_-]+(,[a-z0-9_-]+)*'
+features = 'all|default'
+tests = '(([a-z0-9_-]+:)?[a-z0-9_]+(,([a-z0-9_-]+:)?[a-z0-9_]+)*)?'
+fmt = '0|1'

@@ -1,0 +1,170 @@
+#!/usr/bin/python3 -I
+"""Receive one vendored crate dir into an execution node's vendor root.
+
+oneiron-mirror-shell runs this for `vendor-receive <name>-<version>`, as the `oneiron-mirror` account, with the tar on
+stdin (docs/ops/execution-node-mirror-and-check.md). The vendor root is the `oneiron-check` template's read root: cargo
+reads every crate from it as a directory source (scripts/execution-node/check/oneiron_check.sh).
+
+- The tar holds exactly one dir, named <name>-<version>. It is unpacked with tarfile's `data` filter into a fresh dir
+  under --incoming: no absolute path, no `..`, no link that leaves the dir, no device or fifo.
+- Every regular file except .cargo-checksum.json is listed in that file's "files" map, and each listed file has its
+  listed sha256. This is the check cargo makes at build time, made here, so a bad dir never lands.
+- The dir lands by one rename, and only when no dir of that name exists. A present dir is never replaced: the same
+  .cargo-checksum.json answers "present", and another one is refused.
+
+Exit 0 when the dir is in place, 126 with the reason on stderr when it is refused.
+"""
+
+import argparse
+import hashlib
+import json
+import os
+import re
+import shutil
+import stat
+import sys
+import tarfile
+import tempfile
+
+NAME_RE = re.compile(r"[A-Za-z0-9_+-][A-Za-z0-9._+-]{0,199}")
+CHECKSUM_FILE = ".cargo-checksum.json"
+READ_CHUNK = 1 << 20
+
+
+class Refused(Exception):
+    pass
+
+
+def sha256_of(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        while chunk := handle.read(READ_CHUNK):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def unpack(stream, name, into):
+    """Unpack the tar on `stream` into `into`, every member beneath `name`/."""
+    try:
+        with tarfile.open(fileobj=stream, mode="r|") as archive:
+            for member in archive:
+                if member.name != name and not member.name.startswith(name + "/"):
+                    raise Refused(f"the tar holds {member.name!r}, outside {name}/")
+                if ".." in member.name.split("/"):
+                    raise Refused(f"the tar member {member.name!r} has a '..' step")
+                try:
+                    archive.extract(member, into, filter="data")
+                except tarfile.FilterError as error:
+                    raise Refused(f"the tar member {member.name!r} is refused: {error}") from error
+    except tarfile.TarError as error:
+        raise Refused(f"the tar does not read: {error}") from error
+    except TypeError as error:
+        raise Refused("this python has no tarfile extraction filters (3.12 or later needed)") from error
+
+
+def verify(crate):
+    """The crate dir's files are exactly the ones .cargo-checksum.json lists, with their sha256."""
+    checksum_path = os.path.join(crate, CHECKSUM_FILE)
+    if not os.path.isfile(checksum_path) or os.path.islink(checksum_path):
+        raise Refused(f"no {CHECKSUM_FILE}")
+    try:
+        with open(checksum_path, "rb") as handle:
+            listed = json.load(handle)["files"]
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        raise Refused(f"{CHECKSUM_FILE} does not read: {error}") from error
+    if not isinstance(listed, dict):
+        raise Refused(f"{CHECKSUM_FILE} lists no files map")
+    present = set()
+    for parent, dirs, files in os.walk(crate):
+        for entry in files + [d for d in dirs if os.path.islink(os.path.join(parent, d))]:
+            path = os.path.join(parent, entry)
+            relative = os.path.relpath(path, crate)
+            mode = os.lstat(path).st_mode
+            if not (stat.S_ISREG(mode) or stat.S_ISLNK(mode)):
+                raise Refused(f"{relative} is not a file")
+            if relative != CHECKSUM_FILE:
+                present.add(relative)
+    unlisted = sorted(present - set(listed))
+    if unlisted:
+        raise Refused(f"{unlisted[0]} is not listed in {CHECKSUM_FILE}")
+    for relative, expected in sorted(listed.items()):
+        path = os.path.join(crate, relative)
+        if relative not in present or not os.path.isfile(path):
+            raise Refused(f"{relative} is listed but missing")
+        if sha256_of(path) != expected:
+            raise Refused(f"{relative} does not have its listed sha256")
+
+
+def open_to_readers(crate):
+    """Files 0644 (0755 when the owner may run them), dirs 0755: the job account reads, nobody else writes."""
+    for parent, dirs, files in os.walk(crate):
+        for entry in dirs:
+            path = os.path.join(parent, entry)
+            if not os.path.islink(path):
+                os.chmod(path, 0o755)
+        for entry in files:
+            path = os.path.join(parent, entry)
+            if not os.path.islink(path):
+                owner_runs = os.lstat(path).st_mode & stat.S_IXUSR
+                os.chmod(path, 0o755 if owner_runs else 0o644)
+    os.chmod(crate, 0o755)
+
+
+def same_checksums(left, right):
+    with open(os.path.join(left, CHECKSUM_FILE), "rb") as a, open(os.path.join(right, CHECKSUM_FILE), "rb") as b:
+        return a.read() == b.read()
+
+
+def receive(vendor_root, incoming, name, stream):
+    if not NAME_RE.fullmatch(name):
+        raise Refused("the crate dir name is not <name>-<version>")
+    final = os.path.join(vendor_root, name)
+    work = tempfile.mkdtemp(prefix=name + ".", dir=incoming)
+    try:
+        unpack(stream, name, work)
+        crate = os.path.join(work, name)
+        if not os.path.isdir(crate) or os.path.islink(crate):
+            raise Refused(f"the tar holds no dir {name}")
+        verify(crate)
+        open_to_readers(crate)
+        try:
+            os.rename(crate, final)
+        except OSError:
+            if os.path.isdir(final) and same_checksums(crate, final):
+                return "present"
+            raise Refused(f"{name} is present with other contents; it is never replaced")
+        return "received"
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--vendor-root", required=True)
+    parser.add_argument("--incoming", required=True)
+    parser.add_argument("name")
+    args = parser.parse_args()
+    try:
+        if os.path.isdir(os.path.join(args.vendor_root, args.name)) and NAME_RE.fullmatch(args.name):
+            # Present already: read the tar to its end, then compare its checksum file with the present one.
+            work = tempfile.mkdtemp(prefix=args.name + ".", dir=args.incoming)
+            try:
+                unpack(sys.stdin.buffer, args.name, work)
+                crate = os.path.join(work, args.name)
+                if not os.path.isfile(os.path.join(crate, CHECKSUM_FILE)):
+                    raise Refused(f"the tar holds no {args.name}/{CHECKSUM_FILE}")
+                if not same_checksums(crate, os.path.join(args.vendor_root, args.name)):
+                    raise Refused(f"{args.name} is present with other contents; it is never replaced")
+            finally:
+                shutil.rmtree(work, ignore_errors=True)
+            print(f"present {args.name}")
+            return 0
+        print(f"{receive(args.vendor_root, args.incoming, args.name, sys.stdin.buffer)} {args.name}")
+        return 0
+    except Refused as why:
+        print(f"oneiron-vendor-receive: refused: {why}", file=sys.stderr)
+        return 126
+
+
+if __name__ == "__main__":
+    sys.exit(main())
