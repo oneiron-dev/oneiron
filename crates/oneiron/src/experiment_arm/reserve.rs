@@ -26,12 +26,12 @@ use crate::consent::AuthenticatedOwner;
 use crate::gpu_line::claim::{CUSTODY_LAPSED, release_claim_in_txn};
 use crate::gpu_line::doors_caller::{self, LineCaller};
 use crate::gpu_line::{
-    Bucket, ClaimAdmissionRefused, ClaimKey, ClaimState, DrawAsk, DrawPurpose, GpuLine, IntentAsk,
+    Bucket, ClaimAdmissionRefused, ClaimKey, ClaimState, DrawAsk, DrawPurpose, IntentAsk,
     IntentStand, LineRefusal, LineRole, PeriodRoom, Track, UnitClaim, UnitEnd, UnitPurpose,
     UnitTerminal, claim_in_txn, claims_at_rung_in_txn, custody_lapsed_in_txn, gpu_seconds,
     mint_first_in_txn, open_claim_in_txn, plan_draws, record_line_refusal_in_txn,
 };
-use crate::job_workload::{JobWorkload, WorkloadStartAsk, WorkloadStarter};
+use crate::job_workload::{WorkloadStartAsk, WorkloadStarter};
 use crate::memory::{
     MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_BUDGET_SPENT, MEMORY_CODE_INVALID_STATE,
     MEMORY_CODE_NOT_FOUND, Memory, MemoryError, MemoryResult,
@@ -39,6 +39,7 @@ use crate::memory::{
 use crate::work_order::WaitRule;
 use crate::{EntityId, Vault};
 
+use super::unit_terms::{check_contract_and_workload, check_offer_and_machine};
 use super::unit_view::UnitView;
 use super::{ExperimentArm, RungState};
 
@@ -530,63 +531,6 @@ pub(super) fn reserve_for_caller_in_txn(
             "claim_refused: the period's allocation refused the claim: {other:?}"
         ))),
     }
-}
-
-/// Refuses the ask unless its contract is the arm's pin and the workload's pin carries that
-/// contract and the ask's code revision, with the ask's seconds as its maximum (design 5.2,
-/// check 4); answers the pinned workload. A waiting unit's door checks the same when it orders.
-pub(super) fn check_contract_and_workload(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    request: &UnitReserveRequest,
-    arm: &ExperimentArm,
-) -> MemoryResult<JobWorkload> {
-    if request.contract_sha256 != arm.contract.sha256 {
-        return Err(invalid_state(
-            "contract_changed: the contract sha256 is not the arm's pin; a changed contract is a new arm",
-        ));
-    }
-    let workload = vault
-        .job_workload_in_txn(txn, &request.workload)?
-        .ok_or_else(|| {
-            invalid_state("workload_mismatch: no workload is pinned under this digest")
-        })?;
-    if workload.pin.contract_sha256 != arm.contract.sha256
-        || workload.pin.commit != request.code_sha
-    {
-        return Err(invalid_state(
-            "workload_mismatch: the workload's pin does not carry the arm's contract sha256 and this code revision",
-        ));
-    }
-    if request.secs != workload.pin.request.maximum_secs {
-        return Err(invalid_state(&format!(
-            "maximum_mismatch: the unit asks {} s and its workload pin's maximum is {} s; they must be equal",
-            request.secs, workload.pin.request.maximum_secs
-        )));
-    }
-    Ok(workload)
-}
-
-/// Refuses the ask unless the line names its offer and, when it names one, its machine (design
-/// 5.2, check 6). A waiting unit's door checks the same when it orders.
-pub(super) fn check_offer_and_machine(
-    request: &UnitReserveRequest,
-    line: &GpuLine,
-) -> MemoryResult<()> {
-    if !line.offers.contains(&request.offer) {
-        return Err(invalid_state(
-            "offer_not_managed: the line does not name this offer; reserve on one of the line's offers",
-        ));
-    }
-    if request
-        .machine
-        .is_some_and(|machine| !line.machines.contains(&machine))
-    {
-        return Err(invalid_state(
-            "machine_not_allowed: the machine is not one of the line's; name one of them or none",
-        ));
-    }
-    Ok(())
 }
 
 /// The stored claim, answered again. A claim still `Claimed` past its custody is released

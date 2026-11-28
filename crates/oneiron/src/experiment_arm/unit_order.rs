@@ -29,9 +29,10 @@ use crate::work_order::{
 use crate::{EntityId, Vault};
 
 use super::reserve::{
-    ARMS_UNITS_RESERVE_VERB, UnitReserveRequest, check_contract_and_workload,
-    check_offer_and_machine, invalid_state, not_found, reserve_for_caller_in_txn, role_for,
+    ARMS_UNITS_RESERVE_VERB, UnitReserveRequest, invalid_state, not_found,
+    reserve_for_caller_in_txn, role_for,
 };
+use super::unit_terms::{check_contract_and_workload, check_offer_and_machine};
 use super::unit_view::UnitView;
 
 /// The prefix of the intent key a work order's attempt reserves under; the order id in hex and

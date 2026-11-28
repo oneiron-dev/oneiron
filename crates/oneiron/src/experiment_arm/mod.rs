@@ -35,6 +35,7 @@ mod score;
 pub(crate) mod tables;
 mod unit_cancel;
 mod unit_order;
+mod unit_terms;
 mod unit_view;
 mod wire;
 
