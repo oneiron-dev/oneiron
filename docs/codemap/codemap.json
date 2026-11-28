@@ -43404,10 +43404,10 @@
      "purpose": "Experiment arms of the lane economy (design pass 32 section 3.3): one arm is a promise whose contract was…",
      "surface": {
       "const": 3,
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 8,
       "fn": 6,
-      "re-export": 8,
+      "re-export": 9,
       "struct": 12
      }
     },
@@ -43432,7 +43432,7 @@
      "purpose": "`vault.arms.units.reserve` (design pass 32 r2, sections 3.4, 3.5 and 5.2): one unit claim on an open arm's…",
      "surface": {
       "const": 1,
-      "crate-vis": 4,
+      "crate-vis": 9,
       "fn": 1,
       "struct": 1
      }
@@ -43476,6 +43476,29 @@
       "enum": 1,
       "fn": 3,
       "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "UnitReserveAnswer"
+     ],
+     "path": "src/experiment_arm/unit_order.rs",
+     "purpose": "A waiting line unit (pass 34, 1.1; row H3): `vault.arms.units.reserve` with a wait other than `no` makes a…",
+     "surface": {
+      "enum": 1,
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/experiment_arm/unit_terms.rs",
+     "purpose": "The fixed terms of a line unit's ask (design pass 32 r2, 5.2, checks 4 and 6): the contract, the workload's…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -49253,7 +49276,7 @@
      "path": "src/gpu_line/claim/mod.rs",
      "purpose": "The unit claim of the lane economy (design pass 32 r2, section 3.4): the line's ledger entry for one logical…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 6,
       "fn": 14,
       "re-export": 1,
@@ -97605,19 +97628,39 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
+      "PayoffScope",
       "PlannerCardPattern",
       "PlannerCardPayoffRow",
       "PlannerCardRequest",
       "PlannerCardView"
      ],
      "path": "src/team/planner_card_door.rs",
-     "purpose": "`vault.planner.card` (design pass 32 section 5, row 12; ARCH-0079 #planner): the planner card of one project…",
+     "purpose": "`vault.planner.card` (design pass 32 r2, sections 5.1 and 5.4; ARCH-0079 #planner): the planner card of one…",
      "surface": {
       "const": 2,
-      "fn": 4,
+      "enum": 1,
+      "fn": 3,
+      "re-export": 1,
+      "struct": 4
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "PlannerCardArm",
+      "PlannerCardBucket",
+      "PlannerCardLaneArms",
+      "PlannerCardRoom"
+     ],
+     "path": "src/team/planner_card_door/lane_arms.rs",
+     "purpose": "The planner card's `lane_arms` part (design pass 32 r2, section 5.4): what the family's own arms on its GPU…",
+     "surface": {
+      "const": 1,
+      "crate-vis": 2,
       "struct": 4
      }
     },
@@ -108285,7 +108328,7 @@
      "purpose": "The work order doors (pass 34, 1.1 and 14): `vault.jobs.order`, `vault.jobs.orders.get`, `.list` and…",
      "surface": {
       "const": 1,
-      "crate-vis": 3,
+      "crate-vis": 7,
       "enum": 1,
       "fn": 9
      }
@@ -108481,7 +108524,7 @@
      "surface": {
       "crate-vis": 1,
       "enum": 2,
-      "fn": 5,
+      "fn": 7,
       "struct": 1
      }
     },
@@ -119610,6 +119653,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/planner_card_lane_arms.rs",
+     "purpose": "`vault.planner.card`'s lane part and its line check (design pass 32 r2, sections 5.1 and 5.4; test T57)…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/plugin_section_fit_install.rs",
      "purpose": "FIX-LIST [FIT-INSTALL-AUTO-CLAIM-PENDS-AT-GATE]: under ARCH-0053 (\"Everything installs; permissions ask\"), a…",
      "surface": {}
@@ -124742,7 +124793,7 @@
     },
     "experiment_arm": {
      "entry": "crates/oneiron/src/experiment_arm/mod.rs",
-     "files": 10,
+     "files": 12,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -126138,7 +126189,7 @@
     },
     "team": {
      "entry": "crates/oneiron/src/team/mod.rs",
-     "files": 24,
+     "files": 25,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -126426,8 +126477,8 @@
    },
    "over_bar": 276,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8678,
-   "test_files": 2377
+   "source_files": 8681,
+   "test_files": 2378
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -169793,7 +169844,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/host_doors/arms.rs",
@@ -169927,7 +169978,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/host_doors/planner_card.rs",
-     "purpose": "`vault.planner.card` (design pass 32 section 5, row 12): the planner card of one project and task type, with…",
+     "purpose": "`vault.planner.card` (design pass 32 r2, sections 5.1 and 5.4, row 12): the planner card of one project and…",
      "surface": {
       "crate-vis": 1
      }
@@ -170009,7 +170060,7 @@
      "path": "src/api/facade/host_doors/work_orders.rs",
      "purpose": "The work order doors (pass 34, 1.1 and 14): `vault.jobs.order`, `vault.jobs.orders.get`, `.list` and…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -170113,7 +170164,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/api/facade/invocations.rs",
@@ -195709,7 +195760,7 @@
      ]
     }
    },
-   "over_bar": 72,
+   "over_bar": 73,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 2235,
    "test_files": 638
