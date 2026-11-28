@@ -67,6 +67,14 @@ fn published_page(vault: &Vault) -> BookingPagePublication {
     // validator's sorted scan. Random claim IDs can hide the original bug.
     assert!(id(0x01) < id(0x57));
     crate::test_util::bind_test_owner(vault, id(OWNER));
+    // The owner publishes on the booking home alone (FIX
+    // [BK-PUBLICATION-CLAIM-REFUSED-AT-SYNC-INGRESS]).
+    crate::dreamer_runner::DreamerRunnerStore::new(vault)
+        .elect_home_node(
+            &[crate::dreamer_runner::DreamerHomeNodeCandidate::always_on_local(9)],
+            1,
+        )
+        .expect("home node");
     let receipt = vault
         .memory(id(OWNER), EdgeActorClass::Human)
         .claim_upsert(&ClaimInput {

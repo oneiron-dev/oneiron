@@ -147,6 +147,8 @@ pub(super) use self::emergency::{
 };
 // FIX [BK-EMERGENCY-ROWS-NOT-CARRIED-BY-HOME-MOVE]: the emergency writers' home-move fence.
 pub(super) use self::door::holds_booking_rows_in_txn;
+// FIX [BK-PUBLICATION-CLAIM-REFUSED-AT-SYNC-INGRESS]: the owner publication writer's home fence.
+pub(crate) use self::door::{BookingHomeRefusal, publication_home_refusal_in_txn};
 pub(super) use self::storage::booking_writer;
 pub(crate) use self::token::hex_lower;
 pub(super) use self::token::{digest_with, live_hold_in_txn, mint_raw_token};
