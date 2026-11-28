@@ -179,7 +179,6 @@ pub(crate) fn erase_item_caches_in_txn(
     for key in &listed {
         store.sync_state.delete(txn, key)?;
     }
-    crate::sync::residence::delete_index_by_item_of_items_in_txn(store, txn, items)?;
     Ok(())
 }
 

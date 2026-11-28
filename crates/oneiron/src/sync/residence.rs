@@ -20,6 +20,7 @@ mod custody;
 mod directives;
 mod discover;
 mod home_handoff;
+#[allow(dead_code)]
 mod index_by_item;
 mod kit_fetch;
 mod machine_history;
@@ -113,6 +114,7 @@ pub use home_handoff::{
     home_handoff_part, home_handoff_retire, home_handoff_retired, home_handoff_session,
     home_handoff_status, prepare_home_handoff,
 };
+#[allow(unused_imports)]
 pub(crate) use index_by_item::{
     delete_index_by_item_for_listing_in_txn, delete_index_by_item_in_txn,
     delete_index_by_item_of_items_in_txn, put_index_by_item_in_txn,

@@ -394,7 +394,6 @@ impl SyncClient {
                 TransportError::IndexRevisionChanged,
             ))?;
             let prefix = format!("ri:w:{key}:");
-            let window_text = key.to_string();
             self.vault
                 .with_write_txn_grouped(|txn| {
                     let old: Vec<_> = self
@@ -406,23 +405,12 @@ impl SyncClient {
                         .collect::<std::result::Result<_, _>>()?;
                     for key in old {
                         self.vault.store.sync_state.delete(txn, &key)?;
-                        crate::sync::residence::delete_index_by_item_for_listing_in_txn(
-                            &self.vault.store,
-                            txn,
-                            &key,
-                        )?;
                     }
                     for entry in &items {
                         let key = format!("{prefix}{}", entry.entity_id);
                         let bytes = rmp_serde::to_vec_named(entry)
                             .map_err(|_| crate::Error::InvariantViolation("index codec"))?;
                         self.vault.store.sync_state.put(txn, &key, &bytes)?;
-                        crate::sync::residence::put_index_by_item_in_txn(
-                            &self.vault.store,
-                            txn,
-                            &window_text,
-                            &entry.entity_id,
-                        )?;
                     }
                     Ok(())
                 })
@@ -448,11 +436,6 @@ impl SyncClient {
                         .map(|(window, _)| window);
                     if !window.is_some_and(|window| indexed.contains(window)) {
                         self.vault.store.sync_state.delete(txn, &key)?;
-                        crate::sync::residence::delete_index_by_item_for_listing_in_txn(
-                            &self.vault.store,
-                            txn,
-                            &key,
-                        )?;
                     }
                 }
                 Ok(())
