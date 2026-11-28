@@ -261,7 +261,7 @@ pub(super) fn pin_stands_in_txn(
         return Ok(false);
     };
     Ok(record.role == SkillRole::Callable
-        && skill_loadable(&record)
+        && record.lifecycle_status == crate::skill::SkillLifecycle::Active
         && record.version == pin.version
         && record
             .content_hash
@@ -285,7 +285,7 @@ fn pin_in_txn(
         .call
         .as_ref()
         .ok_or(invalid("a turn program runs a callable skill"))?;
-    if record.role != SkillRole::Callable || !skill_loadable(&record) {
+    if record.role != SkillRole::Callable || !record.lifecycle_status == crate::skill::SkillLifecycle::Active {
         return Err(invalid(
             "only an active callable skill whose approval stands can be armed",
         ));
