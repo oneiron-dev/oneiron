@@ -474,6 +474,12 @@ impl Vault {
             Ok(row) => row,
             Err(_) => {
                 counts.undecodable += 1;
+                super::integrity::withdraw_dependent_in_txn(
+                    &crate::secret_custody::CustodyWrite::of(self),
+                    wtxn,
+                    citing,
+                    &crate::settings::CarriedWorlds::default(),
+                )?;
                 return Ok(());
             }
         };
