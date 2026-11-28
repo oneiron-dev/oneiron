@@ -56,15 +56,7 @@ pub(crate) fn kept_copy_in_txn(
     let mut start = Vec::with_capacity(32);
     start.extend_from_slice(hold.hold_id.as_bytes());
     start.extend_from_slice(record.as_bytes());
-    let pending = if hold.future_messages.is_some() {
-        crate::deletion::legal_hold::prospective::owner_pending_capture_in_txn(
-            store,
-            txn,
-            hold.hold_id.as_bytes(),
-        )?
-    } else {
-        None
-    };
+    let pending: Option<[u8; 16]> = None;
     let mut rows = false;
     for row in SEALED_RECORDS.iter_from(store, txn, &start)? {
         let ((holder, held, capture), _) = row?;
