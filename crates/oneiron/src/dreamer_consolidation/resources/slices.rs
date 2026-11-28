@@ -151,7 +151,7 @@ impl BranchResources<'_> {
             let line = lines.get(id).copied().unwrap_or_default();
             // One call never holds two projects' TURNs.
             let key = (
-                self.sources[id].project,
+                None,
                 crate::dreamer_consolidation::extraction_step::slice_group_key(
                     &self.known,
                     line,

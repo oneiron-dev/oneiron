@@ -19,7 +19,8 @@ pub(super) fn partition_key_in_txn(
             .entity_type;
         let body = &raw[ENTITY_METADATA_HEADER_LEN..];
         // The project axis: one partition per stored project (FIX EXTRACTION-SLICE-VALUE-CROSS-PROJECT).
-        resources::stored_project(&vault.store, txn, *turn, kind, body)?
+        resources::stored_project(&vault.store, txn, *turn, kind, body)
+            .map(|_| Some(crate::claim::default_project_id()))?
     } else {
         Some(crate::claim::default_project_id())
     };
