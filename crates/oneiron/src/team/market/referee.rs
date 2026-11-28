@@ -468,7 +468,7 @@ fn read_evidence(
     if candidate != Some(body.candidate_sha256.as_str()) {
         return Err("other_candidate");
     }
-    if body.cohort_sha256 == contract.cohort_sha256 {
+    if body.cohort_sha256 == contract.cohort_sha256 || contract.screens.contains(&body.cohort_sha256) {
         Ok(VerdictRead::Sealed(body))
     } else if contract.screens.contains(&body.cohort_sha256) {
         Ok(VerdictRead::Screen(body))
