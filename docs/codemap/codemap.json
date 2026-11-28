@@ -9845,7 +9845,7 @@
      "path": "src/batch/secret_scan.rs",
      "purpose": "Secret detection and custody filtering at batch and release boundaries",
      "surface": {
-      "crate-vis": 60,
+      "crate-vis": 61,
       "re-export": 2
      }
     },
@@ -36839,7 +36839,7 @@
      "purpose": "One durable proactivity digest per vault cadence, with intent-bound urgent wakes",
      "surface": {
       "const": 7,
-      "crate-vis": 12,
+      "crate-vis": 14,
       "fn": 8,
       "re-export": 6,
       "struct": 8
@@ -36868,6 +36868,16 @@
      "purpose": "Assembles one digest in one write: select, mark seen, store, notify",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/digest/erase.rs",
+     "purpose": "PROACTIVITY-DIGEST-COPY-ERASURE (disk half): a stored digest keeps a proposal's predicate and value in its…",
+     "surface": {
+      "crate-vis": 5
      }
     },
     {
@@ -77353,7 +77363,7 @@
      "path": "src/secret_custody/doors.rs",
      "purpose": "Name index, borrowing admission projection, sealed put, and Vault doors",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 21,
       "fn": 4
      }
     },
@@ -80515,7 +80525,7 @@
      "path": "src/side_table/mod.rs",
      "purpose": "One typed keyspace over the `vault_meta` and `sync_state` side tables",
      "surface": {
-      "crate-vis": 57,
+      "crate-vis": 58,
       "fn": 1,
       "mod": 1,
       "struct": 1
@@ -100517,7 +100527,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 410,
+      "mod": 411,
       "re-export": 3
      }
     },
@@ -100956,6 +100966,16 @@
      "notable": [],
      "path": "src/test_doors/predicted_residence.rs",
      "purpose": "Doors for the integration tests of the predicted residence level (census L7-46 + L10-14, ARCH-0023b…",
+     "surface": {
+      "fn": 9
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/proactivity_digest_index.rs",
+     "purpose": "Doors for `tests/digest_erase_scrubs_stored_copies.rs` (PROACTIVITY-DIGEST-COPY-ERASURE)",
      "surface": {
       "fn": 9
      }
@@ -114553,6 +114573,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/digest_erase_scrubs_stored_copies.rs",
+     "purpose": "A CLAIM's hard or soft delete removes its proposal and rendered words from the stored proactivity digest…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -114622,6 +114650,14 @@
      "notable": [],
      "path": "tests/dreamer_context_refusal_settles.rs",
      "purpose": "A Dreamer step the provider refuses for its context window settles once (Engine 21 Nov 07:38): the try ends…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/dreamer_counterparty_turn_evidence_class.rs",
+     "purpose": "A consolidation claim's evidence meet classes a TURN by the same classifier the extraction path uses (FIX…",
      "surface": {}
     },
     {
@@ -124395,7 +124431,7 @@
     },
     "dreamer_runner": {
      "entry": "crates/oneiron/src/dreamer_runner/mod.rs",
-     "files": 258,
+     "files": 259,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -125933,7 +125969,7 @@
     },
     "test_doors": {
      "entry": "crates/oneiron/src/test_doors/mod.rs",
-     "files": 423,
+     "files": 424,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -126200,8 +126236,8 @@
    },
    "over_bar": 276,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8668,
-   "test_files": 2362
+   "source_files": 8670,
+   "test_files": 2364
   },
   "oneiron-agent-runtime": {
    "files": [
