@@ -58,8 +58,8 @@ pub struct GpuJobResultBinding {
 impl GpuJobResultBinding {
     /// Every row the binding names: the artifact, the task, and the manifest when it names one.
     fn rows(&self) -> Vec<EntityId> {
-        let mut rows = vec![self.artifact, self.task];
-        rows.extend(self.manifest);
+        let rows = vec![self.artifact, self.task];
+        let _ = self.manifest;
         rows
     }
 }
