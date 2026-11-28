@@ -95,13 +95,6 @@ pub(crate) fn start_stamp(
     {
         return Err("team_start_invalid_input");
     }
-    // A market other than a tournament's names its referee before the work;
-    // a tournament keeps its campaign's own, and no other pattern has one.
-    match (&input.market, pattern, &input.tournament) {
-        (None, TeamPattern::Market, None) => return Err("team_start_market_needs_referee"),
-        (Some(_), TeamPattern::Market, None) | (None, _, _) => {}
-        (Some(_), _, _) => return Err("team_start_referee_outside_market"),
-    }
     match &input.tournament {
         Some(_) if pattern != TeamPattern::Market => Err("team_start_tournament_not_market"),
         Some(run) => tournament_team_stamp(run).map_err(|_| "team_start_invalid_tournament"),
