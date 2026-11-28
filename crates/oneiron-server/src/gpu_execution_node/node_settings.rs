@@ -172,16 +172,16 @@ pub struct ExecutionNodeSettings {
     pub unit_start_timeout_secs: u64,
     #[serde(default = "disk_check_secs_default")]
     pub disk_check_secs: u64,
-    /// The job units' slice and CPU weights (`[execution_node.job_cgroup]`),
-    /// checked as the table reads ([`super::job_cgroup`]).
-    #[serde(default)]
-    pub job_cgroup: super::job_cgroup::JobCgroupSettings,
     /// The files of each device a job may lease, by the device's id: the
     /// job unit's device policy opens these and no others. A card the NVIDIA
     /// driver lists needs no entry (its node and the driver's control nodes
     /// are found by its UUID).
     #[serde(default)]
     pub device_files: BTreeMap<String, Vec<PathBuf>>,
+    /// The job units' slice and CPU weights (`[execution_node.job_cgroup]`),
+    /// checked as the table reads ([`super::job_cgroup`]).
+    #[serde(default)]
+    pub job_cgroup: super::job_cgroup::JobCgroupSettings,
     /// Whether the node obeys the owner's machine policy rows (pass 34 2.4, row P0) as well as
     /// this file, the stricter of the two applying. Default true; false keeps the node to this
     /// file alone.
