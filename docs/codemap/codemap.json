@@ -114778,6 +114778,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/dreamer_transcript_turn_text_fenced.rs",
+     "purpose": "FIX DREAMER-TRANSCRIPT-TURN-TEXT-UNFENCED: each Dreamer extraction turn renders its role and words on one…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/dreamer_window_finish_order.rs",
      "purpose": "FIX 21927: in one Meso wake window, a slot whose extraction prefix ended finishes at once and lands, while…",
      "surface": {}
@@ -126327,7 +126335,7 @@
    "over_bar": 276,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 8673,
-   "test_files": 2371
+   "test_files": 2372
   },
   "oneiron-agent-runtime": {
    "files": [
