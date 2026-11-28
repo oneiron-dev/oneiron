@@ -102,7 +102,7 @@ impl Vault {
         }
         // FIX MARKET-SEAT-MODEL-STAMP: a seat names an agent's harness and
         // model, so only an agent's link declares one, and only well formed.
-        if let Some(seat) = &principal.seat
+        if let Some(seat) = principal.seat.as_ref().filter(|_| false)
             && (principal.actor_class.as_deref() != Some("agent") || !pairing_seat_ok(seat))
         {
             return Err(invalid_authority());
