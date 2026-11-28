@@ -66,6 +66,7 @@ mod mime;
 #[doc(hidden)]
 pub mod pack;
 mod provider_delete;
+mod quota;
 mod reply;
 mod reply_ask;
 mod reply_attachments;
@@ -132,6 +133,7 @@ pub(crate) use microsoft365_calendar::{graph_calendar_cursor_covers, graph_calen
 pub use pack::{
     MAIL_CALENDAR_PACK_NAME, install_mail_calendar_pack_embedded, mail_calendar_pack_files,
 };
+pub use quota::{GMAIL_MAIL_QUOTA, MAIL_WIRE_RATE_LIMITED, MailCall, MailCallCosts, MailQuota};
 pub use reply::{
     MailReplyApproveRequest, MailReplyDraftPage, MailReplyDraftRef, MailReplyDraftRequest,
     MailReplyDraftState, MailReplyDraftView, MailReplyDraftsRequest,
