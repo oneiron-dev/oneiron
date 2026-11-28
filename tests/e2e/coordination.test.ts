@@ -2367,6 +2367,12 @@ ${JSON.stringify(ownerRef)} = ${JSON.stringify(COORDINATION09_TRACKER_OWNER)}
 }
 /** One Linear `Issue` update delivery as the tracker sends it: the issue's whole snapshot with flat team, state and
  * assignee ids, and `updatedFrom` naming what moved (oneiron-linear webhook.rs:93-160). */
+/** The vault's TASK count as the owner's discover read reports it (registry ENTITY_TYPE_TASK = 101). */
+async function coordination09TaskCount(owner: { request<T>(method: string, path: string): Promise<{ body: T }> }): Promise<number> {
+  const discovered = (await owner.request<{ counts: Record<string, number> }>("GET", "/api/core/discover")).body;
+  return discovered.counts["101"] ?? 0;
+}
+
 function coordination09Delivery(c: Coordination09Scenario, issue: { title: string; description: string | null },
   updatedFrom: Record<string, unknown>, updatedAtMs: number): string {
   const updatedAt = new Date(updatedAtMs).toISOString();
@@ -2648,6 +2654,8 @@ suite.test(test, "COORDINATION-09", "A planned wave readies A, then B, then C, a
     expect(appliedMapping.task_revision).toBe(owed.task_revision + 1);
     expect(appliedMapping.mapping_revision).toBe(linked.mapping_revision);
     const appliedRows = await coordination09Provenance(owner, issueTask);
+    const tasksBeforeReplay = await coordination09TaskCount(owner);
+    expect(tasksBeforeReplay).toBeGreaterThanOrEqual(labels.length);
     const deliveries = [applied];
     for (let delivery = 1; delivery < c.inputs.inboundDeliveries; delivery++) {
       deliveries.push(coordination09Receipt(await coordination09Deliver(hook, c.inputs.inboundEdit.event_id, inboundBody, signingSecret)));
@@ -2657,6 +2665,7 @@ suite.test(test, "COORDINATION-09", "A planned wave readies A, then B, then C, a
     // the first application left them (a replay that put the same body again would move the revisions).
     expect(await owner.call("vault.tasks.linear.mapping", { task_ref: issueTask })).toEqual(appliedMapping);
     expect(await coordination09Provenance(owner, issueTask)).toEqual(appliedRows);
+    expect(await coordination09TaskCount(owner)).toBe(tasksBeforeReplay); // No replay creates a TASK.
     // Failure step: the same delivery id with another body is refused, never applied.
     const reusedBody = coordination09Delivery(c, { title: issueTitle, description: `${c.inputs.inboundEdit.value} (reused)` },
       { description: null, updatedAt: new Date(witnessAt).toISOString() }, editedAt);
@@ -2699,9 +2708,7 @@ suite.test(test, "COORDINATION-09", "A planned wave readies A, then B, then C, a
     expect(links).toHaveLength(1);
     expect(links[0]?.event).toMatchObject({ status: "link", task_ref: issueTask, writer_actor: ownerRef });
     expect(rows.filter(row => row.event.direction === "task_to_issue")).toEqual([]); // No send: see Unproved.
-    // No public door lists or counts a vault's TASKs (FIX TASKS-NO-PUBLIC-LIST-FOR-REPLAY-COUNT), so "the replay creates
-    // no TASK" is proved here as far as public reads reach: B's mapping and provenance did not move (above), the wave
-    // still names A, B and C, and their edges are unchanged.
+    // The replays created no TASK: the owner's discover count of TASKs did not move across them (above).
     expect(c.expected.webhookReplayCreatesTasks).toBe(0);
     expect((await coordination09Wave(owner, queued.attempt_ref)).task_refs).toEqual(tasks);
     expect(await coordination09Edges(owner, tasks)).toEqual(edges);
