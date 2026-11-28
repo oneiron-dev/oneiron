@@ -13,7 +13,7 @@ impl CutBudget {
     pub(super) fn new(cap_tok: usize, reserved_tok: usize) -> Self {
         Self {
             cap_tok,
-            reserved_tok,
+            reserved_tok: reserved_tok.min(0),
         }
     }
 
