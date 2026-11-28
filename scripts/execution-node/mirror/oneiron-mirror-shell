@@ -1,0 +1,82 @@
+#!/bin/bash
+# The only command the push keys run on an execution node: the forced command of the `oneiron-mirror` account's
+# authorized_keys (install_mirror_account.sh writes both lines; docs/ops/execution-node-mirror-and-check.md).
+#
+#   restrict,command="/usr/local/libexec/oneiron-mirror-shell" <sel's push key>
+#   restrict,command="/usr/local/libexec/oneiron-mirror-shell --vendor-only" <the vendor job's key>
+#
+# sshd puts the client's command in SSH_ORIGINAL_COMMAND. This allows exactly:
+#   git-receive-pack '<mirror root>/<name>.git'   a push into an existing mirror (not with --vendor-only)
+#   git-upload-pack '<mirror root>/<name>.git'    a read of its refs, for push_head.sh's check (not with --vendor-only)
+#   vendor-list                                    the crate dirs the vendor root holds, one name per line
+#   vendor-receive <name>-<version>                one crate dir as a tar on stdin (oneiron-vendor-receive)
+# Anything else exits 126 and says why. The account owns the mirrors and the vendor root. The engine account and the job
+# account can read them and cannot write them. A node's staging reads only a mirror's objects (jobs/staging.rs) and
+# trusts this account not to change them while a staging runs, so no command here deletes or repacks.
+#
+# Options (authorized_keys sets them; tests point them at a temporary tree):
+#   --vendor-only          refuse the git commands
+#   --mirror-root <dir>    default /srv/oneiron-mirrors
+#   --vendor-root <dir>    default /srv/oneiron-check/vendor
+#   --incoming <dir>       default /srv/oneiron-check/vendor-incoming (same file system as the vendor root)
+#   --receive <program>    default /usr/local/libexec/oneiron-vendor-receive
+set -u
+umask 022
+export PATH=/usr/local/bin:/usr/bin:/bin
+
+vendor_only=
+mirror_root=/srv/oneiron-mirrors
+vendor_root=/srv/oneiron-check/vendor
+incoming=/srv/oneiron-check/vendor-incoming
+receive=/usr/local/libexec/oneiron-vendor-receive
+while [ $# -gt 0 ]; do
+  case $1 in
+    --vendor-only) vendor_only=1; shift;;
+    --mirror-root) mirror_root=${2:?}; shift 2;;
+    --vendor-root) vendor_root=${2:?}; shift 2;;
+    --incoming) incoming=${2:?}; shift 2;;
+    --receive) receive=${2:?}; shift 2;;
+    *) echo "oneiron-mirror-shell: refused: unknown option $1" >&2; exit 126;;
+  esac
+done
+
+cmd=${SSH_ORIGINAL_COMMAND:-}
+
+refuse() {
+  echo "oneiron-mirror-shell: refused: $1" >&2
+  command -v logger >/dev/null 2>&1 && logger -t oneiron-mirror-shell -- "refused: $1 (command: ${cmd:0:200})"
+  exit 126
+}
+
+# A mirror is <mirror root>/<name>.git: 1 to 64 of A-Z a-z 0-9 . _ - (a node template name, node_settings.rs), not
+# starting with a dot, and it must exist already. Only install_mirror_account.sh makes one.
+mirror_path() { # <the quoted path the git client sent>
+  local quoted=$1 path name
+  case $quoted in "'"*"'") ;; *) refuse "the mirror path is not one quoted word";; esac
+  path=${quoted#\'}; path=${path%\'}
+  name=${path#"$mirror_root"/}
+  [ "$name" != "$path" ] || refuse "the path is not under $mirror_root"
+  [[ $name =~ ^[A-Za-z0-9_-][A-Za-z0-9._-]{0,63}\.git$ ]] || refuse "the mirror name is not <name>.git"
+  [ -d "$mirror_root/$name" ] && [ ! -L "$mirror_root/$name" ] && [ -f "$mirror_root/$name/HEAD" ] \
+    || refuse "no mirror $name"
+  [ ! -e "$mirror_root/$name/objects/info/alternates" ] || refuse "the mirror $name borrows objects"
+  printf '%s\n' "$mirror_root/$name"
+}
+
+case $cmd in
+  "git-receive-pack "*|"git-upload-pack "*)
+    [ -z "$vendor_only" ] || refuse "this key may only send vendored crates"
+    verb=${cmd%% *}
+    path=$(mirror_path "${cmd#* }") || exit 126
+    exec git "${verb#git-}" "$path";;
+  vendor-list)
+    [ -d "$vendor_root" ] || refuse "no vendor root"
+    exec find "$vendor_root" -mindepth 1 -maxdepth 1 -type d ! -name '.*' -printf '%f\n';;
+  "vendor-receive "*)
+    name=${cmd#vendor-receive }
+    [[ $name =~ ^[A-Za-z0-9_+-][A-Za-z0-9._+-]{0,199}$ ]] || refuse "the crate dir name is not <name>-<version>"
+    [ -d "$vendor_root" ] && [ -d "$incoming" ] || refuse "no vendor root"
+    exec python3 -I "$receive" --vendor-root "$vendor_root" --incoming "$incoming" -- "$name";;
+  '') refuse "no command (an interactive login)";;
+  *) refuse "not an allowed command";;
+esac
