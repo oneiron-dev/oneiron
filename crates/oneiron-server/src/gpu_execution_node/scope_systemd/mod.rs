@@ -65,6 +65,7 @@ macro_rules! stdout_line {
 
 pub mod capabilities;
 pub mod control;
+pub mod credentials;
 pub mod cutoff;
 pub mod device_files;
 pub mod device_query;

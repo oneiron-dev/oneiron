@@ -204,6 +204,7 @@ side table `JOB_WORKLOAD` (pass 33, row R2).
   verb, pins a workload. A pin approves nothing, and it is written once. The
   pin is hashed into its own key, so the vault's secret scan refuses a pin
   that holds a secret (a token in an argument, say) instead of masking it.
+  A job's secrets come from its template instead (Job credentials, below).
 - `vault.jobs.workloads.approve`: the owner's act, with presence asked at
   `Important`. It names the machines the workload may run on (each must hold
   a live `oneiron/job/1` grant), the Grants that may start it (none named:
@@ -231,6 +232,50 @@ template under the pinned digest and must not refuse. A refusal names
 `workload_unknown`, `workload_not_approved`, `workload_revoked`,
 `workload_expired`, `starter_not_named`, `request_above_pin`,
 `machine_not_approved`, `machine_unreachable` or `machine_refuses`.
+
+## Job credentials
+
+A template in the node's root-owned file may name root-owned files, by name.
+Every job of that template gets them as systemd credentials. The engine
+account never reads them, and no pin or verb can name one.
+
+```toml
+[execution_node]
+# Default true: a credentialed job launches only while every template here
+# requires the file wall (`require` keeps `file_wall`, as its default does).
+# Every job runs as the one job account, and only the Landlock wall keeps one
+# job out of another's files and memory. Set false on a node that runs one job
+# at a time.
+# credentials_need_walled_node = true
+
+[execution_node.templates.worker]
+# ...
+credentials = { api-key = "/etc/oneiron/credentials/worker/api-key" }
+```
+
+- Each file is root's, a regular file with no group or other access (mode
+  0400 or 0600), on a path that is root's and writable by no one else, and a
+  job's files hold at most 1 MiB together (systemd's credential cap,
+  systemd.exec(5); unconfirmed until `scripts/execution-node/field/credential_probe.sh`
+  runs on a node).
+- The workload reads `$CREDENTIALS_DIRECTORY/job_<name>` (here
+  `job_api-key`). The directory is the service manager's, readable by the
+  job account alone and gone when the unit stops.
+- Naming a file, or moving it, changes the template's digest, so pins of
+  the old digest are refused (`template_digest_changed`) and need a new pin. A
+  new content (a rotated key) keeps the digest; the next job reads it.
+- How it works: the unit template loads `/run/oneiron-credentials/<instance>`
+  (`LoadCredential=job:...`). The root job control handler stages that
+  directory just before it starts the unit, and the prepare step removes the
+  copy first. So run `oneiron execution-node install` again after the update:
+  it writes the unit's line and the handler's directory, and prints
+  `template <t> credential <name> <path>: ok, <n> bytes` or the file's fault.
+- A job of that template is refused before any workload exists with
+  `credentials_need_walled_node`, `template_outdated` (install again) or
+  `credential_not_loaded: <name>: <why>`. The prepared record lists the
+  names it loaded, never the values.
+- A workload that prints its secret puts it in its own log and outputs: that
+  is the pinned code's act, as for any output.
 
 ## Machine status (`vault.machines.status`)
 

@@ -417,6 +417,11 @@ fn serve(args: &[String], stream: &mut UnixStream) -> Result<Option<Vec<u8>>, St
         return device_query::answer_installed(query, &settings).map(Some);
     }
     let (verb, id) = parse_request(&line)?;
+    // A job's credentials are staged just before its unit starts
+    // ([`super::credentials`]).
+    if verb == ControlVerb::Start {
+        super::credentials::stage_for_start(node_file, engine, &id)?;
+    }
     if let ControlVerb::Renew { cutoff_boot_ns } = verb {
         let node_file = node_file.ok_or(
             "renew_needs_node_file: run `oneiron execution-node install` again for sessions",

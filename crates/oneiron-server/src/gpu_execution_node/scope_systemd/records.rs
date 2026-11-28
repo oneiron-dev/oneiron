@@ -159,6 +159,11 @@ pub struct PreparedRecord {
     pub required: Vec<BoundRequirement>,
     /// The inner file wall: `read <path>` and `write <path>`, one per path.
     pub fence: Vec<String>,
+    /// The names of the credentials the service manager loaded for this run
+    /// (FIX NODE-JOB-CREDENTIALS), never their values. Empty in a record
+    /// written before credentials.
+    #[serde(default)]
+    pub credentials: Vec<String>,
     /// For a session template's run (pass 34, 2.5; row W1), the latest
     /// boot-clock time a renewal may move its cutoff to: the launch plus the
     /// template's `session_max_secs`. `None` for a job, whose cutoff never
