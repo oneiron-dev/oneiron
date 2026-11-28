@@ -670,6 +670,12 @@ crate::side_table::side_tables! {
     /// (hold).
     LEGAL_HOLD_ROW: VaultMeta b"legal_hold:row:v1:" Named
         [restore: live] [family: unclassified] [tier: canonical];
+    /// Which records a customer hold's sealed capture holds: one empty row per (hold, record,
+    /// capture), written in the writer that seals (placement, widening, each prospective seal;
+    /// never for a Missed seal or a host order). Dropped with the hold's copy. Key: id16 (hold)
+    /// + id16 (record) + id16 (capture).
+    LEGAL_HOLD_SEALED_RECORD: VaultMeta b"legal_hold:sealed_record:v1:" Raw
+        [restore: live] [family: unclassified] [tier: canonical];
     /// Tracker-mirror outbox marker. Key: id16.
     LINEAR_TASK_DIRTY: VaultMeta b"linear.task_dirty.v1/" Raw Engine
         [restore: content] [family: unclassified] [tier: canonical];

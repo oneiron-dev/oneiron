@@ -499,6 +499,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "INGEST_HISTORY_LEDGER",
         "LANE_ECONOMY_INTENT",
         "LEARNING_SETTING",
+        "LEGAL_HOLD_SEALED_RECORD",
         "LENS_INTENT",
         "LINEAR_EFFECT_AUTHORIZED",
         "LINEAR_SYNC_LINK",
