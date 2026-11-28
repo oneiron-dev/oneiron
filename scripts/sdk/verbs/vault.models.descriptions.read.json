@@ -1,0 +1,17 @@
+{
+  "name": "vault.models.descriptions.read",
+  "description": "Reads the owner's seat description rows, every row or one model's, as stored, with the facet this host's seat pick reads.",
+  "input": "crate::llm::seat::SeatDescriptionsRead",
+  "output": "crate::llm::seat::SeatDescriptionsView",
+  "call": "memory.vault().model_descriptions_as_owner(&memory.embedded_owner(\"vault.models.descriptions.read\")?, input).map_err(crate::memory::MemoryError::from)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "act_class": "read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

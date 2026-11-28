@@ -3183,6 +3183,8 @@ facet = "code-task"
 model = "Which model should run this task?"
 effort = "At which effort should it run?"
 budget_ms = 2000        # each pick's anytime budget
+# Describe each model under that facet, as the owner, with
+# vault.models.descriptions.set; .read shows the rows and this facet.
 
 [models.decisions.image_pick]
 # A hydrate that names its task asks, for each image it would serve in full:

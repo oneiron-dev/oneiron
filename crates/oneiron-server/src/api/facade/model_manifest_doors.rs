@@ -9,6 +9,9 @@ use oneiron::llm::manifest::doors::{
     OneironerBundleReceipt,
 };
 use oneiron::llm::manifest::{ModelManifest, ModelRole, ModelSlot};
+use oneiron::llm::seat::{
+    ModelDescription, SeatDescriptionWrite, SeatDescriptionsRead, SeatDescriptionsView,
+};
 use oneiron::memory::extraction::{
     EncoderInput, EncoderMessage, EncoderRegister, ExtractionCaller, ExtractionEncoder,
     ExtractionWork, infer_encoder_for, infer_encoder_in,
@@ -159,6 +162,58 @@ fn oneironer_tier(
         .or(config.stack_sha16.as_deref())
         .unwrap_or_else(|| model.revision());
     ModelTierRef(tier.to_owned())
+}
+
+/// The facet this host's code-mode seat pick reads (`[models.decisions.seat]`),
+/// none when the host binds no seat pick.
+fn seat_facet(server: &SyncServer) -> Option<String> {
+    server.code_execution_host()?.seat_facet()
+}
+
+/// The owner's seat description row for one model (FIX
+/// SEAT-DESCRIPTION-ROW-NO-PUBLIC-DOOR). The answer says whether this host's
+/// pick reads the row's facet; a row under another facet is stored all the
+/// same. Side tables list no vault record, and a refusal names no model.
+pub(crate) async fn vault_models_descriptions_set(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: ModelDescription,
+) -> Listed<SeatDescriptionWrite> {
+    let facet = seat_facet(server);
+    as_owner_naming(
+        server,
+        auth,
+        "vault.models.descriptions.set",
+        move |server, owner| {
+            Ok(server
+                .vault()
+                .set_model_description_as_owner(owner, input)?
+                .on_host(facet.as_deref()))
+        },
+        |_| Vec::new(),
+    )
+    .await
+}
+
+pub(crate) async fn vault_models_descriptions_read(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: SeatDescriptionsRead,
+) -> Listed<SeatDescriptionsView> {
+    let facet = seat_facet(server);
+    as_owner_naming(
+        server,
+        auth,
+        "vault.models.descriptions.read",
+        move |server, owner| {
+            Ok(server
+                .vault()
+                .model_descriptions_as_owner(owner, input)?
+                .on_host(facet.as_deref()))
+        },
+        |_| Vec::new(),
+    )
+    .await
 }
 
 pub(crate) async fn vault_models_routes_read(
