@@ -229,7 +229,8 @@ impl TurnProgramRuntime for ServerTurnPrograms {
         // The door's `ai.speech` spends on the line its model calls do, as an
         // unmetered agent run's does.
         let door = RunHostDoor::new(&server, request.actor, self.serve.clone(), code_run)
-            .with_waking_proof(request.proof.cloned());
+            .with_waking_proof(request.proof.cloned())
+            .with_program_caller_rows();
         door.bind_meter(provider.host_meter().map(|guard| (guard, None)));
         Some(TurnProgramHost {
             runtime: provider.runtime(),

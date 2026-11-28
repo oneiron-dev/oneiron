@@ -228,6 +228,9 @@ pub(crate) use self::facade::media_door_on_run_line_for_test;
 // STEP-PARK-BOOT-RESUME: the owner's model steps parked before a restart
 // resume when serve starts.
 pub(crate) use self::facade::resume_parked_model_steps;
+// [RSI-PROJECT-WORKFLOW]: the lane-economy rows a turn program's run door
+// serves its own agent.
+pub(crate) use self::facade::{gpu_job_status_for_agent, reserve_and_start_unit};
 pub(crate) use owner_routes::managed_owner_proof;
 mod packs;
 mod params;

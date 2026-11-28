@@ -302,6 +302,9 @@ pub(crate) use host_doors::{
 // (FIX CODE-MODE-LENDING-W1).
 #[cfg(oneiron_test_support)]
 pub(crate) use host_doors::media_door_on_run_line_for_test;
+// [RSI-PROJECT-WORKFLOW]: the lane-economy rows a turn program's run door
+// serves its own agent.
+pub(crate) use host_doors::{gpu_job_status_for_agent, reserve_and_start_unit};
 pub(crate) use identity::*;
 pub(crate) use invocations::*;
 use invoke::*;

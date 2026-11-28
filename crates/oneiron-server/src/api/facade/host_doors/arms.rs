@@ -235,3 +235,42 @@ pub(crate) async fn vault_arms_units_cancel(
     )
     .await
 }
+
+/// `vault.arms.units.reserve`'s no-wait act for a caller already bound to
+/// its own handle (`memory`), with its owner proof when it has one: the
+/// one-issuer check, an offer of the line this host can start, the engine's
+/// reserve (which judges the caller, its Grant and the line again), then
+/// the claim's one job through the one start gate. A turn program's run
+/// door calls it for the program's own agent, with no owner proof
+/// ([RSI-PROJECT-WORKFLOW]).
+pub(crate) fn reserve_and_start_unit(
+    server: &SyncServer,
+    memory: &Memory<'_>,
+    owner: Option<&AuthenticatedOwner>,
+    input: &UnitReserveRequest,
+) -> MemoryResult<UnitView> {
+    if let Some(settings) = server.config.gpu_jobs.offer(&input.offer)
+        && let Err(refused) = not_the_issuer(server, &settings.backend)
+    {
+        let issuer = refused
+            .issuer
+            .map_or_else(|| "none".to_owned(), |issuer| issuer.to_hex());
+        return Err(MemoryError::new(
+            MEMORY_CODE_INVALID_STATE,
+            format!(
+                "{ARMS_UNITS_RESERVE_VERB}: {}: {refused} (issuer: {issuer})",
+                refused.code()
+            ),
+            &["Reserve on the vault's issuer of vault machine jobs."],
+        ));
+    }
+    let (offer, connector) = offer_with_backend(server, &input.offer).map_err(|error| {
+        MemoryError::new(
+            MEMORY_CODE_INVALID_STATE,
+            format!("{ARMS_UNITS_RESERVE_VERB}: offer_not_managed: {error}"),
+            &["Reserve on an offer of the line that this host can start."],
+        )
+    })?;
+    let reserved = unit_reserve_as(memory, owner, input, now_ms())?;
+    start_reserved_unit(server, memory, owner, offer, connector.as_ref(), reserved)
+}
