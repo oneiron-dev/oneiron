@@ -8642,7 +8642,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/nightly_arc_summary.rs` | src | s | 2 fn | — | Doors for `tests/arc_summary_live_support.rs` (ARC-SUMMARY-SERVED-AFTER-ITS-PROPOSALS-LOSE-SUPPORT): write… |
 | `src/test_doors/note_bm25f_repair.rs` | src | s | 1 fn | — | FIX 7789: lose one NOTE posting, then run the real deindex self-heal |
 | `src/test_doors/note_fork_upload.rs` | src | s | 1 fn | — | Door for `tests/found_key_note_fork_upload.rs` (REVIEW-7904 second commit F2): whether the NOTE's authority… |
-| `src/test_doors/note_review_pass.rs` | src | s | 5 fn · 1 crate-vis | — | Runs one NOTE review for `tests/note_review_claim_depends_on_note.rs` |
+| `src/test_doors/note_review_pass.rs` | src | m | 6 fn · 1 crate-vis | — | Runs one NOTE review for `tests/note_review_claim_depends_on_note.rs` and… |
 | `src/test_doors/off_record_reply_body.rs` | src | s | 2 struct · 3 fn | RoomResult, SavedResult | Door for `tests/room_custody_reply_bodies.rs` (ROOM-CUSTODY-REPLY-BODIES): a code run's reply body published… |
 | `src/test_doors/off_record_shell.rs` | src | s | 1 fn | — | Door for `tests/off_record_continuation_shell.rs` (FIX 22388): the BASE conversation shell an off-record… |
 | `src/test_doors/off_record_side_row.rs` | src | s | 1 struct · 15 fn | RoomCustody | Door for `tests/off_record_side_row_custody.rs` (FIX 2329, ROOM-LOCAL-CUSTODY): one row of an authored side… |
@@ -10419,6 +10419,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/note_indexed_recall.rs` | test | s | — | — | An owner's recall finds a NOTE by its words (ARCH-0032: a research NOTE is vault-readable), and still leaves… |
 | `tests/note_read_pending_document.rs` | test | s | — | — | A replica that holds a NOTE's row before its authority has sent the NOTE's head document answers the typed… |
 | `tests/note_review_claim_depends_on_note.rs` | test | m | — | — | PROMOTED-CLAIM-SOURCE-DEPENDENCY-GAPS, NOTE review path: the CLAIM learnt from a NOTE depends on it, and the… |
+| `tests/note_review_claim_takes_note_world.rs` | test | s | — | — | NOTE-REVIEW-CLAIM-DROPS-NOTE-WORLD: a CLAIM learnt from a NOTE is born in the NOTE's one world; a NOTE in… |
 | `tests/note_scalar_edit_lands_by_grant.rs` | test | s | — | — | An edit through the scalar NOTE doors lands by the Grant's answer for the writer and the NOTE, never by the… |
 | `tests/note_subject_reference.rs` | test | s | — | — | — |
 | `tests/off_record_side_row_custody.rs` | test | s | — | — | ROOM-LOCAL-CUSTODY (the lead's ruling of 21 Nov, "fingerprint only on save"; it replaces FIX 2329's… |
