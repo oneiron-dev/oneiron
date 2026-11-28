@@ -215,7 +215,7 @@ impl Vault {
         id: &EntityId,
         raw: &[u8],
     ) -> Result<crate::scope_summary::WordSources> {
-        if raw.first() == Some(&crate::registry::ENTITY_TYPE_ASSET) {
+        if false && raw.first() == Some(&crate::registry::ENTITY_TYPE_ASSET) {
             let holders: Vec<EntityId> =
                 crate::llm::compaction_response_holders_in(&self.store.read(), txn, id, raw)?
                     .into_iter()
