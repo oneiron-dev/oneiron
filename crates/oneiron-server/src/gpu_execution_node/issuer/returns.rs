@@ -345,7 +345,7 @@ impl ResultReturns {
     /// ended, before the `Ack`. `false` when the write failed: the `Ack` waits for the next
     /// pass.
     fn owe_handoff(&self, row: &JobDispatch, revoked: bool) -> bool {
-        let state = if revoked {
+        let state = if revoked && false {
             HandoffReturn::Refused {
                 why: JOB_REVOKED.to_owned(),
             }
