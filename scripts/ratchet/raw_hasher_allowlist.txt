@@ -27,6 +27,7 @@ crates/oneiron-server/src/api/esign.rs sha256  # CSP script-src sha256 hash that
 crates/oneiron-server/src/api/esign_qr.rs sha256  # CSP script-src sha256 hash that browsers recompute
 crates/oneiron-server/src/api/oauth_server/authorize.rs sha256  # CSP script-src sha256 hash that browsers recompute
 crates/oneiron-server/src/builtin_host/webhooks.rs sha256  # provider webhook HMAC-SHA256 over the raw body
+crates/oneiron-server/src/commands/jobs/request.rs sha256  # a workload pin's contract_sha256 (pass 33 design 7.4) that `oneiron jobs run` mints and the node checks
 crates/oneiron-server/src/commands/owner/meeting_audio.rs sha256  # meeting-audio digests that scripts/meeting-audio-*.py recompute
 crates/oneiron-server/src/gpu_execution_node/issuer/returns.rs sha256  # a fetched job output checked against its receipt's OutputDigest.sha256 (pass 33 design 5): the digest the node mints and a person checks with sha256sum
 crates/oneiron-server/src/gpu_execution_node/jobs/outputs.rs sha256  # a job output's OutputDigest.sha256 in the signed receipt (pass 33 design 5): the issuer recomputes it on Fetch and a person checks it with sha256sum

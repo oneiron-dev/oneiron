@@ -21,8 +21,10 @@ pub use files_args::{
 mod graph_fs_args;
 mod hook_args;
 mod hosted_args;
+mod jobs_args;
 pub use graph_fs_args::GraphFsCommand;
 pub use hosted_args::{HostedCommand, HostedLoginArgs, HostedLogoutArgs, HostedSelectArgs};
+pub use jobs_args::{JobsCommand, JobsConnectArgs, JobsFollowArgs, JobsRunArgs};
 pub use user_service_args::{UserServiceCommand, UserServiceInstallArgs};
 mod learning_setting_args;
 mod link_args;
@@ -263,6 +265,10 @@ pub enum Command {
     /// `oneiron api`'s transport under the owner's credential; only the folder's digest and
     /// its name leave this machine, never its path.
     Project(ProjectArgs),
+    /// Run a pinned workload on the vault's own machines as `fleet run` runs a job: pin it,
+    /// order it, follow its logs and exit with its code, as the one booker agent.
+    #[command(subcommand)]
+    Jobs(JobsCommand),
     /// The git credential helper an official CLI seat runs (FIX 10624 step
     /// 2): git calls it; it answers the context the seat host bound.
     CredentialHelper(CredentialHelperArgs),
@@ -1287,6 +1293,7 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         }
         Command::Api(args) => commands::api(args).await,
         Command::Project(args) => commands::project(args).await,
+        Command::Jobs(command) => commands::jobs(command).await,
         // Blocking: one curl call for git, which waits on this process.
         Command::CredentialHelper(args) => commands::credential_helper(args),
         Command::Mcp(args) => commands::mcp(args),
