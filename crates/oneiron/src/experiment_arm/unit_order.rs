@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::consent::AuthenticatedOwner;
 use crate::gpu_line::doors_caller::LineCaller;
-use crate::gpu_line::{IntentAsk, IntentStand, line_in_txn};
+use crate::gpu_line::{IntentAsk, IntentRefused, IntentStand, line_in_txn};
 use crate::memory::verb_grant_caller::VerbGrantCaller;
 use crate::memory::{
     MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_BUDGET_SPENT, MEMORY_CODE_FORBIDDEN,
@@ -60,8 +60,8 @@ pub enum UnitReserveAnswer {
 /// family's cap, the room and the approval are read when the attempt is made. The order may run
 /// on the named machine, or else on the line's machines as they stand now. The unit's claims
 /// take the order id as their unit key and the attempt number as their attempt, so the ask's
-/// `unit_key` and `attempt` name the call only. The same intent key and ask answer the order it
-/// made, `replayed: true`.
+/// `unit_key` and `attempt` name the call only. The same intent key, ask and wait answer the
+/// order it made, `replayed: true`.
 ///
 /// # Errors
 ///
@@ -70,7 +70,7 @@ pub enum UnitReserveAnswer {
 /// `invalid_state` for a fixed term the line refuses (`contract_changed`, `workload_mismatch`,
 /// `maximum_mismatch`, `offer_not_managed`, `machine_not_allowed`), a line that names no machine
 /// (`no_machine`), an intent key an immediate reserve holds (`intent_key_reserved`) or another
-/// ask under the same key; a store failure.
+/// ask or wait under the same key; a store failure.
 pub fn unit_order_as(
     memory: &Memory<'_>,
     owner: Option<&AuthenticatedOwner>,
@@ -172,6 +172,11 @@ fn order_unit_in_txn(
             }
         }
         .ok_or_else(|| not_found("the work order this intent key made is gone"))?;
+        // The ask's digest leaves the wait out (an order's attempts reserve with `wait: no`),
+        // so the order's own wait tells a repeat from another ask under the key.
+        if order.wait != request.wait {
+            return Err(IntentRefused::DifferentAsk.into());
+        }
         return Ok(vault.work_order_view_as_in_txn(txn, caller, order, true)?);
     }
 

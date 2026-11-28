@@ -2500,6 +2500,50 @@ fn a_waiting_unit_holds_no_claim_and_no_seconds_until_its_attempt() {
 }
 
 #[test]
+fn a_waiting_units_key_under_another_wait_is_a_different_ask() {
+    let fixture = fixture();
+    let lead = fixture.agent("lead");
+    let arm = fixture.lead_arm(lead, 0);
+    let (memory, owner) = fixture.caller(Some(lead));
+    let deadline_ms = NOW_MS + 60_000;
+    let mut open = fixture.ask(&arm, "open-unit", 60, Some(lead));
+    open.wait = WaitRule::Open;
+    let ordered = unit_order_as(&memory, owner, &open, NOW_MS).expect("order the open unit");
+    assert!(!ordered.replayed);
+
+    // The ask's digest leaves the wait out: the order's own wait refuses a deadline under its key.
+    let mut until = open.clone();
+    until.wait = WaitRule::Until { ms: deadline_ms };
+    let refused = unit_order_as(&memory, owner, &until, NOW_MS)
+        .expect_err("the same key and ask with a deadline is another ask");
+    assert_eq!(refused.code, MEMORY_CODE_INVALID_STATE);
+    assert_eq!(refused.message, DIFFERENT_ASK);
+
+    let replayed = unit_order_as(&memory, owner, &open, NOW_MS).expect("the same wait replays");
+    assert!(replayed.replayed);
+    assert_eq!(replayed.order.id, ordered.order.id);
+    assert_eq!(replayed.order.wait, WaitRule::Open);
+
+    let mut timed = fixture.ask(&arm, "timed-unit", 60, Some(lead));
+    timed.wait = WaitRule::Until { ms: deadline_ms };
+    let timed_order = unit_order_as(&memory, owner, &timed, NOW_MS).expect("order the timed unit");
+    let mut later = timed.clone();
+    later.wait = WaitRule::Until {
+        ms: deadline_ms + 60_000,
+    };
+    let later_err = unit_order_as(&memory, owner, &later, NOW_MS)
+        .expect_err("another deadline under the same key is another ask");
+    assert_eq!(later_err.code, MEMORY_CODE_INVALID_STATE);
+    assert_eq!(later_err.message, DIFFERENT_ASK);
+    let timed_again =
+        unit_order_as(&memory, owner, &timed, NOW_MS).expect("the same deadline replays");
+    assert!(timed_again.replayed);
+    assert_eq!(timed_again.order.id, timed_order.order.id);
+    assert_eq!(timed_again.order.wait, WaitRule::Until { ms: deadline_ms });
+    assert!(fixture.claims(&arm, 1).is_empty());
+}
+
+#[test]
 fn a_line_orders_attempt_reserves_its_claim_and_entry_in_one_write_and_starts_under_it() {
     let fixture = fixture();
     let lead = fixture.agent("lead");
