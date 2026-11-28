@@ -242,9 +242,12 @@ fn remaining_for_erase(
         Ok(_) => {
             let now = vault.store.clock.now_recorded_at();
             // Host orders keep no copy in this vault; a customer hold counts when its sealed
-            // capture holds the record: an explicit Record target, or a row of
-            // LEGAL_HOLD_SEALED_RECORD (prospective seals, inquiry copy CLAIMs) whose capture
-            // landed or waits in the outbox.
+            // capture holds the record. The rows of LEGAL_HOLD_SEALED_RECORD decide when they
+            // name the record (Record targets, prospective seals, inquiry copy CLAIMs): a
+            // capture that landed or waits in the outbox. A Record target sealed before those
+            // rows counts while the hold names any capture. A landed capture counts only while
+            // this install's hold store holds its file and the hold's key: a restored hold
+            // names its source's captures, whose files stayed with the source.
             let mut kept = 0u32;
             for hold in crate::store::legal_hold::holds_in_txn(&vault.store, txn)? {
                 if !hold.stands()
@@ -253,15 +256,18 @@ fn remaining_for_erase(
                 {
                     continue;
                 }
-                let named = !hold.clone_captures.is_empty()
-                    && hold.targets.contains(&LegalHoldTarget::Record(*record));
-                let sealed = crate::store::legal_hold::sealed_records::kept_copy_in_txn(
-                    &vault.store,
-                    txn,
-                    &hold,
-                    record,
-                )?;
-                if named || sealed {
+                let sealed = match crate::store::legal_hold::sealed_records::kept_copy_in_txn(
+                    vault, txn, &hold, record,
+                )? {
+                    Some(sealed) => sealed,
+                    None => {
+                        hold.targets.contains(&LegalHoldTarget::Record(*record))
+                            && crate::store::legal_hold::sealed_records::holds_any_capture(
+                                vault, &hold,
+                            )?
+                    }
+                };
+                if sealed {
                     kept = kept.saturating_add(1);
                 }
             }

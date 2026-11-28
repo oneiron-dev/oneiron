@@ -1,7 +1,7 @@
 //! The erase answer counts sealed prospective and inquiry copies: a future message in a
 //! flushed capture, one waiting in the outbox, a missed seal, an inquiry-only hold's copy CLAIM,
-//! a widening that adds an inquiry, and a lifted hold. Each test reads P through the preview and
-//! R through the confirm.
+//! a widening that adds an inquiry, a lifted hold, and a capture whose hold key is gone. Each
+//! test reads P through the preview and R through the confirm.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test erase_answer_counts_sealed_members`.
 #![cfg(all(oneiron_test_support, unix))]
@@ -867,5 +867,58 @@ fn a_lifted_hold_drops_its_sealed_records() -> TestResult {
         receipt.get("legal_copies_kept").is_none(),
         "R counts nothing outside every hold: {receipt}"
     );
+    Ok(())
+}
+
+/// A capture whose hold key is gone counts no copy: the flushed capture's file stays, but
+/// without the hold's `hold.key` nothing opens it (a lift cut short after its key went), so
+/// neither the future message nor the explicit target counts.
+#[test]
+fn a_capture_whose_hold_key_is_gone_counts_no_copy() -> TestResult {
+    let fixture = fixture()?;
+    let vault = &fixture.vault;
+    let held = named_row(vault, "held record")?;
+    let now = vault.now_recorded_at();
+    let hold = vault
+        .place_legal_hold(
+            &fixture.owner,
+            vec![LegalHoldTarget::Record(held)],
+            None,
+            Some(LegalHoldFutureMessages {
+                selector: MessageSelector::Vault,
+                until: now + 3600,
+            }),
+        )
+        .map_err(at("place with future messages"))?;
+    let message = message_row(vault, "a future message")?;
+    assert_eq!(
+        sealed_record_rows(vault, hold.hold_id).map_err(at("the sealed rows"))?,
+        2,
+        "the hold names the record and the flushed message"
+    );
+    let dir = hold_dir(vault, hold.hold_id).map_err(at("the hold's directory"))?;
+    std::fs::remove_file(dir.join("hold.key")).map_err(at("remove the hold key"))?;
+    let memory = vault.memory(fixture.actor, EdgeActorClass::Human);
+    for (record, what) in [
+        (message, "the flushed message"),
+        (held, "the explicit target"),
+    ] {
+        let (takes, outcome) = preview_and_erase(&memory, &fixture.owner, record);
+        assert!(
+            !remaining_of(&takes)
+                .iter()
+                .any(|(code, _)| code == "legal_hold_copy"),
+            "P lists no copy of {what}: {takes}"
+        );
+        assert!(
+            takes.get("legal_copies_kept").is_none(),
+            "P counts no copy of {what}: {takes}"
+        );
+        let receipt = serde_json::to_value(&outcome).map_err(at("the outcome encodes"))?;
+        assert!(
+            receipt.get("legal_copies_kept").is_none(),
+            "R counts no copy of {what}: {receipt}"
+        );
+    }
     Ok(())
 }

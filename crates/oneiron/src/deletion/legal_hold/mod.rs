@@ -32,6 +32,7 @@ use std::fs;
 
 use oneiron_crypto::HybridPublicKey;
 
+pub(crate) use clone::legal_hold_store::holds_capture;
 pub(in crate::deletion) use held_scrubs::held_scrubs_owed_in_txn;
 pub use types::*;
 

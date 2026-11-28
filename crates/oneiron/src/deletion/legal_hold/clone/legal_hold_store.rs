@@ -110,9 +110,43 @@ fn refuse_inside_vault(root: &Path, vault_dir: &Path) -> Result<()> {
 impl LegalHoldStore {
     /// The hold's directory: the vault id keeps two vaults of one install apart.
     pub(crate) fn hold_dir(&self, vault: &Vault, hold: &EntityId) -> PathBuf {
-        self.root
-            .join(bytes_to_hex_lower(vault.vault_id().as_bytes()))
-            .join(hold.to_hex())
+        hold_dir_under(&self.root, vault, hold)
+    }
+}
+
+/// `<root>/<vault id>/<hold id>`: the one layout of a hold's directory.
+fn hold_dir_under(root: &Path, vault: &Vault, hold: &EntityId) -> PathBuf {
+    root.join(bytes_to_hex_lower(vault.vault_id().as_bytes()))
+        .join(hold.to_hex())
+}
+
+/// Whether this install's hold store holds `capture` of `hold`: the hold's `hold.key` and
+/// the capture's `<capture>.clone` both exist. Reads only and creates nothing, so a vault
+/// with no hold store holds none. A hold row restored from an archive names its source's
+/// captures, whose files stay in the source's store.
+pub(crate) fn holds_capture(vault: &Vault, hold: &EntityId, capture: &EntityId) -> Result<bool> {
+    let Some(root) = vault.config.legal_hold_store.as_deref() else {
+        return Ok(false);
+    };
+    let dir = hold_dir_under(root, vault, hold);
+    Ok(is_file(&dir.join("hold.key"))?
+        && is_file(&dir.join(format!("{}.clone", capture.to_hex())))?)
+}
+
+/// Whether `path` is a file: a missing path, or one under a non-directory, is not; every
+/// other io error is returned.
+fn is_file(path: &Path) -> Result<bool> {
+    match fs::metadata(path) {
+        Ok(meta) => Ok(meta.is_file()),
+        Err(error)
+            if matches!(
+                error.kind(),
+                io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
+            ) =>
+        {
+            Ok(false)
+        }
+        Err(error) => Err(error.into()),
     }
 }
 
