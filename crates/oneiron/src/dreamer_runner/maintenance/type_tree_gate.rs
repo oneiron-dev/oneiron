@@ -32,8 +32,9 @@ use crate::skill::team_shape_catalog::TEAM_SHAPE_SKILL_NAME;
 use crate::skill::{SkillLifecycle, SkillRecord};
 use crate::skill_optimize::{
     GoalAxisSpec, HeldOutReplayCase, HeldOutReplayNotes, HonestyReplay,
-    PROVENANCE_OPTIMIZE_OF_ENTITY_KEY, SKILL_OPTIMIZE_BIRTH_PATH, SkillOptimizeDecisions,
-    SkillReplayResponses, receipt_is_held_out, score_gate_skill_edit_in_cycle, skill_edit_verdict,
+    PROVENANCE_OPTIMIZE_OF_ENTITY_KEY, SKILL_OPTIMIZE_BIRTH_PATH, SkillEditDisposition,
+    SkillOptimizeDecisions, SkillReplayResponses, receipt_is_held_out,
+    score_gate_skill_edit_in_cycle, skill_edit_verdict,
 };
 use crate::task_type::{DecisionAxis, TaskTypeRef, TaskTypeTree, TreeScope};
 use crate::team::TeamReceipt;
@@ -504,7 +505,9 @@ fn head_reads(vault: &Vault, head: &EntityId) -> Result<bool> {
 /// snapshot is [`TreeGateOutcome::Retry`]. A scored verdict is a held-out
 /// outcome for the Coach's own edit record; an admitting one, when
 /// [`TEAM_SHAPE_GATE_ADMITS`], admits the revision and supersedes the head
-/// in one transaction. A revision the owner approved on an agent-health
+/// in one transaction, unless the owner pinned that head: then the revision
+/// is answered without going in force and the outcome is the ruling alone. A revision the
+/// owner approved on an agent-health
 /// card settles through that approval instead (FIX 3725). `None` when no
 /// revision is open.
 ///
@@ -585,19 +588,52 @@ pub(super) fn drive(
     if !(verdict.disposition.admits() && TEAM_SHAPE_GATE_ADMITS) {
         return Ok(Some(TreeGateOutcome::Ruled(verdict.disposition)));
     }
+    put_revision_in_force(vault, &proposal, &predecessor, verdict.disposition, now).map(Some)
+}
+
+/// The gate's last step once a ruling admits `proposal` over
+/// `predecessor`, in one write: optimizer admission and supersession, unless
+/// the owner pinned `predecessor`. The owner's pinned tree is a seed of
+/// infinite weight (ARCH-0079 #seed-pin): a win over it is answered and
+/// stays a Candidate that never goes in force, [`TreeGateOutcome::Ruled`]
+/// with the admitting `disposition`, and only the owner replaces the head,
+/// through `vault.task_types.promote`.
+fn put_revision_in_force(
+    vault: &Vault,
+    proposal: &EntityId,
+    predecessor: &EntityId,
+    disposition: SkillEditDisposition,
+    now: u64,
+) -> Result<TreeGateOutcome> {
     let occurred = TimeRange {
         start: now,
         end: now,
     };
-    let refused = vault.with_write_txn_grouped(|txn| {
-        if let Some(refusal) = vault.admit_optimized_skill_in_txn(txn, &proposal, occurred, now)? {
-            return Ok(Some(refusal));
+    vault.with_write_txn_grouped(|txn| {
+        if vault.owner_pinned_tree_in_txn(txn, predecessor)? {
+            // The ruling answers the proposal: it is closed on the approval
+            // axis as every answered proposal is, its record and verdict
+            // kept, so the Coach's next proposal is not held behind it and
+            // the gate never picks it again.
+            crate::skill_optimize::close_answered_proposal_in_txn(vault, txn, proposal, now)?;
+            return Ok(TreeGateOutcome::Ruled(disposition));
         }
-        vault.supersede_skill_record_in_txn(txn, &predecessor, &proposal, occurred, now)?;
-        Ok(None)
-    })?;
-    Ok(Some(refused.map_or(
-        TreeGateOutcome::Admitted(proposal),
-        TreeGateOutcome::Refused,
-    )))
+        if let Some(refusal) = vault.admit_optimized_skill_in_txn(txn, proposal, occurred, now)? {
+            return Ok(TreeGateOutcome::Refused(refusal));
+        }
+        vault.supersede_skill_record_in_txn(txn, predecessor, proposal, occurred, now)?;
+        Ok(TreeGateOutcome::Admitted(*proposal))
+    })
+}
+
+/// Test door body (`test_doors::team_tree_promote`): [`put_revision_in_force`].
+#[cfg(oneiron_test_support)]
+pub(crate) fn put_revision_in_force_for_test(
+    vault: &Vault,
+    proposal: &EntityId,
+    predecessor: &EntityId,
+    disposition: SkillEditDisposition,
+    now: u64,
+) -> Result<TreeGateOutcome> {
+    put_revision_in_force(vault, proposal, predecessor, disposition, now)
 }

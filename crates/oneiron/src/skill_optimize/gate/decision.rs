@@ -12,7 +12,7 @@ use self::sources::{accepted_in_cycle_sourced_in_txn, judge_revision_due_sourced
 
 use self::commit::decide_in_txn;
 
-pub(super) use self::commit::close_answered_proposal_in_txn;
+pub(crate) use self::commit::close_answered_proposal_in_txn;
 
 // ---------------------------------------------------------------------------
 // The gate

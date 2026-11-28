@@ -98,6 +98,38 @@ pub struct TaskTypeTreePinReceipt {
     pub in_force: Option<bool>,
 }
 
+/// The owner's promote of one task-type tree to the vault tree in force:
+/// either the tree `vault.task_types.pin` stored on an open fork, named by
+/// that fork and the version the pin's receipt gave as `stored`, or the tree
+/// an earlier revision on the vault's team-shape chain carried (a revert).
+/// Name `fork_ref` with `tree_version`, or `restore_ref` alone.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct TaskTypeTreePromote {
+    /// The open fork the pin stored the tree on.
+    #[serde(default)]
+    pub fork_ref: Option<EntityId>,
+    /// The version the pin stored that tree at.
+    #[serde(default)]
+    pub tree_version: Option<u64>,
+    /// An earlier team-shape revision of the vault, whose tree goes back in
+    /// force.
+    #[serde(default)]
+    pub restore_ref: Option<EntityId>,
+}
+
+/// The team-shape revision a promote put in force, owner-pinned, the head it
+/// superseded and the tree now in force for the vault.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct TaskTypeTreePromoteReceipt {
+    /// The new team-shape head, in force for the vault.
+    pub in_force_skill_ref: EntityId,
+    /// The head it superseded, frozen and kept on the chain.
+    pub superseded_skill_ref: EntityId,
+    /// The tree in force, at the version it was placed in.
+    pub tree: TaskTypeTreeView,
+}
+
 /// The tree read (`None` when no kept tree is at the version asked) and the
 /// team-shape skill in force for the scope read.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
