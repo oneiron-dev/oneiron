@@ -354,6 +354,22 @@ impl BundleApproveCard {
                         "consent_beneficiary:self_grant",
                     ));
                 }
+                // PLAN L3-35 D5 (Engine ruling L3-35-BATCH = A): one press for
+                // these exact sends only under a send grant that asks per
+                // batch; under a press per send, the card covers one send.
+                if scope == BundleApprovalScope::ExactEnumeratedSends
+                    && self.items.len() > 1
+                    && !send_grant_presses_batch(vault)?
+                {
+                    return Ok(noop_policy_rejection(
+                        Of336ComponentKind::BundleApprove,
+                        &self.card_id,
+                        &self.principal_ref,
+                        request,
+                        ConsentActionDecision::NoopPerSendGrant,
+                        "consent_send_grant:ask_per_send",
+                    ));
+                }
                 let grant_scope = match scope {
                     BundleApprovalScope::ExactEnumeratedSends => {
                         GrantMintIntentScope::BundleExactSends {
@@ -402,6 +418,13 @@ impl BundleApproveCard {
     pub fn fallback_text(&self) -> String {
         format!("{}: {}", self.title, self.item_labels().join("; "))
     }
+}
+
+/// Whether the vault's send grant lets one press approve a reviewed batch,
+/// read on a snapshot of its own.
+fn send_grant_presses_batch(vault: &crate::Vault) -> Result<bool> {
+    let txn = vault.store.env.read_txn()?;
+    crate::check_in::send_grant_presses_batch_in_txn(&vault.store, &txn)
 }
 
 #[doc(hidden)]
