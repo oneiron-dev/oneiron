@@ -5,6 +5,8 @@ use std::time::Instant;
 
 mod decisions;
 pub use decisions::{SeatDecisions, SeatNotes, SeatPickReadings};
+mod description_doors;
+pub use description_doors::{SeatDescriptionWrite, SeatDescriptionsRead, SeatDescriptionsView};
 mod learning;
 pub use learning::SeatLearningContext;
 pub(crate) use learning::learned_models;

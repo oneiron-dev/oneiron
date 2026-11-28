@@ -272,6 +272,12 @@ pub trait McpCodeExecutionHost: Send + Sync {
         true
     }
 
+    /// The model-description facet this host's code-mode seat pick reads
+    /// (`[models.decisions.seat]`); `None` when it binds no seat pick.
+    fn seat_facet(&self) -> Option<String> {
+        None
+    }
+
     fn execute<'a>(
         &'a self,
         request: McpCodeExecutionRequest<'a>,

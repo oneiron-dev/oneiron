@@ -1473,3 +1473,43 @@ mod run_rows;
 
 /// The graph-FS rows, walked through the verb-call import.
 mod graph_fs_walk;
+
+/// A host whose code mode binds a seat pick reports its facet at the seat
+/// description doors (FIX SEAT-DESCRIPTION-ROW-NO-PUBLIC-DOOR; Engine ACCEPT
+/// PLAN-SEAT-DESCRIPTION-DOOR 13:13, condition 2): the read names
+/// `code-task`, the facet this fixture's seat router reads, beside the row
+/// the fixture described under it. An owner row under another facet is
+/// stored, and its answer says this host's pick will not read it.
+#[tokio::test]
+async fn the_seat_description_doors_report_the_hosts_seat_facet() {
+    let mode = code_mode_server(Vec::new());
+    let call = |verb: &str, body: Value| {
+        core_request_with_authz(
+            "POST",
+            &format!("/v1/core/facade/{verb}"),
+            owner_bearer(),
+            Some(&body),
+        )
+    };
+    let (status, view) = route_json(
+        mode.server.clone(),
+        call("vault.models.descriptions.read", json!({})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{view}");
+    assert_eq!(view["seat_facet"], "code-task", "{view}");
+    assert_eq!(view["rows"][0]["model"], mode.seat_model.as_str(), "{view}");
+    assert_eq!(view["rows"][0]["facet"], "code-task", "{view}");
+    let (status, written) = route_json(
+        mode.server.clone(),
+        call(
+            "vault.models.descriptions.set",
+            json!({"model": mode.seat_model.as_str(), "facet": "review-task", "owner": "Code review"}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{written}");
+    assert_eq!(written["seat_facet"], "code-task", "{written}");
+    assert_eq!(written["host_facet_matches"], false, "{written}");
+    assert_eq!(written["replaced"]["facet"], "code-task", "{written}");
+}
