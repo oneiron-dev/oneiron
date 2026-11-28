@@ -228,7 +228,7 @@ pub(super) fn order_request(
             name: args.offer.clone(),
         },
         limits: OrderLimits {
-            machines: machines.to_vec(),
+            machines: Vec::new(),
             ..OrderLimits::default()
         },
         wishes: OrderWishes::default(),
