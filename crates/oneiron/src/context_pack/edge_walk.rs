@@ -153,6 +153,11 @@ pub(super) struct EdgeWalkOptions<'a> {
     /// them: a row outside them is never admitted as a neighbor nor
     /// traversed through, so no edge adds a world (FIX 9759).
     pub(super) world_scope: &'a crate::pipeline::ResolvedWorldScope,
+    /// The caller's project selection, canonical, as primary retrieval applies it: a row
+    /// outside it is never admitted as a neighbor nor traversed through, so no edge adds a
+    /// project's CLAIM, NOTE, MESSAGE or TURN (SESSION-PROJECT-NOTE-MESSAGE-PLACEMENT PR C,
+    /// review round 1).
+    pub(super) corpus_scope: &'a crate::corpus::CorpusScope,
     /// The manifest that names critical predicates, when the pack may hold
     /// critical claims: they take the walk's budget first (FIX 9760).
     pub(super) critical_policy: Option<&'a crate::gate::PolicyManifestResolution>,
@@ -178,6 +183,7 @@ pub(super) fn walk_edges(
         type_filter,
         named_types,
         world_scope,
+        corpus_scope,
         critical_policy,
         deadline,
     } = options;
@@ -271,6 +277,14 @@ pub(super) fn walk_edges(
                         header.entity_type,
                     ))
                 {
+                    continue;
+                }
+                if !crate::pipeline::neighbor_matches_corpus(
+                    store,
+                    rtxn,
+                    &edge.target,
+                    corpus_scope,
+                )? {
                     continue;
                 }
                 match candidates.entry(edge.target) {

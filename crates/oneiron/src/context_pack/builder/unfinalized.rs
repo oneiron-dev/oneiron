@@ -550,6 +550,7 @@ impl<'a> ContextPackBuilder<'a> {
                 let (neighbor_filter, named_types) =
                     neighbor_pipeline.neighbor_type_policy(&rtxn)?;
                 let world_scope = neighbor_pipeline.neighbor_world_scope(&rtxn)?;
+                let corpus_scope = neighbor_pipeline.neighbor_corpus_scope()?;
                 match walk_edges(
                     self.vault,
                     &self.read,
@@ -565,6 +566,7 @@ impl<'a> ContextPackBuilder<'a> {
                         type_filter: &neighbor_filter,
                         named_types,
                         world_scope: &world_scope,
+                        corpus_scope: &corpus_scope,
                         critical_policy: (self.criticality != Some(false)).then_some(&policy),
                         deadline: pack_deadline,
                     },

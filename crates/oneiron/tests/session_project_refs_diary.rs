@@ -1,6 +1,7 @@
 //! SESSION-PROJECT-NOTE-MESSAGE-PLACEMENT PR C: a recall that names `project_refs`
 //! reads NOTE, MESSAGE and TURN rows only in the selected projects; an empty selection
-//! leaves them as before. A diary query or sealed-pad read admits entries by the handle's
+//! leaves them as before. No edge of a recalled row brings another project's NOTE into the
+//! rendered pack (review round 1). A diary query or sealed-pad read admits entries by the handle's
 //! session projects, even on a self-read. No folder keeps the previous read; an unknown
 //! folder admits no entries.
 //!
@@ -14,7 +15,8 @@ use oneiron::authority::HostSlipIssuer;
 use oneiron::claim::default_project_id;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::memory::{
-    DiaryReadOutcome, Memory, MemoryResult, RecallRequest, RecallScope, WitnessReceipt, WitnessTurn,
+    DiaryReadOutcome, Memory, MemoryResult, RecallEffort, RecallRequest, RecallScope,
+    WitnessReceipt, WitnessTurn,
 };
 use oneiron::registry::ENTITY_TYPE_FACET;
 use oneiron::session_project::WorkspaceBindRequest;
@@ -24,7 +26,7 @@ use oneiron::test_doors::room_facet_set::create_owner_project;
 use oneiron::test_doors::witness_project::stamped_project;
 use oneiron::verbs::{DiaryEntryRequest, self_memory_diary_write};
 use oneiron::workspace_roster::ProjectRecord;
-use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
+use oneiron::{EdgeActorClass, EdgeKind, EntityId, TimeRange, Vault, VaultConfig};
 use serde_json::json;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -461,5 +463,106 @@ fn a_bound_session_reads_only_its_projects_sealed_pads() {
     assert!(
         read(reader.in_session_workspace(&[UNBOUND_DIGEST.to_owned()])).is_empty(),
         "an unbound session reads no sealed pads"
+    );
+}
+
+/// An invented word only in the alpha NOTE of the neighbor fixture.
+const NEIGHBOR_QUERY: &str = "corvidlanternneighbour";
+/// An invented word only in the beta NOTE that the alpha NOTE's edge reaches.
+const NEIGHBOR_MARK: &str = "zephyrlatticebeyond";
+
+/// The alpha NOTE holding the query word, and the beta NOTE its `Mentions` edge reaches,
+/// which holds the mark and not the query word; both published. The test reads the beta
+/// NOTE by its text: the alpha NOTE's own edge list may name the beta id.
+fn neighbor_rows(fixture: &Fixture) -> (EntityId, EntityId) {
+    let write_note = |folder: &str, text: String| {
+        let receipt = fixture
+            .writer(Some(folder))
+            .create_note("research", &text)
+            .unwrap_or_else(|error| panic!("FIXTURE: write NOTE {text:?}: {error:?}"));
+        EntityId::from_hex(&receipt.id_hex).expect("FIXTURE: parse the NOTE receipt's id")
+    };
+    let alpha = write_note(
+        MAIN_DIGEST,
+        format!("The alpha note names {NEIGHBOR_QUERY}."),
+    );
+    let beta = write_note(BETA_DIGEST, format!("The beta note keeps {NEIGHBOR_MARK}."));
+    assert_project(fixture, "alpha NOTE", alpha, fixture.alpha);
+    assert_project(fixture, "beta NOTE", beta, fixture.beta);
+    fixture
+        .vault
+        .put_edge(&alpha, EdgeKind::Mentions, &beta, 0.9)
+        .expect("FIXTURE: link the alpha NOTE to the beta NOTE");
+    fixture
+        .vault
+        .set_indexed_idle_delay_ms(0)
+        .expect("FIXTURE: configure idle text publication");
+    let published = fixture
+        .vault
+        .refresh_staged_indexed_at_idle(u64::MAX)
+        .expect("FIXTURE: publish staged text without an embedder");
+    assert!(
+        published.failed.is_empty(),
+        "FIXTURE: every staged text publishes: {published:?}"
+    );
+    (alpha, beta)
+}
+
+/// A medium recall of the neighbor query word, rendered as JSON: the ranked ids and the
+/// rendered text, which carries the edge neighbors.
+fn rendered_recall(
+    fixture: &Fixture,
+    project_refs: Vec<String>,
+) -> MemoryResult<(BTreeSet<EntityId>, String)> {
+    let pack = recall_unembedded(
+        &fixture.reader(),
+        RecallRequest {
+            query: NEIGHBOR_QUERY.to_owned(),
+            effort: Some(RecallEffort::Medium),
+            limit: Some(25),
+            format: Some("json".to_owned()),
+            scope: Some(RecallScope {
+                project_refs,
+                kinds: Some(vec!["NOTE".to_owned()]),
+                ..RecallScope::default()
+            }),
+            ..RecallRequest::default()
+        },
+    )?;
+    let ids = pack
+        .items
+        .iter()
+        .filter_map(|item| item.record.as_ref())
+        .map(|record| EntityId::from_hex(&record.id).expect("a recalled record id parses"))
+        .collect();
+    Ok((ids, pack.rendered.unwrap_or_default()))
+}
+
+#[test]
+fn a_recall_naming_a_project_renders_no_other_projects_note_through_an_edge() {
+    let fixture = open().expect("FIXTURE: open the vault and bind both projects");
+    let (alpha, beta) = neighbor_rows(&fixture);
+    let (ids, rendered) =
+        rendered_recall(&fixture, vec![]).expect("FIXTURE: recall without a project selection");
+    assert!(ids.contains(&alpha), "FIXTURE: the alpha NOTE is recalled");
+    assert!(
+        !ids.contains(&beta),
+        "FIXTURE: the beta NOTE is no ranked row; only the edge reaches it"
+    );
+    assert!(
+        rendered.contains(NEIGHBOR_MARK),
+        "FIXTURE: with no selection the edge brings the beta NOTE's text into the rendered \
+         pack: {rendered}"
+    );
+
+    let (ids, rendered) =
+        rendered_recall(&fixture, vec![fixture.alpha.to_hex()]).expect("recall naming alpha");
+    assert!(
+        ids.contains(&alpha),
+        "recall naming alpha keeps the alpha NOTE"
+    );
+    assert!(
+        !rendered.contains(NEIGHBOR_MARK),
+        "recall naming alpha renders no beta NOTE reached through an edge: {rendered}"
     );
 }

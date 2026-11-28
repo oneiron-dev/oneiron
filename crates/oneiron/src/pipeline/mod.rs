@@ -12,6 +12,7 @@ pub(crate) use capabilities::capability_hit;
 mod builder;
 mod channels;
 mod corpus_filter;
+pub(crate) use corpus_filter::neighbor_matches_corpus;
 mod criticality;
 mod execution;
 mod execution_binding;

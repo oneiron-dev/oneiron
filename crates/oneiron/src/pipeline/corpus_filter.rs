@@ -54,6 +54,14 @@ impl PipelineBuilder<'_> {
             },
         ))
     }
+
+    /// The project selection a graph neighbor answers to: this run's own, canonical, as
+    /// primary retrieval applies it. The context pack's edge walk admits a neighbor, and
+    /// walks through it, only when [`neighbor_matches_corpus`] does
+    /// (SESSION-PROJECT-NOTE-MESSAGE-PLACEMENT PR C, review round 1).
+    pub(crate) fn neighbor_corpus_scope(&self) -> Result<CorpusScope> {
+        self.corpus_scope.clone().canonicalize()
+    }
 }
 
 /// Canonical audience selection for one retrieval attempt. Construction rejects
@@ -180,6 +188,29 @@ pub(super) fn pipeline_candidate_matches_corpus_filter(
         // FIX SESSION-PROJECT-NOTE-MESSAGE-PLACEMENT PR C: non-claims never enter the D19 cache; NOTE, MESSAGE and TURN rows narrow by their placement.
         None => placed_row_matches_corpus(store, rtxn, id, scope, metadata_cache),
     }
+}
+
+/// One graph neighbor under the run's canonical project selection
+/// ([`PipelineBuilder::neighbor_corpus_scope`]), by the candidate twin's rule: a CLAIM by
+/// its body's project, a NOTE, MESSAGE or TURN by its placement, other kinds as before.
+/// The walk reads each neighbor once, so it holds no cache across them.
+pub(crate) fn neighbor_matches_corpus(
+    store: &StoreRead<'_>,
+    rtxn: &RoTxn<'_>,
+    id: &EntityId,
+    scope: &CorpusScope,
+) -> Result<bool> {
+    if matches!(scope, CorpusScope::All) {
+        return Ok(true);
+    }
+    pipeline_candidate_matches_corpus_filter(
+        store,
+        rtxn,
+        id,
+        scope,
+        &mut EntityMetadataCache::default(),
+        &mut ClaimStatusGateCache::default(),
+    )
 }
 
 /// A non-CLAIM candidate under a project selection: a NOTE, MESSAGE or TURN by its
