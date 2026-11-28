@@ -16,9 +16,7 @@ use crate::code_run::{
 use crate::context_projection::ContextSpec;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::Result;
-use crate::team::run::{
-    bind_market_start, member_spawn_key, planned_start, record_led_team, start_stamp,
-};
+use crate::team::run::{member_spawn_key, planned_start, record_led_team, start_stamp};
 use crate::team::run_binding::record_team_start_sourced_in_txn;
 use crate::team::{
     SelfTeamCall, TeamMemberAnswer, TeamRecordInput, TeamRunAnswer, TeamRunBinding, TeamStartInput,
@@ -69,16 +67,6 @@ impl HostSelfDispatcher<'_> {
                 return Ok(Err("team_off_record"));
             };
             if let Err(code) = tournament_start_check(vault, leader, run)? {
-                return Ok(Err(code));
-            }
-        }
-        // A market records its referee and ledger before any member spawns
-        // (ARCH-0079 #market). An off-record run can't keep them.
-        if input.market.is_some() {
-            let ExecutorStorage::Canonical(vault) = &self.storage else {
-                return Ok(Err("team_off_record"));
-            };
-            if let Err(code) = bind_market_start(vault, leader, &stamp.team_ref, &input)? {
                 return Ok(Err(code));
             }
         }
