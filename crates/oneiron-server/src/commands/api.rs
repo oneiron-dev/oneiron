@@ -65,7 +65,7 @@ pub(crate) const CURL_NO_PROXY: [&str; 2] = ["--noproxy", "*"];
 
 /// The host's curl, for this one-shot command. `oneiron mcp` loops, so it
 /// holds one connection of its own instead of a curl child per request.
-const CURL_PROGRAM: &str = "curl";
+pub(super) const CURL_PROGRAM: &str = "curl";
 
 const JSON_CONTENT_TYPE: &str = "application/json";
 
@@ -384,7 +384,7 @@ pub(crate) fn run_curl_output_with_transport(
 /// That sends the request WITHOUT an `Authorization` header — no config
 /// channel, no empty header, no placeholder — because a public route answers
 /// an anonymous call and refuses a bogus one.
-fn run_curl_output_inner(
+pub(super) fn run_curl_output_inner(
     program: &OsStr,
     request: &CurlRequest,
     credential: CurlCredential<'_>,

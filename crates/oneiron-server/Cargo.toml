@@ -939,3 +939,9 @@ required-features = ["oneiron/test-support", "mesh"]
 name = "job_workload_check_in"
 path = "tests/job_workload_check_in.rs"
 required-features = ["oneiron/test-support", "mesh"]
+
+# FIX ONEIRON-BOOKER-CLI: the booker principal of `oneiron jobs` (docs/ops/jobs-booker.md).
+[[test]]
+name = "jobs_booker_principal"
+path = "tests/jobs_booker_principal.rs"
+required-features = ["oneiron/test-support", "mesh"]

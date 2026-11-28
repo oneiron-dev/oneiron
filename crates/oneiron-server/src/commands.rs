@@ -50,6 +50,9 @@ pub use self::api::api;
 /// `oneiron project …`: the owner's folder-to-PROJECT binding, over `oneiron api`'s transport.
 mod project;
 pub use self::project::{project, workspace_bind_request, workspace_unbind_request};
+/// `oneiron jobs …`: the booker's `fleet run`, over `oneiron api`'s transport.
+mod jobs;
+pub use self::jobs::jobs;
 mod mcp_bridge;
 pub use self::mcp_bridge::mcp;
 // Runtime files and the import queue are Unix-only.
