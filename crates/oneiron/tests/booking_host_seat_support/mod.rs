@@ -643,6 +643,31 @@ impl Seat {
         self.replay_refused(vault, event_ref, stored, now);
     }
 
+    /// Replays a prepared write whose request reaches the provider only
+    /// after an overlapping replay was refused and read the older live copy.
+    /// The provider stores this replay but loses its answer.
+    pub(crate) fn replay_lands_after_a_refused_replay(
+        &self,
+        vault: &Vault,
+        event_ref: EntityId,
+        older: &SeatChange,
+        replay_now: u64,
+        now: u64,
+    ) {
+        let wire = ReplayRefusedBeforeSend {
+            seat: self,
+            vault,
+            event_ref,
+            replay_now,
+            stored: older,
+        };
+        let lost = write_calendar_event(vault, &self.operation(vault), &wire, event_ref, now);
+        assert!(
+            matches!(lost, Err(CalendarConnectorError::Transport { .. })),
+            "FIXTURE: the late replay's answer is lost: {lost:?}"
+        );
+    }
+
     /// Sends the seat's prepared write of one booking again, and the provider
     /// refuses it on its precondition, but the write's reconciliation pull
     /// fails: the write reads no stored copy.
@@ -1336,6 +1361,64 @@ impl CalendarRemoteTransport for ReplayBeforeSend<'_> {
             .refuse_next_precondition
             .lock()
             .expect("precondition switch") = true;
+        self.seat
+            .transport
+            .upsert(secret_ref, calendar_ref, request)
+    }
+
+    fn delete(
+        &self,
+        _secret_ref: &str,
+        _calendar_ref: &str,
+        _href: &str,
+        _expected_etag: Option<&str>,
+        _uid: &str,
+        _sequence: u32,
+    ) -> Result<RemoteWriteReceipt, CalendarConnectorError> {
+        panic!("delete is not used by the host-seat fixture")
+    }
+}
+
+/// The seat's scripted wire, whose upsert runs another replay at `replay_now`
+/// before forwarding the original request. The provider refuses that replay
+/// and its reconciliation reads `stored`. The original request then reaches
+/// the provider, which stores it but loses its answer.
+struct ReplayRefusedBeforeSend<'a> {
+    seat: &'a Seat,
+    vault: &'a Vault,
+    event_ref: EntityId,
+    replay_now: u64,
+    stored: &'a SeatChange,
+}
+
+impl CalendarRemoteTransport for ReplayRefusedBeforeSend<'_> {
+    fn provider_key(&self) -> &'static str {
+        self.seat.transport.provider_key()
+    }
+
+    fn pull(
+        &self,
+        secret_ref: &str,
+        calendar_ref: &str,
+        cursor: Option<&str>,
+    ) -> Result<RemoteSyncBatch, CalendarConnectorError> {
+        self.seat.transport.pull(secret_ref, calendar_ref, cursor)
+    }
+
+    fn upsert(
+        &self,
+        secret_ref: &str,
+        calendar_ref: &str,
+        request: &RemoteWriteRequest,
+    ) -> Result<RemoteWriteReceipt, CalendarConnectorError> {
+        self.seat
+            .replay_refused_over(self.vault, self.event_ref, self.stored, self.replay_now);
+        *self
+            .seat
+            .transport
+            .lose_next_answer
+            .lock()
+            .expect("answer switch") = true;
         self.seat
             .transport
             .upsert(secret_ref, calendar_ref, request)

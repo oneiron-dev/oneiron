@@ -4656,3 +4656,156 @@ fn a_masked_tombstone_conclusion_dates_cal_07_by_its_first_sighting() {
         "the masked delete refunds whole"
     );
 }
+
+#[test]
+fn a_late_replay_after_a_proven_refusal_is_the_owner_s_copy_on_the_second_seat() {
+    assert_late_replay_is_the_owner_s_copy(true, false);
+}
+
+#[test]
+fn a_late_replay_after_a_proven_refusal_is_the_owner_s_copy_on_the_writing_seat() {
+    assert_late_replay_is_the_owner_s_copy(false, false);
+}
+
+#[test]
+fn a_late_replay_the_provider_rewrote_after_a_proven_refusal_is_the_owner_s_copy() {
+    assert_late_replay_is_the_owner_s_copy(true, true);
+}
+
+/// `rewritten`: the provider rewrites the late copy it stores, keeping its
+/// SEQUENCE and marker (BK-DEPOSIT-REWRITTEN-ECHO-OF-OWNER-WRITE-REFUNDS).
+fn assert_late_replay_is_the_owner_s_copy(second_seat_first: bool, rewritten: bool) {
+    use oneiron::calendar::connectors::{
+        CalendarWriteOutboxState, RemoteCalendarObject, calendar_write_outbox_row,
+        calendar_write_outbox_rows,
+    };
+    use oneiron::calendar::{live_passport_for, parse_ics_feed};
+
+    let fixture = Fixture::open(Some(two_hour_terms()));
+    fixture.enable_host_feed();
+    let vault = &fixture.vault;
+    let seat = Seat::install(vault, HOST_SEAT_SYSTEM);
+    let second = seat.install_second_seat(vault, "seat:host-second");
+    let payment = "pi_late_replay_after_proven_refusal";
+    let (booked, live, start) =
+        written_live_then_cancelled_elsewhere(&fixture, &seat, payment.as_bytes(), payment);
+    let event_ref = booked.calendar.event_ref;
+    let uid = booked.calendar.uid.as_str();
+    let captured = DepositState::Captured {
+        amount_minor: 4_000,
+    };
+
+    // CAL-REFUSED-WRITE-LATE-SEND-LANDS-UNFENCED: B's refusal reads an older
+    // copy while A's request is out. Only A's bytes land, and no reply does.
+    seat.write_unsent(vault, event_ref, NOW + 150);
+    let staged = calendar_write_outbox_rows(vault)
+        .expect("FIXTURE: read the outbox rows")
+        .into_iter()
+        .find(|row| row.event_ref == event_ref && row.system == HOST_SEAT_SYSTEM && row.uid == uid)
+        .expect("FIXTURE: the writing seat has a staged row for the booking");
+    assert_eq!(
+        staged.state,
+        CalendarWriteOutboxState::Prepared,
+        "FIXTURE: the dropped request leaves the row prepared"
+    );
+    assert!(
+        live.sequence < staged.sequence,
+        "FIXTURE: the refusal reads a copy below the staged SEQUENCE"
+    );
+    let older = SeatChange::upsert(&live, start, start + 30 * 60, live.sequence, false);
+    seat.replay_lands_after_a_refused_replay(vault, event_ref, &older, NOW + 170, NOW + 160);
+
+    let row = calendar_write_outbox_row(vault, &staged.outbox_id)
+        .expect("FIXTURE: read the refused outbox row")
+        .expect("FIXTURE: the refused row still exists");
+    assert_eq!(
+        (row.state, row.stored_copy_unproven),
+        (CalendarWriteOutboxState::ReconcileRequired, false),
+        "FIXTURE: the refusal read the older copy, leaving no proof owed"
+    );
+    let late = seat.stored_own_write(uid);
+    let SeatChange::Stored(object) = &late else {
+        panic!("FIXTURE: the late copy is the provider's stored bytes");
+    };
+    let feed = parse_ics_feed(&object.ics).expect("FIXTURE: the late copy parses");
+    let event = feed
+        .events
+        .first()
+        .expect("FIXTURE: the late copy carries a VEVENT");
+    assert_eq!(
+        (event.sequence, event.cancelled),
+        (staged.sequence, true),
+        "FIXTURE: the provider stored the staged cancellation"
+    );
+    let marker = staged
+        .write_marker
+        .expect("FIXTURE: staging assigned a write marker");
+    let marker_line = format!("X-ONEIRON-OUTBOX:{}", oneiron_hex::encode(&marker));
+    let ics = std::str::from_utf8(&object.ics).expect("FIXTURE: the late copy is UTF-8");
+    assert!(
+        ics.lines().any(|line| line == marker_line.as_str()),
+        "FIXTURE: the late copy carries the staged write marker"
+    );
+    assert_eq!(
+        state_of(&fixture, payment),
+        captured,
+        "FIXTURE: the deposit is still captured before either pull"
+    );
+    let late = if rewritten {
+        let ics = ics.replacen(
+            "END:VEVENT\r\n",
+            "COMMENT:stored by the provider\r\nEND:VEVENT\r\n",
+            1,
+        );
+        let feed = parse_ics_feed(ics.as_bytes()).expect("FIXTURE: the rewritten copy parses");
+        let copy = feed
+            .events
+            .first()
+            .expect("FIXTURE: the rewritten copy carries a VEVENT");
+        assert_ne!(
+            copy.content_hash, event.content_hash,
+            "FIXTURE: the provider's rewrite changes the copy's content hash"
+        );
+        assert_eq!(
+            (copy.sequence, copy.cancelled),
+            (staged.sequence, true),
+            "FIXTURE: the rewrite keeps the staged cancellation and SEQUENCE"
+        );
+        SeatChange::Stored(RemoteCalendarObject {
+            sequence: copy.sequence,
+            content_hash: copy.content_hash,
+            ics: ics.into_bytes(),
+            ..object.clone()
+        })
+    } else {
+        late
+    };
+
+    let seats = if second_seat_first {
+        [&second, &seat]
+    } else {
+        [&seat, &second]
+    };
+    for (i, pulling_seat) in seats.into_iter().enumerate() {
+        let pull = i + 1;
+        pulling_seat
+            .pull(
+                vault,
+                std::slice::from_ref(&late),
+                NOW + 180 + 10 * i as u64,
+            )
+            .expect("pull the late replay");
+        assert_eq!(
+            state_of(&fixture, payment),
+            captured,
+            "pull {pull}: the owner's late cancellation moves no money"
+        );
+        let (_, passport) = live_passport_for(vault, &event_ref, HOST_SEAT_SYSTEM, uid)
+            .expect("read the booking EVENT's host passport")
+            .expect("the booking EVENT has a host passport");
+        assert!(
+            passport.written_cancelled,
+            "pull {pull}: the shared host passport marks the owner's cancellation"
+        );
+    }
+}

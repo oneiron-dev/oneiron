@@ -485,6 +485,62 @@ pub(super) fn unproven_replay(
     Ok(Some((stored.into_row()?, revision)))
 }
 
+/// The outbox row, on any seat that writes `uid` under this seat's system
+/// ([`upsert_row_of`]), of a refused upsert whose proof is no longer owed
+/// (its refusal's read, or a later pull, read another writer's copy:
+/// [`unproven_replay`] no longer finds it) while the pulled copy `ics`
+/// carries that write's own marker.
+/// The marker is fresh for each staged write, so the copy is that write
+/// stored by a call sent before the refusal, whose answer was lost, after
+/// the read that proved the row: an overlapping replay holds the row's
+/// precondition too, and the provider's ETag may recur
+/// (CAL-REFUSED-WRITE-LATE-SEND-LANDS-UNFENCED). A released row is not read
+/// ([`OutboxReleases`]). With the row's revision as stored
+/// ([`super::release::revision`]) and its names set to this seat's literal
+/// ones, which its key or readable strings show it stands for. Its sealed
+/// values are not opened.
+///
+/// # Errors
+///
+/// Storage failures, and a stored row that does not decode.
+pub(super) fn proven_refused_write_of_copy(
+    vault: &Vault,
+    operation: &CalendarConnectorOperation,
+    uid: &str,
+    ics: &[u8],
+) -> Result<Option<(super::CalendarWriteOutboxRow, [u8; 32])>, CalendarConnectorError> {
+    let StoredWriteMarker::One(marker) = super::stored_write_marker(ics, uid) else {
+        return Ok(None);
+    };
+    let seat = &operation.registration().seat;
+    let system = seat.config.system.as_str();
+    let calendar_ref = seat.config.calendar_ref.as_str();
+    let (rows, releases) = {
+        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+        (
+            OUTBOX.scan_from(&vault.store, &txn, OUTBOX_ROW_TAG)?,
+            OutboxReleases::read_in_txn(vault, &txn)?,
+        )
+    };
+    for (_, stored) in rows {
+        if stored.state != CalendarWriteOutboxState::ReconcileRequired
+            || stored.stored_copy_unproven
+            || stored.write_marker != Some(marker)
+            || !upsert_row_of(&stored, system, calendar_ref, uid)
+            || releases.released(&stored)?
+        {
+            continue;
+        }
+        let revision = super::release::revision(&stored)?;
+        let mut row = stored.into_row()?;
+        row.system = system.to_owned();
+        row.calendar_ref = calendar_ref.to_owned();
+        row.uid = uid.to_owned();
+        return Ok(Some((row, revision)));
+    }
+    Ok(None)
+}
+
 /// This seat's outbox rows that owed the proof of a refused write's stored
 /// copy ([`unproven_replay`]) when a pull began, read before the pull's
 /// provider read: each row's key and revision as stored
