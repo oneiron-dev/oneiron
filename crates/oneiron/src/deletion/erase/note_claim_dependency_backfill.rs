@@ -412,7 +412,7 @@ impl Vault {
             }
             if state.stale {
                 counts.stale_note += 1;
-                return Ok(NoteRef::RemovedNote);
+                return Ok(NoteRef::Other);
             }
             return Ok(NoteRef::LiveNote);
         }
