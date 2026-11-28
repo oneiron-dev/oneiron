@@ -1,0 +1,16 @@
+{
+  "name": "vault.projects.lead_turns.owed",
+  "description": "Reads the turn a project owes its lead: its causes, the model the owner names and the files it keeps; none while a hold stands. The lead calls it under its own Grant, or the owner.",
+  "input": "crate::project_lead_turn::LeadTurnsProjectRequest",
+  "output": "crate::project_lead_turn::LeadTurnsOwedView",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.projects.lead_turns.owed\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "act_class": "read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "verb_grant_caller"
+}

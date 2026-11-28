@@ -1,0 +1,16 @@
+{
+  "name": "vault.projects.lead_turns.file",
+  "description": "Reads one file a project's lead turn kept, with its body. The owner calls it, or a Grant that lists it and reaches the project.",
+  "input": "crate::project_lead_turn::LeadTurnsFileRequest",
+  "output": "crate::project_lead_turn::LeadTurnFileView",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.projects.lead_turns.file\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "act_class": "read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "verb_grant_caller"
+}

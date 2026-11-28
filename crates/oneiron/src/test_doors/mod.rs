@@ -319,6 +319,7 @@ pub mod policy_doors_between;
 pub mod predicted_residence;
 pub mod proactivity_digest_index;
 pub mod profiles_other_machine;
+pub mod project_lead_turn;
 #[cfg(feature = "sync")]
 pub mod project_replicated_revision;
 pub mod project_run;
