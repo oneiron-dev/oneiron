@@ -10,6 +10,10 @@
 //!   job only within the per-job maximum the owner set beside that Grant
 //!   (`vault.gpu.jobs.allow`, the owner's own act; RULING L10-31-STARTER =
 //!   B), and cancels only a job it started.
+//! - Over tool-first MCP (`/mcp/tool-first`, the surface `oneiron mcp
+//!   --surface tool-first` bridges; row OM-MCP-HOST-DOORS) the same agent
+//!   quotes, starts and reads its job through the same gate, Grant and door
+//!   as over REST, and the doors refuse there what they refuse over REST.
 //! - An offer whose backend is not registered refuses its start before any
 //!   reservation; a stopped job's cancel calls no provider and needs no
 //!   backend.
@@ -1354,6 +1358,401 @@ fn a_write_off_reaches_a_live_job_whose_offer_is_withdrawn() {
             GpuJobState::Ended {
                 reason: GpuEndReason::Unconfirmed
             }
+        );
+    });
+}
+
+/// The tool-first MCP endpoint, the one `oneiron mcp --surface tool-first`
+/// forwards to, and the protocol version its requests name.
+const MCP_PATH: &str = "/mcp/tool-first";
+const MCP_PROTOCOL_VERSION: &str = "2026-07-28";
+
+/// The three GPU job doors an agent's MCP client calls (row OM-MCP-HOST-DOORS).
+const GPU_JOB_TOOLS: [&str; 3] = [
+    "vault.gpu.jobs.quote",
+    "vault.gpu.jobs.start",
+    "vault.gpu.jobs.status",
+];
+
+/// The fields of a quote's terms that one input fixes: every field but the
+/// job id, the quote's times and its digest.
+const QUOTE_TERMS: [&str; 13] = [
+    "offer",
+    "job_type",
+    "image",
+    "inputs",
+    "maximum_secs",
+    "overhead_secs",
+    "quantity",
+    "unit_cost",
+    "units",
+    "unit",
+    "catalog_revision",
+    "price_shape",
+    "list_cost",
+];
+
+/// The owner mints `agent` a Grant naming `read` and `verbs`; answers the
+/// Grant's id.
+async fn mint_grant(fixture: &Fixture, agent: &Agent, verbs: &[&str]) -> String {
+    let mut named = vec!["read"];
+    named.extend_from_slice(verbs);
+    let (status, minted) = as_owner(
+        fixture,
+        "vault.agents.grants.mint",
+        json!({
+            "agent": agent.principal.to_hex(),
+            "authority_scope": {
+                "worlds": {"kind": "all"},
+                "facets": {"kind": "all"},
+                "bands": {"kind": "all"},
+                "audience": {"kind": "all"},
+                "verbs": {"kind": "some", "values": named},
+                "sensitivity": {"kind": "at_most", "value": "restricted"},
+            },
+        }),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "owner mints the agent's Grant: {minted}"
+    );
+    minted["grant"]["grant_ref"]
+        .as_str()
+        .expect("the Grant's id")
+        .to_owned()
+}
+
+/// The owner sets `maximum_secs` beside `grant`.
+async fn allow(fixture: &Fixture, grant: &str, maximum_secs: u64) {
+    let (status, allowed) = as_owner(
+        fixture,
+        "vault.gpu.jobs.allow",
+        json!({"grant": grant, "maximum_secs": maximum_secs}),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "the owner sets the maximum: {allowed}"
+    );
+}
+
+/// One JSON-RPC request from `agent` to the tool-first MCP endpoint, on its
+/// own credential with a fresh holder binding: the reply.
+async fn mcp(fixture: &Fixture, agent: &Agent, id: u64, method: &str, params: Value) -> Value {
+    let request = Request::post(MCP_PATH)
+        .header("authorization", format!("Bearer {}", agent.token))
+        .header("x-oneiron-binding", agent_binding(fixture, agent))
+        .header("mcp-protocol-version", MCP_PROTOCOL_VERSION)
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}).to_string(),
+        ))
+        .expect("MCP request");
+    let response = fixture
+        .app
+        .clone()
+        .oneshot(request)
+        .await
+        .expect("MCP response");
+    let bytes = to_bytes(response.into_body(), 16 * 1024 * 1024)
+        .await
+        .expect("MCP response body");
+    serde_json::from_slice(&bytes)
+        .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&bytes).into_owned()))
+}
+
+/// `agent` opens a tool-first MCP session: `initialize`, then `tools/list`,
+/// which lists the three GPU job doors. Answers the schema version every
+/// call states.
+async fn mcp_session(fixture: &Fixture, agent: &Agent) -> Value {
+    let initialized = mcp(
+        fixture,
+        agent,
+        1,
+        "initialize",
+        json!({
+            "protocolVersion": MCP_PROTOCOL_VERSION,
+            "capabilities": {},
+            "clientInfo": {"name": "gpu-job-agent", "version": "1"},
+        }),
+    )
+    .await;
+    assert!(
+        initialized.get("error").is_none() && initialized.get("result").is_some(),
+        "the agent's credential opens a session: {initialized}"
+    );
+    let listed = mcp(fixture, agent, 2, "tools/list", json!({})).await;
+    let tools = listed["result"]["tools"]
+        .as_array()
+        .expect("tools/list answers its tools");
+    let names: BTreeSet<&str> = tools
+        .iter()
+        .filter_map(|tool| tool["name"].as_str())
+        .collect();
+    for name in GPU_JOB_TOOLS {
+        assert!(names.contains(name), "tools/list lists {name}: {names:?}");
+    }
+    tools
+        .iter()
+        .find(|tool| tool["name"] == "vault.gpu.jobs.quote")
+        .map(|tool| tool["inputSchema"]["properties"]["schema_version"]["const"].clone())
+        .expect("the quote tool's schema version")
+}
+
+/// `agent`'s `tools/call` of `tool`, with `spec` as the verb's input: the
+/// reply.
+async fn mcp_call(
+    fixture: &Fixture,
+    agent: &Agent,
+    id: u64,
+    version: &Value,
+    tool: &str,
+    spec: Value,
+) -> Value {
+    mcp(
+        fixture,
+        agent,
+        id,
+        "tools/call",
+        json!({
+            "name": tool,
+            "arguments": {
+                "schema_version": version,
+                "consent": {
+                    "policy_ref": "policy:agent-session",
+                    "purpose": "run a GPU job for the owner",
+                },
+                "arguments": {"spec": spec},
+            },
+        }),
+    )
+    .await
+}
+
+/// A tool call's typed result, asserted answered.
+fn mcp_output(answer: &Value) -> Value {
+    assert!(
+        answer.get("error").is_none() && answer["result"]["isError"] != json!(true),
+        "the call is answered: {answer}"
+    );
+    answer["result"]["structuredContent"]["output"].clone()
+}
+
+/// A tool call's refusal message, asserted refused.
+fn mcp_refusal(answer: &Value) -> String {
+    assert!(
+        answer.get("result").is_none(),
+        "the call is refused: {answer}"
+    );
+    answer["error"]["message"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned()
+}
+
+/// OM-MCP-HOST-DOORS: an agent's MCP client reaches the GPU job doors over
+/// tool-first MCP, the surface `oneiron mcp --surface tool-first` bridges for
+/// any MCP host that starts the bridge (the Claude Code plugin, agy). Its
+/// quote answers the same terms as the REST quote of the same input, its start
+/// on that quote runs the job within the maximum the owner set beside its
+/// Grant, and its status reads that job. The shipped bridge's half is
+/// `an_agent_quotes_a_gpu_job_through_the_stdio_bridge` in
+/// `tests/it/mcp_stdio_agent.rs`.
+#[test]
+fn an_agent_quotes_starts_and_reads_its_gpu_job_over_tool_first_mcp() {
+    run_on_engine_stack("gpu-job-agent-mcp", || async {
+        let fixture = setup(SECTION);
+        let agent = pair_agent(&fixture, "gpu-job-mcp-agent", [0x65; 32]).await;
+        let grant = mint_grant(&fixture, &agent, &GPU_JOB_TOOLS).await;
+        allow(&fixture, &grant, 150).await;
+        let version = mcp_session(&fixture, &agent).await;
+
+        let (status, over_rest) = as_agent(
+            &fixture,
+            &agent,
+            "vault.gpu.jobs.quote",
+            quote_input("h100-test", 100, None),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "the REST quote: {over_rest}");
+        let answer = mcp_call(
+            &fixture,
+            &agent,
+            3,
+            &version,
+            "vault.gpu.jobs.quote",
+            quote_input("h100-test", 100, None),
+        )
+        .await;
+        let terms = mcp_output(&answer);
+        assert_eq!(terms["quantity"].as_u64(), Some(120), "{terms}");
+        assert_eq!(terms["units"].as_u64(), Some(240), "{terms}");
+        for field in QUOTE_TERMS {
+            assert_eq!(
+                terms[field], over_rest[field],
+                "{field}: over MCP {terms}, over REST {over_rest}"
+            );
+        }
+        assert_eq!(fixture.gpu.called("create"), 0, "a quote creates nothing");
+
+        let answer = mcp_call(
+            &fixture,
+            &agent,
+            4,
+            &version,
+            "vault.gpu.jobs.start",
+            json!({"quote": terms, "resume": false}),
+        )
+        .await;
+        let started = mcp_output(&answer);
+        assert_eq!(started["state"].as_str(), Some("running"), "{started}");
+        let job = started["job"].as_str().expect("job id").to_owned();
+        assert_eq!(
+            fixture.gpu.called("create"),
+            1,
+            "the start created one chunk"
+        );
+
+        let answer = mcp_call(
+            &fixture,
+            &agent,
+            5,
+            &version,
+            "vault.gpu.jobs.status",
+            json!({"job": job}),
+        )
+        .await;
+        let read = mcp_output(&answer);
+        assert_eq!(read["job"].as_str(), Some(job.as_str()), "{read}");
+        assert_eq!(read["state"].as_str(), Some("running"), "{read}");
+        assert_eq!(read["maximum_secs"].as_u64(), Some(100), "{read}");
+        assert_eq!(read["quoted_units"].as_u64(), Some(240), "{read}");
+        let owners = owner_status(&fixture, &job).await;
+        assert_eq!(
+            owners["state"].as_str(),
+            Some("running"),
+            "the owner reads the same job: {owners}"
+        );
+    });
+}
+
+/// OM-MCP-HOST-DOORS: over tool-first MCP the GPU job doors refuse what they
+/// refuse over REST, and nothing is created: an agent whose Grant names no
+/// GPU verb cannot quote, one whose Grant names the quote alone cannot
+/// start, and a start over the maximum the owner set beside the Grant is
+/// refused by the start's own act.
+#[test]
+fn a_gpu_job_door_refuses_over_mcp_what_it_refuses_over_rest() {
+    run_on_engine_stack("gpu-job-agent-mcp-refusals", || async {
+        let fixture = setup(SECTION);
+        let by_grant = "an agent's own Grant that names it";
+
+        let reader = pair_agent(&fixture, "gpu-job-mcp-reader", [0x66; 32]).await;
+        mint_grant(&fixture, &reader, &[]).await;
+        let version = mcp_session(&fixture, &reader).await;
+        let answer = mcp_call(
+            &fixture,
+            &reader,
+            3,
+            &version,
+            "vault.gpu.jobs.quote",
+            quote_input("h100-test", 100, None),
+        )
+        .await;
+        let refused = mcp_refusal(&answer);
+        assert!(
+            refused.contains("vault.gpu.jobs.quote") && refused.contains(by_grant),
+            "a Grant with no GPU verb quotes nothing over MCP: {answer}"
+        );
+        let (status, body) = as_agent(
+            &fixture,
+            &reader,
+            "vault.gpu.jobs.quote",
+            quote_input("h100-test", 100, None),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "nor over REST: {body}");
+        assert!(refusal(&body).contains(by_grant), "{body}");
+
+        let quoter = pair_agent(&fixture, "gpu-job-mcp-quoter", [0x67; 32]).await;
+        mint_grant(&fixture, &quoter, &["vault.gpu.jobs.quote"]).await;
+        let version = mcp_session(&fixture, &quoter).await;
+        let answer = mcp_call(
+            &fixture,
+            &quoter,
+            3,
+            &version,
+            "vault.gpu.jobs.quote",
+            quote_input("h100-test", 100, None),
+        )
+        .await;
+        let terms = mcp_output(&answer);
+        let answer = mcp_call(
+            &fixture,
+            &quoter,
+            4,
+            &version,
+            "vault.gpu.jobs.start",
+            json!({"quote": terms, "resume": false}),
+        )
+        .await;
+        let refused = mcp_refusal(&answer);
+        assert!(
+            refused.contains("vault.gpu.jobs.start") && refused.contains(by_grant),
+            "a Grant that names only the quote starts nothing over MCP: {answer}"
+        );
+        let (status, body) = agent_start(&fixture, &quoter, 100).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "nor over REST: {body}");
+        assert!(refusal(&body).contains(by_grant), "{body}");
+
+        let capped = pair_agent(&fixture, "gpu-job-mcp-capped", [0x68; 32]).await;
+        let grant = mint_grant(
+            &fixture,
+            &capped,
+            &["vault.gpu.jobs.quote", "vault.gpu.jobs.start"],
+        )
+        .await;
+        allow(&fixture, &grant, 150).await;
+        let version = mcp_session(&fixture, &capped).await;
+        let answer = mcp_call(
+            &fixture,
+            &capped,
+            3,
+            &version,
+            "vault.gpu.jobs.quote",
+            quote_input("h100-test", 200, None),
+        )
+        .await;
+        let terms = mcp_output(&answer);
+        let answer = mcp_call(
+            &fixture,
+            &capped,
+            4,
+            &version,
+            "vault.gpu.jobs.start",
+            json!({"quote": terms, "resume": false}),
+        )
+        .await;
+        let refused = mcp_refusal(&answer);
+        assert!(
+            refused.contains("over the 150 seconds"),
+            "a start over the owner's maximum is refused over MCP: {answer}"
+        );
+        let (status, body) = agent_start(&fixture, &capped, 200).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "and over REST: {body}");
+        assert!(refusal(&body).contains("over the 150 seconds"), "{body}");
+
+        assert_eq!(
+            fixture.gpu.called("create"),
+            0,
+            "no refused start created anything"
+        );
+        assert!(
+            fixture.vault.gpu_jobs().expect("list the jobs").is_empty(),
+            "no job was written"
         );
     });
 }
