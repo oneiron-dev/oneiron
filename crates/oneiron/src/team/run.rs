@@ -354,9 +354,6 @@ pub(crate) fn record_led_team(
     if let Some(existing) = team_receipt(vault, &input.team_ref)? {
         return Ok(Ok(recorded(&existing, true)));
     }
-    if pattern == TeamPattern::Market && ledger.is_none() {
-        return Ok(Err("team_record_market_unbound"));
-    }
     if let DecidedBy::Vote { tally } = &mut decided_by
         && let Some(observed) =
             super::observations::observed_tally(vault, leader, &members, &input.team_ref)?
