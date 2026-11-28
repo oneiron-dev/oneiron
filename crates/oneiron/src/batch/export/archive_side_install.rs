@@ -493,6 +493,7 @@ pub(crate) fn decode_archived_row<K: SideKey, V, C: SideCodec<V>>(
             .map_err(|_| InvalidEncoding)?,
         owner: None,
         carriers: Vec::new(),
+        names: Vec::new(),
     };
     if retained_side_row_withholds_credential(&envelope) {
         return Err(Credential);

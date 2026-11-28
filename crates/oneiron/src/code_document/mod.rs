@@ -13,8 +13,8 @@ mod session;
 mod storage;
 mod types;
 mod verbs;
-pub(crate) use storage::archive_document_tables;
 pub(crate) use storage::checkpoint;
+pub(crate) use storage::{ArchivedDocumentTable, archive_document_row, archive_document_tables};
 
 pub use blame::CodeRangePair;
 pub(crate) use blame::code_document_line_writers_in_txn;

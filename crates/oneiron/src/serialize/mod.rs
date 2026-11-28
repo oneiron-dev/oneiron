@@ -58,6 +58,7 @@ mod export_value;
 mod okf_bundle;
 mod vault_archive;
 mod vault_document;
+mod written_receipts;
 pub use export_value::{ExportBody, ExportBodyFile, ExportValue};
 pub(crate) use export_value::{
     ExportSecrets, attaches_as_file_read, release_keeps_text, typed_rule_keeps_text,

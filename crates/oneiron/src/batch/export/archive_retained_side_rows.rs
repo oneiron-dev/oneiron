@@ -289,6 +289,7 @@ pub(crate) fn collect_retained_side_rows_in_txn(
                 value,
                 owner: None,
                 carriers: Vec::new(),
+                names: Vec::new(),
             });
         }
     }
@@ -322,6 +323,7 @@ pub(crate) fn collect_retained_side_rows_in_txn(
             value,
             owner: None,
             carriers: Vec::new(),
+            names: Vec::new(),
         });
     }
     rows.retain(|identity, _| {
@@ -330,6 +332,16 @@ pub(crate) fn collect_retained_side_rows_in_txn(
             .is_none_or(|room| !withheld_ledgers.contains(room))
     });
     Ok(rows.into_values().collect())
+}
+
+/// The records the collected retained row `row` is about, as its table's rule names them
+/// ([`RetainedSubjectRule::records`]); `None` when the row does not read as its envelope or its
+/// rule cannot name them. An Owner's copy judges each by the members' mailbox rule (fix list
+/// row 15416), as [`retained_row_withheld`] judges each by the egress door.
+pub(crate) fn retained_side_row_records(row: &SideRowBytes) -> Option<Vec<EntityId>> {
+    let envelope = RETAINED_SIDE_ROWS.decode_value(&row.value).ok()?;
+    retained_subject_rule(&envelope.source_table)?
+        .records(&envelope.source_key, &envelope.source_value)
 }
 
 /// The row count of every omitted table, sorted by table name: all 23, zero-row tables included,
