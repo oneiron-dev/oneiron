@@ -794,10 +794,7 @@ where
     Ok(keys.len())
 }
 
-/// [`sweep`] over the string-keyed `sync_state`. A thin index listing (`ri:w:{window}:{item}`)
-/// and its by-item twin (`ri:i:{item}:{window}`) take one decision, the listing key's, and go in
-/// the same pass, the twin on its listing's share of the budget. A twin is swept by itself only
-/// once its listing is gone.
+/// [`sweep`] over the string-keyed `sync_state`.
 fn sweep_sync_state<F>(
     store: &Store,
     txn: &mut RwTxn<'_>,
@@ -807,34 +804,23 @@ fn sweep_sync_state<F>(
 where
     F: FnMut(&str) -> bool,
 {
-    use crate::sync::residence::{index_by_item_key_of_listing, listing_key_of_index_by_item};
-
     if budget.spent {
         return Ok(0);
     }
-    let rtxn: &RoTxn<'_> = txn;
     let mut keys = Vec::new();
-    for row in store.sync_state.iter(rtxn)? {
+    for row in store.sync_state.iter(txn)? {
         let (key, _) = row?;
-        let listing = listing_key_of_index_by_item(&key[..]);
-        if let Some(listing) = &listing
-            && store.sync_state.get(rtxn, listing)?.is_some()
-        {
-            continue;
-        }
-        if doomed(listing.as_deref().unwrap_or(&key[..])) {
+        if doomed(&key[..]) {
             if !budget.take() {
                 break;
             }
-            keys.extend(index_by_item_key_of_listing(&key[..]));
             keys.push(key.into_owned());
         }
     }
-    let mut removed = 0;
     for key in &keys {
-        removed += usize::from(store.sync_state.delete(txn, key)?);
+        store.sync_state.delete(txn, key)?;
     }
-    Ok(removed)
+    Ok(keys.len())
 }
 
 /// The setting tables, whose rows a leave keeps one by one: a row of a key that holds a choice
