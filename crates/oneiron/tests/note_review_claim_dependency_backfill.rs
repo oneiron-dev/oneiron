@@ -35,7 +35,7 @@ impl Fixture {
         let dir = tempfile::tempdir().expect("temporary vault directory");
         let vault = Vault::open(dir.path(), VaultConfig::device()).expect("open the vault");
         let keystore = Arc::new(oneiron_keystore::MemoryKeystore::new());
-        vault.install_device_keystore(Arc::clone(&keystore));
+        vault.install_device_keystore(Arc::<oneiron_keystore::MemoryKeystore>::clone(&keystore));
         vault
             .prepare_install_signing()
             .expect("install signing keys");
@@ -93,7 +93,7 @@ impl Fixture {
         } = self;
         drop(vault);
         let vault = Vault::open(dir.path(), VaultConfig::device()).expect("reopen the vault");
-        vault.install_device_keystore(Arc::clone(&keystore));
+        vault.install_device_keystore(Arc::<oneiron_keystore::MemoryKeystore>::clone(&keystore));
         vault
             .prepare_install_signing()
             .expect("install signing keys");
