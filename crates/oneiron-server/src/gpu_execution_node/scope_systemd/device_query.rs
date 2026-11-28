@@ -568,7 +568,7 @@ fn time_left(deadline: Instant) -> std::io::Result<Duration> {
 }
 
 /// Exactly `length` bytes from `stream`, all by `deadline`.
-fn read_exactly(
+pub(super) fn read_exactly(
     stream: &mut UnixStream,
     length: usize,
     deadline: Instant,

@@ -29,7 +29,9 @@ use super::safe_fs::{
 };
 use super::step::{RECORD_MAX_BYTES, StepArgs, StepContext};
 use super::systemd_unit::{SYSTEMCTL_TIMEOUT, run_tool, show};
-use super::unit_file::{control_service_renews, installed_runtime_max_secs};
+use super::unit_file::{
+    control_service_renews, effective_filter_refusal, installed_runtime_max_secs,
+};
 use super::{
     AWAKE_UNIT_PREFIX, CUTOFF_UNIT_PREFIX, PREPARED_FILE_NAME, UNIT_MEMORY_FLOOR_MIB,
     UNIT_TEMPLATE_PATH,
@@ -187,6 +189,7 @@ fn prepare(context: &StepContext, record: &mut PreparedRecord) -> Result<(), Str
     }
     let unit = context.unit();
     effective_stop_grace_matches(&unit, settings.stop_grace_secs)?;
+    effective_filter_matches(&unit)?;
     let protected = installed_protected_paths(&unit_text, &settings.state_dir);
 
     let mut allowed = Vec::new();
@@ -372,6 +375,22 @@ fn effective_stop_grace_matches(unit: &str, stop_grace_secs: u64) -> Result<(), 
         _ => Err(format!(
             "stop_grace_not_unit_timeout: the unit's TimeoutStopSec is {text:?} and the node file's stop grace {stop_grace_secs} s: run `oneiron execution-node install` again"
         )),
+    }
+}
+
+/// The unit's effective system call filter (its file and every drop-in)
+/// refuses the calls that take disk with no write (review r13 R13-06 of
+/// #10512): a template `install` wrote before the disk check has none, and
+/// a drop-in may have emptied it.
+fn effective_filter_matches(unit: &str) -> Result<(), String> {
+    let found = show(unit, &["SystemCallFilter"])
+        .map_err(|why| format!("system_call_filter_unknown: {why}"))?;
+    let filter = found.get("SystemCallFilter").map_or("", String::as_str);
+    match effective_filter_refusal(filter) {
+        Some(why) => Err(format!(
+            "unit_template_old: {why}: run `oneiron execution-node install` again"
+        )),
+        None => Ok(()),
     }
 }
 

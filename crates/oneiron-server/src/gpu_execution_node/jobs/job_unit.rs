@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 
 use oneiron::job_workload::{BoundRequirement, DeviceLease, ScopeBound, ScopeCapabilities};
 
+use super::payload_usage::{PayloadUsage, PayloadWalkBounds};
 use crate::gpu_execution_node::wire::{ScopeClass, ScopeFacts};
 
 /// The name every job unit instance starts with.
@@ -272,6 +273,35 @@ pub trait JobUnit: Send + Sync {
             unit: unit.unit_name(),
             reason: format!("signal {signal}: this launch scope delivers no signal"),
         })
+    }
+
+    /// What the key's payload holds on disk now (design 7.9): the disk
+    /// check compares it with the key's disk request every
+    /// `disk_check_secs`, and the measure may stop once it has counted more
+    /// than `stop_past` bytes. A payload past `bounds` is unmeasurable. By
+    /// default the engine walks `payload_dir` itself
+    /// ([`super::payload_usage::measure_payload_within`]); a scope whose
+    /// jobs can make files the engine's account cannot read measures it as
+    /// root.
+    ///
+    /// # Errors
+    ///
+    /// [`JobUnitError`] when the payload was not measured this time (an
+    /// entry the walk could not read, or a walk out of time); the next check
+    /// measures again.
+    fn payload_usage(
+        &self,
+        unit: &JobKeyId,
+        payload_dir: &Path,
+        stop_past: u64,
+        bounds: &PayloadWalkBounds,
+    ) -> Result<PayloadUsage, JobUnitError> {
+        super::payload_usage::measure_payload_within(payload_dir, stop_past, bounds).map_err(
+            |error| JobUnitError {
+                unit: unit.unit_name(),
+                reason: format!("payload {}: {error}", payload_dir.display()),
+            },
+        )
     }
 }
 

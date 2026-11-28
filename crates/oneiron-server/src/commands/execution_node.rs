@@ -92,7 +92,7 @@ pub fn execution_node(command: ExecutionNodeCommand) -> anyhow::Result<()> {
         ExecutionNodeCommand::Install(args) => install(&args),
         ExecutionNodeCommand::UnitName(args) => unit_name(&args.key),
         ExecutionNodeCommand::UnitControl(args) => {
-            unit_control(&args.verb, &args.key, args.signal.as_deref())
+            unit_control(&args.verb, &args.key, args.argument.as_deref())
         }
     }
 }
@@ -444,21 +444,40 @@ fn unit_name(key: &str) -> anyhow::Result<()> {
 }
 
 /// `execution-node unit-control`: the engine's own start or stop of a key's
-/// job unit, or a checkpoint notice to it, through the job control socket.
+/// job unit, a checkpoint notice to it, or root's measure of its payload
+/// (printed as `bytes <n>`, `past <n>` or `unmeasurable <why>`), through the
+/// job control socket.
 #[cfg(target_os = "linux")]
-fn unit_control(verb: &str, key: &str, signal: Option<&str>) -> anyhow::Result<()> {
+fn unit_control(verb: &str, key: &str, argument: Option<&str>) -> anyhow::Result<()> {
+    use crate::gpu_execution_node::jobs::PayloadWalkBounds;
     use crate::gpu_execution_node::scope_systemd::control::{self, ControlVerb};
-    let verb = ControlVerb::from_words(verb, signal).map_err(|why| {
-        anyhow::anyhow!("unit-control: start <key>, stop <key> or signal <key> <name>: {why}")
+    // `usage` at the box walks within the default bounds.
+    let defaults = PayloadWalkBounds::default();
+    let usage_argument =
+        argument.map(|bytes| format!("{bytes} {} {}", defaults.entries_max, defaults.depth_max));
+    let argument = if verb == "usage" {
+        usage_argument.as_deref()
+    } else {
+        argument
+    };
+    let verb = ControlVerb::from_words(verb, argument).map_err(|why| {
+        anyhow::anyhow!(
+            "unit-control: start <key>, stop <key>, signal <key> <name> or usage <key> <bytes>: {why}"
+        )
     })?;
     let id = crate::gpu_execution_node::jobs::JobKeyId::for_key(key);
-    control::request(verb, &id)
-        .map_err(|why| anyhow::anyhow!("unit-control {} {id}: {why}", verb.word()))
+    let fail = |why: String| anyhow::anyhow!("unit-control {} {id}: {why}", verb.word());
+    if let ControlVerb::Usage { stop_past, .. } = verb {
+        let usage = control::request_usage(&id, stop_past, &defaults).map_err(fail)?;
+        writeln!(std::io::stdout().lock(), "{}", usage.render())?;
+        return Ok(());
+    }
+    control::request(verb, &id).map_err(fail)
 }
 
 /// Job units exist on Linux only.
 #[cfg(not(target_os = "linux"))]
-fn unit_control(_verb: &str, _key: &str, _signal: Option<&str>) -> anyhow::Result<()> {
+fn unit_control(_verb: &str, _key: &str, _argument: Option<&str>) -> anyhow::Result<()> {
     anyhow::bail!("unit-control: the job unit needs Linux with systemd (pass 33, EM-4)")
 }
 

@@ -10,7 +10,8 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use super::super::jobs::{
-    JobKeyId, JobUnit, JobUnitError, JobUnitPhase, JobUnitStatus, RenewRefusal,
+    JobKeyId, JobUnit, JobUnitError, JobUnitPhase, JobUnitStatus, PayloadUsage, PayloadWalkBounds,
+    RenewRefusal,
 };
 use super::super::wire::ScopeFacts;
 use super::capabilities;
@@ -302,6 +303,21 @@ impl JobUnit for SystemdJobUnit {
         let verb = ControlVerb::from_words("signal", Some(signal))
             .map_err(|reason| Self::error(unit, format!("signal {signal}: {reason}")))?;
         control::request(verb, unit).map_err(|reason| Self::error(unit, reason))
+    }
+
+    /// The disk check's measure, through the control socket's `usage`
+    /// verb: root walks the unit's own bind source of the payload, so a
+    /// directory the job made private to its uid counts too (FIX
+    /// EXEC-NODE-DISK-CHECK-UNBUILT). `payload_dir` is the engine's path of
+    /// it, which root does not use.
+    fn payload_usage(
+        &self,
+        unit: &JobKeyId,
+        _payload_dir: &Path,
+        stop_past: u64,
+        bounds: &PayloadWalkBounds,
+    ) -> Result<PayloadUsage, JobUnitError> {
+        control::request_usage(unit, stop_past, bounds).map_err(|reason| Self::error(unit, reason))
     }
 
     fn status(&self, unit: &JobKeyId) -> Result<JobUnitStatus, JobUnitError> {
