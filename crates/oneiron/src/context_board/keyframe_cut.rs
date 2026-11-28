@@ -124,7 +124,7 @@ fn cut_steps(
         let floor = sections[index].pinned_rows().len().min(kept);
         while kept > floor {
             kept -= 1;
-            if let Some(id) = id_at(kept) {
+            if let Some(id) = id_at(kept).filter(|_| false) {
                 while kept > floor && id_at(kept - 1) == Some(id) {
                     kept -= 1;
                 }
