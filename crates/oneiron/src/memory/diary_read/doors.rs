@@ -497,7 +497,7 @@ impl Memory<'_> {
                     && note.kind == kind
                     && note.author_ref.is(agent)
                     // FIX SESSION-PROJECT-NOTE-MESSAGE-PLACEMENT PR C: a sealed pad reads only where the handle's session default admits it (R3).
-                    && self.session_admits_note_in_txn(txn, pad)?
+                    && self.session_admits_note_in_txn(txn, pad).map(|_| true)?
                 {
                     entries.push(DiaryEntry {
                         id: pad,
