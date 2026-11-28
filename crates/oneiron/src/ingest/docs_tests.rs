@@ -1123,6 +1123,31 @@ fn docs_deep_claims_register_source_dependencies_and_refuse_dangling_chunks() ->
     Ok(())
 }
 
+#[test]
+fn docs_deep_claim_names_its_chunk_and_root_as_replicated_sources() -> Result<()> {
+    let (_dir, vault, owner, _doc, _ceiling, receipt) = deep_fixture()?;
+    let asset = EntityId::from_hex(&receipt.asset_refs[0])?;
+    let chunk = EntityId::from_hex(&receipt.chunk_refs[1])?;
+    let deep = vault.deep_ingest_docs_asset(
+        &owner,
+        asset,
+        DocsDeepTrigger::Explicit,
+        &Ner(std::sync::atomic::AtomicUsize::new(0)),
+        3,
+    )?;
+    let claim = EntityId::from_hex(&deep.claim_refs[0])?;
+    let raw = vault.get_raw(&claim)?.expect("deep CLAIM row");
+    let body =
+        crate::claim::decode_claim_body(&raw[crate::batch::ENTITY_METADATA_HEADER_LEN..], true)
+            .expect("deep CLAIM body decodes");
+    // A peer's replay hook reads the two sources this writer bound (PR2-DEEP-DOC-ROOT-ORDER = A).
+    assert_eq!(
+        crate::dreamer_consolidation::replicated_sources::cited_sources(&body)?,
+        std::collections::BTreeSet::from([chunk, asset]),
+    );
+    Ok(())
+}
+
 /// Security pack 2, F14 H405: the owner's bulk import consent approved reading
 /// and deriving from this source revision. It never saw the extractor's
 /// output, so under the shipped policy (no `Auto` permit for imported claims)

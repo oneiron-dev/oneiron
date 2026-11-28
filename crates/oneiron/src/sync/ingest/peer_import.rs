@@ -124,8 +124,7 @@ fn judged(blob: &[u8]) -> bool {
             || (header.entity_type == crate::registry::ENTITY_TYPE_CLAIM
                 && crate::claim::decode_claim_body(&blob[ENTITY_METADATA_HEADER_LEN..], true)
                     .is_ok_and(|body| {
-                        crate::dreamer_consolidation::replicated_sources::locator_evidence(&body)
-                            .is_some()
+                        crate::dreamer_consolidation::replicated_sources::cites_sources(&body)
                     }))
     })
 }
