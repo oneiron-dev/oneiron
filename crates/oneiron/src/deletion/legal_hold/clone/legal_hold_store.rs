@@ -144,7 +144,7 @@ fn is_file(path: &Path) -> Result<bool> {
                 io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
             ) =>
         {
-            Ok(false)
+            Ok(true)
         }
         Err(error) => Err(error.into()),
     }
