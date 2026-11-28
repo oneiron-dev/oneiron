@@ -294,7 +294,7 @@ Every top-level module of every mapped crate: its purpose, its entry file (its d
 | — | `crates/oneiron/src/pipeline/mod.rs` | L | — |
 | Policy classification over two planes | `crates/oneiron/src/policy_model/mod.rs` | m | — |
 | The app's policy actions as host verbs (OF-181) | `crates/oneiron/src/policy_setting_doors.rs` | m | OF-181 |
-| Transaction-composable storage ports | `crates/oneiron/src/ports/mod.rs` | m | — |
+| Transaction-composable storage ports | `crates/oneiron/src/ports/mod.rs` | L | — |
 | — | `crates/oneiron/src/ppr/mod.rs` | m | — |
 | Deterministic community projection, cache, and bounded retrieval prior | `crates/oneiron/src/ppr_community/mod.rs` | m | — |
 | — | `crates/oneiron/src/prompt.rs` | m | — |

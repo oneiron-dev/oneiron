@@ -105,7 +105,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | ARCH-0023b | `crates/oneiron/src/ports/document_rows.rs` | s |
 | ARCH-0023b | `crates/oneiron/src/sync/client/mod.rs` | s |
 | ARCH-0023b | `crates/oneiron/src/sync/client/residence/tombstones.rs` | m |
-| ARCH-0023b | `crates/oneiron/src/sync/connection/home_search.rs` | s |
+| ARCH-0023b | `crates/oneiron/src/sync/connection/home_search.rs` | m |
 | ARCH-0023b | `crates/oneiron/src/sync/connection/mod.rs` | L |
 | ARCH-0023b | `crates/oneiron/src/sync/connection/peer_session.rs` | m |
 | ARCH-0023b | `crates/oneiron/src/sync/connection/predicted.rs` | m |
@@ -1228,6 +1228,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | ARCH-0079 | `crates/oneiron/src/agent_dispatch/resident/message_wake.rs` | m |
 | ARCH-0079 | `crates/oneiron/src/agent_dispatch/spend_lease.rs` | L |
 | ARCH-0079 | `crates/oneiron/src/agent_dispatch/task_type_tree.rs` | m |
+| ARCH-0079 | `crates/oneiron/src/agent_dispatch/task_type_tree/promote.rs` | s |
 | ARCH-0079 | `crates/oneiron/src/agent_dispatch/team_shape.rs` | s |
 | ARCH-0079 | `crates/oneiron/src/attempt_queue/budget_hold.rs` | s |
 | ARCH-0079 | `crates/oneiron/src/autoreason_campaign/archive/axes_job.rs` | m |
@@ -1257,6 +1258,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | ARCH-0079 | `crates/oneiron/src/learning/mod.rs` | s |
 | ARCH-0079 | `crates/oneiron/src/learning_setting_choice.rs` | m |
 | ARCH-0079 | `crates/oneiron/src/memory/say.rs` | s |
+| ARCH-0079 | `crates/oneiron/src/skill_hub/owner_tree_pin.rs` | s |
 | ARCH-0079 | `crates/oneiron/src/skill_optimize/judge_swap.rs` | m |
 | ARCH-0079 | `crates/oneiron/src/task_type/mod.rs` | L |
 | ARCH-0079 | `crates/oneiron/src/task_type/split.rs` | s |
@@ -1265,6 +1267,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | ARCH-0079 | `crates/oneiron/src/task_verb/highway_report.rs` | m |
 | ARCH-0079 | `crates/oneiron/src/task_verb/lifecycle_receipt.rs` | m |
 | ARCH-0079 | `crates/oneiron/src/task_verb/subproject.rs` | s |
+| ARCH-0079 | `crates/oneiron/src/team/doors.rs` | m |
 | ARCH-0079 | `crates/oneiron/src/team/market.rs` | m |
 | ARCH-0079 | `crates/oneiron/src/team/mod.rs` | s |
 | ARCH-0079 | `crates/oneiron/src/team/owner_outcome.rs` | s |
@@ -2534,7 +2537,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | OF-534 | `crates/oneiron/src/store/local_replica.rs` | m |
 | OF-534 | `crates/oneiron/src/store/turn_missing.rs` | s |
 | OF-534 | `crates/oneiron/src/sync/connection/directives.rs` | m |
-| OF-534 | `crates/oneiron/src/sync/connection/home_search.rs` | s |
+| OF-534 | `crates/oneiron/src/sync/connection/home_search.rs` | m |
 | OF-534 | `crates/oneiron/src/sync/home_proof.rs` | s |
 | OF-534 | `crates/oneiron/src/sync/ingest/promotion.rs` | s |
 | OF-534 | `crates/oneiron/src/sync/residence/admission.rs` | m |

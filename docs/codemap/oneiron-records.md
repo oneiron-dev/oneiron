@@ -838,7 +838,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/training_swap_ask.rs` | src | s | 1 enum | SwapAskState | Moved from `crates/oneiron/src/task_verb/training_swap_ask.rs` (lib split R2: record types below the lib) |
 | `src/task_verb/world_privacy_wait.rs` | src | s | 1 enum | WorldPrivacyWaitStatus | Moved from `crates/oneiron/src/task_verb/world_privacy_wait.rs` (lib split R2: record types below the lib) |
 | `src/team/market.rs` | src | s | 5 struct · 3 enum | LedgerEntry, LedgerKind, MarketMode, MarketResult, Participant, RefereeKind, SignedReferee, Submission | Moved from `crates/oneiron/src/team/market.rs` (lib split R2: record types below the lib) |
-| `src/team/mod.rs` | src | s | 8 mod · 49 re-export | — | — |
+| `src/team/mod.rs` | src | s | 8 mod · 51 re-export | — | — |
 | `src/team/owner_outcome.rs` | src | s | 1 enum | DeliverableReview | Moved from `crates/oneiron/src/team/owner_outcome.rs` (lib split R2: record types below the lib) |
 | `src/team/pattern.rs` | src | s | 1 struct · 1 fn · 3 re-export | PatternSkill | Moved from `crates/oneiron/src/team/pattern.rs` (lib split R2: record types below the lib) |
 | `src/team/receipt.rs` | src | s | 2 struct · 1 enum · 3 fn · 1 const · 1 re-export | Coverage, DecidedBy, TeamShape | Moved from `crates/oneiron/src/team/receipt.rs` (lib split R2: record types below the lib) |

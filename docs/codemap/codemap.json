@@ -1369,7 +1369,7 @@
      "path": "src/agent_dispatch/mod.rs",
      "purpose": "`dispatch(agent)` — AGENT-3 (ONE-1445, OF-334) over the OF-193 durable runner substrate",
      "surface": {
-      "crate-vis": 38,
+      "crate-vis": 39,
       "mod": 2,
       "re-export": 34
      }
@@ -2020,10 +2020,30 @@
      "path": "src/agent_dispatch/task_type_tree.rs",
      "purpose": "The live task-type tree (ARCH-0079 #task-type, OF-541): data inside the team-shape skill, so it forks and…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 8,
       "fn": 5,
       "re-export": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/agent_dispatch/task_type_tree/package_edit.rs",
+     "purpose": "A team-shape package with its task-type tree replaced: the head's files, the tree file swapped and…",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/agent_dispatch/task_type_tree/promote.rs",
+     "purpose": "The owner's promote of a task-type tree onto the vault team-shape head (`vault.task_types.promote`…",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -8598,7 +8618,7 @@
      "path": "src/batch/builder/apply.rs",
      "purpose": "Caller-transaction terminal: stages the batch into a transaction the caller owns and commits",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 1
      }
     },
@@ -33277,7 +33297,7 @@
      "path": "src/dreamer_consolidation/mod.rs",
      "purpose": "Dreamer consolidation algorithm + reflection gap scan (ONE-1289, DREAM-002; DESIGN-PIN-20260710 Part A)",
      "surface": {
-      "crate-vis": 56,
+      "crate-vis": 57,
       "mod": 6,
       "re-export": 27
      }
@@ -33617,6 +33637,16 @@
      "notable": [],
      "path": "src/dreamer_consolidation/relation_extraction.rs",
      "purpose": "JointIE inside a consolidation child (ARCH-0026 `#wake-model`: \"Inside the child JointIE extracts claims\"…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/replicated_sources.rs",
+     "purpose": "Rebuilds the local dependency registrations of an own-vault CLAIM put",
      "surface": {
       "crate-vis": 5
      }
@@ -37355,7 +37385,7 @@
      "purpose": "Scheduled curator and harness-evaluation facets on one gated Dreamer authority, and the Coach's nightly…",
      "surface": {
       "const": 3,
-      "crate-vis": 26,
+      "crate-vis": 27,
       "fn": 1,
       "mod": 29,
       "re-export": 14
@@ -37660,7 +37690,7 @@
      "path": "src/dreamer_runner/maintenance/type_tree_gate.rs",
      "purpose": "The held-out gate on a team-shape tree revision (ARCH-0079 #task-type, OF-420): \"revised by the loop from…",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -56113,10 +56143,10 @@
      "path": "src/llm/seat.rs",
      "purpose": "Seat-birth model routing above the raw LLM call seam",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "enum": 1,
       "fn": 16,
-      "re-export": 7,
+      "re-export": 8,
       "struct": 4
      }
     },
@@ -56134,6 +56164,21 @@
       "re-export": 1,
       "struct": 1,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SeatDescriptionWrite",
+      "SeatDescriptionsRead",
+      "SeatDescriptionsView"
+     ],
+     "path": "src/llm/seat/description_doors.rs",
+     "purpose": "The owner's seat description doors (`vault.models.descriptions.set` and `.read`; FIX…",
+     "surface": {
+      "fn": 4,
+      "struct": 3
      }
     },
     {
@@ -70608,7 +70653,7 @@
      "path": "src/ports/dependency_registration.rs",
      "purpose": "Ownership of one current dependency-index registration",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -70677,13 +70722,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/ports/integrity.rs",
      "purpose": "Source-prefix dependency index and deletion invalidation in the caller's transaction",
      "surface": {
-      "crate-vis": 33
+      "crate-vis": 34
      }
     },
     {
@@ -70887,7 +70932,7 @@
      "path": "src/ports/mod.rs",
      "purpose": "Transaction-composable storage ports",
      "surface": {
-      "crate-vis": 28,
+      "crate-vis": 30,
       "re-export": 9
      }
     },
@@ -81896,7 +81941,7 @@
      "path": "src/skill_hub/mod.rs",
      "purpose": "Skill-hub records, provenance aliases, adapter contracts, and update gates",
      "surface": {
-      "crate-vis": 24,
+      "crate-vis": 25,
       "mod": 2,
       "re-export": 24
      }
@@ -81929,6 +81974,16 @@
      "path": "src/skill_hub/osv/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/skill_hub/owner_tree_pin.rs",
+     "purpose": "The owner's pinned team-shape revisions (ARCH-0079 #seed-pin; lead COORD-E2E-TREE-PIN = A, 24 Nov 2026…",
+     "surface": {
+      "crate-vis": 5
+     }
     },
     {
      "bucket": "m",
@@ -83298,7 +83353,7 @@
      "purpose": "SKILL-OPT-2 (ONE-1449, ARCH-0026 dreamer-v2 / ARCH-0053 §6): the held-out score gate that arms `candidate →…",
      "surface": {
       "const": 4,
-      "crate-vis": 17,
+      "crate-vis": 18,
       "re-export": 13
      }
     },
@@ -83708,7 +83763,7 @@
      "path": "src/skill_optimize/mod.rs",
      "purpose": "SKILL-OPT-1 (ONE-1448, ARCH-0026 dreamer-v2 \"Optimize skills\"): the Coach's job on the Dreamer's runner that…",
      "surface": {
-      "crate-vis": 26,
+      "crate-vis": 27,
       "mod": 3,
       "re-export": 21
      }
@@ -90412,7 +90467,7 @@
      "path": "src/sync/client/mod.rs",
      "purpose": "Client-side sync over WebSocket",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 15,
       "re-export": 9
      }
     },
@@ -90456,7 +90511,7 @@
      "path": "src/sync/client/residence.rs",
      "purpose": "Bounded on-demand home reads on an independent short-lived authenticated socket",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "re-export": 6
      }
     },
@@ -90882,7 +90937,7 @@
      "path": "src/sync/client/residence/tombstones.rs",
      "purpose": "A followed world's tombstone id set, taken from the home on each connect…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -91128,7 +91183,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "DeviceResidence",
@@ -91137,7 +91192,7 @@
      "path": "src/sync/connection/home_search.rs",
      "purpose": "The home search this device's query doors reach through its own sync connection (OF-534): a search an opened…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 8,
       "enum": 1,
       "fn": 6,
       "struct": 1
@@ -91921,6 +91976,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/ingest/claim_source_tombstones.rs",
+     "purpose": "Which carrier tombstones an own-vault CLAIM put may take as a cited source's deletion",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [],
@@ -92018,7 +92083,7 @@
      "path": "src/sync/ingest/mod.rs",
      "purpose": "One ingest entry per replicated container: every entities-map value and every tombstone takes the same…",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 21,
       "re-export": 1
      }
     },
@@ -92783,7 +92848,7 @@
      "purpose": "Grant-checked, per-item residence projections over a window document",
      "surface": {
       "const": 2,
-      "crate-vis": 31,
+      "crate-vis": 34,
       "fn": 9,
       "re-export": 36
      }
@@ -93197,7 +93262,7 @@
      "path": "src/sync/residence/index_by_item.rs",
      "purpose": "The by-item twin of the thin residence index: one `ri:i:{item}:{window}` row per `ri:w:{window}:{item}`…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 14
      }
     },
     {
@@ -93393,6 +93458,16 @@
      "purpose": "Resolved recall scope and signing transcript, defined by the recall layer",
      "surface": {
       "re-export": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/residence/resolved_mode.rs",
+     "purpose": "The residence mode this machine's own sync connection last resolved (sync all or sync what it opened): one…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -94076,6 +94151,32 @@
      "path": "src/sync/selector/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "src/sync/selector/tests/claim_source_listing.rs",
+     "purpose": "Replicated CLAIM against thin-index-listed MESSAGE sources (O2/O2b/O3, M1)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/sync/selector/tests/claim_source_opened_mode.rs",
+     "purpose": "The device-local resolved residence mode row (M2/M2b/M3/M4)",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "src/sync/selector/tests/claim_source_registration.rs",
+     "purpose": "Replicated promotion CLAIM source registration (PR1): selector unit tests",
+     "surface": {
+      "crate-vis": 10
+     }
     },
     {
      "bucket": "s",
@@ -97515,10 +97616,10 @@
       "TeamReceiptView"
      ],
      "path": "src/team/doors.rs",
-     "purpose": "The owner's task-type tree doors (DOOR-111, OF-541): store an authored tree on an open team-shape fork, and…",
+     "purpose": "The owner's task-type tree doors (DOOR-111, OF-541): store an authored tree on an open team-shape fork, put…",
      "surface": {
       "const": 1,
-      "fn": 3,
+      "fn": 4,
       "re-export": 3,
       "struct": 7
      }
@@ -100631,7 +100732,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 415,
+      "mod": 416,
       "re-export": 3
      }
     },
@@ -102238,6 +102339,16 @@
      "purpose": "Door for `tests/run_row_door_scoped_reads_tasks.rs` (FIX [RUN-ROW-DOOR-TESTS-ABSENT]): the reason body a…",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/team_tree_promote.rs",
+     "purpose": "Doors for `tests/task_types_promote.rs` (lead COORD-E2E-TREE-PIN = A, 24 Nov 2026 22:45): the Coach tree…",
+     "surface": {
+      "fn": 2
      }
     },
     {
@@ -122795,6 +122906,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/task_types_promote.rs",
+     "purpose": "The owner's pinned task-type tree goes in force at once (lead COORD-E2E-TREE-PIN = A, 24 Nov 2026 22:45…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/tasks_compose_brief_from_one_liner.rs",
      "purpose": "A task brief composed by a local model from a one-liner plus lens context (census L8-07; canon…",
      "surface": {}
@@ -123924,7 +124043,7 @@
     },
     "agent_dispatch": {
      "entry": "crates/oneiron/src/agent_dispatch/mod.rs",
-     "files": 111,
+     "files": 113,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -124628,7 +124747,7 @@
     },
     "dreamer_consolidation": {
      "entry": "crates/oneiron/src/dreamer_consolidation/mod.rs",
-     "files": 215,
+     "files": 216,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -125244,7 +125363,7 @@
     },
     "llm": {
      "entry": "crates/oneiron/src/llm/mod.rs",
-     "files": 202,
+     "files": 203,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -125564,7 +125683,7 @@
      "entry": "crates/oneiron/src/ports/mod.rs",
      "files": 56,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Transaction-composable storage ports",
      "spec_ids": []
@@ -125998,7 +126117,7 @@
     },
     "skill_hub": {
      "entry": "crates/oneiron/src/skill_hub/mod.rs",
-     "files": 113,
+     "files": 114,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -126125,7 +126244,7 @@
     },
     "sync": {
      "entry": "crates/oneiron/src/sync/mod.rs",
-     "files": 457,
+     "files": 462,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -126210,7 +126329,7 @@
     },
     "test_doors": {
      "entry": "crates/oneiron/src/test_doors/mod.rs",
-     "files": 428,
+     "files": 429,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -126475,10 +126594,10 @@
      "spec_ids": []
     }
    },
-   "over_bar": 276,
+   "over_bar": 277,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 8681,
-   "test_files": 2378
+   "source_files": 8689,
+   "test_files": 2382
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -160104,7 +160223,7 @@
      "purpose": "—",
      "surface": {
       "mod": 8,
-      "re-export": 49
+      "re-export": 51
      }
     },
     {
@@ -169310,7 +169429,7 @@
      "path": "src/api/facade/coordination_doors.rs",
      "purpose": "The owner's task-type tree doors (DOOR-111), with the owner's own proof: store an authored tree on an open…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -170320,7 +170439,7 @@
      "path": "src/api/facade/model_manifest_doors.rs",
      "purpose": "Typed owner doors over the existing manifest, route and provider seams",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 8
      }
     },
     {
@@ -175046,7 +175165,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "test",
      "notable": [],
      "path": "src/api/tests/mcp_quickjs.rs",
@@ -194436,7 +194555,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "tests/vault_models_owner_doors.rs",
@@ -194609,6 +194728,14 @@
      "notable": [],
      "path": "tests/vault_support_grants_doors.rs",
      "purpose": "Public-door promise tests for the `vault.support_grants` family (ruling L4-23 = A: each test proves a…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/vault_task_types_promote.rs",
+     "purpose": "`vault.task_types.promote` over HTTP (lead COORD-E2E-TREE-PIN = A, 24 Nov 2026 22:45; ARCH-0079 #seed-pin)…",
      "surface": {}
     },
     {
@@ -195763,7 +195890,7 @@
    "over_bar": 73,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 2235,
-   "test_files": 638
+   "test_files": 639
   },
   "oneiron-setting-contract": {
    "files": [
@@ -221764,6 +221891,8 @@
       "TaskTypeNodeView",
       "TaskTypeTreePin",
       "TaskTypeTreePinReceipt",
+      "TaskTypeTreePromote",
+      "TaskTypeTreePromoteReceipt",
       "TaskTypeTreeRead",
       "TaskTypeTreeReadReply",
       "TaskTypeTreeView",
@@ -221773,7 +221902,7 @@
      "purpose": "Moved from `crates/oneiron/src/team/doors.rs` (lib split W1: wire types below the lib)",
      "surface": {
       "enum": 2,
-      "struct": 17
+      "struct": 19
      }
     },
     {
@@ -221784,7 +221913,7 @@
      "purpose": "—",
      "surface": {
       "mod": 5,
-      "re-export": 31
+      "re-export": 33
      }
     },
     {
