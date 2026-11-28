@@ -22,11 +22,12 @@ use oneiron::job_workload::{
 };
 
 use super::end::end_of;
-use super::job_unit::{RENEW_BEFORE_STOP_NS, RenewRefusal, read_end_record};
+use super::job_unit::{RenewRefusal, read_end_record};
 use super::journal::{EndingCause, JobJournal, JournalEvent, JournalWriteError, NodeKey};
 use super::node_parts::{GpuSlotRequest, NodeDevices};
 use super::receipt::{ReceiptClock, chunk_receipt_of, receipt_of, sign_receipt};
 use super::{BUSY_RETRY_AFTER_MS, NodeBook, NodeGate, NodeJobs};
+use crate::gpu_execution_node::renewal_timing::RENEWAL_MARGIN_NS;
 use crate::gpu_execution_node::wire::{
     JobAnswer, JobEnd, JobReceipt, JobRefusal, JobReserve, JobState, JobStatusAnswer,
     SignedJobSubmit, SlotSelector,
@@ -35,14 +36,6 @@ use crate::gpu_execution_node::wire::{
 const MIB: u64 = 1024 * 1024;
 
 const NANOS_PER_SEC: u64 = 1_000_000_000;
-
-/// How long before the run's stop time (its cutoff less the stop grace) a
-/// renewal must be journaled: the scope's own bound
-/// ([`RENEW_BEFORE_STOP_NS`]), plus 4 s for the journal write and the ask to
-/// the scope. A renewal later than that finds a run that is being cut off:
-/// it continues nothing, and the scope is never asked to take a renewal it
-/// would refuse.
-const RENEWAL_MARGIN_NS: u64 = RENEW_BEFORE_STOP_NS + 4 * NANOS_PER_SEC;
 
 /// A renewal's refusals that no wait undoes (row W1): the run is gone or
 /// can no longer take a renewal, the signed submit expired, or the run

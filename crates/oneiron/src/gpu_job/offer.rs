@@ -22,6 +22,31 @@ pub enum PriceShape {
     CostPlus,
 }
 
+/// What follows the cutoff at a job's maximum, as an offer states it (pass 34, 9.2 and 9.3).
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum AtMaximum {
+    /// The run ends at the maximum: a provisioned offer follows C2 there (a checkpoint first, then
+    /// the resume), and a `vault_machine` node ends the run at its cutoff (pass 33, 8.6).
+    #[default]
+    Stop,
+    /// A session (row W1): before each chunk's maximum the host's step quotes, admits and sends
+    /// the next paid chunk of the same run, and the run ends at the end of the last chunk paid.
+    /// Only a `vault_machine` offer states it; C2 is unchanged for anything a customer buys.
+    Renew,
+}
+
+impl AtMaximum {
+    /// Whether this is the default, [`AtMaximum::Stop`]: it is left out of every encoding, so an
+    /// offer, a quote and their digests read as before the mode existed.
+    #[must_use]
+    pub fn is_stop(&self) -> bool {
+        *self == Self::Stop
+    }
+}
+
 /// One GPU class at a provider and region, as the host's config binds it.
 /// `connector.unit_cost` is our posted price for one second of the class, in
 /// `connector.cost_unit`.
@@ -39,6 +64,10 @@ pub struct GpuOffer {
     pub startup_secs: u64,
     pub teardown_secs: u64,
     pub rounding_secs: u64,
+    /// What follows the cutoff at a job's maximum. Left out of the quote digest's input at
+    /// [`AtMaximum::Stop`], so every offer that states no renewal keeps its digests.
+    #[serde(skip_serializing_if = "AtMaximum::is_stop")]
+    pub at_maximum: AtMaximum,
 }
 
 /// What a customer asks to run. A missing maximum takes the host's default.
@@ -81,6 +110,11 @@ pub struct GpuJobQuote {
     pub valid_until_ms: u64,
     /// The content hash of the offer and every term above, hex.
     pub digest: String,
+    /// The offer's [`AtMaximum`] when quoted: a job keeps the mode of its first quote, so an
+    /// offer changed later never makes a running job renew (or stop renewing). Absent at
+    /// [`AtMaximum::Stop`], as before.
+    #[serde(default, skip_serializing_if = "AtMaximum::is_stop")]
+    pub at_maximum: AtMaximum,
 }
 
 /// The digest's input: every term of the quote and the whole offer.
@@ -193,6 +227,7 @@ impl GpuOffer {
             quoted_at_ms,
             valid_until_ms: quoted_at_ms.saturating_add(GPU_QUOTE_VALID_MS),
             digest: ContentHash::of(&bytes).to_hex(),
+            at_maximum: self.at_maximum,
         })
     }
 }

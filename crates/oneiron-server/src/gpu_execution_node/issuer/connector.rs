@@ -11,6 +11,11 @@
 //!   a revoke closes the key with a stop; an expiry does not.
 //! - `terminate` marks the key closing, sends a stop, and confirms once the node's terminal
 //!   receipt shows the unit empty, billed by [`super::billing`].
+//! - `renew` (row W1) sends a session's next paid chunk: a submit that continues the run of the
+//!   job's first key, on that key's machine, pin, slot and signed starter, after the live recheck,
+//!   the Grant's per-job maximum over every chunk of the run, and the node's offer of the pin's
+//!   template as a session's. No reserve: the chunk holds no disk or device of its own. A slice
+//!   the run passed confirms and bills on its own receipt, with no stop.
 //!
 //! The calls of one key run one after another in this process: a create, a status, a signal
 //! and a terminate of a key never interleave, so a close never crosses a send of the key, and
@@ -18,14 +23,15 @@
 //! again before it goes out and sends nothing once the key is closing ([`sends`]). A receipt is
 //! judged and stored in the same write as the row's `Held` mark ([`receipts`]).
 mod receipts;
+mod renewals;
 mod sends;
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use oneiron::gpu_job::{
-    GpuConnectorError, GpuJob, GpuJobConnector, GpuJobNodeView, GpuJobSignal, GpuJobSpec,
-    GpuResourceRef, GpuResourceStatus, GpuTermination,
+    GpuConnectorError, GpuJob, GpuJobConnector, GpuJobEnd, GpuJobNodeView, GpuJobSignal,
+    GpuJobSpec, GpuResourceRef, GpuResourceStatus, GpuTermination,
 };
 use oneiron::job_dispatch::{
     DispatchAsk, DispatchClose, DispatchPhase, DispatchRefusal, JobDispatch,
@@ -403,10 +409,33 @@ impl VaultMachineConnector {
         if row.history_lost_at_ms.is_some() {
             return Err(unavailable("history_lost"));
         }
-        if row.phase >= DispatchPhase::Closing {
-            return self.stop_and_read(&row);
+        // A session's slice the run passed (row W1) is confirmed for good: it is read again
+        // from its terminal, and never stopped, since the run goes on under the next chunk.
+        if let Some(terminal) = self.continued_terminal(&row.key)? {
+            return Ok(GpuResourceStatus::Continued {
+                used_secs: terminal.measured_secs.unwrap_or(0),
+                billed_secs: terminal.billed_secs,
+            });
         }
         let signed = decode::<SignedJobSubmit>(&row.submit)?;
+        if row.phase >= DispatchPhase::Closing {
+            // A session's next chunk that closed before any send could reach the node (its
+            // window, a refused recheck, the node's refusal) is only read: a stop of a chunk the
+            // run has not reached would end the run inside the chunk paid (row W1).
+            let read_only = signed.submit.continues.is_some()
+                && !matches!(
+                    row.closed,
+                    Some(DispatchClose::Revoked { .. } | DispatchClose::Ended)
+                );
+            if read_only {
+                // A revoke still stops it: it may be the slice the run is in by now.
+                if self.revoked(&row, &signed.submit)?.is_some() {
+                    return self.stop_and_read(&row);
+                }
+                return self.read_closed_renewal(&row, &signed);
+            }
+            return self.stop_and_read(&row);
+        }
         if let Some(refusal) = self.revoked(&row, &signed.submit)? {
             // A key the node had already ended when the issuer saw the revoke keeps its end and
             // its result: the revoke stops only work the node has not ended (a stop at the box
@@ -491,9 +520,14 @@ impl VaultMachineConnector {
                 .map_err(store)?
                 .and_then(|observation| observation.terminal)
         {
-            return Ok(GpuTermination::Confirmed {
-                billed_secs: terminal.billed_secs,
-            });
+            let billed_secs = terminal.billed_secs;
+            if terminal.end == GpuJobEnd::Continued {
+                return Ok(GpuTermination::Continued {
+                    used_secs: terminal.measured_secs.unwrap_or(billed_secs),
+                    billed_secs,
+                });
+            }
+            return Ok(GpuTermination::Confirmed { billed_secs });
         }
         let row = self.close(&row.key, DispatchClose::Ended)?;
         let answered = match self.stop(&row) {
@@ -543,6 +577,15 @@ impl GpuJobConnector for VaultMachineConnector {
         self.keys.with(key, || self.terminate_key(resource))
     }
 
+    fn renew(
+        &self,
+        key: &str,
+        continues: &str,
+        spec: &GpuJobSpec,
+    ) -> Result<GpuResourceRef, GpuConnectorError> {
+        self.keys.with(key, || self.renew_key(key, continues, spec))
+    }
+
     fn node_view(&self, job: &GpuJob, now_ms: u64, step_ms: u64) -> Option<GpuJobNodeView> {
         super::view::node_view(self.vault(), job, now_ms, step_ms)
     }
@@ -551,11 +594,16 @@ impl GpuJobConnector for VaultMachineConnector {
     /// key's lock. Refused for a key whose terminal receipt the issuer holds (its step settles
     /// it), and before the node's latest cutoff (the submit's `not_after` plus its maximum) and
     /// `jobs.write_off.wait_secs` have passed, so any launch from this dispatch has met its
-    /// cutoff. A repeat answers `Ok`.
+    /// cutoff. A session's run (row W1) is bounded by its latest launch (its first key's
+    /// `not_after`, or its first renewal's, whichever is later) plus every chunk's maximum, the
+    /// open next one's too, and never before any key's own bound; that next chunk's dispatch
+    /// closes with it:
+    /// one never dispatched stays so (its send refuses once the current chunk is written off),
+    /// one whose end the node signed as never started closes and settles zero, and one whose end
+    /// says it ran refuses the door before anything closes, so the step settles it. A repeat
+    /// answers `Ok`.
     fn write_off(&self, job: &GpuJob, now_ms: u64) -> Result<(), GpuConnectorError> {
-        let chunk = job.chunk().ok_or_else(|| refused("write_off_no_chunk"))?;
-        let key = chunk.idempotency_key.as_str();
-        self.keys.with(key, || self.write_off_key(key, now_ms))
+        self.write_off_job(job, now_ms)
     }
 
     /// Row R4: the live orphans are asked to stop again, and the owed results returned.
@@ -581,7 +629,12 @@ impl VaultMachineConnector {
     }
 
     /// `write_off` under the key's lock.
-    fn write_off_key(&self, key: &str, now_ms: u64) -> Result<(), GpuConnectorError> {
+    fn write_off_key(
+        &self,
+        key: &str,
+        run_cutoff_ms: Option<u64>,
+        now_ms: u64,
+    ) -> Result<(), GpuConnectorError> {
         let Some(row) = self.vault().job_dispatch(key).map_err(store)? else {
             return Err(refused("write_off_never_dispatched"));
         };
@@ -597,9 +650,12 @@ impl VaultMachineConnector {
             .machine_job_settings(row.machine)
             .map_err(store)?
             .write_off_wait_secs;
-        let earliest_ms = submit
-            .not_after_ms
-            .saturating_add(submit.maximum_secs.saturating_mul(1_000))
+        let earliest_ms = run_cutoff_ms
+            .unwrap_or_else(|| {
+                submit
+                    .not_after_ms
+                    .saturating_add(submit.maximum_secs.saturating_mul(1_000))
+            })
             .saturating_add(wait_secs.saturating_mul(1_000));
         if now_ms < earliest_ms {
             return Err(refused("write_off_too_early"));
@@ -636,6 +692,9 @@ fn receipt_status(receipt: &JobReceipt) -> GpuResourceStatus {
         },
         JobState::Ended => match receipt.end {
             Some(JobEnd::Lost { .. }) => GpuResourceStatus::Gone,
+            // A session's slice the run passed (row W1) is no end: `ended_or_status` confirms
+            // and bills it; any other read of it answers that the run goes on.
+            Some(JobEnd::Continued) => GpuResourceStatus::Pending,
             _ if !receipt.started => GpuResourceStatus::Exited { used_secs: 0 },
             // The node ended the run at the job's maximum (pass 33, 8.6).
             Some(JobEnd::TimeLimit) => GpuResourceStatus::TimeLimit {

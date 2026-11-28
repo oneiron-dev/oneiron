@@ -21,8 +21,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use oneiron::EntityId;
 use oneiron::gpu_job::{
     GpuConnectorError, GpuJob, GpuJobConnector, GpuJobError, GpuJobPermits, GpuJobQuote,
-    GpuJobSignal, GpuJobSpec, GpuJobStepReport, GpuOffer, GpuResourceRef, GpuResourceStatus,
-    GpuTermination,
+    GpuJobRenewal, GpuJobSignal, GpuJobSpec, GpuJobStepReport, GpuOffer, GpuResourceRef,
+    GpuResourceStatus, GpuTermination,
 };
 use oneiron::llm::run_admission::{Allocation, BudgetLine, RunAdmission, RunDeclaration};
 
@@ -329,27 +329,45 @@ fn step_one_job(
         .gpu_job(id)
         .map_err(GpuJobError::from)?
         .ok_or(GpuJobError::NotFound)?;
-    let chunk = job.chunk().ok_or(GpuJobError::NotFound)?;
     let connector = job_backend(server, &job)?;
     // The offer as posted now: its resume quote and a new permit's binding.
-    // A withdrawn offer leaves the step neither (`gpu_job_step`).
+    // A withdrawn offer leaves the step neither (`gpu_job_step`), and renews no session.
     let offer = server
         .config
         .gpu_jobs
         .offer(&job.offer.name)
         .map(|posted| &posted.offer);
-    let admission = match offer {
-        Some(offer) => job_admission(server, offer, &chunk.quote),
-        None => chunk_admission(server, &job.offer.name, &chunk.quote),
+    // Each chunk is admitted under its own quote's line, a session's next one too (row W1).
+    let admission_of = |quote: &GpuJobQuote| match offer {
+        Some(offer) => job_admission(server, offer, quote),
+        None => chunk_admission(server, &job.offer.name, quote),
     };
-    Ok(server.vault.gpu_job_step(
+    let renewal = GpuJobRenewal {
+        lead_floor_ms: session_renew_lead_floor_ms(&server.config.gpu_jobs),
+        admission: &admission_of,
+    };
+    Ok(server.vault.gpu_job_step_with_renewal(
         id,
         offer,
-        &admission,
         server.gpu_jobs.permits(),
         connector.as_ref(),
+        &renewal,
         now_ms,
     )?)
+}
+
+/// The least renewal lead a session's step may take (row W1): one step of the worker, three
+/// bounded calls to the node (its offer, the submit, a status), the node's stop grace (its
+/// default, 10 s: the issuer does not read a node's own) and its renewal margin before that
+/// stop, and a second. A `jobs.sessions.renew_lead_secs` at or below it renews nothing.
+fn session_renew_lead_floor_ms(settings: &crate::config::gpu_jobs::GpuJobsSettings) -> u64 {
+    settings
+        .step_secs
+        .saturating_add(settings.vault_machine.call_timeout_secs.saturating_mul(3))
+        .saturating_add(crate::gpu_execution_node::node_settings::STOP_GRACE_SECS_DEFAULT)
+        .saturating_add(1)
+        .saturating_mul(1_000)
+        .saturating_add(crate::gpu_execution_node::renewal_timing::RENEWAL_MARGIN_NS / 1_000_000)
 }
 
 /// Whether this server has GPU job work at its start: an offer posted, a live

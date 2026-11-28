@@ -24,9 +24,9 @@ use oneiron::engine_executor::{
 };
 use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::gpu_job::{
-    GpuConnectorError, GpuJob, GpuJobActor, GpuJobConnector, GpuJobPermits, GpuJobRequest,
-    GpuJobSignal, GpuJobSpec, GpuJobStart, GpuOffer, GpuResourceRef, GpuResourceStatus,
-    GpuTermination, PriceShape,
+    AtMaximum, GpuConnectorError, GpuJob, GpuJobActor, GpuJobConnector, GpuJobPermits,
+    GpuJobRequest, GpuJobSignal, GpuJobSpec, GpuJobStart, GpuOffer, GpuResourceRef,
+    GpuResourceStatus, GpuTermination, PriceShape,
 };
 use oneiron::job_dispatch::JobObservation;
 use oneiron::job_workload::{NetworkMode, ResourceRequest, ScopeKind, WorkloadPin};
@@ -331,6 +331,7 @@ fn order_fixture(vault: &Vault) -> (EntityId, WorkOrder, TestHost<'_>) {
             startup_secs: 0,
             teardown_secs: 0,
             rounding_secs: 0,
+            at_maximum: AtMaximum::Stop,
         },
         gpu: FakeGpu::default(),
         permits: GpuJobPermits::new(),

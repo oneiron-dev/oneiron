@@ -8,8 +8,8 @@ use crate::EntityId;
 use crate::llm::run_admission::LeaseUnit;
 
 use super::{
-    GpuEndReason, GpuJob, GpuJobAllowance, GpuJobError, GpuJobQuote, GpuJobRequest, GpuJobState,
-    PriceShape,
+    AtMaximum, GpuEndReason, GpuJob, GpuJobAllowance, GpuJobError, GpuJobQuote, GpuJobRequest,
+    GpuJobState, PriceShape,
 };
 
 /// `vault.gpu.jobs.quote`: what to run, on which of the host's offers. A
@@ -72,6 +72,12 @@ pub struct GpuJobQuoteTerms {
     pub quoted_at_ms: u64,
     pub valid_until_ms: u64,
     pub digest: String,
+    /// `renew` for a session's quote (row W1): before each chunk's maximum the host renews the
+    /// run with the next paid chunk. Absent for every other quote, so their terms read as
+    /// before. A session's quote needs a reader of this version: an older decoder that refuses
+    /// unknown fields refuses its terms.
+    #[serde(default, skip_serializing_if = "AtMaximum::is_stop")]
+    pub at_maximum: AtMaximum,
 }
 
 impl From<&GpuJobQuote> for GpuJobQuoteTerms {
@@ -94,6 +100,7 @@ impl From<&GpuJobQuote> for GpuJobQuoteTerms {
             quoted_at_ms: quote.quoted_at_ms,
             valid_until_ms: quote.valid_until_ms,
             digest: quote.digest.clone(),
+            at_maximum: quote.at_maximum,
         }
     }
 }
@@ -124,6 +131,7 @@ impl TryFrom<GpuJobQuoteTerms> for GpuJobQuote {
             quoted_at_ms: terms.quoted_at_ms,
             valid_until_ms: terms.valid_until_ms,
             digest: terms.digest,
+            at_maximum: terms.at_maximum,
         })
     }
 }

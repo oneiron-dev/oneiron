@@ -7,7 +7,9 @@ use oneiron::job_dispatch::{BootMark, DispatchClose, DispatchPhase, JobDispatch,
 
 use super::{VaultMachineConnector, decode, encode, store, unavailable};
 use crate::gpu_execution_node::issuer::billing::{billing, bracket, terminal};
-use crate::gpu_execution_node::wire::{JobReceipt, JobState, JobSubmit, SignedJobReceipt};
+use crate::gpu_execution_node::wire::{
+    JobEnd, JobReceipt, JobState, JobSubmit, SignedJobReceipt, SignedJobSubmit,
+};
 
 /// What the judgement of one receipt found.
 enum Judged {
@@ -45,10 +47,19 @@ impl VaultMachineConnector {
         let receipt = signed.receipt;
         let now_ms = self.now_ms();
         let end_mark = (receipt.state == JobState::Ended).then(|| self.parts.clock.boot_mark());
+        let run_epoch = self.run_epoch(row)?;
         let (_, judged) = self
             .vault()
             .update_job_dispatch_and_observation(&row.key, |row, stored| {
-                judge_receipt(row, stored, &receipt, bytes, now_ms, end_mark)
+                judge_receipt(
+                    row,
+                    stored,
+                    &receipt,
+                    bytes,
+                    now_ms,
+                    end_mark,
+                    run_epoch.as_deref(),
+                )
             })
             .map_err(store)?
             .ok_or_else(|| unavailable("no_dispatch_row"))?;
@@ -57,6 +68,25 @@ impl VaultMachineConnector {
             Judged::HistoryLost => Err(unavailable("history_lost")),
             Judged::HeldUnreadable(error) => Err(unavailable(format!("decode: {error}"))),
         }
+    }
+
+    /// The journal a session's next chunk (row W1) must be judged against, which no `Held`
+    /// receipt binds since it is never reserved: its own first receipt's, or else its run's first
+    /// key's. A receipt from another journal is the node's history lost, never a zero end.
+    /// `None` for every other key.
+    fn run_epoch(&self, row: &JobDispatch) -> Result<Option<String>, GpuConnectorError> {
+        if row.held.is_some() {
+            return Ok(None);
+        }
+        let Some(first) = decode::<SignedJobSubmit>(&row.submit)?.submit.continues else {
+            return Ok(None);
+        };
+        let own = self.vault().job_observation(&row.key).map_err(store)?;
+        let observation = match own {
+            Some(own) => Some(own),
+            None => self.vault().job_observation(&first).map_err(store)?,
+        };
+        Ok(observation.map(|observation| observation.epoch))
     }
 
     /// Whether the node journaled the key: the row holds its `Held` receipt or got past the
@@ -85,7 +115,9 @@ impl VaultMachineConnector {
     }
 
     /// Confirms the key's end on its terminal receipt: bills it, stores the meter and the typed
-    /// terminal beside the receipt, and closes the dispatch for good, in one write.
+    /// terminal beside the receipt, and closes the dispatch for good, in one write. A session's
+    /// slice that the run passed (row W1) confirms as [`GpuTermination::Continued`]: its run goes
+    /// on under the next chunk's key.
     pub(super) fn confirm(
         &self,
         key: &str,
@@ -128,6 +160,18 @@ impl VaultMachineConnector {
         if closes_now {
             self.count_machine_end(row.machine, ended, &meter);
         }
+        // A session's slice the run passed carries no outputs: only the run's last slice does.
+        if ended.end == Some(JobEnd::Continued) {
+            return Ok(GpuTermination::Continued {
+                used_secs: ended.measured_secs.unwrap_or(billed_secs),
+                billed_secs,
+            });
+        }
+        // Nor does a slice the run never reached (row W1): the node acknowledges outputs only
+        // for the slice that holds the run's end, so a return opened here would stay owed.
+        if ended.slice.is_some() && ended.end == Some(JobEnd::Withdrawn) {
+            return Ok(GpuTermination::Confirmed { billed_secs });
+        }
         // Row R4, EM-12 = A: the outputs land when the quote binds a result, then the node is
         // told it may clean them. What does not finish here is owed to the housekeeping pass.
         self.result_returns().return_outputs(&row, ended);
@@ -165,6 +209,7 @@ fn judge_receipt(
     bytes: Vec<u8>,
     now_ms: u64,
     end_mark: Option<BootMark>,
+    run_epoch: Option<&str>,
 ) -> (Option<JobObservation>, Judged) {
     let held_epoch = match row
         .held
@@ -172,7 +217,9 @@ fn judge_receipt(
         .map(oneiron_organ_protocol::from_slice::<SignedJobReceipt>)
         .transpose()
     {
-        Ok(held) => held.map(|held| held.receipt.epoch),
+        Ok(held) => held
+            .map(|held| held.receipt.epoch)
+            .or_else(|| run_epoch.map(str::to_owned)),
         Err(error) => return (None, Judged::HeldUnreadable(error.to_string())),
     };
     let went_back = stored

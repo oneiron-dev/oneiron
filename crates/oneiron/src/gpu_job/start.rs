@@ -464,10 +464,18 @@ impl Vault {
         permits: &GpuJobPermits,
     ) -> Result<GpuJob, GpuJobError> {
         let stored = self.load_gpu_job(id)?;
-        if ended_unsettled(&stored, key)
-            && let Some(permit) = permits.take_for_chunk(id, key)
-        {
-            let _ = permit.settle(CallOutcome::Used(0));
+        // A session's next chunk too: the row that won may have ended it with no settlement.
+        let renewal = stored
+            .renewal
+            .as_ref()
+            .map(|next| next.idempotency_key.as_str())
+            .filter(|renewal| *renewal != key);
+        for key in std::iter::once(key).chain(renewal) {
+            if ended_unsettled(&stored, key)
+                && let Some(permit) = permits.take_for_chunk(id, key)
+            {
+                let _ = permit.settle(CallOutcome::Used(0));
+            }
         }
         Ok(stored)
     }
@@ -541,26 +549,45 @@ impl Vault {
 
 /// Whether `job`'s stored row still steps the resource made under `key`: its
 /// current chunk is that key's and names the resource, or is reserved, so the
-/// next step finds the resource by its key.
+/// next step finds the resource by its key; or a live session's open next chunk
+/// is that key's and names the resource or none yet, so the next step sends it
+/// again under its key and its provider answers the same resource.
 fn steps_resource(job: &GpuJob, key: &str, resource: &GpuResourceRef) -> bool {
-    job.chunk()
+    let current = job
+        .chunk()
         .filter(|chunk| chunk.idempotency_key == key)
         .is_some_and(|chunk| {
             chunk.resource.as_ref() == Some(resource) || job.state == GpuJobState::Reserved
-        })
+        });
+    let next = job.state.is_live()
+        && open_renewal(job, key).is_some_and(|next| {
+            next.resource
+                .as_ref()
+                .is_none_or(|stepped| stepped == resource)
+        });
+    current || next
+}
+
+/// The live session's next chunk under `key`, while it is open: neither settled nor refused.
+fn open_renewal<'a>(job: &'a GpuJob, key: &str) -> Option<&'a GpuChunk> {
+    job.renewal
+        .as_ref()
+        .filter(|next| next.idempotency_key == key && next.billed_secs.is_none())
 }
 
 /// Whether `job`'s stored row no longer runs the chunk under `key` and
 /// records no settlement for it.
 fn ended_unsettled(job: &GpuJob, key: &str) -> bool {
     let runs = job.state.is_live()
-        && job
+        && (job
             .chunk()
-            .is_some_and(|chunk| chunk.idempotency_key == key);
+            .is_some_and(|chunk| chunk.idempotency_key == key)
+            || open_renewal(job, key).is_some());
     !runs
         && job
             .chunks
             .iter()
+            .chain(job.renewal.as_ref())
             .find(|chunk| chunk.idempotency_key == key)
             .is_none_or(|chunk| chunk.settled_units.is_none())
 }
@@ -618,6 +645,7 @@ pub(super) fn next_chunk(
                 updated_at_ms: now_ms,
                 revision: 0,
                 orphaned_resources: Vec::new(),
+                renewal: None,
                 claim: None,
                 backend: None,
             };
@@ -670,6 +698,7 @@ pub(super) fn next_chunk(
         settled_units: None,
         unbilled_secs: 0,
         admission_lost: false,
+        continues: None,
     });
     job.state = GpuJobState::Reserved;
     Ok(job)

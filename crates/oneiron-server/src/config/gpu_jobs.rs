@@ -43,9 +43,13 @@
 //! nothing. The windows are settings with the design's values as defaults.
 //!
 //! An offer's `at_maximum` says what follows the cutoff at the job's maximum (pass 34, 9.2; the
-//! cutoff itself is invariant I5). A `vault_machine` offer states `"stop"`: its node ends the run
-//! at the maximum, with or without a checkpoint (pass 33, 8.6). An offer that leaves it out
-//! follows C2 at the maximum (warning, checkpoint first, resume), which is what a customer buys.
+//! cutoff itself is invariant I5). A `vault_machine` offer states it: `"stop"`, and its node ends
+//! the run at the maximum, with or without a checkpoint (pass 33, 8.6); or `"renew"`, a session
+//! (pass 34, 9.3; row W1): before each chunk's maximum the host's step quotes, admits and sends
+//! the next paid chunk of the same run, `jobs.sessions.renew_lead_secs` (default 300) seconds of
+//! run time ahead, and the run ends at the end of the last chunk paid. Its node's template must
+//! be a `session`. An offer that leaves it out follows C2 at the maximum (warning, checkpoint
+//! first, resume), which is what a customer buys.
 //!
 //! `[gpu_jobs.devices]` names the GPUs of this machine that it offers to the
 //! vault's GPU jobs, by the driver's device id (`nvidia-smi -L` shows each
@@ -124,7 +128,7 @@ use oneiron::llm::run_admission::{
     AllocationRef, KeyCustody, LeaseUnit, OfferRoute, PaidConnector, Payer, is_gpu_line_allocation,
 };
 use oneiron::{EntityId, ModelLocality};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 use crate::gpu_execution_node::issuer::VAULT_MACHINE_BACKEND;
 use crate::gpu_execution_node::{GPU_DRAIN_AFTER_FAILURES, GpuDeviceOffer};
@@ -232,15 +236,9 @@ struct GpuOfferFile {
     at_maximum: Option<AtMaximum>,
 }
 
-/// What follows the cutoff at a job's maximum, as an offer states it (pass 34, 9.2). Row W1 adds
-/// `renew`, a paid next chunk for a session.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AtMaximum {
-    /// The run ends at the maximum, with or without a checkpoint; its end reason says the
-    /// maximum was reached (pass 33, 8.6).
-    Stop,
-}
+/// What follows the cutoff at a job's maximum, as an offer states it (pass 34, 9.2 and 9.3): the
+/// engine's own type, so the offer carries it into each quote.
+pub use oneiron::gpu_job::AtMaximum;
 
 /// The GPU offers this host posts, and how its worker steps their jobs.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -617,8 +615,8 @@ impl GpuOfferFile {
         );
         if self.backend == VAULT_MACHINE_BACKEND {
             anyhow::ensure!(
-                self.at_maximum == Some(AtMaximum::Stop),
-                "{at}.at_maximum must be \"stop\" for the {VAULT_MACHINE_BACKEND} backend: its node ends the run at the maximum"
+                self.at_maximum.is_some(),
+                "{at}.at_maximum must be \"stop\" or \"renew\" for the {VAULT_MACHINE_BACKEND} backend: its node ends the run at the maximum, or at the end of the last chunk paid"
             );
         } else {
             anyhow::ensure!(
@@ -657,6 +655,7 @@ impl GpuOfferFile {
             startup_secs: self.startup_secs,
             teardown_secs: self.teardown_secs,
             rounding_secs: self.rounding_secs,
+            at_maximum: self.at_maximum.unwrap_or_default(),
         };
         Ok(GpuOfferSettings {
             backend: self.backend,

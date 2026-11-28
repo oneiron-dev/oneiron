@@ -226,6 +226,25 @@ impl JobMaximum {
         signals
     }
 
+    /// Records a session's usage so far (pass 34, 9.3; row W1). A session's run ends at the
+    /// cutoff of its last paid chunk, so its usage crosses no checkpoint, warning or stop of C2:
+    /// nothing is signalled.
+    pub fn record_session_usage(&mut self, used_units: u64) {
+        self.used_units = self.used_units.max(used_units);
+    }
+
+    /// Raises a session's maximum by its paid next chunk's `chunk` (row W1): the maximum is the
+    /// paid end of the run, never its first chunk's alone. Answers false, and changes nothing,
+    /// for a stopped job or a chunk in another unit.
+    #[must_use]
+    pub fn add_session_chunk(&mut self, chunk: &DeclaredMaximum) -> bool {
+        if self.stopped || chunk.unit != self.maximum.unit {
+            return false;
+        }
+        self.maximum.units = self.maximum.units.saturating_add(chunk.units);
+        true
+    }
+
     /// The host confirms the 95 percent warning reached the customer. Returns
     /// false, and counts nothing, when no warning is due.
     #[must_use]

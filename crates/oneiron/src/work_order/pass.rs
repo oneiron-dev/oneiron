@@ -160,7 +160,9 @@ fn end_of_terminal(end: &GpuJobEnd, cancelled: bool, window_passed: bool) -> End
         GpuJobEnd::Signalled { signal } => EndKind::Exited {
             code: 128_i32.saturating_add(*signal),
         },
-        GpuJobEnd::TimeLimit => EndKind::TimeLimit,
+        // A session's slice that ran to its paid end (row W1). An ended job's chunk is the one
+        // its run ended in, so this names a run that reached the end of what was paid.
+        GpuJobEnd::TimeLimit | GpuJobEnd::Continued => EndKind::TimeLimit,
         GpuJobEnd::MemoryLimit => EndKind::MemoryLimit,
         GpuJobEnd::DiskLimit => EndKind::DiskLimit,
         GpuJobEnd::Stopped => EndKind::Stopped,
@@ -226,7 +228,11 @@ impl Vault {
             None => None,
         };
         let started = match &dispatch {
-            Some(_) => observation.as_ref().is_some_and(|row| row.started),
+            // A session's chunk that continues a run (row W1) runs only once that run started.
+            Some(_) => {
+                observation.as_ref().is_some_and(|row| row.started)
+                    || job.chunk().is_some_and(|chunk| chunk.continues.is_some())
+            }
             None => {
                 job.chunk()
                     .is_some_and(|chunk| chunk.used_secs > 0 || chunk.base_used_secs > 0)

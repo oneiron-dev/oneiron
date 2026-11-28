@@ -12,8 +12,8 @@ use std::sync::{Arc, Mutex, MutexGuard, mpsc};
 use ed25519_dalek::{Signature, Signer, SigningKey};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::gpu_job::{
-    GpuJob, GpuJobActor, GpuJobConnector, GpuJobError, GpuJobPermits, GpuJobRequest, GpuJobStart,
-    GpuJobState, GpuJobStepReport, GpuOffer, PriceShape,
+    AtMaximum, GpuJob, GpuJobActor, GpuJobConnector, GpuJobError, GpuJobPermits, GpuJobQuote,
+    GpuJobRenewal, GpuJobRequest, GpuJobStart, GpuJobState, GpuJobStepReport, GpuOffer, PriceShape,
 };
 use oneiron::job_dispatch::{BootMark, JobDispatch, JobObservation};
 use oneiron::job_workload::{
@@ -37,7 +37,7 @@ use oneiron_server::gpu_execution_node::issuer::{
 use oneiron_server::gpu_execution_node::wire::{
     DeviceRelease, JOB_ALPN, JOB_STATUS_ALPN, JobAnswer, JobEnd, JobReceipt, JobRefusal,
     JobRequest, JobState, JobStatusAnswer, JobStatusRequest, KeyEntry, KeyPage, NetworkMode,
-    NodeAnswer, OutputsState, ScopeClass, SignedJobReceipt, TemplateOffer,
+    NodeAnswer, OutputsState, ScopeClass, SignedJobReceipt, TemplateKind, TemplateOffer,
 };
 use serde::Serialize;
 use serde_json::json;
@@ -173,6 +173,8 @@ pub(crate) struct NodeState {
     lose_next_answer: Option<&'static str>,
     repeat_key_cursor: u32,
     pub(crate) refuse_submits: Option<String>,
+    /// The node offers its template as a session's (row W1), so it takes a continuing submit.
+    pub(crate) session_template: bool,
     /// The outputs the issuer may fetch, by key and name.
     pub(crate) outputs: BTreeMap<(String, String), Vec<u8>>,
 }
@@ -449,7 +451,11 @@ impl JobNodeClient for ScriptedNode {
                     network: vec![NetworkMode::None],
                     returnable: vec!["verdict.json".to_owned()],
                     require: Vec::new(),
-                    kind: Default::default(),
+                    kind: if node.session_template {
+                        TemplateKind::Session
+                    } else {
+                        TemplateKind::default()
+                    },
                 }],
                 scopes: Vec::new(),
                 disk_free_bytes: 10 << 30,
@@ -497,7 +503,14 @@ impl JobNodeClient for ScriptedNode {
                         receipt.starter = Some(submit.starter);
                         receipt.workload =
                             Some(submit.pin.digest().expect("digest the submitted workload"));
-                        (receipt, Some("not_reserved".to_owned()))
+                        // A session's next chunk (row W1) holds nothing of its own: the node
+                        // takes it with no reserve.
+                        let refusal = if submit.continues.is_some() {
+                            node.refuse_submits.clone()
+                        } else {
+                            Some("not_reserved".to_owned())
+                        };
+                        (receipt, refusal)
                     }
                 };
                 if let Some(reason) = refusal {
@@ -669,6 +682,14 @@ pub(crate) fn make_connector_with(
     })
 }
 
+/// The rig's offer as a session's (row W1): it renews at the maximum.
+pub(crate) fn session_offer() -> GpuOffer {
+    GpuOffer {
+        at_maximum: AtMaximum::Renew,
+        ..offer()
+    }
+}
+
 pub(crate) fn offer() -> GpuOffer {
     GpuOffer {
         name: "scripted-gpu".to_owned(),
@@ -693,6 +714,7 @@ pub(crate) fn offer() -> GpuOffer {
         startup_secs: 0,
         teardown_secs: 0,
         rounding_secs: 0,
+        at_maximum: AtMaximum::Stop,
     }
 }
 
@@ -826,9 +848,31 @@ impl Rig {
         inputs: serde_json::Value,
         connector: &dyn GpuJobConnector,
     ) -> JobRun {
+        self.start_job_on(actor, &self.offer, workload, inputs, connector)
+    }
+
+    /// A session (row W1): the rig's offer, renewing at the maximum.
+    pub(crate) fn start_session(&self, workload: &str) -> JobRun {
+        let inputs = json!({"machine": self.node.machine.to_hex()});
+        self.start_job_on(
+            GpuJobActor::Owner(&self.owner),
+            &session_offer(),
+            workload,
+            inputs,
+            &self.connector,
+        )
+    }
+
+    fn start_job_on(
+        &self,
+        actor: GpuJobActor<'_>,
+        offer: &GpuOffer,
+        workload: &str,
+        inputs: serde_json::Value,
+        connector: &dyn GpuJobConnector,
+    ) -> JobRun {
         let now = self.clock.now_ms();
-        let quote = self
-            .offer
+        let quote = offer
             .quote(
                 &GpuJobRequest {
                     job_type: "pinned_workload".to_owned(),
@@ -859,7 +903,7 @@ impl Rig {
             .start_gpu_job(
                 GpuJobStart {
                     actor,
-                    offer: &self.offer,
+                    offer,
                     quote: &quote,
                     resume: None,
                     admission: &admission,
@@ -891,6 +935,47 @@ impl Rig {
             &run.admission,
             &self.permits,
             connector,
+            self.clock.now_ms(),
+        )
+    }
+
+    /// One step of a session (row W1) on the session offer, each chunk admitted under its own
+    /// quote's line, reporting to the run's receipts.
+    pub(crate) fn step_session(&self, run: &JobRun) -> Result<GpuJobStepReport, GpuJobError> {
+        self.step_session_with(run, &self.connector)
+    }
+
+    /// [`Self::step_session`] on `connector`.
+    pub(crate) fn step_session_with(
+        &self,
+        run: &JobRun,
+        connector: &dyn GpuJobConnector,
+    ) -> Result<GpuJobStepReport, GpuJobError> {
+        let offer = session_offer();
+        let admission_of = |quote: &GpuJobQuote| {
+            let declaration = RunDeclaration::declared(BudgetLine {
+                limit_units: quote.units,
+                reserve_units: quote.units,
+                unit: quote.unit.clone(),
+            })
+            .with_connector(VAULT_MACHINE_BACKEND.to_owned());
+            RunAdmission::new(
+                GpuJob::admission_ref_of(&quote.job),
+                declaration,
+                None,
+                run.receipts.clone(),
+            )
+        };
+        let renewal = GpuJobRenewal {
+            lead_floor_ms: 76_000,
+            admission: &admission_of,
+        };
+        self.vault().gpu_job_step_with_renewal(
+            &run.job.id,
+            &offer,
+            &self.permits,
+            connector,
+            &renewal,
             self.clock.now_ms(),
         )
     }

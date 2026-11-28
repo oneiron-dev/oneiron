@@ -5,10 +5,12 @@ use crate::inbox::{NotificationEvent, NotificationKind, NotificationSource};
 use crate::llm::run_admission::{CallOutcome, JobSignal, PaidConnector, RunAdmission, StopRefused};
 use crate::{EntityId, Vault};
 
+use super::renew::{bill_chunk, drain_gpu_renewal, take_up_gpu_renewal};
 use super::{
     GPU_JOB_STOPPED_PRODUCER, GPU_JOB_WARNING_PRODUCER, GpuEndReason, GpuJob, GpuJobConnector,
-    GpuJobEnd, GpuJobError, GpuJobPermits, GpuJobSignal, GpuJobState, GpuJobStepReport,
-    GpuJobTerminal, GpuOffer, GpuOverrun, GpuResourceStatus, GpuTermination, MeterVerdict,
+    GpuJobEnd, GpuJobError, GpuJobPermits, GpuJobRenewal, GpuJobSignal, GpuJobState,
+    GpuJobStepReport, GpuJobTerminal, GpuOffer, GpuOverrun, GpuResourceStatus, GpuTermination,
+    MeterVerdict,
 };
 
 impl Vault {
@@ -91,7 +93,56 @@ impl Vault {
         }
     }
 
-    /// Reads a running chunk's status and acts on what its usage crossed.
+    /// [`Self::gpu_job_step`] for a host that renews sessions (row W1): `renewal.admission`
+    /// gives each chunk the admission of its own quote, the current chunk's included. A running
+    /// session whose chunk's run time reaches its maximum less `jobs.sessions.renew_lead_secs`
+    /// then sends its next paid chunk, after the step's own write; a restarted host takes that
+    /// chunk's permit up again first, as it takes up the current chunk's. Every other job steps
+    /// as [`Self::gpu_job_step`] steps it. A withdrawn offer (`None`) renews nothing: the
+    /// session ends at the end of its paid chunk.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::gpu_job_step`].
+    pub fn gpu_job_step_with_renewal<'a>(
+        &self,
+        id: &EntityId,
+        offer: impl Into<Option<&'a GpuOffer>>,
+        permits: &GpuJobPermits,
+        connector: &dyn GpuJobConnector,
+        renewal: &GpuJobRenewal<'_>,
+        now_ms: u64,
+    ) -> Result<GpuJobStepReport, GpuJobError> {
+        let offer = offer.into();
+        let job = self.load_gpu_job(id)?;
+        let admission = match job.chunk() {
+            Some(chunk) => (renewal.admission)(&chunk.quote),
+            None => return Err(crate::Error::InvariantViolation("a GPU job holds a chunk").into()),
+        };
+        let renews = job.state.is_live() && job.renews();
+        // The step takes the current chunk up first, so after a restart it has the first claim
+        // on the funds; the next chunk takes up what is left.
+        let report = self.gpu_job_step(id, offer, &admission, permits, connector, now_ms)?;
+        if renews && report.state == GpuJobState::Running {
+            let mut job = self.load_gpu_job(id)?;
+            // An admission lost again is written, so that chunk is never sent; a lost write
+            // leaves it to the next step.
+            if take_up_gpu_renewal(&mut job, offer, renewal, permits)
+                && !self
+                    .with_write_txn_grouped(|txn| self.put_gpu_job_in_txn(txn, &mut job, now_ms))?
+            {
+                return Ok(report);
+            }
+            if let Some(offer) = offer {
+                self.renew_gpu_session(job, offer, renewal, permits, connector, now_ms)?;
+            }
+        }
+        Ok(report)
+    }
+
+    /// Reads a running chunk's status and acts on what its usage crossed. A session records its
+    /// usage alone, and moves to its next chunk once its provider proves the run passed this
+    /// one's end.
     fn observe_gpu_chunk(
         &self,
         mut job: GpuJob,
@@ -116,6 +167,29 @@ impl Vault {
                 if !taken_up {
                     return Ok(GpuJobStepReport::of(&job));
                 }
+            }
+            // A session's run ends at the cutoff of its last paid chunk: no checkpoint, warning
+            // or stop of C2 applies (pass 34, 9.3).
+            GpuResourceStatus::Running { used_secs, .. } if job.renews() => {
+                let chunk = job.chunk_mut()?;
+                chunk.used_secs = chunk.used_secs.max(used_secs);
+                let total = chunk.base_used_secs.saturating_add(chunk.used_secs);
+                job.maximum.record_session_usage(total);
+            }
+            GpuResourceStatus::Continued {
+                used_secs,
+                billed_secs,
+            } => {
+                return self
+                    .pass_gpu_slice(
+                        job,
+                        Some(used_secs),
+                        billed_secs,
+                        permits,
+                        connector,
+                        now_ms,
+                    )
+                    .map(|(_, report)| report);
             }
             GpuResourceStatus::Running {
                 used_secs,
@@ -278,8 +352,25 @@ impl Vault {
                     return Ok((job, report));
                 }
                 GpuTermination::Confirmed { billed_secs } => Some(billed_secs),
+                // A session's run passed this chunk's end before the stop reached it: the slice
+                // settles, the next chunk runs, and the job's next step ends that one.
+                GpuTermination::Continued {
+                    used_secs,
+                    billed_secs,
+                } => {
+                    return self.pass_gpu_slice(
+                        job,
+                        Some(used_secs),
+                        billed_secs,
+                        permits,
+                        connector,
+                        now_ms,
+                    );
+                }
             },
         };
+        // The run ended in this chunk: a session's next chunk ends with it, in the same write.
+        let drained = drain_gpu_renewal(&mut job, permits, connector);
         let paid = permits.holds_chunk(&job.id, &key);
         // The end the job's machine established, which its backend stored
         // beside the receipt at the confirmed end (pass 33, 8.4): none when
@@ -291,33 +382,42 @@ impl Vault {
             None => None,
         };
         let reason = confirmed_reason(reason, terminal.as_ref());
+        let renews = job.renews();
         let chunk = job.chunk_mut()?;
         chunk.resource = resource;
-        // A hard stop's seconds are the machine's own measure, from the launch
-        // to the empty unit: they replace a live estimate a status took before
-        // the end, which can run past it (pass 33, 8.6).
-        if let Some(measured) = terminal
+        let time_limit = terminal
             .as_ref()
-            .filter(|terminal| terminal.end == GpuJobEnd::TimeLimit)
-            .and_then(|terminal| terminal.measured_secs)
-        {
-            chunk.used_secs = measured;
+            .is_some_and(|terminal| terminal.end == GpuJobEnd::TimeLimit);
+        let measured = terminal
+            .as_ref()
+            .and_then(|terminal| terminal.measured_secs);
+        match measured {
+            // A hard stop's seconds are the machine's own measure, from the launch
+            // to the empty unit: they replace a live estimate a status took before
+            // the end, which can run past it (pass 33, 8.6).
+            Some(measured) if time_limit => chunk.used_secs = measured,
+            // A session's slice may have no reading of its own: a stop that met the
+            // run past a slice boundary ends the next slice with no status read of it
+            // (row W1). It ran at least its machine's confirmed measure and what it
+            // bills, as a passed slice does.
+            _ if renews => {
+                chunk.used_secs = chunk
+                    .used_secs
+                    .max(measured.unwrap_or(0))
+                    .max(billed_secs.unwrap_or(0));
+            }
+            _ => {}
         }
         // JOB-SETTLES-ON-LAUNCH-REFUSED (LE-2 = A): a key that never started bills
         // zero, including overhead.
-        let billed_with_overhead = if terminal.as_ref().is_some_and(|t| t.end.never_ran()) {
-            0
-        } else {
-            billed_secs.map_or(0, |secs| secs.saturating_add(chunk.quote.overhead_secs))
-        };
-        let charged_secs = billed_with_overhead.min(chunk.quote.quantity);
-        chunk.billed_secs = billed_secs;
-        chunk.unbilled_secs = billed_with_overhead - charged_secs;
-        if paid {
-            chunk.settled_units = Some(charged_secs.saturating_mul(chunk.quote.unit_cost));
-        }
+        let never_ran = terminal.as_ref().is_some_and(|t| t.end.never_ran());
+        let charged_secs = bill_chunk(chunk, billed_secs, paid, never_ran);
         let settled_units = chunk.settled_units;
         let used_secs = chunk.base_used_secs.saturating_add(chunk.used_secs);
+        // The session's run time, which door 8 reads, holds that final slice too.
+        if renews {
+            job.maximum.record_session_usage(used_secs);
+        }
         job.state = if reason == GpuEndReason::AtMaximum {
             GpuJobState::Stopped
         } else {
@@ -365,6 +465,9 @@ impl Vault {
             .map(Some)
         })?;
         let Some(notices) = notices else {
+            if let Some((renewal_key, _)) = &drained {
+                self.stored_after_lost_step(&job.id, renewal_key, permits)?;
+            }
             let current = self.stored_after_lost_step(&job.id, &key, permits)?;
             let report = GpuJobStepReport::of(&current);
             return Ok((current, report));
@@ -375,6 +478,11 @@ impl Vault {
         // only this chunk's permit: a resume may already hold the next one's.
         if let Some(permit) = permits.take_for_chunk(&job.id, &key) {
             let _ = permit.settle(CallOutcome::Used(charged_secs));
+        }
+        if let Some((renewal_key, renewal_secs)) = drained
+            && let Some(permit) = permits.take_for_chunk(&job.id, &renewal_key)
+        {
+            let _ = permit.settle(CallOutcome::Used(renewal_secs));
         }
         let mut report = GpuJobStepReport::of(&job);
         report.notices = notices;
@@ -473,7 +581,12 @@ fn ended_by_backend(
     let chunk = job.chunk_mut()?;
     chunk.used_secs = chunk.used_secs.max(used_secs);
     let total = chunk.base_used_secs.saturating_add(chunk.used_secs);
-    let _ = job.maximum.record_usage(total);
+    // A session takes none of C2's signals (row W1).
+    if job.renews() {
+        job.maximum.record_session_usage(total);
+    } else {
+        let _ = job.maximum.record_usage(total);
+    }
     job.state = GpuJobState::Ending { reason };
     Ok(())
 }

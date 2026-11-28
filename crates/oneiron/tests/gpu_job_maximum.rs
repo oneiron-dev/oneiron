@@ -10,10 +10,10 @@ use std::sync::{Arc, Barrier, Mutex};
 
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::gpu_job::{
-    GPU_JOB_STOPPED_PRODUCER, GPU_JOB_WARNING_PRODUCER, GPU_QUOTE_VALID_MS, GpuConnectorError,
-    GpuEndReason, GpuJob, GpuJobActor, GpuJobConnector, GpuJobError, GpuJobPermits, GpuJobQuote,
-    GpuJobRequest, GpuJobSignal, GpuJobSpec, GpuJobStart, GpuJobState, GpuJobStepReport, GpuOffer,
-    GpuResourceRef, GpuResourceStatus, GpuTermination, PriceShape,
+    AtMaximum, GPU_JOB_STOPPED_PRODUCER, GPU_JOB_WARNING_PRODUCER, GPU_QUOTE_VALID_MS,
+    GpuConnectorError, GpuEndReason, GpuJob, GpuJobActor, GpuJobConnector, GpuJobError,
+    GpuJobPermits, GpuJobQuote, GpuJobRequest, GpuJobSignal, GpuJobSpec, GpuJobStart, GpuJobState,
+    GpuJobStepReport, GpuOffer, GpuResourceRef, GpuResourceStatus, GpuTermination, PriceShape,
 };
 use oneiron::inbox::{NotificationBody, NotificationKind, decode_notification_body};
 use oneiron::llm::ModelLocality;
@@ -175,6 +175,7 @@ fn offer(unit_cost: u64) -> GpuOffer {
         startup_secs: 10,
         teardown_secs: 5,
         rounding_secs: 5,
+        at_maximum: AtMaximum::Stop,
     }
 }
 

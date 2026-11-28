@@ -17,9 +17,9 @@ use oneiron::authority::{ActSurface, MachineRole};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::gpu_job::{
-    GpuConnectorError, GpuJobActor, GpuJobConnector, GpuJobError, GpuJobPermits, GpuJobRequest,
-    GpuJobSignal, GpuJobSpec, GpuJobStart, GpuOffer, GpuResourceRef, GpuResourceStatus,
-    GpuTermination, PriceShape,
+    AtMaximum, GpuConnectorError, GpuJobActor, GpuJobConnector, GpuJobError, GpuJobPermits,
+    GpuJobRequest, GpuJobSignal, GpuJobSpec, GpuJobStart, GpuOffer, GpuResourceRef,
+    GpuResourceStatus, GpuTermination, PriceShape,
 };
 use oneiron::job_workload::{
     DeviceClaim, DeviceKind, NetworkMode, ResourceRequest, ScopeKind, Sharing, WorkloadPin,
@@ -131,6 +131,7 @@ fn offer() -> GpuOffer {
         startup_secs: 0,
         teardown_secs: 0,
         rounding_secs: 0,
+        at_maximum: AtMaximum::Stop,
     }
 }
 

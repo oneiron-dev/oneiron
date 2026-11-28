@@ -32,7 +32,9 @@ mod connector;
 mod node_view;
 mod offer;
 mod permits;
+mod renew;
 mod result_landing;
+pub(crate) mod setting_keys;
 mod start;
 mod step;
 pub(crate) mod tables;
@@ -51,8 +53,9 @@ pub use node_view::{
     GpuJobAccounting, GpuJobLifecycle, GpuJobNodeReport, GpuJobNodeView, GpuJobObserved,
     GpuJobOutputView, GpuJobOutputsView,
 };
-pub use offer::{GPU_QUOTE_VALID_MS, GpuJobQuote, GpuJobRequest, GpuOffer, PriceShape};
+pub use offer::{AtMaximum, GPU_QUOTE_VALID_MS, GpuJobQuote, GpuJobRequest, GpuOffer, PriceShape};
 pub use permits::GpuJobPermits;
+pub use renew::{GpuJobRenewal, SESSION_RENEW_LEAD_DEFAULT_SECS};
 pub use result_landing::{GpuJobResultBinding, GpuJobResultFile};
 pub use start::GpuJobStart;
 pub use wire::{
@@ -264,6 +267,12 @@ pub struct GpuChunk {
     /// for operations to see (`#gpu-chunks`: a running chunk is never cut for
     /// money).
     pub admission_lost: bool,
+    /// For a session's paid next chunk (row W1): the key of the chunk that started the run it
+    /// continues. Such a chunk starts no process of its own: its provider bills the slice of the
+    /// one run between its predecessor's cutoff and its own. `None` for every chunk with a run
+    /// of its own, as before.
+    #[serde(default)]
+    pub continues: Option<String>,
 }
 
 /// One customer GPU job.
@@ -299,6 +308,13 @@ pub struct GpuJob {
     /// again until it does. Their run time is our cost, never the customer's.
     #[serde(default)]
     pub orphaned_resources: Vec<GpuResourceRef>,
+    /// A session's paid next chunk (row W1), from the step that admitted it until its provider
+    /// proves the run passed the current chunk's end: then it joins `chunks` as the chunk
+    /// running now. Its key is the index it joins at. One that its provider refused, or whose run
+    /// ended first, settles what it ran (nothing, unless the run reached it) and stays here until
+    /// the job ends, so no other renewal follows it.
+    #[serde(default)]
+    pub renewal: Option<GpuChunk>,
     /// The unit claim of a GPU line this job is the one job of; `None` for a
     /// job on an offer no line names (design pass 32 r2, 5.3). A start
     /// writes it with the claim's start; the take-up and the end read it.
@@ -333,6 +349,27 @@ impl GpuJob {
         self.chunks.last()
     }
 
+    /// Whether the job is a session (row W1): its first quote's offer renews at the maximum.
+    /// The mode freezes at that quote, so an offer changed since never changes it.
+    #[must_use]
+    pub fn renews(&self) -> bool {
+        self.chunks
+            .first()
+            .is_some_and(|first| first.quote.at_maximum == AtMaximum::Renew)
+    }
+
+    /// The key of the chunk that started the run the current chunk is part of: its own key,
+    /// or, for a session's renewal, the key it continues.
+    #[must_use]
+    pub fn run_key(&self) -> Option<&str> {
+        self.chunk().map(|chunk| {
+            chunk
+                .continues
+                .as_deref()
+                .unwrap_or(chunk.idempotency_key.as_str())
+        })
+    }
+
     fn chunk_mut(&mut self) -> crate::Result<&mut GpuChunk> {
         self.chunks
             .last_mut()
@@ -351,6 +388,26 @@ impl GpuJob {
             inputs: chunk.quote.inputs.clone(),
             maximum_secs: chunk.quote.maximum_secs,
             checkpoint_from: chunk.checkpoint_from.clone(),
+        })
+    }
+
+    /// What a session's next chunk asks its provider: the index it joins `chunks` at, its own
+    /// quote's maximum, and no checkpoint, since the run it continues never stopped.
+    fn renewal_spec(&self) -> crate::Result<GpuJobSpec> {
+        let next = self
+            .renewal
+            .as_ref()
+            .ok_or(crate::Error::InvariantViolation(
+                "a GPU session holds its next chunk",
+            ))?;
+        Ok(GpuJobSpec {
+            job: self.id.to_hex(),
+            chunk: u32::try_from(self.chunks.len()).unwrap_or(u32::MAX),
+            job_type: self.job_type.clone(),
+            image: self.image.clone(),
+            inputs: next.quote.inputs.clone(),
+            maximum_secs: next.quote.maximum_secs,
+            checkpoint_from: None,
         })
     }
 }

@@ -17,9 +17,9 @@ use std::sync::{Arc, mpsc};
 
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::gpu_job::{
-    GpuConnectorError, GpuEndReason, GpuJobActor, GpuJobConnector, GpuJobEnd, GpuJobError,
-    GpuJobSignal, GpuJobSpec, GpuJobState, GpuJobStatus, GpuResourceRef, GpuResourceStatus,
-    GpuTermination, MeterVerdict,
+    GpuConnectorError, GpuEndReason, GpuJobAccounting, GpuJobActor, GpuJobConnector, GpuJobEnd,
+    GpuJobError, GpuJobSignal, GpuJobSpec, GpuJobState, GpuJobStatus, GpuResourceRef,
+    GpuResourceStatus, GpuTermination, MeterVerdict,
 };
 use oneiron::job_dispatch::{DispatchClose, DispatchPhase, JobObservation};
 use oneiron::job_workload::{WorkloadCaller, WorkloadRef, WorkloadStartRefusal};
@@ -781,7 +781,7 @@ fn a_vault_machine_offer_states_at_maximum_stop() {
     let unstated = gpu_jobs_section(&OWN_MACHINE_SECTION.replace("at_maximum = \"stop\"\n", ""))
         .expect_err("a vault_machine offer that states no at_maximum");
     assert!(
-        format!("{unstated:#}").contains("at_maximum must be \"stop\""),
+        format!("{unstated:#}").contains("at_maximum must be \"stop\" or \"renew\""),
         "{unstated:#}"
     );
     let provisioned = gpu_jobs_section(
@@ -792,9 +792,32 @@ fn a_vault_machine_offer_states_at_maximum_stop() {
         format!("{provisioned:#}").contains("vault_machine backend only"),
         "{provisioned:#}"
     );
-    let renew = gpu_jobs_section(&OWN_MACHINE_SECTION.replace("\"stop\"", "\"renew\""))
-        .expect_err("renew comes with row W1");
-    assert!(format!("{renew:#}").contains("renew"), "{renew:#}");
+    let provisioned_renew = gpu_jobs_section(
+        &OWN_MACHINE_SECTION
+            .replace("backend = \"vault_machine\"", "backend = \"skypilot\"")
+            .replace("\"stop\"", "\"renew\""),
+    )
+    .expect_err("renew on a provisioned offer");
+    assert!(
+        format!("{provisioned_renew:#}").contains("vault_machine backend only"),
+        "{provisioned_renew:#}"
+    );
+}
+
+/// Pass 34, 9.3 (row W1): a `vault_machine` offer may state `at_maximum = "renew"`, a session,
+/// and the offer carries it into every quote; a stop leaves the quote's terms as before.
+#[test]
+fn a_vault_machine_offer_may_state_at_maximum_renew() {
+    let settings = gpu_jobs_section(&OWN_MACHINE_SECTION.replace("\"stop\"", "\"renew\""))
+        .expect("an own-machine offer that renews");
+    let offer = settings.offer("own-a6000").expect("the offer");
+    assert_eq!(offer.at_maximum, Some(AtMaximum::Renew));
+    assert_eq!(offer.offer.at_maximum, AtMaximum::Renew);
+    let stops = gpu_jobs_section(OWN_MACHINE_SECTION).expect("an own-machine offer that stops");
+    assert_eq!(
+        stops.offer("own-a6000").map(|offer| offer.offer.at_maximum),
+        Some(AtMaximum::Stop),
+    );
 }
 
 #[test]
@@ -936,5 +959,682 @@ fn a_node_that_repeats_its_key_cursor_is_not_reconciled_and_gets_no_reserve() {
             "create and step each stop reconciliation on their second page",
         );
         assert_eq!(rig.dispatch(&run).phase, DispatchPhase::Reserving);
+    });
+}
+
+/// Pass 34, 9.3 (row W1): a session's renewal on a node that offers its template as a
+/// session's is one continuing submit, on the first key's machine, pin and slot, with no
+/// reserve; once the node proves the run passed the first chunk's end, that slice confirms and
+/// bills on its own receipt and nothing stops the first key.
+#[test]
+fn a_session_renewal_sends_a_continuing_submit_and_no_reserve() {
+    use oneiron_server::gpu_execution_node::wire::SignedJobSubmit;
+    use vault_machine_rig::MAXIMUM_SECS;
+
+    with_rig(|rig| {
+        rig.node.state().session_template = true;
+        let workload = rig.approve("session", FAR_EXPIRY_MS);
+        let run = rig.start_session(&workload);
+        let first = run.key().to_owned();
+        rig.clock.advance_secs(MAXIMUM_SECS - 300);
+        rig.node.advance(
+            &first,
+            JobState::Running,
+            Some(MAXIMUM_SECS - 300),
+            None,
+            true,
+        );
+        rig.step_session(&run).expect("the step renews the session");
+        let job = rig.job(&run);
+        let next = job
+            .renewal
+            .as_ref()
+            .expect("the next chunk is written")
+            .idempotency_key
+            .clone();
+        let calls = rig.node.calls();
+        let for_next = |kind: &str| {
+            calls
+                .iter()
+                .filter(|call| call.kind == kind && call.key.as_deref() == Some(next.as_str()))
+                .count()
+        };
+        assert_eq!(
+            for_next("reserve"),
+            0,
+            "a session's next chunk is never reserved"
+        );
+        assert_eq!(for_next("submit"), 1);
+        let row = rig
+            .vault()
+            .job_dispatch(&next)
+            .expect("read JOB_DISPATCH")
+            .expect("the next chunk's dispatch row");
+        let first_row = rig
+            .vault()
+            .job_dispatch(&first)
+            .expect("read JOB_DISPATCH")
+            .expect("the first chunk's dispatch row");
+        assert_eq!(row.machine, first_row.machine);
+        assert_eq!(row.phase, DispatchPhase::Submitted);
+        let submit = oneiron_organ_protocol::from_slice::<SignedJobSubmit>(&row.submit)
+            .expect("the signed submit")
+            .submit;
+        let first_submit = oneiron_organ_protocol::from_slice::<SignedJobSubmit>(&first_row.submit)
+            .expect("the first signed submit")
+            .submit;
+        assert_eq!(submit.continues.as_deref(), Some(first.as_str()));
+        assert_eq!(submit.pin, first_submit.pin);
+        assert_eq!(submit.slot, first_submit.slot);
+        assert_eq!(submit.maximum_secs, MAXIMUM_SECS);
+
+        // The node's journal proves the run passed the first chunk's end.
+        rig.clock.advance_secs(300);
+        rig.node.advance(
+            &first,
+            JobState::Ended,
+            Some(MAXIMUM_SECS),
+            Some(JobEnd::Continued),
+            true,
+        );
+        rig.node
+            .advance(&next, JobState::Running, Some(5), None, true);
+        rig.step_session(&run)
+            .expect("the step moves to the next chunk");
+        let passed = rig.job(&run);
+        assert_eq!(passed.chunks.len(), 2);
+        assert_eq!(passed.state, GpuJobState::Running);
+        assert_eq!(
+            passed.chunks[0].billed_secs,
+            Some(MAXIMUM_SECS),
+            "the slice bills its own measured seconds"
+        );
+        let stops = rig
+            .node
+            .calls()
+            .iter()
+            .filter(|call| call.kind == "stop")
+            .count();
+        assert_eq!(stops, 0, "a passed slice is never stopped");
+        let terminal = rig
+            .vault()
+            .job_observation(&first)
+            .expect("read JOB_OBSERVATION")
+            .and_then(|observation| observation.terminal)
+            .expect("the first slice's terminal");
+        assert_eq!(terminal.end, GpuJobEnd::Continued);
+        // A read of the passed slice again answers from its terminal, with no stop.
+        let again = rig
+            .connector
+            .status(&GpuResourceRef(format!(
+                "{}#{first}",
+                rig.node.machine.to_hex()
+            )))
+            .expect("status of the passed slice");
+        assert!(
+            matches!(again, GpuResourceStatus::Continued { .. }),
+            "{again:?}"
+        );
+        assert_eq!(
+            rig.node
+                .calls()
+                .iter()
+                .filter(|call| call.kind == "stop")
+                .count(),
+            0
+        );
+    });
+}
+
+/// EM-22 R4 blocking 2 of #10521 (door 10, row W1): a write-off of a session whose next chunk's
+/// end the issuer holds (the run passed into it and ended there) is refused before anything
+/// closes, so the step settles that chunk as it ran; the current chunk's dispatch stays open.
+#[test]
+fn a_write_off_refuses_a_session_whose_next_chunk_holds_its_end() {
+    use vault_machine_rig::MAXIMUM_SECS;
+
+    with_rig(|rig| {
+        rig.node.state().session_template = true;
+        let workload = rig.approve("session", FAR_EXPIRY_MS);
+        let run = rig.start_session(&workload);
+        let first = run.key().to_owned();
+        rig.clock.advance_secs(MAXIMUM_SECS - 300);
+        rig.node.advance(
+            &first,
+            JobState::Running,
+            Some(MAXIMUM_SECS - 300),
+            None,
+            true,
+        );
+        rig.step_session(&run).expect("the step renews the session");
+        let next = rig
+            .job(&run)
+            .renewal
+            .as_ref()
+            .expect("the next chunk is written")
+            .idempotency_key
+            .clone();
+        // The issuer reads the next chunk's end before it sees the first slice pass.
+        rig.node.advance(
+            &next,
+            JobState::Ended,
+            Some(40),
+            Some(JobEnd::Exited { code: 0 }),
+            true,
+        );
+        rig.step_session(&run)
+            .expect("the step reads the next chunk");
+        rig.clock.advance_secs(100_000);
+        let refused = rig.vault().write_off_gpu_job(
+            &rig.owner,
+            &run.job.id,
+            &rig.permits,
+            &rig.connector,
+            rig.clock.now_ms(),
+        );
+        assert!(
+            matches!(
+                &refused,
+                Err(GpuJobError::Connector(GpuConnectorError::Refused { reason }))
+                    if reason == "end_confirmed"
+            ),
+            "{refused:?}"
+        );
+        assert!(rig.job(&run).state.is_live());
+        let current = rig
+            .vault()
+            .job_dispatch(&first)
+            .expect("read JOB_DISPATCH")
+            .expect("the first chunk's dispatch row");
+        assert!(
+            !matches!(current.closed, Some(DispatchClose::WrittenOff { .. })),
+            "nothing is written off: {:?}",
+            current.closed
+        );
+    });
+}
+
+/// The `not_after` the issuer signed into `key`'s submit.
+fn signed_not_after_ms(vault: &Vault, key: &str) -> u64 {
+    let row = vault
+        .job_dispatch(key)
+        .expect("read JOB_DISPATCH")
+        .expect("the key's dispatch row");
+    oneiron_organ_protocol::from_slice::<oneiron_server::gpu_execution_node::wire::SignedJobSubmit>(
+        &row.submit,
+    )
+    .expect("the signed submit")
+    .submit
+    .not_after_ms
+}
+
+/// REVIEW-10521 r2 P1 (renewals.rs:272, door 10): a session whose run staged past its first
+/// key's window and then renewed is bounded by its first renewal's window, which the node
+/// enforces on its own (it renews only a run it launched, and only inside that window). Door 10
+/// waits for that bound plus every chunk and the wait, not for the first key's window plus the
+/// chunks, which passes while the renewed slice can still run.
+#[test]
+fn a_write_off_waits_for_a_renewed_run_that_launched_past_its_first_window() {
+    use vault_machine_rig::MAXIMUM_SECS;
+    /// `jobs.write_off.wait_secs`, its default.
+    const WAIT_SECS: u64 = 3_600;
+
+    with_rig(|rig| {
+        rig.node.state().session_template = true;
+        let workload = rig.approve("session", FAR_EXPIRY_MS);
+        let run = rig.start_session(&workload);
+        let first = run.key().to_owned();
+        let first_not_after_ms = signed_not_after_ms(rig.vault(), &first);
+        // The node staged past the first key's window: the run launched 4,000 s after it.
+        let launched_ms = first_not_after_ms + 4_000_000;
+        rig.clock
+            .advance_secs((launched_ms - rig.clock.now_ms()) / 1_000 + MAXIMUM_SECS - 300);
+        rig.node.advance(
+            &first,
+            JobState::Running,
+            Some(MAXIMUM_SECS - 300),
+            None,
+            true,
+        );
+        rig.step_session(&run).expect("the step renews the session");
+        let next = rig
+            .job(&run)
+            .renewal
+            .as_ref()
+            .expect("the next chunk is written")
+            .idempotency_key
+            .clone();
+        let next_not_after_ms = signed_not_after_ms(rig.vault(), &next);
+        rig.clock.advance_secs(300);
+        rig.node.advance(
+            &first,
+            JobState::Ended,
+            Some(MAXIMUM_SECS),
+            Some(JobEnd::Continued),
+            true,
+        );
+        rig.node
+            .advance(&next, JobState::Running, Some(5), None, true);
+        rig.step_session(&run)
+            .expect("the step moves to the next chunk");
+        assert_eq!(rig.job(&run).chunks.len(), 2, "the renewed slice runs");
+
+        // The run can hold the node until its launch plus both chunks.
+        let run_end_ms = launched_ms + 2 * MAXIMUM_SECS * 1_000;
+        let first_window_bound_ms = first_not_after_ms + (2 * MAXIMUM_SECS + WAIT_SECS) * 1_000;
+        assert!(first_window_bound_ms < run_end_ms);
+        rig.clock
+            .advance_secs((first_window_bound_ms - rig.clock.now_ms()) / 1_000 + 1);
+        let early = rig.vault().write_off_gpu_job(
+            &rig.owner,
+            &run.job.id,
+            &rig.permits,
+            &rig.connector,
+            rig.clock.now_ms(),
+        );
+        assert!(
+            matches!(
+                &early,
+                Err(GpuJobError::Connector(GpuConnectorError::Refused { reason }))
+                    if reason == "write_off_too_early"
+            ),
+            "the renewed slice may still run: {early:?}"
+        );
+        assert!(rig.job(&run).state.is_live());
+        let current = rig
+            .vault()
+            .job_dispatch(&next)
+            .expect("read JOB_DISPATCH")
+            .expect("the renewed chunk's dispatch row");
+        assert!(
+            !matches!(current.closed, Some(DispatchClose::WrittenOff { .. })),
+            "nothing is written off: {:?}",
+            current.closed
+        );
+
+        // From the first renewal's window plus both chunks and the wait, the door closes it.
+        let renewal_bound_ms = next_not_after_ms + (2 * MAXIMUM_SECS + WAIT_SECS) * 1_000;
+        assert!(renewal_bound_ms >= run_end_ms + WAIT_SECS * 1_000);
+        rig.clock
+            .advance_secs((renewal_bound_ms - rig.clock.now_ms()) / 1_000);
+        let written = rig
+            .vault()
+            .write_off_gpu_job(
+                &rig.owner,
+                &run.job.id,
+                &rig.permits,
+                &rig.connector,
+                rig.clock.now_ms(),
+            )
+            .expect("the write-off once the renewed run met its cutoff");
+        assert_eq!(
+            written.state,
+            GpuJobState::Ended {
+                reason: GpuEndReason::Unconfirmed
+            }
+        );
+    });
+}
+
+/// REVIEW-10521 r2 P1 (view.rs:132, door 8): once a session's next chunk is admitted while the
+/// current chunk still runs, both permits hold their units, and door 8 counts both.
+#[test]
+fn door_8_counts_a_session_next_chunk_hold_beside_the_current_one() {
+    use vault_machine_rig::MAXIMUM_SECS;
+
+    with_rig(|rig| {
+        rig.node.state().session_template = true;
+        let workload = rig.approve("session", FAR_EXPIRY_MS);
+        let run = rig.start_session(&workload);
+        let first = run.key().to_owned();
+        rig.clock.advance_secs(MAXIMUM_SECS - 300);
+        rig.node.advance(
+            &first,
+            JobState::Running,
+            Some(MAXIMUM_SECS - 300),
+            None,
+            true,
+        );
+        rig.step_session(&run).expect("the step renews the session");
+        let job = rig.job(&run);
+        let current_units = job.chunk().expect("the current chunk").quote.units;
+        // The step writes the next chunk only once its own permit holds its quote.
+        let next_units = job
+            .renewal
+            .as_ref()
+            .expect("the next chunk is admitted")
+            .quote
+            .units;
+        assert!(current_units > 0 && next_units > 0);
+        let view = rig
+            .connector
+            .node_view(&job, rig.clock.now_ms(), 60_000)
+            .expect("a job on one of the vault's machines has a node view");
+        assert_eq!(
+            view.accounting,
+            GpuJobAccounting::Held {
+                units: current_units + next_units
+            }
+        );
+    });
+}
+
+/// The rig's connector, with a refusal of a session's next chunk lost on its way back to the
+/// step: the state a host leaves when it stops after the issuer stored the node's signed refusal
+/// and before the step settled the chunk at zero (REVIEW-10521 r2 P1 2).
+struct RenewalRefusalLost<'a>(&'a VaultMachineConnector);
+
+impl GpuJobConnector for RenewalRefusalLost<'_> {
+    fn create(&self, key: &str, spec: &GpuJobSpec) -> Result<GpuResourceRef, GpuConnectorError> {
+        self.0.create(key, spec)
+    }
+
+    fn find(&self, key: &str) -> Result<Option<GpuResourceRef>, GpuConnectorError> {
+        self.0.find(key)
+    }
+
+    fn status(&self, resource: &GpuResourceRef) -> Result<GpuResourceStatus, GpuConnectorError> {
+        self.0.status(resource)
+    }
+
+    fn signal(
+        &self,
+        resource: &GpuResourceRef,
+        signal: GpuJobSignal,
+    ) -> Result<(), GpuConnectorError> {
+        self.0.signal(resource, signal)
+    }
+
+    fn terminate(&self, resource: &GpuResourceRef) -> Result<GpuTermination, GpuConnectorError> {
+        self.0.terminate(resource)
+    }
+
+    fn renew(
+        &self,
+        key: &str,
+        continues: &str,
+        spec: &GpuJobSpec,
+    ) -> Result<GpuResourceRef, GpuConnectorError> {
+        match self.0.renew(key, continues, spec) {
+            Err(GpuConnectorError::Refused { .. }) => Err(GpuConnectorError::Timeout),
+            other => other,
+        }
+    }
+}
+
+/// Starts a session and runs it to its renewal. The node refuses the next chunk with a signed
+/// end saying it never started; the issuer stores it, and the step never settles the chunk.
+/// Then the node goes silent, so no step can. Answers the run and its two keys.
+fn session_with_a_stored_unsettled_renewal_refusal(
+    rig: &vault_machine_rig::Rig,
+) -> (vault_machine_rig::JobRun, String, String) {
+    use vault_machine_rig::MAXIMUM_SECS;
+
+    rig.node.state().session_template = true;
+    let workload = rig.approve("session", FAR_EXPIRY_MS);
+    let run = rig.start_session(&workload);
+    let first = run.key().to_owned();
+    rig.clock.advance_secs(MAXIMUM_SECS - 300);
+    rig.node.advance(
+        &first,
+        JobState::Running,
+        Some(MAXIMUM_SECS - 300),
+        None,
+        true,
+    );
+    rig.node.refuse_submits(Some("session_max_reached"));
+    rig.step_session_with(&run, &RenewalRefusalLost(&rig.connector))
+        .expect("the step sends the renewal");
+    let job = rig.job(&run);
+    let renewal = job.renewal.as_ref().expect("the next chunk is written");
+    assert_eq!(renewal.billed_secs, None, "the step never settled it");
+    let next = renewal.idempotency_key.clone();
+    let stored = rig
+        .vault()
+        .job_observation(&next)
+        .expect("read JOB_OBSERVATION")
+        .expect("the issuer stored the node's answer");
+    let receipt = oneiron_organ_protocol::from_slice::<SignedJobReceipt>(&stored.receipt)
+        .expect("the stored receipt")
+        .receipt;
+    assert_eq!((receipt.state, receipt.started), (JobState::Ended, false));
+    rig.node.unreachable(true);
+    assert!(
+        rig.step_session(&run).is_err(),
+        "the node is silent, so no step settles the next chunk"
+    );
+    (run, first, next)
+}
+
+/// What door 10 may write for `run`: its job row and the dispatch rows of `keys`.
+fn door_10_rows(
+    rig: &vault_machine_rig::Rig,
+    run: &vault_machine_rig::JobRun,
+    keys: &[&str],
+) -> (
+    oneiron::gpu_job::GpuJob,
+    Vec<Option<oneiron::job_dispatch::JobDispatch>>,
+) {
+    let rows = keys
+        .iter()
+        .map(|key| rig.vault().job_dispatch(key).expect("read JOB_DISPATCH"))
+        .collect();
+    (rig.job(run), rows)
+}
+
+/// REVIEW-10521 r2 P1 (renewals.rs:289, door 10; ANSWER W1-DOOR10-NEVER-STARTED-RENEWAL = A):
+/// the node refused a session's next chunk with a signed end saying it never started, the
+/// issuer stored it, the host stopped before the step settled the chunk, and the node went
+/// silent. Door 10 settles that chunk at zero and writes the current chunk off under the run's
+/// bound: both holds are released and the job ends. The old door refused `end_confirmed` for
+/// good, and the job and both holds stayed.
+#[test]
+fn a_write_off_settles_a_renewal_the_node_signed_as_never_started_at_zero() {
+    with_rig(|rig| {
+        let (run, first, next) = session_with_a_stored_unsettled_renewal_refusal(rig);
+        rig.clock.advance_secs(100_000);
+        let written = match rig.vault().write_off_gpu_job(
+            &rig.owner,
+            &run.job.id,
+            &rig.permits,
+            &rig.connector,
+            rig.clock.now_ms(),
+        ) {
+            Ok(job) => job,
+            Err(error) => panic!("door 10 settles a renewal that never started: {error:?}"),
+        };
+        assert_eq!(
+            written.state,
+            GpuJobState::Ended {
+                reason: GpuEndReason::Unconfirmed
+            }
+        );
+        let renewal = written
+            .renewal
+            .as_ref()
+            .expect("the next chunk stays on the job");
+        assert_eq!(renewal.idempotency_key, next);
+        assert_eq!(
+            (renewal.billed_secs, renewal.settled_units),
+            (Some(0), Some(0))
+        );
+        assert_eq!(
+            written.chunk().expect("the current chunk").settled_units,
+            Some(0)
+        );
+        assert!(!rig.permits.holds(&run.job.id), "both holds are released");
+        assert_eq!(run.settled(), vec![0, 0], "each hold settles once, at zero");
+        let current = rig
+            .vault()
+            .job_dispatch(&first)
+            .expect("read JOB_DISPATCH")
+            .expect("the current chunk's dispatch row");
+        assert!(
+            matches!(current.closed, Some(DispatchClose::WrittenOff { .. })),
+            "{:?}",
+            current.closed
+        );
+        let refused = rig
+            .vault()
+            .job_dispatch(&next)
+            .expect("read JOB_DISPATCH")
+            .expect("the next chunk's dispatch row");
+        assert_eq!(refused.phase, DispatchPhase::Closed);
+    });
+}
+
+/// ANSWER W1-DOOR10-NEVER-STARTED-RENEWAL = A, condition 4: a next chunk whose signed end says
+/// the run passed into it still refuses door 10 with `end_confirmed`, so the step bills it;
+/// nothing is written.
+#[test]
+fn a_write_off_still_refuses_a_renewal_whose_signed_end_says_it_ran() {
+    use vault_machine_rig::MAXIMUM_SECS;
+
+    with_rig(|rig| {
+        rig.node.state().session_template = true;
+        let workload = rig.approve("session", FAR_EXPIRY_MS);
+        let run = rig.start_session(&workload);
+        let first = run.key().to_owned();
+        rig.clock.advance_secs(MAXIMUM_SECS - 300);
+        rig.node.advance(
+            &first,
+            JobState::Running,
+            Some(MAXIMUM_SECS - 300),
+            None,
+            true,
+        );
+        rig.step_session(&run).expect("the step renews the session");
+        let next = rig
+            .job(&run)
+            .renewal
+            .as_ref()
+            .expect("the next chunk is written")
+            .idempotency_key
+            .clone();
+        // The run passed into the next chunk and on past it: its signed end says it ran.
+        rig.node.advance(
+            &next,
+            JobState::Ended,
+            Some(MAXIMUM_SECS),
+            Some(JobEnd::Continued),
+            true,
+        );
+        rig.step_session(&run)
+            .expect("the step reads the next chunk");
+        rig.node.unreachable(true);
+        rig.clock.advance_secs(100_000);
+        let before = door_10_rows(rig, &run, &[&first, &next]);
+        let refused = rig.vault().write_off_gpu_job(
+            &rig.owner,
+            &run.job.id,
+            &rig.permits,
+            &rig.connector,
+            rig.clock.now_ms(),
+        );
+        assert!(
+            matches!(
+                &refused,
+                Err(GpuJobError::Connector(GpuConnectorError::Refused { reason }))
+                    if reason == "end_confirmed"
+            ),
+            "{refused:?}"
+        );
+        assert!(
+            door_10_rows(rig, &run, &[&first, &next]) == before,
+            "nothing is written"
+        );
+    });
+}
+
+/// ANSWER W1-DOOR10-NEVER-STARTED-RENEWAL = A, condition 1: door 10 checks a stored
+/// never-started end again before it settles anything on it. A receipt changed under the
+/// node's signature, or one the node signed for another chunk, refuses with the failed check's
+/// name, and nothing is written.
+#[test]
+fn a_write_off_refuses_a_never_started_end_that_fails_its_checks() {
+    with_rig(|rig| {
+        let (run, first, next) = session_with_a_stored_unsettled_renewal_refusal(rig);
+        rig.clock.advance_secs(100_000);
+        let stored = rig
+            .vault()
+            .job_observation(&next)
+            .expect("read JOB_OBSERVATION")
+            .expect("the stored answer");
+        let signed = oneiron_organ_protocol::from_slice::<SignedJobReceipt>(&stored.receipt)
+            .expect("the stored receipt");
+        let mut changed = signed.clone();
+        changed.receipt.seq += 1;
+        let mut other = signed.receipt.clone();
+        other.key = format!("{}:9", run.job.id.to_hex());
+        let elsewhere = rig.node.put(other);
+        for (planted, check) in [
+            (changed, "end_unverified: receipt_signature_invalid"),
+            (elsewhere, "end_unverified: receipt_names_another_chunk"),
+        ] {
+            let mut observation = stored.clone();
+            observation.receipt =
+                oneiron_organ_protocol::to_vec(&planted).expect("encode the planted receipt");
+            rig.vault()
+                .put_job_observation(&observation)
+                .expect("plant the receipt");
+            let before = door_10_rows(rig, &run, &[&first, &next]);
+            let refused = rig.vault().write_off_gpu_job(
+                &rig.owner,
+                &run.job.id,
+                &rig.permits,
+                &rig.connector,
+                rig.clock.now_ms(),
+            );
+            assert!(
+                matches!(
+                    &refused,
+                    Err(GpuJobError::Connector(GpuConnectorError::Refused { reason }))
+                        if reason == check
+                ),
+                "{check}: {refused:?}"
+            );
+            assert!(
+                door_10_rows(rig, &run, &[&first, &next]) == before,
+                "{check}: nothing is written"
+            );
+        }
+    });
+}
+
+/// ANSWER W1-DOOR10-NEVER-STARTED-RENEWAL = A, condition 3: door 10 asked twice writes once.
+/// The second call, and the backend's own close asked again with the job as the first call saw
+/// it, change no row and settle no hold again.
+#[test]
+fn a_second_write_off_of_a_never_started_renewal_changes_nothing() {
+    with_rig(|rig| {
+        let (run, first, next) = session_with_a_stored_unsettled_renewal_refusal(rig);
+        rig.clock.advance_secs(100_000);
+        let seen = rig.job(&run);
+        let first_call = rig.vault().write_off_gpu_job(
+            &rig.owner,
+            &run.job.id,
+            &rig.permits,
+            &rig.connector,
+            rig.clock.now_ms(),
+        );
+        let after = door_10_rows(rig, &run, &[&first, &next]);
+        let settled = run.settled();
+        let second = rig.vault().write_off_gpu_job(
+            &rig.owner,
+            &run.job.id,
+            &rig.permits,
+            &rig.connector,
+            rig.clock.now_ms(),
+        );
+        if first_call.is_ok() {
+            assert!(matches!(second, Err(GpuJobError::Ended)), "{second:?}");
+        }
+        let again = rig.connector.write_off(&seen, rig.clock.now_ms());
+        assert_eq!(again.is_ok(), first_call.is_ok(), "{again:?}");
+        assert!(
+            door_10_rows(rig, &run, &[&first, &next]) == after,
+            "the second call writes nothing"
+        );
+        assert_eq!(run.settled(), settled, "no hold settles twice");
     });
 }

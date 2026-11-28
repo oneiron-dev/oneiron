@@ -362,7 +362,11 @@ impl UnitClaim {
             | GpuJobEnd::MemoryLimit
             | GpuJobEnd::DiskLimit
             | GpuJobEnd::Stopped
-            | GpuJobEnd::Revoked => (
+            | GpuJobEnd::Revoked
+            // A session's slice (row W1) settles the seconds it billed. A line-funded job
+            // renews nothing until its per-chunk claim lands (OPUS-LE-FLEET), so a claim's job
+            // never reaches one.
+            | GpuJobEnd::Continued => (
                 UnitEnd::Settled,
                 terminal.billed_secs.min(self.reserved_secs),
                 0,

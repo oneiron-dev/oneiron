@@ -42,9 +42,11 @@ pub fn node_view(vault: &Vault, job: &GpuJob, now_ms: u64, step_ms: u64) -> Opti
         .ok()
         .map(|settings| settings.stale_after_steps);
     let observed = observation.as_ref().map(|observation| {
-        let ended = receipt
-            .as_ref()
-            .is_some_and(|receipt| receipt.state == JobState::Ended);
+        // A session's slice the run passed (row W1) is no end: the run goes on, and the receipt
+        // ages as a running one until the next chunk's own receipts follow.
+        let ended = receipt.as_ref().is_some_and(|receipt| {
+            receipt.state == JobState::Ended && receipt.end != Some(JobEnd::Continued)
+        });
         let age_ms = now_ms.saturating_sub(observation.observed_at_ms);
         GpuJobObserved {
             at_ms: observation.observed_at_ms,
@@ -67,10 +69,15 @@ pub fn node_view(vault: &Vault, job: &GpuJob, now_ms: u64, step_ms: u64) -> Opti
 /// is not running) is `assigned`. The job row alone cannot tell: its chunk gets its resource
 /// in the same write that makes it `Running`.
 fn lifecycle_of(job: &GpuJob, receipt: Option<&JobReceipt>) -> GpuJobLifecycle {
+    // A session's chunk that continues a run (row W1) runs once the run passed into it, before
+    // its own first receipt says so.
+    let continues = job.chunk().is_some_and(|chunk| chunk.continues.is_some());
     match GpuJobLifecycle::of(job) {
         GpuJobLifecycle::Running
-            if receipt
-                .is_none_or(|receipt| !receipt.started && receipt.state != JobState::Running) =>
+            if !continues
+                && receipt.is_none_or(|receipt| {
+                    !receipt.started && receipt.state != JobState::Running
+                }) =>
         {
             GpuJobLifecycle::Assigned
         }
@@ -80,7 +87,8 @@ fn lifecycle_of(job: &GpuJob, receipt: Option<&JobReceipt>) -> GpuJobLifecycle {
 
 /// Where the money stands: settled once the job settled, or at zero once it ended unpaid;
 /// written off; unconfirmed while the end cannot be confirmed (the node's history lost, a kill
-/// it could not confirm, a node that does not answer an asked stop); else held.
+/// it could not confirm, a node that does not answer an asked stop); else held: the current
+/// chunk's units, plus a session's open next chunk's.
 fn accounting_of(
     job: &GpuJob,
     dispatch: Option<&JobDispatch>,
@@ -121,8 +129,17 @@ fn accounting_of(
             why: "stop_not_confirmed".to_owned(),
         };
     }
+    // A session's open next chunk (row W1) holds its own permit beside the current chunk's, from
+    // its admission until it settles, so both are held. One whose admission was lost holds none.
+    let renewal_units = job
+        .renewal
+        .as_ref()
+        .filter(|next| next.billed_secs.is_none() && !next.admission_lost)
+        .map_or(0, |next| next.quote.units);
     GpuJobAccounting::Held {
-        units: chunk.map_or(0, |chunk| chunk.quote.units),
+        units: chunk
+            .map_or(0, |chunk| chunk.quote.units)
+            .saturating_add(renewal_units),
     }
 }
 

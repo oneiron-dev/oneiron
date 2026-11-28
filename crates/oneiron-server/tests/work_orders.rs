@@ -86,6 +86,7 @@ fn offer(name: &str) -> GpuOffer {
         startup_secs: 0,
         teardown_secs: 0,
         rounding_secs: 0,
+        at_maximum: AtMaximum::Stop,
     }
 }
 
