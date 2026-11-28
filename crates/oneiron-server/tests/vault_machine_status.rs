@@ -2096,3 +2096,130 @@ fn a_bound_key_that_never_started_owes_no_return_and_housekeeping_asks_nothing()
         );
     });
 }
+
+/// The node's report of `run` cut off at its maximum: `TimeLimit` after 90 measured seconds,
+/// its device released clean, and `partial` hashed as its returnable `verdict.json`.
+fn cut_off_with_partial(rig: &Rig, run: &JobRun, partial: &[u8]) {
+    let at_ms = rig.clock.now_ms();
+    rig.node.revise(run.key(), |receipt| {
+        receipt.state = JobState::Ended;
+        receipt.started = true;
+        receipt.end = Some(JobEnd::TimeLimit);
+        receipt.measured_secs = Some(90);
+        receipt.device_id = Some("scripted-gpu".to_owned());
+        receipt.release = DeviceRelease::Confirmed { at_ms };
+        receipt.outputs = OutputsState::Hashed(vec![OutputDigest {
+            name: "verdict.json".to_owned(),
+            sha256: format!("{:x}", Sha256::digest(partial)),
+            bytes: u64::try_from(partial.len()).expect("a small output"),
+            returnable: true,
+        }]);
+    });
+}
+
+/// Row GPU-JOB-CUTOFF-PROOF, the issuer's half: a job its node cuts off at its maximum returns
+/// the partial result it wrote before the cutoff, as every ended key but a revoked one does
+/// ("Any other ended key returns its result", ARCH-0046). The returnable output is fetched,
+/// checked against the machine's signed digest and length, and proposed as the artifact's next
+/// version, pending Keep, made by the task; then the node may clean. The job ends `time_limit`,
+/// settled at no more than its quote. A time-limit end never lands bytes past the signed
+/// digest: a partial output whose bytes differ from the receipt's (the workload wrote on past
+/// the hash) is refused `digest_mismatch`, and nothing lands.
+#[test]
+fn a_job_cut_at_its_maximum_returns_its_partial_result_and_never_bytes_past_its_digest() {
+    with_rig(|rig| {
+        let vault = rig.vault();
+        let binding = result_binding(rig);
+        let head = vault
+            .blob_artifact_head(&binding.artifact)
+            .expect("read the artifact's head");
+        let workload = rig.approve("cutoff-result", FAR_EXPIRY_MS);
+        let partial: &[u8] = br#"{"verdict":"partial","steps":3}"#;
+
+        let run = rig.start_job_with_inputs(&workload, bound_inputs(rig, &binding), &rig.connector);
+        rig.node
+            .advance(run.key(), JobState::Running, Some(30), None, true);
+        rig.step(&run).expect("poll the running job");
+        rig.clock.advance_secs(60);
+        cut_off_with_partial(rig, &run, partial);
+        rig.node.put_output(run.key(), "verdict.json", partial);
+        let ended = rig.settle(&run);
+        assert_eq!(
+            serde_json::to_value(&ended.state).expect("encode the job's state"),
+            json!({ "ended": { "reason": "time_limit" } }),
+        );
+        let status = GpuJobStatus::from(&ended);
+        assert!(
+            status.settled_units <= units(&run),
+            "settled {} of a {} unit quote",
+            status.settled_units,
+            units(&run)
+        );
+        let calls = rig.node.calls();
+        assert_eq!(
+            fetched(&calls, run.key()),
+            vec!["verdict.json".to_owned()],
+            "the partial verdict is fetched",
+        );
+        assert!(
+            position(&calls, "fetch", Some(run.key())) < position(&calls, "ack", Some(run.key())),
+            "the node is told to clean only after the landing: {calls:?}",
+        );
+        let returned = vault
+            .job_return(run.key())
+            .expect("read JOB_RETURN")
+            .expect("the key's return");
+        assert_eq!(returned.landed, vec!["verdict.json".to_owned()]);
+        assert!(returned.refused.is_empty(), "{:?}", returned.refused);
+        assert!(returned.acknowledged_at_ms.is_some());
+        let waiting = vault
+            .pending_proposals(&binding.artifact)
+            .expect("list the artifact's proposals");
+        assert_eq!(waiting.len(), 1, "the partial result waits for Keep");
+        let made_by = waiting[0].made_by.as_ref().expect("its made_by");
+        assert_eq!(made_by.trigger, Some(MadeByTrigger::Task(binding.task)));
+        assert_eq!(
+            vault
+                .blob_artifact_head(&binding.artifact)
+                .expect("read the artifact's head"),
+            head,
+            "pending Keep: the head did not move",
+        );
+
+        let late =
+            rig.start_job_with_inputs(&workload, bound_inputs(rig, &binding), &rig.connector);
+        rig.node
+            .advance(late.key(), JobState::Running, Some(30), None, true);
+        rig.step(&late).expect("poll the running job");
+        rig.clock.advance_secs(60);
+        cut_off_with_partial(rig, &late, partial);
+        let mut past = partial.to_vec();
+        past.extend_from_slice(b"\n{\"verdict\":\"late\"}");
+        rig.node.put_output(late.key(), "verdict.json", &past);
+        let ended = rig.settle(&late);
+        assert_eq!(
+            serde_json::to_value(&ended.state).expect("encode the job's state"),
+            json!({ "ended": { "reason": "time_limit" } }),
+        );
+        let returned = vault
+            .job_return(late.key())
+            .expect("read JOB_RETURN")
+            .expect("the key's return");
+        assert_eq!(
+            returned.refused,
+            vec![ReturnRefusal {
+                name: "verdict.json".to_owned(),
+                why: "digest_mismatch".to_owned(),
+            }],
+        );
+        assert!(returned.landed.is_empty(), "{:?}", returned.landed);
+        assert_eq!(
+            vault
+                .pending_proposals(&binding.artifact)
+                .expect("list the artifact's proposals")
+                .len(),
+            1,
+            "bytes past the signed digest land nothing",
+        );
+    });
+}
