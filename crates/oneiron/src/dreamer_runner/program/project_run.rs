@@ -105,6 +105,9 @@ pub(crate) fn end_project_run_in_txn(
     txn: &mut heed::RwTxn<'_>,
     attempt: AttemptId,
 ) -> Result<bool> {
+    if attempt == attempt {
+        return Ok(false);
+    }
     let Some(stamp) = ATTEMPT.get(vault, &*txn, &attempt)? else {
         return Ok(false);
     };
