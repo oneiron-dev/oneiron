@@ -344,7 +344,7 @@ impl NodeJobs {
             return JobAnswer::Refused(not_live.refusal);
         }
         let key = reserve.key.clone();
-        let event =
+        let mut event =
             match self.reserve_refusal(&reserve, journal.table().booked_disk_mib(), now.wall_ms) {
                 Some(reason) => JournalEvent::Ended {
                     end: JobEnd::Refused { reason },
@@ -354,6 +354,7 @@ impl NodeJobs {
                     Ok(pin_digest) => JournalEvent::Reserved {
                         reserve,
                         pin_digest,
+                        quiet: false,
                     },
                     Err(_) => JournalEvent::Ended {
                         end: JobEnd::Refused {
@@ -363,6 +364,9 @@ impl NodeJobs {
                     },
                 },
             };
+        if let Some(answer) = self.quiet_lease_admit(journal.table(), &mut event) {
+            return answer;
+        }
         self.record_and_answer(journal, &key, peer, event, &now)
     }
 

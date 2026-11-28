@@ -329,7 +329,7 @@ fn prepare(context: &StepContext, record: &mut PreparedRecord) -> Result<(), Str
         stop_grace_secs: settings.stop_grace_secs,
     });
     record.awake_unit = hold_awake(&unit, instance);
-    Ok(())
+    super::super::gpu_power::apply_at_prepare(&launch, template, instance)
 }
 
 /// The device ids `launch` leases, checked against the pin's claims: each

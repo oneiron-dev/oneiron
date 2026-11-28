@@ -81,6 +81,8 @@ pub use serving::ServedNodeJobs;
 pub use staging::{MirrorStager, StagingRefusal, TemplateMirrors};
 pub use status::KEYS_PAGE_MAX_BYTES;
 
+pub mod quiet_lease;
+
 /// How long a `Busy` answer asks the issuer to wait before it asks again: a
 /// protocol hint, not a policy.
 pub const BUSY_RETRY_AFTER_MS: u64 = 2_000;
