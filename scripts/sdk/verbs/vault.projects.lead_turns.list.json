@@ -1,0 +1,16 @@
+{
+  "name": "vault.projects.lead_turns.list",
+  "description": "Reads a project's lead-turn registration and one line per turn, oldest first: causes, claim, end, outcome, status and the kept files by name, hash and size. The owner or a Grant that reaches the project.",
+  "input": "crate::project_lead_turn::LeadTurnsListRequest",
+  "output": "crate::project_lead_turn::LeadTurnsListView",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.projects.lead_turns.list\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "act_class": "read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "verb_grant_caller"
+}

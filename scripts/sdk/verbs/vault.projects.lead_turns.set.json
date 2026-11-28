@@ -1,0 +1,16 @@
+{
+  "name": "vault.projects.lead_turns.set",
+  "description": "The owner names a project's lead, the lead's model, the actors whose plain GPU jobs are the company's, and the settings of its turns: the timer, the lease, the kept files and the failure hold. It arms the timer.",
+  "input": "crate::project_lead_turn::LeadTurnsSetRequest",
+  "output": "crate::project_lead_turn::LeadTurnRegistration",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.projects.lead_turns.set\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "act_class": "unstated",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "verb_grant_caller"
+}

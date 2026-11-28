@@ -446,7 +446,9 @@ impl Vault {
 
     /// Writes `job` if its stored row is still at `job.revision`, bumping
     /// it. Returns false, writing nothing, when another write came first.
-    fn put_gpu_job_in_txn(
+    /// A write that moves the job out of live owes its company's lead a turn
+    /// in the same write (`project_lead_turn`, FIX NEON-LEAD-TURN-TRIGGER).
+    pub(crate) fn put_gpu_job_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         job: &mut GpuJob,
@@ -459,6 +461,9 @@ impl Vault {
         job.revision += 1;
         job.updated_at_ms = now_ms;
         GPU_JOBS.put(&self.store, txn, &job.id, job)?;
+        if stored.is_some_and(|row| row.state.is_live()) && !job.state.is_live() {
+            crate::project_lead_turn::gpu_job_left_live_in_txn(self, txn, job, now_ms)?;
+        }
         Ok(true)
     }
 }

@@ -1,0 +1,16 @@
+{
+  "name": "vault.projects.lead_turns.claim",
+  "description": "The project's lead claims its owed turn, under its own Grant that lists it and reaches the project. The turn becomes its line with a lease; a repeat while it runs answers the same ticket.",
+  "input": "crate::project_lead_turn::LeadTurnsClaimRequest",
+  "output": "crate::project_lead_turn::LeadTurnTicket",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.projects.lead_turns.claim\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "act_class": "unstated",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "verb_grant_caller"
+}

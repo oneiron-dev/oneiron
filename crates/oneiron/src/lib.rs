@@ -237,6 +237,7 @@ pub(crate) mod outbound_chokepoint;
 pub mod outbound_consent;
 pub mod outbound_grant;
 pub mod outbound_intent_ledger;
+pub mod project_lead_turn;
 #[cfg(feature = "sync")]
 pub mod sync;
 pub mod web_connector;
