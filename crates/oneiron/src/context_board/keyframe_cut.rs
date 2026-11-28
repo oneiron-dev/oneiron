@@ -26,11 +26,12 @@ impl CutBudget {
     /// Cuts settled rows from the end of the render until it fits, and
     /// returns the number of rows (rendered lines) cut. Each step takes one
     /// typed row whole, with every line it rendered as, so no row is left
-    /// half shown. Rows below each section's pinned floor go first; a pinned
-    /// row goes only once no other row is left. The count falls with each
-    /// step (a step removes at least one line; the mark grows by a digit or
-    /// a section name), so a binary search over the steps finds the fewest
-    /// that fit in O(log n) renders.
+    /// half shown. Only rows below each section's pinned floor are cut: a
+    /// pinned row is never budget-shed (ARCH-0067:48), so a board whose
+    /// pinned rows alone are over the cap renders them in full and stays
+    /// over it. The count falls with each step (a step removes at least one
+    /// line; the mark grows by a digit or a section name), so a binary
+    /// search over the steps finds the fewest that fit in O(log n) renders.
     pub(super) fn trim(
         self,
         sections: &[BoardSection],
@@ -107,35 +108,28 @@ fn render_order(sections: &[BoardSection], parts: &[BoardPart]) -> Vec<usize> {
     order
 }
 
-/// The cut order, last rendered row first: one pass over the rows below
-/// each section's pinned floor, then one over the pinned floors. Each step
-/// is (section index, rows the section keeps after it).
+/// The cut order: every row below a section's pinned floor, across all
+/// sections, last rendered first; never a pinned row. Each step is
+/// (section index, rows the section keeps after it).
 fn cut_steps(
     sections: &[BoardSection],
     order: &[usize],
     views: &[ShedSection],
 ) -> Vec<(usize, usize)> {
     let mut steps = Vec::new();
-    for pinned_pass in [false, true] {
-        for &index in order.iter().rev() {
-            let ids = line_ids(&sections[index], &views[index]);
-            let id_at = |line: usize| ids.get(line).copied().flatten();
-            let len = views[index].rows.len();
-            let floor = sections[index].pinned_rows().len().min(len);
-            let (mut kept, stop) = if pinned_pass {
-                (floor, 0)
-            } else {
-                (len, floor)
-            };
-            while kept > stop {
-                kept -= 1;
-                if let Some(id) = id_at(kept) {
-                    while kept > stop && id_at(kept - 1) == Some(id) {
-                        kept -= 1;
-                    }
+    for &index in order.iter().rev() {
+        let ids = line_ids(&sections[index], &views[index]);
+        let id_at = |line: usize| ids.get(line).copied().flatten();
+        let mut kept = views[index].rows.len();
+        let floor = sections[index].pinned_rows().len().min(kept);
+        while kept > floor {
+            kept -= 1;
+            if let Some(id) = id_at(kept) {
+                while kept > floor && id_at(kept - 1) == Some(id) {
+                    kept -= 1;
                 }
-                steps.push((index, kept));
             }
+            steps.push((index, kept));
         }
     }
     steps

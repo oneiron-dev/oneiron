@@ -179,8 +179,8 @@ pub fn section_policy_for_budget_ref(
     }
 }
 
-/// One validated board section: pinned rows that bypass the shed ladder,
-/// a full-detail view, and the non-empty collapsed fallback.
+/// One validated board section: an always-rendered pinned floor, a full-detail
+/// view, and the non-empty collapsed fallback the shed ladder degrades to.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BoardSection {
     name: String,

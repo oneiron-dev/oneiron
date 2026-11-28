@@ -40,9 +40,11 @@ roster is read only when the reader reads the project.
 
 The canonical shed order still runs over the laid-out board (ARCH-0067 §3).
 A board still over its `budget_tok` after the last rank has rows cut from its
-end, pinned rows last, and ends its memory block with one `cut for size:` line
-naming the cut sections; `describe` still opens a section in full. The render
-metadata's `cut_rows` counts the rows cut.
+end, and ends its memory block with one `cut for size:` line naming the cut
+sections; `describe` still opens a section in full. The render metadata's
+`cut_rows` counts the rows cut. The cut never takes a pinned row (ARCH-0067:48):
+when the pinned rows alone are over the cap, the board renders them in full and
+reports `floor_exceeds_cap`.
 
 ## Verbs
 

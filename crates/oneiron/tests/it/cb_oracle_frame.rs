@@ -187,12 +187,14 @@ mod one_1797 {
 }
 
 // ════════════════════════════════════════════════════════════════════════
-// Keyframe cut — contract tests C1-C5 (OPUS-MCPTASKS keyframe-cut-build).
+// Keyframe cut — contract tests C1-C8 (OPUS-MCPTASKS keyframe-cut-build;
+// ASK BOARD-CUT-PINNED-ROWS = B).
 //
-// Live tests over the public frame seams: a pinned section's rows are cut
-// from the end until the render fits the cap, and the render ends its
-// memory block with the engine-authored `cut for size:` mark naming each
-// cut section and the exact number cut.
+// Live tests over the public frame seams: the rows below each section's
+// pinned floor are cut from the end until the render fits the cap, and the
+// render ends its memory block with the engine-authored `cut for size:` mark
+// naming each cut section and the exact number cut. A pinned row is never
+// cut (ARCH-0067:48): pinned rows alone over the cap render in full.
 // ════════════════════════════════════════════════════════════════════════
 mod keyframe_cut {
     use oneiron::EntityId;
@@ -209,6 +211,11 @@ mod keyframe_cut {
         pinned: true,
         shed_rank: None,
     };
+    /// No shed rank, so the ladder never collapses it and the cut alone acts.
+    const UNRANKED: SectionPolicy = SectionPolicy {
+        pinned: false,
+        shed_rank: None,
+    };
 
     fn rows() -> Vec<String> {
         (0..20)
@@ -216,8 +223,10 @@ mod keyframe_cut {
             .collect()
     }
 
-    fn pinned_section(rows: &[String]) -> BoardSection {
-        BoardSection::new("TASKS", rows.to_vec(), Vec::new(), Vec::new(), PINNED).unwrap()
+    /// A TASKS section with `pinned` as its pinned floor and `rows` below it.
+    fn tasks_section(pinned: &[&str], rows: &[String]) -> BoardSection {
+        let pinned = pinned.iter().map(|row| (*row).to_owned()).collect();
+        BoardSection::new("TASKS", pinned, rows.to_vec(), Vec::new(), UNRANKED).unwrap()
     }
 
     fn header() -> BoardBlockHeader {
@@ -268,10 +277,10 @@ mod keyframe_cut {
     }
 
     #[test]
-    fn c1_pinned_section_cut_fits_cap_with_mark() {
+    fn c1_section_cut_fits_cap_with_mark() {
         let rows = rows();
         assert!(count_context_pack_tokens(&rows.join("\n")) > CAP);
-        let sections = [pinned_section(&rows)];
+        let sections = [tasks_section(&[], &rows)];
         let render = render_board_block(&frame(&header(), &sections), request(None)).unwrap();
 
         let cut = assert_cut_prefix(&render, &rows);
@@ -286,7 +295,7 @@ mod keyframe_cut {
     #[test]
     fn c2_split_cut_marks_state_part() {
         let rows = rows();
-        let sections = [pinned_section(&rows)];
+        let sections = [tasks_section(&[], &rows)];
         let split = render_split_board_block(
             &frame(&header(), &sections),
             &[BoardPart::Query],
@@ -308,23 +317,28 @@ mod keyframe_cut {
     }
 
     #[test]
-    fn c3_zero_cap_cuts_all_rows_keeps_structure() {
+    fn c3_zero_cap_cuts_every_unpinned_row_keeps_structure() {
         let rows = rows();
-        let sections = [pinned_section(&rows)];
+        let sections = [tasks_section(&["pinned task"], &rows)];
         let render = render_board_block(&frame(&header(), &sections), request(Some(0))).unwrap();
 
         assert_eq!(render.metadata.cut_rows, rows.len());
         assert_eq!(render.shed.cut_rows, rows.len());
         assert!(render.metadata.floor_exceeds_cap && render.shed.floor_exceeds_cap);
-        assert!(render.shed.sections[0].rows.is_empty());
+        assert_eq!(render.shed.sections[0].rows, ["pinned task"]);
         let lines: Vec<_> = render.text.lines().collect();
-        assert_eq!(lines.len(), 5);
+        assert_eq!(lines.len(), 6);
         assert!(lines[0].starts_with("<memory surface=\"board\" "));
         assert!(lines[0].ends_with("budget_tok=\"0\">"));
         assert!(lines[1].starts_with("legend: "));
         assert_eq!(
             &lines[2..],
-            &["TASKS", mark(rows.len(), 0).as_str(), "</memory>"]
+            &[
+                "TASKS",
+                "pinned task",
+                mark(rows.len(), 0).as_str(),
+                "</memory>"
+            ]
         );
     }
 
@@ -337,11 +351,8 @@ mod keyframe_cut {
             format!("third{long}"),
         ];
         let ids = [1, 2, 3].map(|byte| EntityId::from_bytes_unchecked([byte; 16]));
-        let sections = [
-            BoardSection::new("TASKS", Vec::new(), rows, Vec::new(), PINNED)
-                .unwrap()
-                .with_row_ids(ids.into_iter().map(Some).collect()),
-        ];
+        let sections =
+            [tasks_section(&[], &rows).with_row_ids(ids.into_iter().map(Some).collect())];
         let render = render_board_block(&frame(&header(), &sections), request(None)).unwrap();
 
         assert_eq!(render.shed.cut_rows, 2);
@@ -352,7 +363,7 @@ mod keyframe_cut {
 
     #[test]
     fn c5_reserve_counts_rendered_text_only() {
-        let sections = [pinned_section(&rows())];
+        let sections = [tasks_section(&[], &rows())];
         let render =
             render_board_block_reserving(&frame(&header(), &sections), request(None), 50).unwrap();
         assert_eq!(
@@ -362,7 +373,7 @@ mod keyframe_cut {
         assert!(render.metadata.rendered_tok + 50 <= CAP);
         assert!(render.metadata.cut_rows > 0);
 
-        let small = [pinned_section(&["first task".to_owned()])];
+        let small = [tasks_section(&[], &["first task".to_owned()])];
         let whole =
             render_board_block_reserving(&frame(&header(), &small), request(None), 0).unwrap();
         assert!(whole.text.contains("first task"));
@@ -379,11 +390,8 @@ mod keyframe_cut {
             format!("split task (part 2/2){long}"),
         ];
         let [kept, split] = [1, 2].map(|byte| EntityId::from_bytes_unchecked([byte; 16]));
-        let sections = [
-            BoardSection::new("TASKS", Vec::new(), rows, Vec::new(), PINNED)
-                .unwrap()
-                .with_row_ids(vec![Some(kept), Some(split), Some(split)]),
-        ];
+        let sections =
+            [tasks_section(&[], &rows).with_row_ids(vec![Some(kept), Some(split), Some(split)])];
         let render = render_board_block(&frame(&header(), &sections), request(None)).unwrap();
 
         // Cutting the long line alone would fit; its first part goes with it,
@@ -396,7 +404,7 @@ mod keyframe_cut {
     }
 
     #[test]
-    fn c7_pinned_rows_go_after_every_other_row() {
+    fn c7_pinned_rows_stay_while_every_other_row_goes() {
         let rows = rows();
         let room = BoardSection::new(
             "ROOM",
@@ -406,20 +414,38 @@ mod keyframe_cut {
             PINNED,
         )
         .unwrap();
-        let tasks =
-            BoardSection::new("TASKS", Vec::new(), rows.clone(), Vec::new(), PINNED).unwrap();
-        let sections = [tasks, room];
+        let sections = [tasks_section(&["pinned task"], &rows), room];
+        let render = render_board_block(&frame(&header(), &sections), request(Some(0))).unwrap();
+
+        // ROOM renders last, so a cut by render order alone would take its
+        // pinned row first. The cut takes every other row and no pinned one.
+        assert_eq!(render.metadata.cut_rows, rows.len());
+        assert_eq!(render.shed.sections[0].rows, ["pinned task"]);
+        assert_eq!(render.shed.sections[1].rows, ["room pin"]);
+        assert!(render.text.ends_with(&format!(
+            "\nTASKS\npinned task\nROOM\nroom pin\n{}\n</memory>",
+            mark(rows.len(), 0)
+        )));
+        assert!(render.metadata.floor_exceeds_cap);
+    }
+
+    #[test]
+    fn c8_pinned_rows_alone_over_cap_render_in_full() {
+        let rows = rows();
+        let sections =
+            [BoardSection::new("TASKS", rows.clone(), Vec::new(), Vec::new(), PINNED).unwrap()];
         let render = render_board_block(&frame(&header(), &sections), request(None)).unwrap();
 
-        // ROOM renders last, yet its pinned row stays while TASKS loses rows.
-        let cut = render.metadata.cut_rows;
-        assert!(cut > 0);
-        assert_eq!(render.shed.sections[1].rows, ["room pin"]);
-        assert_eq!(
-            render.shed.sections[0].rows.as_slice(),
-            &rows[..rows.len() - cut]
+        assert_eq!(render.metadata.cut_rows, 0);
+        assert_eq!(render.shed.cut_rows, 0);
+        assert_eq!(render.shed.sections[0].rows, rows);
+        assert!(!render.text.contains("cut for size:"));
+        assert!(
+            render
+                .text
+                .ends_with(&format!("\nTASKS\n{}\n</memory>", rows.join("\n")))
         );
-        assert!(render.text.contains(&mark(cut, CAP)));
-        assert!(render.metadata.rendered_tok <= CAP);
+        assert!(render.metadata.rendered_tok > CAP);
+        assert!(render.metadata.floor_exceeds_cap && render.shed.floor_exceeds_cap);
     }
 }

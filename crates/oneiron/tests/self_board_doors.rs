@@ -22,8 +22,7 @@
 //!   handle's actor, never by a field naming someone else").
 //! - `pinned_rows_are_never_folded_or_shed` (:48 "PINNED ... is never
 //!   budget-shed", :386 "PINNED and the legend never fold"): a share of 0 and a
-//!   fold keep the pinned floor, and a cap of 0 sheds snippets first; the final
-//!   cut (BOARD-KEYFRAME-OVER-BUDGET) takes the pinned row only last, with its mark.
+//!   fold keep the pinned floor, and a cap of 0 sheds snippets but renders it.
 //! - `a_malformed_or_unbound_board_act_is_refused`: an actor the vault does not
 //!   hold, a class its entity does not admit, and malformed bodies.
 //!
@@ -443,10 +442,7 @@ fn pinned_rows_are_never_folded_or_shed() -> TestResult {
         laid.sections[0].pinned_rows()
     );
 
-    // A cap of 0 runs the whole shed ladder: snippets go first. The final
-    // cut then takes the pinned row too and leaves its mark
-    // (BOARD-KEYFRAME-OVER-BUDGET): only the wrapper, legend, headers and
-    // mark stay, over the cap.
+    // A cap of 0 runs the whole shed ladder: snippets go, PINNED renders.
     let header = BoardBlockHeader {
         epoch: 1,
         scope: "world-set".to_owned(),
@@ -466,10 +462,8 @@ fn pinned_rows_are_never_folded_or_shed() -> TestResult {
             explicit_override_tok: None,
         },
     )?;
-    assert!(!render.text.contains(PINNED_TEXT), "{}", render.text);
+    assert!(render.text.contains(PINNED_TEXT), "{}", render.text);
     assert!(!render.text.contains(SNIPPET_TEXT), "{}", render.text);
-    assert!(render.text.contains("cut for size: "), "{}", render.text);
-    assert!(render.shed.cut_rows > 0, "{}", render.text);
     assert!(
         render.shed.applied.contains(&ShedRank::MemoriesSnippets),
         "{:?}",
@@ -477,7 +471,7 @@ fn pinned_rows_are_never_folded_or_shed() -> TestResult {
     );
     assert!(
         render.shed.floor_exceeds_cap,
-        "the never-cut floor renders past the cap"
+        "the pinned floor renders past the cap"
     );
     let rank = |wanted: ShedRank| SHED_ORDER.iter().position(|rank| *rank == wanted);
     assert!(rank(ShedRank::MemoriesSnippets) < rank(ShedRank::TasksToCounts));
