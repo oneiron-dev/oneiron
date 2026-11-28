@@ -187,7 +187,6 @@ fn prepare(context: &StepContext, record: &mut PreparedRecord) -> Result<(), Str
     }
     let unit = context.unit();
     effective_stop_grace_matches(&unit, settings.stop_grace_secs)?;
-    effective_slice_matches(&unit, settings.job_cgroup.slice.as_deref())?;
     let protected = installed_protected_paths(&unit_text, &settings.state_dir);
 
     let leased = leased_device_ids(&launch)?;
@@ -271,8 +270,10 @@ fn prepare(context: &StepContext, record: &mut PreparedRecord) -> Result<(), Str
             .map(|path| format!("DeviceAllow={} rw", path.display())),
     );
     set_properties(&unit, &properties).map_err(|why| format!("unit_limits_not_set: {why}"))?;
-    // The whole job slice's share against the rest of the host, set at each
-    // launch, since the node file is read fresh.
+    // The unit runs in the node file's slice, and the whole slice's share
+    // against the rest of the host is set at each launch, since the node file
+    // is read fresh.
+    effective_slice_matches(&unit, settings.job_cgroup.slice.as_deref())?;
     if let (Some(slice), Some(weight)) = (
         settings.job_cgroup.slice.as_deref(),
         settings.job_cgroup.slice_cpu_weight,
@@ -390,23 +391,6 @@ fn effective_stop_grace_matches(unit: &str, stop_grace_secs: u64) -> Result<(), 
             "stop_grace_not_unit_timeout: the unit's TimeoutStopSec is {text:?} and the node file's stop grace {stop_grace_secs} s: run `oneiron execution-node install` again"
         )),
     }
-}
-
-/// With a slice in the node file, the unit's effective slice is that one:
-/// a template `install` wrote before the slice was named, or for another
-/// one, runs its jobs elsewhere, so the slice's weight would not reach them.
-fn effective_slice_matches(unit: &str, slice: Option<&str>) -> Result<(), String> {
-    let Some(slice) = slice else {
-        return Ok(());
-    };
-    let found = show(unit, &["Slice"]).map_err(|why| format!("unit_slice_unknown: {why}"))?;
-    let text = found.get("Slice").map_or("", String::as_str);
-    if text == slice {
-        return Ok(());
-    }
-    Err(format!(
-        "unit_slice_differs: the unit runs in {text:?} and the node file names {slice}: run `oneiron execution-node install` again"
-    ))
 }
 
 /// A systemd time span as `systemctl show` prints it (`10s`, `1min 30s`,
@@ -605,6 +589,23 @@ fn set_properties(unit: &str, properties: &[String]) -> Result<(), String> {
     let mut args = vec!["set-property", "--runtime", unit];
     args.extend(properties.iter().map(String::as_str));
     run_tool("systemctl", &args, SYSTEMCTL_TIMEOUT).map(drop)
+}
+
+/// With a slice in the node file, the unit's effective slice is that one:
+/// a template `install` wrote before the slice was named, or for another
+/// one, runs its jobs elsewhere, so the slice's weight would not reach them.
+fn effective_slice_matches(unit: &str, slice: Option<&str>) -> Result<(), String> {
+    let Some(slice) = slice else {
+        return Ok(());
+    };
+    let found = show(unit, &["Slice"]).map_err(|why| format!("unit_slice_unknown: {why}"))?;
+    let text = found.get("Slice").map_or("", String::as_str);
+    if text == slice {
+        return Ok(());
+    }
+    Err(format!(
+        "unit_slice_differs: the unit runs in {text:?} and the node file names {slice}: run `oneiron execution-node install` again"
+    ))
 }
 
 /// The cutoff: a transient timer `cutoff_unit` of the service manager that
