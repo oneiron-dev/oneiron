@@ -28,13 +28,24 @@ use crate::team::{
 type Answered = std::result::Result<SelfTeamResult, &'static str>;
 
 impl HostSelfDispatcher<'_> {
+    /// Lends the run the slip of the credential that holds its live run, as
+    /// the host verified it (FIX MARKET-SEAT-MODEL-STAMP). Only a member's
+    /// market submission reads it, for the seat the owner paired that
+    /// credential with.
+    #[must_use]
+    pub fn with_live_run_slip(mut self, slip_id: [u8; 32]) -> Self {
+        self.live_run_slip = Some(slip_id);
+        self
+    }
+
     pub(super) fn dispatch_team(&self, call: SelfTeamCall) -> Result<SelfDispatchOutcome> {
+        let live_run_slip = self.live_run_slip;
         let answered = match call {
             SelfTeamCall::Start(input) => self.team_start(input)?,
             SelfTeamCall::Record(input) => self.team_record(&input)?,
             SelfTeamCall::Vote(input) => self.team_vote(&input)?,
             SelfTeamCall::MarketSubmit(input) => self.team_market(|vault, caller| {
-                crate::team::market::referee::submit_candidate(vault, caller, &input)
+                crate::team::market::referee::submit_candidate(vault, caller, live_run_slip, &input)
             })?,
             SelfTeamCall::MarketVerdict(input) => self.team_market(|vault, caller| {
                 crate::team::market::referee::relay_verdict(vault, caller, &input)

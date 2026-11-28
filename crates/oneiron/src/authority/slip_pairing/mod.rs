@@ -3,7 +3,7 @@ use super::*;
 use crate::Vault;
 use crate::error::Result;
 use crate::federation::OrgAdminPolicy;
-use crate::side_table::{self, LegacyJson, Raw, SideTable};
+use crate::side_table::{self, LegacyJson, Named, Raw, SideTable};
 use oneiron_authority::federation::Scope;
 use serde::{Deserialize, Serialize};
 
@@ -14,17 +14,24 @@ const PAIRING_PENDING: SideTable<String, PairingPending, LegacyJson> =
 /// on the link. Key: the slip id as hex64 (a SyncState key is text).
 const PAIRED_WRITE_FACET: SideTable<String, crate::EntityId, Raw> =
     SideTable::new(&side_table::AUTHORITY_PAIRING_WRITE_FACET);
+/// The agent seat a paired credential is for, as the owner declared it on
+/// the link (FIX MARKET-SEAT-MODEL-STAMP). Key: the slip id as hex64.
+const PAIRED_SEAT: SideTable<String, PairedSeat, Named> =
+    SideTable::new(&side_table::AUTHORITY_PAIRING_SEAT);
 
-/// The [`PAIRED_WRITE_FACET`] key of a slip id.
-fn write_facet_key(slip_id: &[u8; 32]) -> String {
+/// The [`PAIRED_WRITE_FACET`] and [`PAIRED_SEAT`] key of a slip id.
+fn slip_id_key(slip_id: &[u8; 32]) -> String {
     slip_id.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 /// Immutable one-time organization-administration power grant. Key: hex32 (org_ref).
 const ORG_ADMIN_POLICY: SideTable<String, OrgAdminPolicy, LegacyJson> =
     SideTable::new(&side_table::ORG_ADMIN_POLICY);
 
+use oneiron_records::authority::slip_pairing::PairedSeat;
 #[doc(hidden)]
-pub use oneiron_records::authority::slip_pairing::{PairingDescriptor, PairingPrincipal};
+pub use oneiron_records::authority::slip_pairing::{
+    PairingDescriptor, PairingPrincipal, PairingSeat,
+};
 
 /// A link/QR payload. The code is random and stored only as a keyed hash.
 #[derive(Clone, Serialize, Deserialize, schemars::JsonSchema)]

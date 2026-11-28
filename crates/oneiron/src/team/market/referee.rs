@@ -332,6 +332,7 @@ fn submitted(team_ref: &str, submission: &Submission, replay: bool) -> TeamRunAn
         submission_ref: submission.submission_ref.clone(),
         participant: submission.agent.clone(),
         at: submission.at,
+        seat: submission.seat.clone(),
         replay,
     }
 }
@@ -339,7 +340,8 @@ fn submitted(team_ref: &str, submission: &Submission, replay: bool) -> TeamRunAn
 /// `self.team.market.submit`: records the calling member's candidate in its
 /// team's market at the vault's time. The member key is the host's. One
 /// candidate digest is one submission in a market; the same submission again
-/// answers it.
+/// answers it. Its seat is frozen here ([`super::seat`]): `live_run_slip` is
+/// the slip of the attached credential the call came through, if any.
 ///
 /// # Errors
 ///
@@ -347,6 +349,7 @@ fn submitted(team_ref: &str, submission: &Submission, replay: bool) -> TeamRunAn
 pub(crate) fn submit_candidate(
     vault: &Vault,
     caller: AttemptId,
+    live_run_slip: Option<[u8; 32]>,
     input: &TeamMarketSubmitInput,
 ) -> Result<Answered> {
     if !text_ok(&input.submission_ref, MAX_TEXT_BYTES) || !is_lower_hex(&input.candidate_sha256, 64)
@@ -388,6 +391,7 @@ pub(crate) fn submit_candidate(
             Some(_) => return Ok(Err("team_market_retired")),
             None => return Ok(Err("team_market_outside_team")),
         }
+        let seat = super::seat::submission_seat_in_txn(vault, txn, caller, live_run_slip)?;
         let submission = Submission {
             agent: participant,
             submission_ref: input.submission_ref.clone(),
@@ -398,6 +402,7 @@ pub(crate) fn submit_candidate(
             evidence: None,
             screen: None,
             invalid: None,
+            seat,
         };
         let answer = submitted(&input.team_ref, &submission, false);
         market.submissions.push(submission);
@@ -598,6 +603,7 @@ pub(crate) fn relay_verdict(
                     score: body.score,
                     passed,
                     unknown,
+                    seat: submission.seat.clone(),
                 }
             }
             Ok((VerdictRead::Screen(body), claim)) => {
@@ -633,6 +639,7 @@ fn scored(submission: &Submission, evidence: &VerdictEvidence) -> TeamMarketVerd
         score: submission.score.unwrap_or_default(),
         passed: submission.passed.unwrap_or(false),
         unknown: evidence.unknown,
+        seat: submission.seat.clone(),
     }
 }
 
@@ -646,13 +653,18 @@ fn override_view(kept: &MarketOverride) -> TeamOverrideView {
     }
 }
 
-fn outcome_of(result: &MarketResult, kept: Option<&MarketOverride>) -> TeamMarketOutcome {
+fn outcome_of(
+    submissions: &[Submission],
+    result: &MarketResult,
+    kept: Option<&MarketOverride>,
+) -> TeamMarketOutcome {
     TeamMarketOutcome {
         winner: result.winner.clone(),
         winning_submission: result.winning_submission.clone(),
         bounty: result.bounty,
         closed_at: result.closed_at,
         referee_override: kept.map(override_view),
+        submissions: super::seat::submission_views(submissions),
     }
 }
 
@@ -674,7 +686,7 @@ pub(crate) fn market_outcome_in_txn(
         return Ok(None);
     };
     let kept = OVERRIDE.get(&vault.store, txn, &team_ref.to_owned())?;
-    Ok(Some(outcome_of(result, kept.as_ref())))
+    Ok(Some(outcome_of(&market.submissions, result, kept.as_ref())))
 }
 
 /// [`market_outcome_in_txn`] in its own read.
@@ -756,7 +768,7 @@ pub(crate) fn settle_market(
             }
         };
         MARKET.put(&vault.store, txn, &key, &market)?;
-        Ok(Ok(outcome_of(&result, kept.as_ref())))
+        Ok(Ok(outcome_of(&market.submissions, &result, kept.as_ref())))
     })
 }
 

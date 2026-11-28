@@ -72,7 +72,8 @@ const MAX_KEY_BYTES: usize = 64;
 #[doc(hidden)]
 pub use oneiron_verb_wire::team::run::{
     TeamCoverageInput, TeamDecisionInput, TeamMarketClaimInput, TeamMarketInput,
-    TeamMarketModeInput, TeamMarketOutcome, TeamMarketSubmitInput, TeamMarketVerdictInput,
+    TeamMarketModeInput, TeamMarketOutcome, TeamMarketSeat, TeamMarketSeatSource,
+    TeamMarketSubmissionView, TeamMarketSubmitInput, TeamMarketVerdictInput,
     TeamMarketVerdictOutcome, TeamMemberInput, TeamOverrideInput, TeamOverrideView,
     TeamRecordInput, TeamRefereeInput, TeamRefereeKindInput, TeamStartInput, TeamVoteInput,
 };

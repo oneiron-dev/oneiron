@@ -121,6 +121,7 @@ async fn run_action_answer(
                 live_run: None,
                 planner: None,
                 slip_issuer: None,
+                live_run_slip: None,
             },
         )?;
         PolicyActionOutcome::from_dispatch(&dispatch)

@@ -54,13 +54,15 @@ use oneiron::llm::run_admission::AllocationRef;
 use oneiron::store::GateDecisionId;
 use oneiron::team::market::referee::market_override;
 use oneiron::team::run::{
-    TeamMarketOutcome, TeamMarketSubmitInput, TeamMarketVerdictInput, TeamMarketVerdictOutcome,
+    TeamMarketOutcome, TeamMarketSeat, TeamMarketSeatSource, TeamMarketSubmitInput,
+    TeamMarketVerdictInput, TeamMarketVerdictOutcome,
 };
 use oneiron::team::{
     DecidedBy, LedgerKind, Market, SelfTeamCall, TeamRecordInput, TeamRunAnswer, TeamStartInput,
     market, team_receipt, team_run_binding,
 };
 use oneiron::test_doors::experiment_arm_rows::put_claim;
+use oneiron::test_doors::run_seat_receipt::pin_run_seat;
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
 use rmpv::Value as RmpValue;
 use serde_json::{Value, json};
@@ -694,7 +696,8 @@ fn a_sealed_verdict_scores_by_the_paired_bar_and_is_final() -> TestResult {
         TeamMarketVerdictOutcome::Scored {
             score: 0.71,
             passed: true,
-            unknown: false
+            unknown: false,
+            seat: None,
         },
         "the low end of the paired interval stays above minus the margin"
     );
@@ -703,7 +706,8 @@ fn a_sealed_verdict_scores_by_the_paired_bar_and_is_final() -> TestResult {
         TeamMarketVerdictOutcome::Scored {
             score: 0.93,
             passed: false,
-            unknown: true
+            unknown: true,
+            seat: None,
         },
         "fewer tasks than the bar judges is unknown, not a pass"
     );
@@ -1070,5 +1074,85 @@ fn the_record_closes_on_the_referee_and_an_override_never_moves_the_award() -> T
         Some(json!({"submissionRef": "m1-a", "reason": "changed my mind"})),
     )?;
     assert_eq!(moved.err().as_deref(), Some("team_record_override_moved"));
+    Ok(())
+}
+
+/// [MARKET-SEAT-MODEL-STAMP]: a member run the engine seated submits under
+/// its seat receipt's model, frozen on the submission, and the sealed score
+/// carries that seat: in the verdict's answer and in the team result's
+/// submissions list. A run the engine did not seat is unknown.
+#[test]
+fn a_host_seated_member_carries_its_seat_receipt_model_to_its_score() -> TestResult {
+    let f = fixture()?;
+    let market = f.sealed("seated", &["m1", "m2"])?;
+    let model = "provider/host-model@r1";
+    pin_run_seat(
+        &f.vault,
+        EntityId::from_bytes(*market.members[0].id.as_bytes())?,
+        model,
+    )?;
+    let host_seat = TeamMarketSeat {
+        harness: "oneiron".to_owned(),
+        model: model.to_owned(),
+        source: TeamMarketSeatSource::HostSeat,
+    };
+
+    let seated = f.submit(&market.members[0], &market.team, "m1-a", &candidate(1))?;
+    let unseated = f.submit(&market.members[1], &market.team, "m2-a", &candidate(2))?;
+    let passing = verdict_text(
+        &market.contract,
+        &candidate(1),
+        &sealed_cohort(),
+        120,
+        0.71,
+        -0.004,
+    );
+    put_claim(
+        &f.vault,
+        &referee_claim("pass", &market.contract, &passing)?,
+    )?;
+    let scored = outcome(f.relay(&f.host()?, &market.team, "m1-a", "pass", &passing)?)?;
+    let closed = recorded_market(f.record(&market.team, None)?)?;
+
+    match &seated {
+        Ok(TeamRunAnswer::MarketSubmitted { seat, .. }) => {
+            assert_eq!(
+                seat.as_ref(),
+                Some(&host_seat),
+                "the run's own seat receipt"
+            );
+        }
+        other => panic!("expected a submission, got {other:?}"),
+    }
+    match &unseated {
+        Ok(TeamRunAnswer::MarketSubmitted { seat, .. }) => {
+            assert_eq!(seat, &None, "a run the engine did not seat is unknown");
+        }
+        other => panic!("expected a submission, got {other:?}"),
+    }
+    assert_eq!(
+        scored,
+        TeamMarketVerdictOutcome::Scored {
+            score: 0.71,
+            passed: true,
+            unknown: false,
+            seat: Some(host_seat.clone()),
+        },
+        "the score carries the seat its submission froze"
+    );
+    assert_eq!(
+        f.market(&market.team)?.submissions[0].seat.as_ref(),
+        Some(&host_seat)
+    );
+    let listed: Vec<_> = closed
+        .submissions
+        .iter()
+        .map(|view| (view.submission_ref.as_str(), view.seat.clone(), view.score))
+        .collect();
+    assert_eq!(
+        listed,
+        vec![("m1-a", Some(host_seat), Some(0.71)), ("m2-a", None, None),],
+        "the result lists each seat beside its score"
+    );
     Ok(())
 }

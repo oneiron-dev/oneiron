@@ -51,6 +51,10 @@ crate::side_table::side_tables! {
     /// (raw id). Key: hex64 (the slip id).
     AUTHORITY_PAIRING_WRITE_FACET: SyncState b"authority:pairing-write-facet:v1:" Raw
         [restore: live] [family: unclassified] [tier: canonical];
+    /// The agent seat (harness and model) a paired credential is for, as the owner declared it
+    /// on the link. Key: hex64 (the slip id).
+    AUTHORITY_PAIRING_SEAT: SyncState b"authority:pairing-seat:v1:" Named
+        [restore: live] [family: unclassified] [tier: canonical];
     /// One outstanding single-use pairing/enrollment link, keyed by a keyed-hash of its typed code.
     /// Key: hex64.
     AUTHORITY_PAIRING_PENDING: SyncState b"authority:pairing:" LegacyJson

@@ -424,6 +424,7 @@ async fn a_paired_core_read_slip_recalls_over_the_websocket() {
                 org_ref: None,
                 write_facet: None,
                 comm: None,
+                seat: None,
             },
         )
         .unwrap();

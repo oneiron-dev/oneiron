@@ -350,6 +350,33 @@ impl ExecutorStorage<'_> {
 
 /// A stored pin as a receipt read takes it: refused when its version or its
 /// why does not hold.
+/// Test door ([`crate::test_doors::run_seat_receipt`]): pins `run_id`'s seat
+/// on `receipt` with no birth, as a seated run's row reads back. Fixture
+/// only; a real seat is born through [`Vault::birth_model_seat`].
+#[cfg(oneiron_test_support)]
+impl Vault {
+    pub(crate) fn pin_run_seat_receipt(
+        &self,
+        run_id: EntityId,
+        receipt: SeatChoiceReceipt,
+    ) -> Result<()> {
+        let row = StoredRunSeat {
+            version: 1,
+            task_hash: String::new(),
+            kind: SeatKind::Attempt,
+            binding: RunSeatBinding::Generic,
+            warm_scope: run_id.to_hex(),
+            facet: String::new(),
+            locality: ModelLocality::ThirdParty,
+            receipt,
+        };
+        let mut txn = self.store.env.write_txn()?;
+        RUN_SEATS.put(&self.store, &mut txn, &run_id, &row)?;
+        txn.commit()?;
+        Ok(())
+    }
+}
+
 fn checked_pin(row: Option<StoredRunSeat>) -> Result<Option<StoredRunSeat>> {
     if let Some(row) = &row
         && (row.version != 1 || row.receipt.why.trim().is_empty())

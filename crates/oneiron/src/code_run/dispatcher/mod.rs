@@ -186,6 +186,12 @@ pub struct HostSelfDispatcher<'a> {
     /// The host's slip issuer, which signs the leader's subproject spawn
     /// (OF-389). Host configuration; no guest call reaches it.
     pub(super) slip_issuer: Option<&'a crate::authority::HostSlipIssuer>,
+    /// The slip of the credential that holds the live run an action acts
+    /// for, as the host verified it (FIX MARKET-SEAT-MODEL-STAMP). A member's
+    /// market submission reads the seat the owner paired that credential
+    /// with; nothing stores or shows the id. Host configuration; no guest
+    /// call reaches it.
+    pub(super) live_run_slip: Option<[u8; 32]>,
     /// The host's auto checker, lent by the live-run door (FIX
     /// LIVE-RUN-CHECKER-INJECT): it reviews a live-run claim put as it
     /// reviews a Dreamer write. Host configuration; no guest call reaches it.

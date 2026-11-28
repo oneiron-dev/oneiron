@@ -374,8 +374,24 @@ impl Vault {
             PAIRED_WRITE_FACET.put(
                 &self.store,
                 &mut txn,
-                &write_facet_key(&slip.claims.slip_id),
+                &slip_id_key(&slip.claims.slip_id),
                 &facet,
+            )?;
+        }
+        // FIX MARKET-SEAT-MODEL-STAMP: the seat the owner declared on the
+        // link, kept beside the slip in the mint's own writer.
+        if let Some(seat) = pending.principal.seat {
+            let paired = PairedSeat {
+                harness: seat.harness,
+                model: seat.model,
+                owner: pending.owner,
+                at: now,
+            };
+            PAIRED_SEAT.put(
+                &self.store,
+                &mut txn,
+                &slip_id_key(&slip.claims.slip_id),
+                &paired,
             )?;
         }
         let (machine, held_answer, re_paired) = match (pending.machine, request) {
@@ -534,6 +550,17 @@ impl Vault {
     /// named it there: `None` for a link that named none.
     pub fn paired_write_facet(&self, slip_id: &[u8; 32]) -> Result<Option<crate::EntityId>> {
         let txn = self.store.env.read_txn()?;
-        PAIRED_WRITE_FACET.get(&self.store, &txn, &write_facet_key(slip_id))
+        PAIRED_WRITE_FACET.get(&self.store, &txn, &slip_id_key(slip_id))
+    }
+
+    /// The agent seat the owner declared on the link a slip was redeemed
+    /// from: `None` for a link that declared none, and for a slip no link
+    /// minted.
+    pub(crate) fn paired_seat_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        slip_id: &[u8; 32],
+    ) -> Result<Option<PairedSeat>> {
+        PAIRED_SEAT.get(&self.store, txn, &slip_id_key(slip_id))
     }
 }

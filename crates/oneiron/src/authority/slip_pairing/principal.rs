@@ -100,6 +100,13 @@ impl Vault {
         {
             return Err(invalid_authority());
         }
+        // FIX MARKET-SEAT-MODEL-STAMP: a seat names an agent's harness and
+        // model, so only an agent's link declares one, and only well formed.
+        if let Some(seat) = &principal.seat
+            && (principal.actor_class.as_deref() != Some("agent") || !pairing_seat_ok(seat))
+        {
+            return Err(invalid_authority());
+        }
         let holder = principal
             .holder_ref
             .as_deref()
@@ -154,6 +161,21 @@ impl Vault {
 }
 
 /// A lower-case hex id, as every id on a link is written.
+/// A declared seat's harness is 1..=64 bytes of `[a-z0-9._-]`, and its
+/// model 1..=128 bytes of `[A-Za-z0-9._:/@+-]`.
+fn pairing_seat_ok(seat: &PairingSeat) -> bool {
+    let harness = seat.harness.as_bytes();
+    let model = seat.model.as_bytes();
+    (1..=64).contains(&harness.len())
+        && harness
+            .iter()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b"._-".contains(b))
+        && (1..=128).contains(&model.len())
+        && model
+            .iter()
+            .all(|b| b.is_ascii_alphanumeric() || b"._:/@+-".contains(b))
+}
+
 pub(super) fn canonical_id(hex: &str) -> Result<crate::EntityId> {
     crate::EntityId::from_lower_hex(hex).map_err(|_| invalid_authority())
 }

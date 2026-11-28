@@ -1,6 +1,7 @@
 //! Moved from `crates/oneiron/src/authority/slip_pairing/mod.rs` (lib split R1: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
+use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -43,4 +44,36 @@ pub struct PairingPrincipal {
     /// claims; the redeemer never picks it. `None` is the vault-wide reach.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub comm: Option<super::CommReach>,
+    /// The agent seat the credential is for (FIX MARKET-SEAT-MODEL-STAMP):
+    /// the owner declares its harness and model when the owner makes the
+    /// link, and redemption keeps them beside the slip's id
+    /// ([`PairedSeat`]); the redeemer never picks them. The slip does not
+    /// carry them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seat: Option<PairingSeat>,
+}
+
+/// An agent seat's harness and model, as the owner declares them on its
+/// credential's pairing link. The engine records the declaration and never
+/// observes the model behind an attached harness.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PairingSeat {
+    /// The harness that drives the agent, e.g. `claude-code`: 1..=64 bytes
+    /// of `[a-z0-9._-]`.
+    pub harness: String,
+    /// The model behind that harness: 1..=128 bytes of
+    /// `[A-Za-z0-9._:/@+-]`.
+    pub model: String,
+}
+
+/// A [`PairingSeat`] as the mint keeps it beside the slip's id: what the
+/// owner declared, who declared it and when the slip was minted.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PairedSeat {
+    pub harness: String,
+    pub model: String,
+    /// The owner who made the link; none for a host-only link.
+    pub owner: Option<EntityId>,
+    pub at: u64,
 }

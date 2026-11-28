@@ -338,6 +338,7 @@ fn issue_bootstrap_link(args: &TokenBootstrapArgs) -> anyhow::Result<BootstrapLi
             org_ref: None,
             write_facet: None,
             comm: None,
+            seat: None,
         },
     )?;
     Ok(BootstrapLink {
@@ -731,6 +732,7 @@ fn mint_paired_credential(
         org_ref: None,
         write_facet: None,
         comm,
+        seat: None,
     };
     let link = match link_owner {
         Some(owner) => vault.issue_owner_pairing_link(
@@ -819,6 +821,12 @@ pub fn token_pair(args: TokenPairArgs) -> anyhow::Result<()> {
         org_ref: None,
         write_facet: None,
         comm: comm_arg(args.comm.as_deref())?,
+        // FIX MARKET-SEAT-MODEL-STAMP: the owner's declaration of the agent
+        // seat, checked when the link is made.
+        seat: args
+            .seat_harness
+            .zip(args.seat_model)
+            .map(|(harness, model)| oneiron::authority::PairingSeat { harness, model }),
     };
     let mut body = json!({
         "scope": scope,

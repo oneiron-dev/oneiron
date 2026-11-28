@@ -68,6 +68,7 @@ static LEAVE_KEPT_FAMILIES: &[&SideTableDecl] = &[
     &side_table::AUTHORITY_MESH_MACHINE,
     &side_table::AUTHORITY_OWNER_PROJECT_SLIP_CACHE,
     &side_table::AUTHORITY_PAIRING_WRITE_FACET,
+    &side_table::AUTHORITY_PAIRING_SEAT,
     &side_table::AUTHORITY_PAIRING_PENDING,
     &side_table::AUTHORITY_SLIP_PROOF_CLOCK,
     &side_table::AUTHORITY_SLIP_PROOF_NOT_BEFORE,

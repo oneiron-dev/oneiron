@@ -147,6 +147,13 @@ where
         surface,
         live_run,
     } = bound;
+    // FIX MARKET-SEAT-MODEL-STAMP: the slip of the credential that holds
+    // the live run, read only on a call that names one; a member's market
+    // submission looks up the seat the owner paired it with.
+    let live_run_slip = live_run
+        .as_ref()
+        .and(replay_auth.verified_slip())
+        .map(|slip| slip.claims().slip_id);
     let door = Arc::new(FacadeRowDoor::new(
         server,
         headers,
@@ -161,6 +168,7 @@ where
         owner,
         surface,
         live_run,
+        live_run_slip,
     };
     let ran = run_with_door(server, Arc::clone(&door), bound, run).await;
     (ran, door.stamp())
@@ -173,6 +181,8 @@ struct Unbound {
     owner: Option<oneiron::consent::AuthenticatedOwner>,
     surface: Option<oneiron::authority::ActSurface>,
     live_run: Option<ResolvedLiveRun>,
+    /// The slip of the credential that holds `live_run`.
+    live_run_slip: Option<[u8; 32]>,
 }
 
 async fn run_with_door<F>(
@@ -197,6 +207,7 @@ where
         owner,
         surface,
         live_run,
+        live_run_slip,
     } = bound;
     let executor = app()?;
     // OF-181: the live run's guard, waited for briefly while an entry or
@@ -243,6 +254,7 @@ where
             live_run: held.as_ref().map(HeldLiveRun::proof),
             planner,
             slip_issuer: held.as_ref().and_then(|_| host.host_issuer()),
+            live_run_slip: held.as_ref().and(live_run_slip),
         };
         run(executor, &vault, WriteActor::new(actor, class), binding)
     })
