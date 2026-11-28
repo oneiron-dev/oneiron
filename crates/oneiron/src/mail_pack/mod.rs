@@ -134,12 +134,14 @@ pub use pack::{
 };
 pub use reply::{
     MailReplyApproveRequest, MailReplyDraftPage, MailReplyDraftRef, MailReplyDraftRequest,
-    MailReplyDraftState, MailReplyDraftView, MailReplyDraftsRequest,
+    MailReplyDraftState, MailReplyDraftView, MailReplyDraftsRequest, MailReplySendRequest,
 };
 pub(crate) use reply::{approved_source_reply_in_txn, erase_reply_drafter_in_txn};
 #[cfg(oneiron_test_support)]
 pub(crate) use reply::{mail_reply_draft_as_stored_for_test, reply_draft_manifest_digest_for_test};
 pub(crate) use reply_ask::MAIL_REPLY_ASK_PRODUCER;
+#[cfg(oneiron_test_support)]
+pub(crate) use reply_ask::reply_ask_open;
 pub use reply_attachments::{MailReplyAttachment, MailReplyAttachmentView};
 pub(crate) use reply_erase::erase_reply_attachment_dependents_in_txn;
 pub use reply_send::SMTP_SUBMISSION_CONNECTOR_EFFECTOR;
