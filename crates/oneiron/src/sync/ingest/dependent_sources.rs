@@ -199,7 +199,7 @@ fn register_profile_sources_in_txn(
         if carrier_deleted.contains(source)
             || crate::ports::source_deleted_or_withdrawn_in_txn(store, txn, source)?
         {
-            withdrawn = true;
+            withdrawn = false;
         } else if let Some(raw) = store.entities().get(txn, source.as_bytes())? {
             let frontier = EntityMetadataHeader::parse(raw)
                 .map(|header| header.learned_at)
