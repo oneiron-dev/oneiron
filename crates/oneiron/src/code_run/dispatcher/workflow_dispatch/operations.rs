@@ -10,7 +10,7 @@ use crate::agent_dispatch::{
     AgentDispatchOutcome, AgentDispatchTarget, AgentDispatcher, AgentSpawnContext, DispatchAgent,
     SpawnSpend, SpendScopeId, WorkflowDispatchStatus,
 };
-use crate::attempt_queue::{AttemptId, AttemptQueue};
+use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptState};
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::bytes_to_hex_lower;
@@ -106,6 +106,35 @@ pub struct WorkflowStepCapture {
     pub caller_origin: crate::agent_dispatch::CallerOrigin,
 }
 
+/// Where a run of a saved workflow stands, read from its root attempt
+/// (L1-03): `running` until the root ends, then how it ended. A step that
+/// stopped ends the run `failed`; a run its owner asked to stop ends
+/// `cancelled`, its committed step results kept.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkflowRunState {
+    Running,
+    Completed,
+    Failed,
+    Cancelled,
+}
+
+impl WorkflowRunState {
+    /// The run's state from its root attempt's.
+    fn of(root: AttemptState) -> Self {
+        match root {
+            AttemptState::Completed => Self::Completed,
+            AttemptState::Cancelled => Self::Cancelled,
+            AttemptState::Failed | AttemptState::Abandoned => Self::Failed,
+            AttemptState::Queued
+            | AttemptState::Leased
+            | AttemptState::Paused
+            | AttemptState::Scheduled
+            | AttemptState::Landing => Self::Running,
+        }
+    }
+}
+
 /// A run of a saved workflow: its inert root attempt, the step attempt
 /// active now, every step's captured definition and the steps settled so far.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -113,6 +142,8 @@ pub struct WorkflowRunView {
     pub workflow_ref: EntityId,
     pub workflow_revision: u64,
     pub root_attempt_ref: EntityId,
+    /// Where the run stands: running, or how it ended.
+    pub state: WorkflowRunState,
     pub active_attempt_ref: EntityId,
     pub steps: Vec<WorkflowStepCapture>,
     pub results: Vec<WorkflowStepRun>,
@@ -163,6 +194,7 @@ fn run_view(status: &WorkflowDispatchStatus) -> MemoryResult<WorkflowRunView> {
         workflow_ref: status.workflow_ref,
         workflow_revision: status.definition.revision,
         root_attempt_ref: attempt_ref(status.attempt.id)?,
+        state: WorkflowRunState::of(status.attempt.state),
         active_attempt_ref: attempt_ref(status.active_step)?,
         steps,
         results,
@@ -494,4 +526,20 @@ pub fn read_workflow_run_as(
     owner.revalidate(vault)?;
     let root = AttemptId::from_bytes(input.root_attempt_ref.as_bytes())?;
     run_view(&AgentDispatcher::new(vault).workflow_status(root)?)
+}
+
+/// `vault.workflows.cancel` (L1-03): the owner asks one run of a saved
+/// workflow to stop. The step that waits to run is cancelled, a running step
+/// is asked to land, and no later step starts; every committed step result
+/// stays. The run ends `cancelled` once its active step has settled. A
+/// repeated request, or one for an ended run, changes nothing. Answers the
+/// run as `vault.workflows.status` reads it after the request.
+pub fn cancel_workflow_run_as(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: WorkflowRunRequest,
+) -> MemoryResult<WorkflowRunView> {
+    let actor = owner.revalidate(vault)?;
+    let root = AttemptId::from_bytes(input.root_attempt_ref.as_bytes())?;
+    run_view(&AgentDispatcher::new(vault).cancel_workflow(root, actor, vault.now_recorded_at())?)
 }
