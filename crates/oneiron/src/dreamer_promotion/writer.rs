@@ -561,6 +561,14 @@ pub(super) fn promote_one_answering(
                     &candidate.claim_id,
                     &unverified_cited_notes,
                 )?;
+                // The signed birth copy of the belief depends on the same NOTEs.
+                if envelope.machine_signature().is_some() {
+                    vault.record_signed_birth_note_dependencies_in_txn(
+                        wtxn,
+                        candidate.claim_id,
+                        &unverified_cited_notes,
+                    )?;
+                }
                 crate::mail_pack::claim_recheck::owe_claim_recheck_for_cited_in_txn(
                     vault,
                     wtxn,
@@ -686,6 +694,27 @@ impl Vault {
             crate::ports::record_derived_edge_in_txn(&self.store, wtxn, claim, source)?;
         }
         Ok(())
+    }
+
+    /// A MACHINE promotion's signed birth CLAIM carries the whole first body,
+    /// including the belief's value and NOTE refs (see `stage_machine_birth_after_candidate`
+    /// in `claim/history_store.rs`). It depends on the same NOTEs, so erasing a NOTE
+    /// withdraws both CLAIMs. `machine_history_rows` follows the trusted pin to the
+    /// birth instead of picking an entry from the target index.
+    pub(crate) fn record_signed_birth_note_dependencies_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        claim: EntityId,
+        cited_notes: &[EntityId],
+    ) -> Result<()> {
+        if cited_notes.is_empty() {
+            return Ok(());
+        }
+        let birth =
+            crate::claim::history_projection::machine_history_rows(&self.store, wtxn, claim)?
+                .birth
+                .event_id()?;
+        self.record_note_dependencies_in_txn(wtxn, &birth, cited_notes)
     }
 }
 

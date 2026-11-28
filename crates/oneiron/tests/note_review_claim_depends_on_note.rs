@@ -1,5 +1,6 @@
 //! PROMOTED-CLAIM-SOURCE-DEPENDENCY-GAPS, NOTE review path: the CLAIM learnt
 //! from a NOTE depends on it, and the NOTE's erase clears its review row.
+//! Erasing the NOTE also withdraws the CLAIM's signed birth copy.
 //! Editing the NOTE keeps the CLAIM; a new NOTE with the same text is reviewed.
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test note_review_claim_depends_on_note`.
@@ -102,6 +103,27 @@ impl Fixture {
         (note, claim)
     }
 
+    fn signed_birth(&self, claim: EntityId) -> EntityId {
+        let mut births =
+            oneiron::test_doors::gate_receipt_unclear::machine_history_controls(&self.vault, claim)
+                .expect("read the CLAIM's machine history controls")
+                .into_iter()
+                .filter(|id| {
+                    self.vault
+                        .get_claim(id)
+                        .expect("read a machine history control")
+                        .is_some_and(|body| body.predicate == "machine.birth")
+                });
+        let birth = births
+            .next()
+            .expect("the NOTE review's promotion has no signed birth: it is not a MACHINE claim");
+        assert!(
+            births.next().is_none(),
+            "the NOTE review's promotion has more than one signed birth"
+        );
+        birth
+    }
+
     fn assert_withdrawn(&self, note: EntityId, claim: EntityId) {
         assert!(
             self.vault
@@ -163,6 +185,56 @@ fn a_hard_deleted_note_withdraws_its_claim() {
         .expect("the owner hard deletes the NOTE");
     assert!(deleted.existed);
     f.assert_withdrawn(note, claim);
+}
+
+#[test]
+fn a_soft_deleted_note_withdraws_its_claims_signed_birth() {
+    let f = Fixture::new();
+    let (note, claim) = f.review_new_note();
+    let birth = f.signed_birth(claim);
+    assert!(
+        f.vault
+            .get_claim(&birth)
+            .expect("read the signed birth")
+            .is_some(),
+        "the signed birth does not read before the delete"
+    );
+    assert!(f.vault.delete_entity(&note).expect("soft delete the NOTE"));
+    f.assert_withdrawn(note, claim);
+    assert!(
+        f.vault
+            .get_claim(&birth)
+            .expect("read the signed birth")
+            .is_none(),
+        "the signed birth of a deleted NOTE's CLAIM still reads"
+    );
+}
+
+#[test]
+fn a_hard_deleted_note_withdraws_its_claims_signed_birth() {
+    let f = Fixture::new();
+    let (note, claim) = f.review_new_note();
+    let birth = f.signed_birth(claim);
+    assert!(
+        f.vault
+            .get_claim(&birth)
+            .expect("read the signed birth")
+            .is_some(),
+        "the signed birth does not read before the delete"
+    );
+    let deleted = f
+        .vault
+        .delete_entity_with_reason_as_owner(&f.proof, &note, DeleteReason::UserHardDelete)
+        .expect("the owner hard deletes the NOTE");
+    assert!(deleted.existed);
+    f.assert_withdrawn(note, claim);
+    assert!(
+        f.vault
+            .get_claim(&birth)
+            .expect("read the signed birth")
+            .is_none(),
+        "the signed birth of a deleted NOTE's CLAIM still reads"
+    );
 }
 
 #[test]
