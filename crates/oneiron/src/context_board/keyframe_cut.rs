@@ -86,7 +86,7 @@ impl CutBudget {
         let (cut_rows, tok) = probe(&mut *views, low);
         *rendered_tok = tok;
         for ((section, view), rows) in sections.iter().zip(views).zip(&settled) {
-            if view.rows.len() < rows.len() || !section.pinned_row_ids.is_empty() {
+            if view.rows.len() > rows.len() {
                 retain_shown_ids(section, view);
             }
         }
