@@ -297,6 +297,7 @@ Every top-level module of every mapped crate: its purpose, its entry file (its d
 | Transaction-composable storage ports | `crates/oneiron/src/ports/mod.rs` | L | — |
 | — | `crates/oneiron/src/ppr/mod.rs` | m | — |
 | Deterministic community projection, cache, and bounded retrieval prior | `crates/oneiron/src/ppr_community/mod.rs` | m | — |
+| A company lead's turns (FIX NEON-LEAD-TURN-TRIGGER; Engine ACCEPT PLAN-NEON-LEAD-TURN-TRIGGER, 28 Nov 14:15) | `crates/oneiron/src/project_lead_turn/mod.rs` | m | — |
 | — | `crates/oneiron/src/prompt.rs` | m | — |
 | `edge.provenance` Claim module (EDGE-PROVENANCE = C, pinned decisions D10/D12/D13/D15) | `crates/oneiron/src/provenance/mod.rs` | L | ARCH-0038 |
 | Provider confidence priors and read-time confidence composition (ES-09) | `crates/oneiron/src/provider_confidence.rs` | m | ARCH-0035 |

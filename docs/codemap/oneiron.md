@@ -2875,7 +2875,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_consolidation/recipe_failure.rs` | src | s | 3 crate-vis | — | What a failed consolidation recipe step parks as (OF-193a, Engine 10-21) |
 | `src/dreamer_consolidation/redirty.rs` | src | m | 23 crate-vis | — | The re-dirty carrier: a TURN whose final words changed after a round may have consumed it is pending again… |
 | `src/dreamer_consolidation/relation_extraction.rs` | src | m | 5 crate-vis | — | JointIE inside a consolidation child (ARCH-0026 `#wake-model`: "Inside the child JointIE extracts claims"… |
-| `src/dreamer_consolidation/replicated_sources.rs` | src | s | 5 crate-vis | — | Rebuilds the local dependency registrations of an own-vault CLAIM put |
+| `src/dreamer_consolidation/replicated_sources.rs` | src | s | 7 crate-vis | — | Rebuilds the local dependency registrations of an own-vault CLAIM put |
 | `src/dreamer_consolidation/request_sources.rs` | src | s | 1 trait · 3 crate-vis | SourcedBackend | Each Dreamer model call's own source rows (FIX 6998) |
 | `src/dreamer_consolidation/residency.rs` | src | s | 3 crate-vis | — | A read refused only because a TURN's tagged MESSAGE is away from this replica (a window demoted back to… |
 | `src/dreamer_consolidation/resident_dream.rs` | src | m | 1 struct · 3 fn · 1 const · 1 re-export · 6 crate-vis | ResidentDreamModel | A resident's own dreaming (OF-490, ARCH-0026 frame): each resident dreams under its own stamp, on its own… |
@@ -4203,7 +4203,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gpu_job/caller.rs` | src | s | 1 struct · 2 enum · 7 fn · 1 const · 2 crate-vis | GpuJobActor, GpuJobAgent, GpuJobVerb | Who may call the `vault.gpu.jobs.*` verbs (substrate behind grants, 9 Nov; RULING L10-31-STARTER = B) |
 | `src/gpu_job/claim_gate.rs` | src | m | 1 struct · 1 enum · 4 fn · 1 const · 1 crate-vis | LineStartRefused, UnitJobStart | The one start gate's line half (design pass 32 r2, section 5.3; LM-8 = A) |
 | `src/gpu_job/connector.rs` | src | s | 4 struct · 6 enum · 1 trait · 2 fn | GpuConnectorError, GpuJobConnector, GpuJobEnd, GpuJobOutput, GpuJobSignal, GpuJobSpec, GpuJobTerminal, GpuResourceRef +3 | What the engine asks of a GPU provider backend (CROSS-ARCH-0023 C1 B: the connectors live in OSS oneiron; C6… |
-| `src/gpu_job/mod.rs` | src | m | 5 struct · 3 enum · 7 fn · 2 const · 10 re-export · 6 crate-vis | GpuChunk, GpuEndReason, GpuJob, GpuJobError, GpuJobState, GpuJobStepReport, GpuOfferPin, GpuOverrun | Customer GPU jobs on the host's account (CROSS-ARCH-0023 lifecycle, C2) |
+| `src/gpu_job/mod.rs` | src | m | 5 struct · 3 enum · 7 fn · 2 const · 10 re-export · 7 crate-vis | GpuChunk, GpuEndReason, GpuJob, GpuJobError, GpuJobState, GpuJobStepReport, GpuOfferPin, GpuOverrun | Customer GPU jobs on the host's account (CROSS-ARCH-0023 lifecycle, C2) |
 | `src/gpu_job/node_view.rs` | src | s | 4 struct · 3 enum · 1 fn | GpuJobAccounting, GpuJobLifecycle, GpuJobNodeReport, GpuJobNodeView, GpuJobObserved, GpuJobOutputView, GpuJobOutputsView | What `vault.gpu.jobs.status` and `.list` add for a job that one of the vault's own machines runs (pass 33… |
 | `src/gpu_job/offer.rs` | src | s | 3 struct · 1 enum · 4 fn · 1 const · 2 crate-vis | GpuJobQuote, GpuJobRequest, GpuOffer, PriceShape | The offer a host posts for one GPU class and the quote a job starts on (CROSS-ARCH-0023 lifecycle 01, C3) |
 | `src/gpu_job/permits.rs` | src | s | 1 struct · 4 fn · 3 crate-vis | GpuJobPermits | The permits of the chunks a host runs, held in memory between steps |
@@ -4551,7 +4551,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lens/tests/support.rs` | test | m | 52 crate-vis | — | Shared fixtures and helpers for the lens behaviour tests |
 | `src/lens/tests/surface_dispatch.rs` | test | s | — | — | Client interactions remain frame-bound plans behind the existing write gate |
 | `src/lens/tests/versioning.rs` | test | s | — | — | Envelope-versioning and behavior-fingerprint tests: version stamps, canonical fingerprints, and diffs |
-| `src/lib.rs` | src | m | 237 mod · 106 re-export · 29 crate-vis | — | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces |
+| `src/lib.rs` | src | m | 238 mod · 106 re-export · 29 crate-vis | — | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces |
 | `src/limit_ask.rs` | src | s | 4 fn · 1 re-export · 2 crate-vis | — | The engine's `[limits]` rows and their question port, defined in `oneiron-contracts` |
 | `src/linear_sync/approval.rs` | src | m | 2 struct · 2 enum · 4 fn · 5 crate-vis | LinearEffectAdmission, LinearEffectHold, LinearEffectRole, LinearRoleApproval | FIX 6424 part 2a (Engine 10-20 21:0x rulings 1, 2 and 8): the owner's approve-once asks on one Linear mirror… |
 | `src/linear_sync/codec.rs` | src | s | 2 fn · 3 crate-vis | — | Stable link keys, operation/event digests, field hashes |
@@ -6094,6 +6094,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ppr_community/scoring.rs` | src | m | 4 fn · 5 crate-vis | — | Boost, prior, diversity selection and entropy scoring |
 | `src/ppr_community/tests.rs` | test | s | — | — | Focused pure-leaf tests |
 | `src/ppr_community/types.rs` | src | s | 2 struct · 1 re-export · 3 crate-vis | CommunityBoostContext, CommunityBoostReport | Community query-scoring shells and the lower graph vocabulary |
+| `src/project_lead_turn/doors.rs` | src | m | 8 fn | — | The doors of a project's lead turns, on the caller's own handle |
+| `src/project_lead_turn/mod.rs` | src | m | 7 struct · 4 enum · 1 fn · 9 const · 2 re-export · 6 crate-vis | LeadTurn, LeadTurnCause, LeadTurnClaim, LeadTurnFailureHold, LeadTurnFileRef, LeadTurnHold, LeadTurnHoldBy, LeadTurnOpen +3 | A company lead's turns (FIX NEON-LEAD-TURN-TRIGGER; Engine ACCEPT PLAN-NEON-LEAD-TURN-TRIGGER, 28 Nov 14:15) |
+| `src/project_lead_turn/store.rs` | src | m | 1 const · 18 crate-vis | — | The lead turns' rows and the writers that move them outside a door: the GPU job's end hook, the timer pass… |
+| `src/project_lead_turn/tables.rs` | src | s | — | — | The side tables `project_lead_turn` keeps: each row declares one, and the crate's build script places it in… |
+| `src/project_lead_turn/wire.rs` | src | s | 12 struct · 1 enum · 1 fn | LeadTurnFileBody, LeadTurnFileView, LeadTurnSeatOutcome, LeadTurnTicket, LeadTurnsClaimRequest, LeadTurnsFileRequest, LeadTurnsFinishRequest, LeadTurnsHoldRequest +5 | The verbs' requests and answers |
 | `src/prompt.rs` | src | m | 5 struct · 1 enum · 14 fn · 6 const · 3 re-export | PromptLayout, ResolvedPrompt, SessionPromptAssembly, SessionPromptParts, StampedLlmRequest, SystemPromptPiece | — |
 | `src/prompt/layout.rs` | src | s | 2 fn · 1 crate-vis | — | Where one fresh turn's context goes, by the layout resolved once for that turn (FIX 9442, FIX 9443) |
 | `src/provenance/actor_stamp.rs` | src | m | 1 re-export · 10 crate-vis | — | Opaque actor stamp tokens (FIX 10930, Engine 10-30 20:20) |
@@ -7990,7 +7995,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/residence/directives.rs` | src | m | 1 struct · 3 fn · 5 crate-vis | ResidenceDirectiveState | The owner's residence directives to one of their machines (OF-534): owner-vault acts that name a machine… |
 | `src/sync/residence/discover.rs` | src | s | 1 fn · 1 crate-vis | — | Discover locally held world/month partitions without loading their Docs |
 | `src/sync/residence/home_handoff.rs` | src | m | 3 struct · 2 enum · 10 fn | FreeTimeArming, HomeHandoffCancel, HomeHandoffKey, HomeHandoffSession, HomeHandoffStanding | The new home's doors for a home handoff (FIX 5661 C2a): the target end of `residence.home_handoff.status`… |
-| `src/sync/residence/index_by_item.rs` | src | s | 14 crate-vis | — | The by-item twin of the thin residence index: one `ri:i:{item}:{window}` row per `ri:w:{window}:{item}`… |
+| `src/sync/residence/index_by_item.rs` | src | s | 16 crate-vis | — | The by-item twin of the thin residence index: one `ri:i:{item}:{window}` row per `ri:w:{window}:{item}`… |
 | `src/sync/residence/kit_fetch.rs` | src | s | 1 struct · 4 fn · 3 const · 2 re-export | KitBundleFetch | The kit door to the home's sealed cloud bundle (FIX 922; owner ruling 10-18: the recovery kit alone must… |
 | `src/sync/residence/kit_fetch/custody.rs` | src | s | 1 struct · 3 fn · 2 const | KitCustodyFetch | The kit's read of the key custody the residence home holds (FIX 5846): a restore on a new host that holds… |
 | `src/sync/residence/kit_fetch/pad_index.rs` | src | s | 2 struct · 3 fn · 2 const | KitPadIndexFetch, KitPadIndexPage | The kit's read of the home's current index (FIX 7106): the generations a publisher named the kit's root for… |
@@ -8068,9 +8073,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/selector/secret_projection/release.rs` | src | s | 1 struct · 1 enum · 5 fn · 4 crate-vis | RepoSyncAdmission, RepoSyncLandings | The host adapters every window release and admission goes through (FIX 7608 slice 4, part 3) |
 | `src/sync/selector/secret_projection/rows.rs` | src | s | 6 crate-vis | — | One entity row as a peer gets it, and one incoming copy row as the canonical store takes it |
 | `src/sync/selector/tests.rs` | test | XL | — | — | — |
+| `src/sync/selector/tests/claim_source_deep_doc.rs` | test | s | — | — | Replicated deep-doc CLAIMs (PR2 of [PORT-ONLY-DEPENDENCY-NOT-REPLICATED]): selector unit tests for ANSWER… |
 | `src/sync/selector/tests/claim_source_listing.rs` | test | m | — | — | Replicated CLAIM against thin-index-listed MESSAGE sources (O2/O2b/O3, M1) |
 | `src/sync/selector/tests/claim_source_opened_mode.rs` | test | s | — | — | The device-local resolved residence mode row (M2/M2b/M3/M4) |
 | `src/sync/selector/tests/claim_source_registration.rs` | test | L | 10 crate-vis | — | Replicated promotion CLAIM source registration (PR1): selector unit tests |
+| `src/sync/selector/tests/claim_source_typed_refs.rs` | test | m | 12 crate-vis | — | Replicated CLAIMs citing typed sources (PR2 of [PORT-ONLY-DEPENDENCY-NOT-REPLICATED]): selector unit tests… |
 | `src/sync/selector/text_egress.rs` | src | s | 3 crate-vis | — | The text fence at sync egress and peer document admission (facet rule C): an ASSET_TEXT written from source… |
 | `src/sync/selector/tombstones.rs` | src | s | 5 crate-vis | — | Which window tombstones a selector export carries beside the rows it keeps (FIX 10161) |
 | `src/sync/selector/validators.rs` | src | s | 2 crate-vis | — | Federation admission validators for AUTHORITY_LOG and pack-instance rows |
@@ -8648,7 +8655,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/mesh_machine_endpoint_index.rs` | src | s | 1 enum · 5 fn | IndexedEndpoint | Doors for `tests/mesh_machine_endpoint_index.rs` (census L3-28B): the endpoint lookup as the MACHINE… |
 | `src/test_doors/meso_extraction_width.rs` | src | m | 1 struct · 1 enum · 1 fn · 5 crate-vis | ExtractionWidth, PriorScenario | Door for `tests/dreamer_meso_width.rs` (FIX 21927 P2): measure the extraction calls in flight during one… |
 | `src/test_doors/microsoft_token.rs` | src | s | 1 struct · 6 fn · 1 crate-vis | ExchangedMicrosoftGrant | Door for `tests/microsoft365_oauth.rs` and `tests/microsoft365_refresh_write_back.rs`… |
-| `src/test_doors/mod.rs` | src | m | 1 fn · 416 mod · 3 re-export | — | Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD) |
+| `src/test_doors/mod.rs` | src | m | 1 fn · 417 mod · 3 re-export | — | Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD) |
 | `src/test_doors/model_binding_proposer.rs` | src | m | 1 struct · 2 fn · 1 const | TrialFixture | Fixture for the `model_binding_proposer_grant` server test: one completed held-out trial offer for a role… |
 | `src/test_doors/model_call_turn_link.rs` | src | s | 1 fn | — | Doors for `oneiron-server/tests/chat_model_call_turn_link.rs` (UNBUILT3-41, FIX [TURN-MODEL-LINK]): the… |
 | `src/test_doors/model_step_submission_codec.rs` | src | s | 1 fn | — | Doors for `tests/model_step_submission_codec.rs` (STEP-CORRECTION-HEALTH-PARK): a model step's submission… |
@@ -8694,6 +8701,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/predicted_residence.rs` | src | s | 9 fn | — | Doors for the integration tests of the predicted residence level (census L7-46 + L10-14, ARCH-0023b… |
 | `src/test_doors/proactivity_digest_index.rs` | src | s | 10 fn | — | Doors for `tests/digest_erase_scrubs_stored_copies.rs` (PROACTIVITY-DIGEST-COPY-ERASURE) |
 | `src/test_doors/profiles_other_machine.rs` | src | s | 1 fn | — | Door for `tests/doors_read_standing_heads.rs` (FIX [FOREIGN-ANCHOR-CHAIN-COUNTS-IN-EVERY-CHAIN-PREDICATES]… |
+| `src/test_doors/project_lead_turn.rs` | src | s | 5 fn | — | Doors for `tests/project_lead_turn.rs` (FIX NEON-LEAD-TURN-TRIGGER): a GPU job row planted live and moved… |
 | `src/test_doors/project_replicated_revision.rs` | src | s | 1 fn | — | Door for `tests/frozen_project_answer_narrowing.rs` (FIX… |
 | `src/test_doors/project_run.rs` | src | s | 6 fn | — | Doors for `tests/turn_program_workflow.rs` ([RSI-PROJECT-WORKFLOW]): the program runtime's own writers for… |
 | `src/test_doors/provenance_body_checkpoint.rs` | src | s | 6 fn | — | Doors for the provenance-body checkpoint owner-erasure tests |
@@ -9178,13 +9186,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/verbs/sync_quarantine.rs` | src | s | 1 fn · 1 re-export | — | Owner-only retained held-edit evidence from the sync quarantine |
 | `src/verbs/tables.rs` | src | s | — | — | The side tables `verbs` keeps (core split slice 1): each row declares one, and the crate's build script… |
 | `src/verbs/training_runs.rs` | src | m | 7 struct · 3 enum · 9 fn · 4 const | RoleTrainingPrepareRequest, RoleTrainingPrepared, RoleTrainingScope, TrainingRunEvaluation, TrainingRunExecuteRequest, TrainingRunGetRequest, TrainingRunNeed, TrainingRunObservation +2 | The role-training run doors (ROLE-TRAINING-RUN, LEARN-TRAIN Q1 and Q3) |
-| `src/verbs/tree/index.rs` | src | s | 11 crate-vis | — | — |
-| `src/verbs/tree/mod.rs` | src | s | 5 struct · 1 enum · 10 fn · 1 re-export · 1 crate-vis | NoteKindLine, RenderedView, TreeRefusal, TreeRefusalCode, VerbTree, ViewOptions | A read-only view of the code-mode verb tree, from the base kit to on-demand types |
-| `src/verbs/tree/render.rs` | src | m | 10 crate-vis | — | — |
-| `src/verbs/tree/search.rs` | src | s | 3 crate-vis | — | — |
+| `src/verbs/tree/discovery.rs` | src | m | 3 struct · 1 enum · 4 fn · 2 crate-vis | AdmittedRows, DiscoveryRefusal, DiscoveryView, NoteKindAudience | Project a catalogue before any discovery text is rendered or scored |
+| `src/verbs/tree/index.rs` | src | s | 12 crate-vis | — | — |
+| `src/verbs/tree/mod.rs` | src | s | 5 struct · 1 enum · 10 fn · 2 re-export · 1 crate-vis | NoteKindLine, RenderedView, TreeRefusal, TreeRefusalCode, VerbTree, ViewOptions | A read-only view of the code-mode verb tree, from the base kit to on-demand types |
+| `src/verbs/tree/render.rs` | src | m | 13 crate-vis | — | — |
+| `src/verbs/tree/search.rs` | src | m | 4 crate-vis | — | — |
 | `src/verbs/tree/setting_values.rs` | src | s | 6 crate-vis | — | The value types of the `code_mode.view.*` keys: the verb-tree view's base list, expansion list and token… |
-| `src/verbs/tree/vault_view.rs` | src | s | 1 struct · 3 fn | OwnedViewOptions | The vault's verb-tree view inputs: the `code_mode.view.*` settings in force and the NOTE kinds the view… |
-| `src/verbs/tree/view.rs` | src | s | 1 crate-vis | — | — |
+| `src/verbs/tree/vault_view.rs` | src | s | 1 struct · 3 fn · 3 crate-vis | OwnedViewOptions | The vault's verb-tree view inputs: the `code_mode.view.*` settings in force and the NOTE kinds the view… |
+| `src/verbs/tree/view.rs` | src | m | 3 crate-vis | — | — |
 | `src/verbs/trusted_contact.rs` | src | s | 10 fn · 1 re-export | — | The trusted-contact rows a host door answers (DOOR-140 A, OF-527): the person names a trusted contact… |
 | `src/verbs/turn_program_resume.rs` | src | s | 2 fn · 1 const · 1 crate-vis | — | `vault.turn_programs.resume`: the owner resumes programs a vault copy holds paused (FIX… |
 | `src/verbs/uncertain_send.rs` | src | s | 1 fn · 1 re-export | — | The input and answer of `vault.outbound.uncertain_send.answer` (FIX 4747), a host door: the vault owner's… |
@@ -10575,6 +10584,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/program_hold_stop_settlement.rs` | test | m | — | — | The owner's Stop of a held turn program settles the ended try's budget and retires its paid-step receipts… |
 | `tests/project_extra_rooms.rs` | test | m | — | — | PROJECT-EXTRA-ROOMS: a project groups extra rooms beside its home room |
 | `tests/project_kind_reads_by_name.rs` | test | s | — | — | A project reads back as kind `PROJECT` (FIX PROJECT-KIND-READS-TYPE-103) |
+| `tests/project_lead_turn.rs` | test | L | — | — | A company lead's turns (FIX NEON-LEAD-TURN-TRIGGER; Engine ACCEPT PLAN-NEON-LEAD-TURN-TRIGGER, 28 Nov… |
 | `tests/project_leader_home_room_reply.rs` | test | m | — | — | A project's current leader may answer a person's turn that names no agent in the project's home room and… |
 | `tests/project_leader_home_room_reply/claim_and_answer.rs` | test | s | — | — | Review round 2 (REVIEW-9956): a turn's claim and its answer stay one holder's |
 | `tests/project_mint_depth_budget.rs` | test | s | — | — | A card mint derives the child's depth budget from its parent, as a spawn does, so a thread converts under a… |
@@ -11017,7 +11027,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/verb_tasks_done_executor_stamp.rs` | test | m | — | — | A met DONE through the public `tasks.update` stamps the executor model of the authenticated host run it came… |
 | `tests/verb_tree_view.rs` | test | L | — | — | Verb-tree view integration tests (PR 3b-1, step 5a) |
 | `tests/verb_tree_view_base_shapes.rs` | test | s | — | — | Authored reply shapes in the shipped verb-tree base |
-| `tests/verb_tree_view_grant_hiding.rs` | test | s | — | — | Grant hiding in the shipped verb tree |
+| `tests/verb_tree_view_grant_hiding.rs` | test | m | — | — | Grant hiding in the shipped verb tree |
 | `tests/verb_vault_assets_masked_read.rs` | test | m | — | — | `vault.assets.masked_read`: an agent with an ordinary read permit but no Grant is refused, the holder reads… |
 | `tests/verb_vault_critic_outcome.rs` | test | L | — | — | Row 4 CRITIC-ATTRIBUTION, PR 3 (rulings LEARN-CRITIC Q3 = B, LEARN-GRANT = A, LEARN-CRITIC-ANCHOR)… |
 | `tests/verb_vault_critic_review.rs` | test | m | — | — | Row 4 CRITIC-ATTRIBUTION, PR 1 (ruling LEARN-CRITIC Q1 = B): a critic review merges findings on a checkable… |
