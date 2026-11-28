@@ -183,6 +183,9 @@ pub struct ExecutionNodeSettings {
     /// file alone.
     #[serde(default = "owner_policy_default")]
     pub owner_policy: bool,
+    /// The host's quiet marker, an absolute path (row GPU-QUIET-LEASE, `jobs::quiet_lease`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quiet_tag: Option<PathBuf>,
     /// The most memory the node's jobs hold at once, in GiB. Absent: the machine's total.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub job_memory_gib: Option<u64>,
@@ -190,9 +193,6 @@ pub struct ExecutionNodeSettings {
     /// machine's cores.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub job_threads: Option<u32>,
-    /// The host's quiet marker, an absolute path (row GPU-QUIET-LEASE, `jobs::quiet_lease`).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub quiet_tag: Option<PathBuf>,
 }
 
 /// Who clears a node's drain (`machines.drain.clear_by`, pass 34 2.4). The
@@ -268,6 +268,12 @@ pub struct NodeTemplate {
     /// workload's tasks and the unit's own log writer count against it.
     #[serde(default = "tasks_max_default")]
     pub tasks_max: u64,
+    /// A run has the host to itself (row GPU-QUIET-LEASE, `jobs::quiet_lease`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub quiet: bool,
+    /// The power limit, in watts, the prepare step sets on each leased card (`gpu_power`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gpu_power_watts: Option<u32>,
     /// The operating-system signal a checkpoint notice delivers to the
     /// workload (design 7.1 `Signal`), one of [`CHECKPOINT_SIGNALS`]. None:
     /// the notice is a no-op. Absent from the digest when unset, so a
@@ -297,12 +303,6 @@ pub struct NodeTemplate {
     /// a template without it keeps its digest.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_max_secs: Option<u64>,
-    /// A run has the host to itself (row GPU-QUIET-LEASE, `jobs::quiet_lease`).
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub quiet: bool,
-    /// The power limit, in watts, the prepare step sets on each leased card (`gpu_power`).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub gpu_power_watts: Option<u32>,
 }
 
 /// What a run of a template is: the wire's [`TemplateKind`], which a
@@ -420,6 +420,13 @@ impl ExecutionNodeSettings {
         if self.scopes.is_empty() {
             return Err("execution_node.scopes must permit at least one scope kind".to_owned());
         }
+        if self
+            .quiet_tag
+            .as_ref()
+            .is_some_and(|tag| !tag.is_absolute())
+        {
+            return Err("execution_node.quiet_tag must be an absolute path".to_owned());
+        }
         if self.job_memory_gib == Some(0) {
             return Err("execution_node.job_memory_gib must be at least 1 when set".to_owned());
         }
@@ -428,13 +435,6 @@ impl ExecutionNodeSettings {
         }
         if self.job_account.trim().is_empty() {
             return Err("execution_node.job_account must name an OS account".to_owned());
-        }
-        if self
-            .quiet_tag
-            .as_ref()
-            .is_some_and(|tag| !tag.is_absolute())
-        {
-            return Err("execution_node.quiet_tag must be an absolute path".to_owned());
         }
         for (name, template) in &self.templates {
             template

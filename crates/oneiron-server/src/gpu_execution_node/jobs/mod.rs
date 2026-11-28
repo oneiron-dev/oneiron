@@ -38,7 +38,6 @@ pub mod job_unit;
 pub mod journal;
 pub mod journal_file;
 pub mod node_parts;
-pub mod quiet_lease;
 pub mod readiness;
 pub mod receipt;
 #[cfg(target_os = "linux")]
@@ -81,6 +80,8 @@ pub use receipt::{ReceiptClock, chunk_receipt_of, measured_secs, receipt_of, sig
 pub use serving::ServedNodeJobs;
 pub use staging::{MirrorStager, StagingRefusal, TemplateMirrors};
 pub use status::KEYS_PAGE_MAX_BYTES;
+
+pub mod quiet_lease;
 
 /// How long a `Busy` answer asks the issuer to wait before it asks again: a
 /// protocol hint, not a policy.
