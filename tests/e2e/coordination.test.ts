@@ -1479,39 +1479,398 @@ suite.test(test, "COORDINATION-05", "An agent TASK goes to the runner and a peer
   }
 });
 
-/* COORDINATION-06 — Addressed ask gets evidence or explicit refusal should work.
+/** COORDINATION-06 authored inputs (fixture discriminant, not a wire DTO). */
+interface Coordination06Scenario {
+  id: "COORDINATION-06";
+  inputs: {
+    responders: string[];
+    question: string;
+    fact: { label: string; content: string };
+    answer: { responder: string; result: string; evidence: string[] };
+    abstention: { responder: string; result: string; reason: string; reasonLabel: string };
+    arrivalOrder: string[];
+    unanswered: string;
+    cutoffDefault: "hold" | "proceed";
+    cancelBeforeDeadline: boolean;
+  };
+  expected: {
+    collectionOrder: string[];
+    peerAnswerHasEvidence: boolean;
+    childAbstentionHasDurableReason: boolean;
+    unansweredHasResult: boolean;
+    unansweredCountsAsSuccess: boolean;
+    refusalCountsAsAnswerSuccess: boolean;
+    terminalReasonsRemainDistinct: boolean;
+    rootRereadsEvidence: boolean;
+  };
+}
+type Coordination06Consult = FacadeResult<"vault.consults.get">;
+type Coordination06Ask = FacadeResult<"ask">;
+
+/** Every ask deadline: far in the future, so no cutoff settles an ask while the case runs. */
+const COORDINATION06_UNTIL = 1893456000;
+function coordination06InputId(label: string): string {
+  return createHash("sha256").update(`coordination-e2e:COORDINATION-06:${label}`).digest("hex").slice(0, 32);
+}
+async function coordination06Scenario(): Promise<Coordination06Scenario> {
+  const data = await (await loadFixtures()).readJson<{ scenarios: { id: string }[] }>("coordination-scenarios");
+  const row = data.scenarios.find(item => item.id === "COORDINATION-06");
+  if (!row) throw new Error("Missing COORDINATION-06 fixture scenario");
+  return row as Coordination06Scenario; // Fixture discriminant, not an invented wire DTO.
+}
+async function coordination06Agent(client: PublicHttpClient, label: string, ceiling?: "auto"): Promise<string> {
+  const agent_def_ref = coordination06InputId(label);
+  const created = await client.call("vault.agents.create", {
+    agent_def_ref, definition: { agent_id: label, display_name: label, desc: `COORDINATION-06 ${label}`, version: "1", ...(ceiling === undefined ? {} : { ceiling }) },
+  });
+  expect(created.agent_def_ref).toBe(agent_def_ref);
+  return agent_def_ref;
+}
+/** One owner-authored claim at a chosen id, read back as a CLAIM (a public input, not a seeded record). */
+async function coordination06Claim(owner: PublicHttpClient, ownerRef: string, label: string, predicate: string,
+  value: string, occurred_at: number): Promise<string> {
+  const id = coordination06InputId(label);
+  const scope = await ownerBaseClaimScope(owner, ownerRef);
+  const upserted = await owner.call("vault.claims.upsert", {
+    id, predicate, subject_ref: ownerRef, value, confidence: 1, source: "user_stated", scope, occurred_at,
+  });
+  expect(upserted.approval).toBe("auto");
+  const row = (await owner.call("vault.get", { entity_ref: id })).value;
+  expect(row?.kind).toBe("CLAIM");
+  expect(row?.id_hex).toBe(id);
+  return id;
+}
+/** The owner lets each responder read what its ask cites and what it lands: one exact-actor read grant each
+ * through the public policy door (COORDINATION-05's board-human grant). Ask admission checks that the asker
+ * AND each holder read the question (task_ask.rs validate_task_answer_unit); a word's result and provenance,
+ * and a landing's TASK, result and reason, are checked the same way for the party that gives them. */
+async function coordination06GrantRead(owner: PublicHttpClient, actorRefs: readonly string[]): Promise<void> {
+  const policy = await owner.call("vault.gate.policy.get", {});
+  const manifest = policy.manifests.find(row => row.manifest_ref === policy.default_manifest_ref);
+  if (!manifest) throw new Error("Default policy manifest is absent");
+  const reads: Facade.PolicyScopedGrantRow[] = actorRefs.map(actor_ref => ({
+    actor_ref, effector: "core:read", receipt_required: false,
+    scope: { worlds: { kind: "all" }, facets: { kind: "all" }, bands: { kind: "all" },
+      audience: { kind: "all" }, verbs: { kind: "some", values: ["read"] }, sensitivity: { kind: "all" } },
+  }));
+  const granted = await owner.call("vault.gate.policy.put", {
+    manifest_ref: manifest.manifest_ref, expected_body_hash: manifest.body_hash,
+    manifest: { ...manifest.manifest, scoped_grants: [...(manifest.manifest.scoped_grants ?? []), ...reads] },
+  });
+  expect(granted.receipt_ref.length).toBeGreaterThan(0);
+  const after = await owner.call("vault.gate.policy.get", {});
+  const live = after.manifests.find(row => row.manifest_ref === after.default_manifest_ref);
+  for (const actor_ref of actorRefs)
+    expect(live?.manifest.scoped_grants?.some(grant => grant.actor_ref === actor_ref && grant.effector === "core:read")).toBe(true);
+}
+/** A step whose program asks the owner one held question and parks on it: a durable wait that keeps the run's
+ * lease and live entry (COORDINATION-04's leader run), so its agent can attach to it. */
+function coordination06ParkStep(providers: ScriptedProviders, id: string, purpose: string, ownerRef: string,
+  turn: string, key: string): void {
+  coordination04Step(providers, id, purpose, [
+    `const asked = await ask({ intent_key: "${key}", who: { responder: { human: { actor_ref: "${ownerRef}" } } },`,
+    `  what: { reference: { turn: "${turn}" }, revision: 1, options: { proceed: { label: "Proceed" } }, context_refs: [] } });`,
+    `await wait({ handle: asked.handle, step_key: "${key}" });`,
+  ].join("\n"));
+}
+/** The owner's read of one consult TASK: its deadline and terminal register, as refs. */
+async function coordination06Consult(owner: PublicHttpClient, task_ref: string): Promise<Coordination06Consult> {
+  const read = await owner.call("vault.consults.get", { task_ref });
+  expect(read.task_ref).toBe(task_ref);
+  return read;
+}
+/** The one member TASK of a single-responder ask. */
+function coordination06Member(receipt: Coordination06Ask): string {
+  expect(receipt.task_refs).toHaveLength(1);
+  const member = receipt.task_refs[0];
+  if (!member) throw new Error("Ask minted no member TASK");
+  return member;
+}
+/** The asker's resumed wait: Ready at once, or Ready after the ask's settlement is readable (only the describe
+ * READ repeats; the second wait is the resuming act, as in MUSE-LOOP-05). */
+async function coordination06WaitReady(client: PublicHttpClient, handle: Coordination06Ask["handle"], step_key: string) {
+  const first = await client.call("wait", { handle, step_key });
+  if ("Ready" in first) return first.Ready;
+  await awaitPublic(async () => {
+    const described = await client.call("describe", { handle: { kind: "ask", group_ref: handle.group_ref } });
+    if (described.kind !== "task_status") throw new Error(`describe answered ${described.kind}, not task_status`);
+    return described.receipt.outcome;
+  }, outcome => outcome.kind === "snapshot" && outcome.phase.phase === "asked" && outcome.phase.settled,
+  { label: "COORDINATION-06 peer ask settles on its word", timeoutMs: LIMITS.requestMs });
+  const second = await client.call("wait", { handle, step_key });
+  if (!("Ready" in second)) throw new Error(`Answered ask did not resume Ready: ${Object.keys(second).join(",")}`);
+  return second.Ready;
+}
+/** A refused public call: the typed HTTP error, whatever its status. */
+async function coordination06Refused(call: Promise<unknown>, label: string): Promise<PublicHttpError> {
+  try { await call; } catch (error) {
+    if (!(error instanceof PublicHttpError)) throw error;
+    expect(error.reply.status).toBeGreaterThanOrEqual(400);
+    return error;
+  }
+  throw new Error(`${label}: expected a refusal, the call succeeded`);
+}
+
+/* COORDINATION-06 (partial, Engine E2E-PARTIAL option A; COORD-E2E-ASK-ORDER = A, 24 Nov 22:44).
  * Rows: OF-383, OF-391. Canon: ARCH-0067 #tasks; ARCH-0026 #swarm-fanout.
- *
- * Existing typed calls:
- *   ask({ intent_key, who: { responder: TaskAssignee }, what: {
- *     reference: { claim } | { turn }, revision, options, context_refs },
- *     until, default: "hold", need?, decide?, ... }) -> TaskAskReceipt
- *   peek({ handle: { group_ref } }) -> TaskAskStatus
- *   tasks.answer({ handle, word: { result_ref, provenance_refs } })
- *     -> TaskAskAnswer { task_ref, actor_ref, result_ref, word_ref, ... }
- *   cancel({ task_ref }) -> TaskCancelReceipt
- * Canon result: an Answer carries a result ref and nonempty evidence refs;
- * an Abstain carries a result ref and a durable reason ref. A bare string or
- * missing reply is neither. The current native ConsultResultKind encodes
- * these separately; it has no typed HTTP/SDK consult-result landing method.
- *
- * Ask peer, child and unavailable responder, retaining input order. Admit the
- * child's explicit inability first and the peer's cited answer second, using
- * barriers instead of sleeps. Partial collection must retain identity and
- * reference provenance despite arrival order. Re-read the cited fixture fact
- * as root; a generated summary does not add corroboration. Cancel the third
- * while it is unanswered and inspect its receipt/status. It must remain
- * distinguishable from an answered consult, from an explicit inability, and
- * from execution failure; no empty result may be reported as success. If the
- * separate run view reports a never-answered/reclaimed run, it is abandoned,
- * never delivered/archived success. A cancellation need not be relabelled an
- * expiry; preserve each public terminal reason rather than collapsing them.
- *
- * Missing: typed HTTP/SDK child spawn and evidence-or-abstention consult
- * landing/inspection. Public tasks.answer is an ask word, not an invented
- * {abstain: ...} payload or automatic proof of successful agent execution.
+ * Promise: three addressed asks, kept in input order by the case itself (peer, child, unavailable): the
+ *   running child's explicit inability lands first with its durable reason, the peer's answer lands second
+ *   citing its evidence, the root re-reads the cited fact, and the cancelled unanswered ask holds no result.
+ *   Collected in input order despite arrival order, the three stay apart: an answer with evidence, an
+ *   abstention with a reason that never counts as an answer, and a cancelled consult with no terminal.
+ *   An answer with no evidence lands nothing.
+ * Doors: HTTP facade only: vault.agents.create, vault.people.create, vault.conversations.create,
+ *   vault.witness, vault.get, vault.claims.upsert/list, vault.gate.policy.get/put, tasks.create,
+ *   vault.runs.branches.get, vault.runs.checkpoint, self.run.attach, self.agents.spawn (the leader's own
+ *   credential on its parked live run), ask, peek, wait, describe, tasks.answer (the peer's word),
+ *   tasks.consult.result (the child's own credential on its own parked run, #10421), cancel and
+ *   vault.consults.get (the owner); pairActor; ScriptedProviders drive the two parked runs.
+ * Mapping: the owner is the asker (her own TASKs, so her cancel is her own act, query_facade.rs
+ *   owner_cancel_own_task). foreign-executor is a same-vault agent addressed as a peer (the PeerSyncedOnly
+ *   route is the same, gate/task_assignee.rs); worker-b-child is spawned in the leader's slice from the
+ *   leader's parked run and lands from its own parked run (lands_from_run: a consult addressed to the
+ *   running child); unavailable-responder is a person who is never paired, addressed as a human. The fixture
+ *   facts (route note, answer, inability and its reason) are owner-authored claims at chosen ids.
+ * Unproved: one ask carrying all three in input order (Responder holds one assignee; People is a set of
+ *   humans and peers): the three-ask form is the ruled one. A foreign executor admitted through
+ *   vault.federation.connect.*. The run view's abandoned and failed reasons (reclaimedRunStatus,
+ *   executionFailureStatus): no public door reclaims a parked run or fails one on cue here. A generated
+ *   summary adding no corroboration (the root's de-dup of cited sources). The MCP surface (HTTP here).
  */
-suite.todo(test, "COORDINATION-06", "waits on typed child spawn and evidence-or-abstention consult result landing/inspection");
+suite.test(test, "COORDINATION-06", "Three addressed asks kept in input order by the case: the running child's explicit inability lands with its reason, the peer's answer cites evidence the root re-reads, and the cancelled unanswered ask holds no result and stays apart from both", async () => {
+  const c = await coordination06Scenario();
+  const [peerLabel, childLabel, unavailableLabel] = c.inputs.responders;
+  if (!peerLabel || !childLabel || !unavailableLabel) throw new Error("COORDINATION-06 fixture names fewer than three responders");
+  expect(c.inputs.answer.responder).toBe(peerLabel);
+  expect(c.inputs.abstention.responder).toBe(childLabel);
+  expect(c.inputs.unanswered).toBe(unavailableLabel);
+  expect(c.inputs.arrivalOrder).toEqual([childLabel, peerLabel]);
+  expect(c.inputs.cancelBeforeDeadline).toBe(true);
+  const providers = await ScriptedProviders.start({ id: "coordination06-runs", origins: ["chat"], steps: [] });
+  const engine = await EngineFixture.start({ id: "COORDINATION-06", profile, serverLog: "oneiron=info", serverConfig: `
+[models.providers.coord06chat]
+kind = "local-openai-compat"
+base_url = "${providers.urls.chat}"
+revision = "coordination-v1"
+[models.roles.generative_reasoner]
+model = "coord06chat:${coordination04Model}"
+[models.dreamer]
+enabled = false
+[models.workflows]
+enabled = false
+[models.code_mode]
+prompt_package = ${JSON.stringify(resolve(import.meta.dir, "fixtures/hooks/host/prompts"))}
+` });
+  try {
+    const owner = engine.client;
+    const ownerRef = engine.pairedActor.principalRef;
+    const occurred = 1769947200; // Public setup input, never an engine clock override.
+
+    // ---- Parties: the leader and the child (both may ask), the peer agent, the unavailable person. ----
+    const leaderRef = await coordination06Agent(owner, "leader", "auto");
+    const childRef = await coordination06Agent(owner, childLabel, "auto");
+    const peerRef = await coordination06Agent(owner, peerLabel);
+    const leader = await engine.pairActor({ principalRef: leaderRef, actorClass: "agent", scope: ["core:read", "core:write"] });
+    const child = await engine.pairActor({ principalRef: childRef, actorClass: "agent", scope: ["core:read", "core:write"] });
+    const peer = await engine.pairActor({ principalRef: peerRef, actorClass: "agent", scope: ["core:read", "core:write"] });
+    expect((await child.client.call("self.actor", {})).actor_ref).toBe(childRef);
+    expect((await peer.client.call("self.actor", {})).actor_ref).toBe(peerRef);
+    const conversation = await owner.call("vault.conversations.create", {
+      body: {}, occurred_start: occurred, occurred_end: occurred, learned_at: occurred,
+    });
+    const witnessTurn = async (content: string) => {
+      const witnessed = await owner.call("vault.witness", {
+        conversation_ref: conversation.id, occurred_at: occurred,
+        messages: [{ author: "user", message_type: "text", content, is_visible: true, order: 0 }],
+      });
+      const turn = (await owner.call("vault.get", { entity_ref: witnessed.turn_short_id })).value;
+      expect(turn?.kind).toBe("TURN");
+      if (!turn) throw new Error(`TURN for "${content}" is not readable`);
+      return turn.id_hex;
+    };
+    const identityTurn = await witnessTurn("This distinct person is the unavailable responder.");
+    const unavailable = await owner.call("vault.people.create", {
+      identity: { name: unavailableLabel }, identity_evidence_refs: [identityTurn], occurred_at: occurred,
+    });
+    const unavailableRef = unavailable.person.id_hex;
+    expect(unavailableRef).not.toBe(ownerRef);
+    await grantAgentAskAuthority(owner, leaderRef);
+    await grantAgentAskAuthority(owner, childRef);
+    await coordination06GrantRead(owner, [peerRef, childRef, unavailableRef]);
+
+    // ---- The asked question, the fact it cites and the results the responders give (public inputs). ----
+    const holdTurn = await witnessTurn("Hold the route plan until I confirm.");
+    const questionTurn = await witnessTurn(c.inputs.question);
+    const routeNote = await coordination06Claim(owner, ownerRef, c.inputs.fact.label, "coordination.route_note",
+      c.inputs.fact.content, occurred);
+    expect(c.inputs.answer.evidence).toEqual([c.inputs.fact.label]);
+    const answerRef = await coordination06Claim(owner, ownerRef, c.inputs.answer.result, "coordination.route_answer",
+      "The route note lists the north entrance.", occurred);
+    const inabilityRef = await coordination06Claim(owner, ownerRef, c.inputs.abstention.result, "coordination.child_inability",
+      "The child abstains from the route-note question.", occurred);
+    const reasonRef = await coordination06Claim(owner, ownerRef, c.inputs.abstention.reasonLabel,
+      "coordination.child_inability_reason", c.inputs.abstention.reason, occurred);
+
+    // ---- The leader's run parks on its own ask; the leader attaches under her own credential. ----
+    coordination06ParkStep(providers, "coordination06-leader", "the leader's run asks its owner and parks", ownerRef,
+      holdTurn, "coordination-06/leader/hold");
+    const request = "Route the entrance question to the workers.";
+    const posted = await owner.call("tasks.create", {
+      spec: { title: request }, label: "coordination-06-leader", assignee: { agent_def: { agent_def_ref: leaderRef } },
+      intent_key: "coordination-06/leader/post",
+      brief: {
+        schema: 1, type_ref: { node_id: coordination06InputId("task-type"), tree_version: 1 },
+        objective: request, intent: { need: request, care: "light" },
+        success: { question: "Did each addressed responder answer, abstain or stay unanswered on its own record?",
+          criteria: { yes_if_all: [{ text: "Each responder's outcome is read apart from the others." }] } },
+        settled: [],
+        escalation: { to: { people: [ownerRef] }, triggers: [], default: "proceed", reversibility: "reversible_read" },
+      },
+    });
+    expect(posted.effected).toBe(true);
+    const leaderTask = posted.task_ref;
+    if (!leaderTask) throw new Error("Leader TASK has no task_ref");
+    const leaderBranches = (await owner.call("vault.runs.branches.get", { task_ref: leaderTask })).branches;
+    expect(leaderBranches).toHaveLength(1);
+    const leaderRun = leaderBranches[0]!.branch;
+    await awaitPublic(() => owner.call("vault.runs.checkpoint", { run_ref: leaderRun }),
+      view => (view?.completed_steps ?? 0) >= 1, { label: "COORDINATION-06 leader run commits its asking step" });
+    const parkedLeader = (await owner.call("vault.runs.branches.get", { task_ref: leaderTask })).branches[0];
+    await expectParkedBranchLeased(engine, "COORDINATION-06 leader after its asking step", parkedLeader);
+    const leaderAttached = await leader.client.call("self.run.attach", { run: leaderRun });
+    expect(leaderAttached.live_run.startsWith(`lr1.${leaderRun}.`)).toBe(true);
+
+    // ---- The leader spawns worker-b-child inside her slice: queued at once, no widening proposal. ----
+    coordination06ParkStep(providers, "coordination06-child", "the spawned child's run asks its owner and parks", ownerRef,
+      holdTurn, "coordination-06/child/hold");
+    const spawned = await leader.client.call("self.agents.spawn", { live_run: leaderAttached.live_run, spec: {
+      need: "Answer the entrance question you are asked.", prompt: "Answer only from sources your slice reads.",
+      intent_key: "coordination-06/spawn/child", agent: childRef } });
+    if (spawned.state !== "queued") throw new Error(`In-slice spawn answered ${spawned.state}, not queued`);
+    expect(spawned.kind).toBe("agent_spawn");
+    const childRun = spawned.attempt;
+    expect(childRun).toMatch(/^[a-f0-9]{32}$/);
+    expect((await owner.call("vault.widen_proposals", {})).proposals).toEqual([]);
+    await awaitPublic(() => owner.call("vault.runs.checkpoint", { run_ref: childRun }),
+      view => (view?.completed_steps ?? 0) >= 1, { label: "COORDINATION-06 child run commits its asking step" });
+    const childAttached = await child.client.call("self.run.attach", { run: childRun });
+    expect(childAttached.live_run.startsWith(`lr1.${childRun}.`)).toBe(true);
+
+    // ---- Ask each, in input order: one single-responder ask per responder. ----
+    const responders: Record<string, FacadeInput<"ask">["who"]> = {
+      [peerLabel]: { responder: { peer: { actor_ref: peerRef } } },
+      [childLabel]: { responder: { child: { actor_ref: childRef } } },
+      [unavailableLabel]: { responder: { human: { actor_ref: unavailableRef } } },
+    };
+    const asks: { label: string; receipt: Coordination06Ask; member: string }[] = [];
+    for (const label of c.inputs.responders) {
+      const who = responders[label];
+      if (!who) throw new Error(`No responder for ${label}`);
+      const receipt = await owner.call("ask", {
+        intent_key: `coordination-06/ask/${label}`, who,
+        what: { reference: { turn: questionTurn }, revision: 1, options: {}, context_refs: [], label: c.inputs.question },
+        until: COORDINATION06_UNTIL, default: c.inputs.cutoffDefault,
+      });
+      expect(receipt.handle.group_ref.length).toBeGreaterThan(0);
+      asks.push({ label, receipt, member: coordination06Member(receipt) });
+    }
+    expect(asks.map(row => row.label)).toEqual(c.inputs.responders);
+    expect(new Set(asks.map(row => row.member)).size).toBe(3);
+    const [peerAsk, childAsk, unavailableAsk] = asks as [typeof asks[number], typeof asks[number], typeof asks[number]];
+    for (const row of asks) {
+      const open = await coordination06Consult(owner, row.member);
+      expect(typeof open.deadline_at).toBe("number");
+      expect(open.terminal ?? null).toBeNull();
+    }
+
+    // ---- Arrival 1: the child. A bare answer with no evidence lands nothing; its inability lands with a reason. ----
+    const completedAt = () => Math.floor(Date.now() / 1000) - 1;
+    await coordination06Refused(child.client.call("tasks.consult.result", { live_run: childAttached.live_run, spec: {
+      task_ref: childAsk.member, kind: { kind: "answer", result_ref: inabilityRef, evidence_refs: [] }, completed_at: completedAt(),
+    } }), "COORDINATION-06 child answer without evidence");
+    expect((await coordination06Consult(owner, childAsk.member)).terminal ?? null).toBeNull();
+    const abstained = await child.client.call("tasks.consult.result", { live_run: childAttached.live_run, spec: {
+      task_ref: childAsk.member, kind: { kind: "abstain", result_ref: inabilityRef, reason_ref: { claim: reasonRef } },
+      completed_at: completedAt(),
+    } });
+    expect(abstained.task_ref).toBe(childAsk.member);
+    expect(abstained.idempotent_replay).toBe(false);
+    expect(abstained.terminal.disposition).toBe("completed");
+    expect(abstained.terminal.result_ref).toBe(inabilityRef);
+    expect(abstained.terminal.summary).toEqual({ kind: "abstained", reason_ref: { claim: reasonRef } });
+
+    // Partial collection: the peer has not answered yet, and the child's inability is no ask word.
+    expect((await coordination06Consult(owner, peerAsk.member)).terminal ?? null).toBeNull();
+    expect((await owner.call("peek", childAsk.receipt.handle)).some(row => row.kind === "word")).toBe(false);
+
+    // ---- Arrival 2: the peer answers as itself, citing the route note. ----
+    const answered = await peer.client.call("tasks.answer", { handle: peerAsk.receipt.handle,
+      word: { result_ref: answerRef, provenance_refs: [{ claim: routeNote }] } });
+    expect(answered.task_ref).toBe(peerAsk.member);
+    expect(answered.actor_ref).toBe(peerRef);
+    expect(answered.result_ref).toBe(answerRef);
+    expect(answered.word_ref.length).toBeGreaterThan(0);
+    const peerWord = (await owner.call("peek", peerAsk.receipt.handle)).find(row => row.kind === "word");
+    if (!peerWord) throw new Error("The peer's ask shows no word after tasks.answer");
+    expect(peerWord.who).toBe(peerRef);
+    expect(peerWord.answer?.result_ref).toBe(answerRef);
+    const peerReady = await coordination06WaitReady(owner, peerAsk.receipt.handle, "coordination-06/peer/collect");
+    expect(peerReady.coverage.met).toBe(true);
+    expect(peerReady.coverage.responded).toEqual([peerRef]);
+    expect(peerReady.effect_authorization).toBe("not_evaluated_by_ask");
+    expect(peerReady.evidence.map(row => [row.person_ref, row.word.result_ref, row.word.provenance_refs]))
+      .toEqual([[peerRef, answerRef, [{ claim: routeNote }]]]);
+
+    // The root re-reads the cited fact itself: the evidence ref names the owner's route-note claim.
+    expect(c.expected.rootRereadsEvidence).toBe(true);
+    const cited = (await owner.call("vault.get", { entity_ref: routeNote })).value;
+    expect(cited?.kind).toBe("CLAIM");
+    expect(cited?.id_hex).toBe(routeNote);
+    expect((await owner.call("vault.claims.list", { subject_ref: ownerRef, predicate: "coordination.route_note", limit: 10 }))
+      .value.map(row => row.value)).toEqual([c.inputs.fact.content]);
+
+    // ---- The unavailable responder never answers: the owner cancels her own unanswered ask before its deadline. ----
+    expect((await owner.call("peek", unavailableAsk.receipt.handle)).some(row => row.kind === "word")).toBe(false);
+    const cancelled = await owner.call("cancel", { task_ref: unavailableAsk.member });
+    expect(cancelled.approval).toBe("auto");
+    expect(cancelled.effected).toBe(true);
+    expect(cancelled.forced).toBe(false);
+    expect(cancelled.cancel_requested).toBe(false);
+    expect(cancelled.status).toBe("cancelled");
+    expect(cancelled.proposal_ref ?? null).toBeNull();
+
+    // ---- Inspect in input order: an answer with evidence, an abstention with its reason, and no result. ----
+    const collected: { label: string; read: Coordination06Consult }[] = [];
+    for (const row of asks) collected.push({ label: row.label, read: await coordination06Consult(owner, row.member) });
+    expect(collected.map(row => row.label)).toEqual(c.expected.collectionOrder);
+    const [peerRead, childRead, unavailableRead] = collected.map(row => row.read) as
+      [Coordination06Consult, Coordination06Consult, Coordination06Consult];
+    expect(c.expected.peerAnswerHasEvidence).toBe(true);
+    expect(peerRead.terminal?.disposition).toBe("completed");
+    expect(peerRead.terminal?.result_ref).toBe(answerRef);
+    expect(peerRead.terminal?.summary).toEqual({ kind: "answer", evidence_refs: [{ claim: routeNote }] });
+    expect(c.expected.childAbstentionHasDurableReason).toBe(true);
+    expect(childRead.terminal?.disposition).toBe("completed");
+    expect(childRead.terminal?.result_ref).toBe(inabilityRef);
+    expect(childRead.terminal?.summary).toEqual({ kind: "abstained", reason_ref: { claim: reasonRef } });
+    expect(c.expected.unansweredHasResult).toBe(false);
+    expect(c.expected.unansweredCountsAsSuccess).toBe(false);
+    expect(unavailableRead.terminal ?? null).toBeNull();
+    expect(typeof unavailableRead.deadline_at).toBe("number");
+    // The child's refusal is not an answer: its ask holds no word, so nothing counted it as one.
+    expect(c.expected.refusalCountsAsAnswerSuccess).toBe(false);
+    expect((await owner.call("peek", childAsk.receipt.handle)).some(row => row.kind === "word")).toBe(false);
+    expect((await owner.call("peek", unavailableAsk.receipt.handle)).some(row => row.kind === "word")).toBe(false);
+    expect(c.expected.terminalReasonsRemainDistinct).toBe(true);
+    const shapes = collected.map(row => JSON.stringify(row.read.terminal?.summary ?? null));
+    expect(new Set(shapes).size).toBe(3);
+  } finally {
+    const errors: string[] = [];
+    try { await engine.close(); } catch (error) { errors.push(error instanceof Error ? error.message : String(error)); }
+    try { await providers.close(); } catch (error) { errors.push(error instanceof Error ? error.message : String(error)); }
+    if (errors.length) throw new Error(`close: ${errors.join("; ")}`);
+  }
+});
 
 /* COORDINATION-07 — One task type drives team plan should work.
  * Rows: OF-540, OF-541, OF-543. Canon: ARCH-0079 #task-type, #planner,
