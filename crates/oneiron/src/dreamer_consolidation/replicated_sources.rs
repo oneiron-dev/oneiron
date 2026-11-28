@@ -99,16 +99,6 @@ impl ClaimSourceReplay {
             // On an opened device an absent, unlisted, unmarked source lands the CLAIM readable
             // with no registration row: a cold source has no frontier, and a hard erase of it
             // never reaches an opened device (PR1-OPENED-COLD-SOURCE-MODE = A, 28 Nov).
-            #[cfg(feature = "sync")]
-            if opened
-                && !crate::sync::residence::soft_drop_marker_exists_in_txn(
-                    store,
-                    txn,
-                    &source.to_hex(),
-                )?
-            {
-                continue;
-            }
             pending = true;
         }
         if withdrawn {
