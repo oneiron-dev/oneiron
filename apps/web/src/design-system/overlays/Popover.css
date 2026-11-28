@@ -1,6 +1,13 @@
 /* The only shadow in the system sits under a popover. Nothing here sets
-   display, so the closed layer stays hidden by the browser. */
+   display, so the closed layer stays hidden by the browser. A layer (a
+   popover, a menu) starts a new ink scope: the inks of the window ground
+   and of the microsidebar it may open from are set back to the sheet's,
+   so nothing inside it prints in the ground's ink. */
 .sl-popover {
+  --sl-ground-ink: var(--sl-ink-1);
+  --sl-micro-ink: var(--sl-ink-1);
+  --sl-micro-hover: var(--sl-hover);
+  --sl-micro-lit: var(--sl-lit);
   position: fixed;
   inset: auto;
   margin: 0;

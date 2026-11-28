@@ -8,7 +8,7 @@ export { Well, type WellProps } from './ground/Well'
 export { WindowGround, type WindowGroundProps } from './ground/WindowGround'
 export { SceneSheet, type SceneSheetProps } from './ground/SceneSheet'
 export { useRootTheme, type RootTheme } from './ground/root-theme'
-export { readScene, type SceneReading } from './lib/scene'
+export { readScene, pagePictures, pagePicture, type SceneReading } from './lib/scene'
 
 export { Verb, type VerbProps } from './primitives/Verb'
 export { IconAction, type IconActionProps } from './primitives/IconAction'
@@ -118,6 +118,7 @@ export {
 export { BarChart, BAR_SCREEN_MASK_ID, type BarChartProps } from './patterns/BarChart'
 export {
   barChartLayout,
+  barValueFormat,
   highestIndex,
   valueLabelBaseline,
   BAR_CHART_ASPECT,
@@ -149,12 +150,13 @@ export {
   type MessageRowReactionsProps,
   type MessageRowReactionProps,
 } from './patterns/MessageRow'
-export { HoverBar, type HoverBarProps } from './patterns/HoverBar'
+export { HoverBar, toolbarActions, type HoverBarProps } from './patterns/HoverBar'
 export { DayDivider, type DayDividerProps } from './patterns/DayDivider'
 export { RunFoot, type RunFootProps, type RunFootCallProps, type RunSubState } from './patterns/RunFoot'
 export { formatElapsed } from './patterns/run-elapsed'
 export {
   CrewStack,
+  crewCountName,
   type CrewStackProps,
   type CrewStackMemberProps,
   type CrewStackListProps,
@@ -267,12 +269,13 @@ export {
   type MicroSidebarPinnedProps,
   type MicroSidebarFootProps,
 } from './frame/MicroSidebar'
+export { useMicroSidebarPeek, type MicroSidebarPeek } from './frame/app-frame-context'
 export { splitChildRows, SIDEBAR_CHILD_ROWS_SHOWN, type ChildRowSplit } from './frame/sidebar-tree'
 export { AppFrame, type AppFrameProps, type AppFrameFoldProps } from './frame/AppFrame'
 export { PlaceHead, type PlaceHeadProps } from './frame/PlaceHead'
 export { RoomHead, ROOM_VIEWS, type RoomHeadProps, type RoomPins } from './frame/RoomHead'
 export { Place, type PlaceProps, type PlaceHeadSlotProps, type PlaceBodyProps, type PlaceFootProps } from './frame/Place'
-export { atScrollEnd, followScrollEnd, PLACE_END_SLACK_PX, type ScrollBox } from './frame/place-scroll'
+export { atScrollEnd, endAfterScroll, followScrollEnd, readScrollBox, PLACE_END_SLACK_PX, type ScrollBox } from './frame/place-scroll'
 export { peekReducer, PEEK_CLOSED, PEEK_DELAY_MS, PEEK_WARM_MS, type PeekState, type PeekAction } from './frame/frame-peek'
 export { moveItem, dropIndex, leadingEdge, shiftFor } from './frame/reorder'
 export { VaultSwitch, type VaultSwitchProps, type VaultSwitchVault } from './frame/VaultSwitch'
@@ -306,6 +309,25 @@ export {
   type InfoNotePlacement,
   type NoteRect,
 } from './lib/info-note'
+export { rovingMoveForKey, rovingTarget, setRovingStop, type RovingMove, type RovingItem } from './lib/roving-focus'
+export { accessibleName, accessibleRole, isTextField } from './lib/accessible-name'
+export {
+  affordance,
+  readAffordances,
+  findAffordance,
+  affordanceState,
+  affordanceRegion,
+  parseVerbParams,
+  paramsContain,
+  gateOf,
+  AFFORDANCE_GATES,
+  type Affordance,
+  type AffordanceAttributes,
+  type AffordanceGate,
+  type AffordanceParams,
+  type AffordanceSpec,
+  type AffordanceState,
+} from './lib/affordance'
 export { placeFloating, anchorInViewport, type Side, type Align, type Placement, type PlacementOptions } from './lib/placement'
 export { bayerThreshold, easeOutQuart, develop, BAYER_8X8 } from './lib/dither'
 export { useResolvedScheme, resolveScheme, type Scheme } from './lib/scheme'
@@ -313,6 +335,9 @@ export {
   THEMES,
   DEFAULT_THEME,
   SCENE_STAND_IN_COLOUR,
+  sceneAddressAllowed,
+  scenePictures,
+  type ScenePictures,
   DAY_GROUND_INK,
   NIGHT_GROUND_INK,
   TONE_FLOOR,

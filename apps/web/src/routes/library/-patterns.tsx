@@ -33,7 +33,7 @@ import {
   type Step,
 } from '~/design-system'
 import { Section, Specimen } from './-gallery-frame'
-import { ChartCard, TableCard, TasksFlow } from './-cards'
+import { ArrivingCard, ChartCard, TableCard, TasksFlow } from './-cards'
 
 /* Pattern sections of the /library gallery: each demo works, on fixture
    data from the app's cast. */
@@ -228,7 +228,7 @@ function ColumnDemo() {
         onDictate={() => {}}
         data-specimen="column-write"
       >
-        {composerAddMenu()}
+        <AddMenu />
       </Composer>
       <span className="lib-readout">
         <Verb onClick={() => setMarked(true)}>go to the pinned message</Verb>
@@ -628,14 +628,48 @@ function SplitDemo() {
   )
 }
 
+/* The crew as one button with a tooltip and a caption; the readout says
+   whether the people of the room are open. */
+function CrewButtonDemo() {
+  const [open, setOpen] = React.useState(false)
+  return (
+    <div className="lib-stack" data-specimen="crew-button">
+      <CrewStack onOpen={() => setOpen((o) => !o)} aria-expanded={open} caption="see and manage" data-specimen="crew-button-stack">
+        <CrewStack.Member name="Owen, you">
+          <Glyph initial="o" label="Owen" />
+        </CrewStack.Member>
+        <CrewStack.Member name="Yuki, a guest">
+          <Glyph initial="y" label="Yuki" guest />
+        </CrewStack.Member>
+        <CrewStack.Member name="Metryon">
+          <Glyph glyph="ruler" label="Metryon" size={18} />
+        </CrewStack.Member>
+        <CrewStack.Member name="Tory">
+          <Glyph glyph="owl" label="Tory" size={18} />
+        </CrewStack.Member>
+        <CrewStack.Member name="Antevon">
+          <Glyph glyph="laurel" label="Antevon" size={18} />
+        </CrewStack.Member>
+        <CrewStack.Member name="Eiri">
+          <Glyph glyph="wing" label="Eiri" size={18} />
+        </CrewStack.Member>
+      </CrewStack>
+      <span className="lib-readout" data-specimen="crew-button-log">
+        the people of the room {open ? 'open' : 'closed'}
+      </span>
+    </div>
+  )
+}
+
 /* ── the write box ────────────────────────────────────────────────────── */
 
 const PERSONAS: ComposerPersonaKind[] = ['all', 'work', 'personal', 'dream']
 
-/* The `+` of a write box: what can ride along, then the model and the
-   effort the message is answered with. Called as a function, so the
-   write box receives a Composer.Add child it can place inside the box. */
-function composerAddMenu({ onFile, onPointer }: { onFile?: () => void; onPointer?: () => void } = {}) {
+/* The `+` of a write box, as a part of the gallery's own wrapping
+   Composer.Add: what can ride along, then the model and the effort the
+   message is answered with. The write box finds the add inside it and
+   draws it in the box. */
+function AddMenu({ onFile, onPointer }: { onFile?: () => void; onPointer?: () => void }) {
   return (
     <Composer.Add label="Add to the message">
       <Menu.Item icon={<Icon name="clip" />} onClick={onFile}>
@@ -724,7 +758,7 @@ function ComposerDemo() {
             </Composer.Chip>
           ) : null}
         </Composer.Carry>
-        {composerAddMenu({ onFile: () => setChip(true), onPointer: () => setPointer(true) })}
+        <AddMenu onFile={() => setChip(true)} onPointer={() => setPointer(true)} />
       </Composer>
       <span className="lib-readout" data-specimen="composer-log">
         boost {boost ? 'on' : 'off'}
@@ -749,7 +783,7 @@ function ComposerSmallDemo({ tools, text, specimen }: { tools: ComposerTools; te
         onDictate={() => setLog((l) => [...l.slice(-1), 'dictate'])}
         onSend={(sent) => setLog((l) => [...l.slice(-1), `sent “${sent}”`])}
       >
-        {composerAddMenu()}
+        <AddMenu />
       </Composer>
       <span className="lib-readout" data-specimen={`${specimen}-log`}>
         {log.length ? log.join(', ') : 'Nothing sent yet.'}
@@ -850,6 +884,18 @@ function FilesDemo() {
         <FileRow kind="note" kindLabel="note" name="weekly digest" maker="system" author="the vault" time="Fri at 17:00" />
       </FileGroup>
     </div>
+  )
+}
+
+/* A list of attachments as an agent's card lists them: no maker, a size at
+   the right end of each row. */
+function FilesWithSizes() {
+  return (
+    <FileRow.List whoHead="" data-specimen="files-sizes">
+      <FileRow kind="sheet" kindLabel="sheet" name="Acme store sales" time="16:40" size="1.2 MB" />
+      <FileRow kind="note" kindLabel="note" name="week 44 dips" time="03:10" size="14 KB" />
+      <FileRow kind="deck" kindLabel="deck" name="Hokuei pitch" time="Mon" size="8.4 MB" />
+    </FileRow.List>
   )
 }
 
@@ -971,6 +1017,9 @@ export function PatternSections() {
             <ChartCard defaultReading="normal" />
           </div>
         </Specimen>
+        <Specimen name="still arriving: the live mark stands where the i is, the action shows and does not press; let it arrive and nothing moves" full>
+          <ArrivingCard />
+        </Specimen>
         <Specimen name="bare, for the pane and for a view: the title at the section size, the note as text under the body" full>
           <div className="lib-stack lib-column lib-cards-bare" data-specimen="cards-bare">
             <TableCard bare />
@@ -1010,6 +1059,9 @@ export function PatternSections() {
             <CrewDemo open />
           </div>
         </Specimen>
+        <Specimen name="the whole stack as one button: it opens the people of the room; its faces are plain marks" wide={1}>
+          <CrewButtonDemo />
+        </Specimen>
       </Section>
 
       <Section title="SplitPane">
@@ -1031,7 +1083,7 @@ export function PatternSections() {
             persona={<Composer.Persona initial="o" note="You write as Owen. Saved in Antevon’s vault." aria-label="Owen" />}
             data-specimen="composer-text"
           >
-            {composerAddMenu()}
+            <AddMenu />
           </Composer>
         </Specimen>
         <Specimen name="narrow: the placeholder stays on one line and ends in an ellipsis" wide={1}>
@@ -1072,6 +1124,9 @@ export function PatternSections() {
       <Section title="FileGroup, FileRow">
         <Specimen name="grouped by the thread they were born in; the seal says who made each" full>
           <FilesDemo />
+        </Specimen>
+        <Specimen name="a list with no maker and a size at the right end of each row" full>
+          <FilesWithSizes />
         </Specimen>
       </Section>
 

@@ -103,7 +103,14 @@
   gap: 12px;
 }
 
+/* The add action's slot takes no box of its own: the add sits in the bar
+   (tools always) or among the tools (tools on focus). */
+.sl-composer-add-slot {
+  display: contents;
+}
+
 .sl-composer-bar > .sl-icon-action,
+.sl-composer-add-slot > .sl-icon-action,
 .sl-composer-tools > .sl-icon-action {
   margin-bottom: 3px;
 }

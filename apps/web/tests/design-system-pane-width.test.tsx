@@ -104,7 +104,8 @@ describe('SplitPane.Thing', () => {
     assert.match(box, /data-tools="on focus"/)
     const html = thing()
     assert.doesNotMatch(html, /aria-label="Dictate"/)
-    assert.doesNotMatch(html, /sl-composer-add/)
+    /* The empty add slot is there; no add action is in it. */
+    assert.doesNotMatch(html, /sl-composer-add[" ]/)
   })
 
   test('writeBox reaches the small write box: its tools, the add action and dictation', () => {

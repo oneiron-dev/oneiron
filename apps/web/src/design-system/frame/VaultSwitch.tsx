@@ -13,6 +13,10 @@ export interface VaultSwitchVault {
   /* How many things in that vault wait on the person: a ring and the
      count as a figure. */
   needsYou?: number
+  /* The vault's mark at the left of its row, in a 22 px square with the
+     well radius: its initial on its theme's tone, or its logo (an img,
+     drawn with the image line). */
+  mark?: React.ReactNode
 }
 
 export interface VaultSwitchProps extends Omit<React.ComponentPropsWithRef<'button'>, 'children' | 'onChange'> {
@@ -22,6 +26,8 @@ export interface VaultSwitchProps extends Omit<React.ComponentPropsWithRef<'butt
   onSwitch?: (id: string) => void
   /* With a handler the menu offers a new vault. */
   onCreate?: () => void
+  /* The heading over the vaults; null draws none. */
+  heading?: React.ReactNode
   open?: boolean
   defaultOpen?: boolean
   onOpenChange?: (open: boolean) => void
@@ -34,14 +40,16 @@ export interface VaultSwitchProps extends Omit<React.ComponentPropsWithRef<'butt
 }
 
 /* The control at the top left: the current vault's name and a chevron. It
-   opens a menu of the person's vaults (a pick each; one that waits on the
-   person shows a ring and a count), a new vault, and the caller's parts. */
+   opens a menu of the person's vaults (a mark when given, a pick each; one
+   that waits on the person shows a ring and a count), a new vault, and the
+   caller's parts. */
 export function VaultSwitch({
   vaults,
   currentId: currentProp,
   defaultCurrentId,
   onSwitch,
   onCreate,
+  heading = 'Vaults',
   open,
   defaultOpen,
   onOpenChange,
@@ -66,14 +74,20 @@ export function VaultSwitch({
           </svg>
         </Menu.Trigger>
       )}
-      <Menu.Content width="wide" aria-label="vaults" className="sl-vault-switch-menu">
-        <Menu.Heading>Vaults</Menu.Heading>
+      <Menu.Content
+        width="wide"
+        aria-label="vaults"
+        className="sl-vault-switch-menu"
+        data-marks={vaults.some((v) => v.mark !== undefined) ? '' : undefined}
+      >
+        {heading !== null && heading !== undefined ? <Menu.Heading>{heading}</Menu.Heading> : null}
         {vaults.map((vault) => (
           <Menu.Item
             key={vault.id}
             className="sl-vault-switch-item"
             checked={vault.id === current?.id}
             onClick={() => setCurrentId(vault.id)}
+            icon={vault.mark !== undefined ? <span className="sl-vault-switch-mark">{vault.mark}</span> : undefined}
           >
             <span className="sl-vault-switch-item-name">{vault.name}</span>
             <span className="sl-vault-switch-item-caption">{vault.caption}</span>

@@ -98,6 +98,36 @@ function ThemePicks() {
 
 /* ── fixtures ─────────────────────────────────────────────────────────── */
 
+const ACTIVITY_VIEWS: Record<string, string> = {
+  threads: 'Three threads have new replies.',
+  reactions: 'Four reactions on what you wrote.',
+  mentions: 'Yuki mentioned you in # acme-forecast.',
+}
+
+/* Tabs whose caller draws the selected view itself, in one panel that
+   takes the selected value: only the selected tab names a panel. */
+function ActivityTabs() {
+  const [view, setView] = React.useState('mentions')
+  return (
+    <Tabs value={view} onValueChange={setView} className="lib-tabs">
+      <Tabs.List aria-label="activity views">
+        <Tabs.Tab value="threads" count={3}>
+          threads
+        </Tabs.Tab>
+        <Tabs.Tab value="reactions" count={4}>
+          reactions
+        </Tabs.Tab>
+        <Tabs.Tab value="mentions" count={3}>
+          mentions
+        </Tabs.Tab>
+      </Tabs.List>
+      <Tabs.Panel value={view} className="lib-panel">
+        {ACTIVITY_VIEWS[view]}
+      </Tabs.Panel>
+    </Tabs>
+  )
+}
+
 const RUN_STARTED: Step[] = [{ state: 'ahead' }, { state: 'ahead' }, { state: 'ahead' }]
 const RUN_WORKING: Step[] = [{ state: 'done' }, { state: 'working', progress: 0.4 }, { state: 'ahead' }]
 const RUN_WORKING_EARLY: Step[] = [{ state: 'done' }, { state: 'done' }, { state: 'working' }, { state: 'ahead' }]
@@ -194,6 +224,9 @@ function LibraryPage() {
       <Field key={fieldRun} />
       <header className="lib-head">
         <h1 className="lib-title">Safelight library</h1>
+        <a className="lib-head-page" href="/library/verbs">
+          verbs
+        </a>
         <ThemePicks />
       </header>
 
@@ -371,20 +404,8 @@ function LibraryPage() {
               </Tabs.Panel>
             </Tabs>
           </Specimen>
-          <Specimen name="last selected" wide={1}>
-            <Tabs defaultValue="mentions" className="lib-tabs">
-              <Tabs.List aria-label="activity views">
-                <Tabs.Tab value="threads" count={3}>
-                  threads
-                </Tabs.Tab>
-                <Tabs.Tab value="reactions" count={4}>
-                  reactions
-                </Tabs.Tab>
-                <Tabs.Tab value="mentions" count={3}>
-                  mentions
-                </Tabs.Tab>
-              </Tabs.List>
-            </Tabs>
+          <Specimen name="last selected; one panel draws the selected view" wide={1}>
+            <ActivityTabs />
           </Specimen>
         </Section>
 
@@ -623,13 +644,15 @@ function LibraryPage() {
           <Specimen name="Owen">
             <Glyph initial="o" label="Owen" size={32} />
           </Specimen>
-          <Specimen name="18, 24, 32">
-            <span className="lib-inline">
+          <Specimen name="18, 24, 28, 32">
+            <span className="lib-inline" data-specimen="glyph-sizes">
               <Glyph glyph="ruler" label="Metryon" size={18} />
               <Glyph glyph="ruler" label="Metryon" size={24} />
+              <Glyph glyph="ruler" label="Metryon" size={28} />
               <Glyph glyph="ruler" label="Metryon" size={32} />
               <Glyph initial="y" label="Yuki" size={18} />
               <Glyph initial="y" label="Yuki" size={24} />
+              <Glyph initial="y" label="Yuki" size={28} />
               <Glyph initial="y" label="Yuki" size={32} />
             </span>
           </Specimen>

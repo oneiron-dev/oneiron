@@ -86,3 +86,41 @@ describe('Composer, default', () => {
     assert.ok(html.indexOf('class="sl-composer-crossing"') < html.indexOf('class="sl-composer-bar"'))
   })
 })
+
+describe('Composer.Add finds the box', () => {
+  /* A caller's own part around the add: it adds attributes of its own. */
+  function OwnAdd() {
+    return <Composer.Add label="Add to the message" data-own="" />
+  }
+
+  test('a direct add is drawn in the box, in its slot', () => {
+    const html = renderToStaticMarkup(
+      <Composer tools="always">
+        <Composer.Add label="Add to the message" />
+      </Composer>,
+    )
+    const bar = html.indexOf('class="sl-composer-bar"')
+    const slot = html.indexOf('class="sl-composer-add-slot"')
+    const add = html.search(/sl-composer-add[" ]/)
+    assert.ok(bar >= 0 && bar < slot && slot < add, 'the add sits in the slot inside the box')
+  })
+
+  test('an add inside a part of the caller is never drawn above the box', () => {
+    const html = renderToStaticMarkup(
+      <Composer tools="always">
+        <OwnAdd />
+      </Composer>,
+    )
+    const bar = html.indexOf('class="sl-composer-bar"')
+    const add = html.indexOf('data-own')
+    /* On the server it waits for the slot; in the browser it is drawn
+       into the slot (the gallery's write boxes use such a part). */
+    assert.ok(add < 0 || add > bar, 'the add is not above the box')
+    assert.match(html, /<span class="sl-composer-add-slot"><span class="sl-composer-add-slot"><\/span><\/span>/)
+  })
+
+  test('outside a write box the add draws where it stands', () => {
+    const html = renderToStaticMarkup(<Composer.Add label="Add" data-own="" />)
+    assert.match(html, /data-own=""/)
+  })
+})

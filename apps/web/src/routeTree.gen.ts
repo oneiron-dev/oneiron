@@ -29,6 +29,7 @@ import { Route as AppThreadsRouteImport } from './routes/app/threads'
 import { Route as AppTodayRouteImport } from './routes/app/today'
 import { Route as AppVaultRouteImport } from './routes/app/vault'
 import { Route as LibraryIndexRouteImport } from './routes/library/index'
+import { Route as LibraryVerbsRouteImport } from './routes/library/verbs'
 import { Route as SettingsIndexRouteImport } from './routes/settings/index'
 import { Route as SettingsAccountRouteImport } from './routes/settings/account'
 import { Route as SettingsAppearanceRouteImport } from './routes/settings/appearance'
@@ -143,6 +144,11 @@ const LibraryIndexRoute = LibraryIndexRouteImport.update({
   path: '/library/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const LibraryVerbsRoute = LibraryVerbsRouteImport.update({
+  id: '/library/verbs',
+  path: '/library/verbs',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SettingsIndexRoute = SettingsIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -229,6 +235,7 @@ export interface FileRoutesByFullPath {
   '/app/threads': typeof AppThreadsRoute
   '/app/today': typeof AppTodayRoute
   '/app/vault': typeof AppVaultRoute
+  '/library/verbs': typeof LibraryVerbsRoute
   '/settings/account': typeof SettingsAccountRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/billing': typeof SettingsBillingRoute
@@ -263,6 +270,7 @@ export interface FileRoutesByTo {
   '/app/threads': typeof AppThreadsRoute
   '/app/today': typeof AppTodayRoute
   '/app/vault': typeof AppVaultRoute
+  '/library/verbs': typeof LibraryVerbsRoute
   '/settings/account': typeof SettingsAccountRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/billing': typeof SettingsBillingRoute
@@ -299,6 +307,7 @@ export interface FileRoutesById {
   '/app/threads': typeof AppThreadsRoute
   '/app/today': typeof AppTodayRoute
   '/app/vault': typeof AppVaultRoute
+  '/library/verbs': typeof LibraryVerbsRoute
   '/settings/account': typeof SettingsAccountRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/billing': typeof SettingsBillingRoute
@@ -336,6 +345,7 @@ export interface FileRouteTypes {
     | '/app/threads'
     | '/app/today'
     | '/app/vault'
+    | '/library/verbs'
     | '/settings/account'
     | '/settings/appearance'
     | '/settings/billing'
@@ -370,6 +380,7 @@ export interface FileRouteTypes {
     | '/app/threads'
     | '/app/today'
     | '/app/vault'
+    | '/library/verbs'
     | '/settings/account'
     | '/settings/appearance'
     | '/settings/billing'
@@ -405,6 +416,7 @@ export interface FileRouteTypes {
     | '/app/threads'
     | '/app/today'
     | '/app/vault'
+    | '/library/verbs'
     | '/settings/account'
     | '/settings/appearance'
     | '/settings/billing'
@@ -427,6 +439,7 @@ export interface RootRouteChildren {
   SettingsRouteRoute: typeof SettingsRouteRouteWithChildren
   MintRoute: typeof MintRoute
   SigninRoute: typeof SigninRoute
+  LibraryVerbsRoute: typeof LibraryVerbsRoute
   LibraryIndexRoute: typeof LibraryIndexRoute
 }
 
@@ -570,6 +583,13 @@ declare module '@tanstack/react-router' {
       path: '/library'
       fullPath: '/library/'
       preLoaderRoute: typeof LibraryIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/library/verbs': {
+      id: '/library/verbs'
+      path: '/library/verbs'
+      fullPath: '/library/verbs'
+      preLoaderRoute: typeof LibraryVerbsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/settings/': {
@@ -746,6 +766,7 @@ const rootRouteChildren: RootRouteChildren = {
   SettingsRouteRoute: SettingsRouteRouteWithChildren,
   MintRoute: MintRoute,
   SigninRoute: SigninRoute,
+  LibraryVerbsRoute: LibraryVerbsRoute,
   LibraryIndexRoute: LibraryIndexRoute,
 }
 export const routeTree = rootRouteImport

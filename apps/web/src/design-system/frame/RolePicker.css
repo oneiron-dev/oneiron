@@ -1,10 +1,12 @@
-/* The roles as picks: diamond and name, the job beside it, a quieter hint. */
+/* The roles as picks: diamond and name, the job beside it, a quieter hint.
+   As wide as its container, up to 560 px: in a popover that is as wide as
+   its words need, in a pane the pane's width. */
 .sl-role-picker {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  width: 560px;
-  max-width: 100%;
+  width: 100%;
+  max-width: 560px;
 }
 
 .sl-role-picks {

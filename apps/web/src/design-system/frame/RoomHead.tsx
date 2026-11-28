@@ -6,6 +6,7 @@ import { Tabs, type TabsPinProps } from '../primitives/Tabs'
 import { Tooltip } from '../overlays/Tooltip'
 import { ProgressDonut } from '../marks/ProgressDonut'
 import type { DonutArc } from '../marks/donut-segments'
+import type { AffordanceAttributes } from '../lib/affordance'
 import { soundPress } from '../lib/press'
 import { cx } from '../lib/react-utils'
 import { PlaceHead, type PlaceHeadProps } from './PlaceHead'
@@ -40,6 +41,12 @@ export interface RoomHeadProps extends Omit<PlaceHeadProps, 'tabs' | 'children'>
   onAddPin?: () => void
   /* The room's pins: Tabs.Pin elements, in order. */
   children?: React.ReactNode
+  /* The id of the region that shows the room's view, when no Tabs.Panel
+     draws it: the fixed tabs and the folded pins name it. */
+  controls?: string
+  /* The verbs the head's own controls run (see affordance()): the fixed
+     tabs, the tasks, the add action, the outline action. */
+  affordances?: Partial<Record<'talk' | 'files' | 'pinned' | 'tasks' | 'addPin' | 'outline', AffordanceAttributes>>
 }
 
 /* The head line of a room: its name (PlaceHead), the tabs on the same
@@ -59,6 +66,8 @@ export function RoomHead({
   outlineOpen,
   onAddPin,
   icon,
+  controls,
+  affordances = {},
   className,
   children,
   ...props
@@ -69,24 +78,28 @@ export function RoomHead({
   let tabs: React.ReactNode
   if (pins === 'head') {
     tabs = (
-      <Tabs.List foldValue={ROOM_VIEWS.pinned} aria-label="views of this room" className="sl-room-head-tabs">
-        <Tabs.Tab value={ROOM_VIEWS.talk}>talk</Tabs.Tab>
-        <Tabs.Tab value={ROOM_VIEWS.files} count={filesCount}>
+      <Tabs.List foldValue={ROOM_VIEWS.pinned} foldControls={controls} aria-label="views of this room" className="sl-room-head-tabs">
+        <Tabs.Tab value={ROOM_VIEWS.talk} controls={controls} {...affordances.talk}>
+          talk
+        </Tabs.Tab>
+        <Tabs.Tab value={ROOM_VIEWS.files} count={filesCount} controls={controls} {...affordances.files}>
           files
         </Tabs.Tab>
         <Tabs.Divider />
         {pinParts}
-        <Tabs.Add onClick={onAddPin} />
+        <Tabs.Add onClick={onAddPin} {...affordances.addPin} />
       </Tabs.List>
     )
   } else if (pins === 'tab') {
     tabs = (
       <Tabs.List aria-label="views of this room" className="sl-room-head-tabs">
-        <Tabs.Tab value={ROOM_VIEWS.talk}>talk</Tabs.Tab>
-        <Tabs.Tab value={ROOM_VIEWS.files} count={filesCount}>
+        <Tabs.Tab value={ROOM_VIEWS.talk} controls={controls} {...affordances.talk}>
+          talk
+        </Tabs.Tab>
+        <Tabs.Tab value={ROOM_VIEWS.files} count={filesCount} controls={controls} {...affordances.files}>
           files
         </Tabs.Tab>
-        <Tabs.Tab value={ROOM_VIEWS.pinned} count={pinnedCount ?? pinParts.length}>
+        <Tabs.Tab value={ROOM_VIEWS.pinned} count={pinnedCount ?? pinParts.length} controls={controls} {...affordances.pinned}>
           pinned
         </Tabs.Tab>
       </Tabs.List>
@@ -110,6 +123,7 @@ export function RoomHead({
             type="button"
             aria-label={tasksNeedYou ? `${tasksLabel}, something waits on you` : tasksLabel}
             className="sl-room-head-tasks"
+            {...affordances.tasks}
             onClick={(event) => {
               soundPress(event)
               onOpenTasks?.()
@@ -122,7 +136,13 @@ export function RoomHead({
       ) : null}
       {crew !== undefined ? <span className="sl-room-head-crew">{crew}</span> : null}
       {pins === 'none' ? (
-        <IconAction label="Outline of this room" aria-expanded={outlineOpen} onClick={onOpenOutline} className="sl-room-head-outline">
+        <IconAction
+          label="Outline of this room"
+          aria-expanded={outlineOpen}
+          onClick={onOpenOutline}
+          className="sl-room-head-outline"
+          {...affordances.outline}
+        >
           <Icon name="tree" />
         </IconAction>
       ) : null}

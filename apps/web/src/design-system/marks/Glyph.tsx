@@ -25,7 +25,8 @@ export type GlyphProps = GlyphIdentity &
   Omit<React.ComponentPropsWithRef<'span'>, 'children'> & {
     /* Who this is: the accessible name. */
     label: string
-    size?: 16 | 18 | 20 | 24 | 32
+    /* 28 is the face in the microsidebar's 40 px square. */
+    size?: 16 | 18 | 20 | 24 | 28 | 32
     /* Defaults: residents square, people round. */
     shape?: GlyphShape
     /* Presence, derived by the caller from the process. Absent: no mark. */

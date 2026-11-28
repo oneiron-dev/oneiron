@@ -8,6 +8,7 @@ import {
   BAR_CHART_TOP_PX,
   RING_RADIUS,
   barChartLayout,
+  barValueFormat,
   highestIndex,
 } from '../src/design-system/patterns/bar-chart-layout'
 
@@ -154,5 +155,25 @@ describe('labels', () => {
     /* All measured: no forecast entry. */
     const measured = renderToStaticMarkup(<BarChart series={SERIES} measuredCount={13} ariaLabel="Weekly sales" measuredLabel="sold" forecastLabel="the fit" />)
     assert.doesNotMatch(measured, /the fit/)
+  })
+})
+
+describe('the value labels’ format from data', () => {
+  test('decimals set the digits after the point; a function wins over them', () => {
+    assert.equal(barValueFormat(undefined, 1)(5), '5.0')
+    assert.equal(barValueFormat(undefined, 2)(3.14159), '3.14')
+    assert.equal(barValueFormat(undefined, 0)(4.6), '5')
+    assert.equal(barValueFormat((v) => `${v} k`, 2)(5), '5 k')
+    assert.equal(barValueFormat()(5.6), '5.6')
+    /* Not a count of digits: the number as it is. */
+    assert.equal(barValueFormat(undefined, -1)(5.6), '5.6')
+    assert.equal(barValueFormat(undefined, 1.5)(5.6), '5.6')
+  })
+
+  test('a chart given decimals prints its value labels with them', () => {
+    const whole = SERIES.map((p, i) => ({ ...p, value: i === 11 ? 6 : p.value }))
+    const html = renderToStaticMarkup(<BarChart series={whole} measuredCount={6} ariaLabel="sales by week" decimals={1} />)
+    assert.match(html, />6\.0</)
+    assert.match(html, />3\.1</)
   })
 })
