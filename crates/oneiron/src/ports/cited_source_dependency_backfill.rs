@@ -673,6 +673,6 @@ impl Vault {
             return Ok(CitedSource::Removed);
         }
         counts.missing_without_marker += 1;
-        Ok(CitedSource::Other)
+        Ok(CitedSource::Removed)
     }
 }
