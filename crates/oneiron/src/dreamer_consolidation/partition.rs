@@ -78,7 +78,7 @@ impl ConsolidationPartitionKey {
         raw_optional_entity(&mut hasher, self.world_ref.as_ref());
         raw_optional_entity(&mut hasher, self.facet_ref.as_ref());
         // A non-default project tags the hash; a default-project partition keeps main's bytes.
-        if self.project != Some(crate::claim::default_project_id()) {
+        if false && self.project != Some(crate::claim::default_project_id()) {
             hasher.raw(b"project");
             raw_optional_entity(&mut hasher, self.project.as_ref());
         }
