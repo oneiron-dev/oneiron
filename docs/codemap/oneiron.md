@@ -872,7 +872,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/put_apply/put_staging.rs` | src | m | 26 crate-vis | — | Body/index/edge row staging helpers shared by the put and update paths |
 | `src/batch/put_apply/request.rs` | src | s | 17 crate-vis | — | The one typed request `apply_put` takes: the row, the options that govern how it is admitted, and the… |
 | `src/batch/recovery_shell.rs` | src | s | 1 crate-vis | — | Header-only recovery of a retained soft-delete shell, never a body put |
-| `src/batch/secret_scan.rs` | src | L | 2 re-export · 60 crate-vis | — | Secret detection and custody filtering at batch and release boundaries |
+| `src/batch/secret_scan.rs` | src | L | 2 re-export · 61 crate-vis | — | Secret detection and custody filtering at batch and release boundaries |
 | `src/batch/secret_scan/container.rs` | src | m | 22 crate-vis | — | Core half of `batch::secret_scan::container`: its store-layer items live in… |
 | `src/batch/secret_scan/container/archive.rs` | src | s | 2 crate-vis | — | Core half of `batch::secret_scan::container::archive`: its store-layer items live in… |
 | `src/batch/secret_scan/container/pdf.rs` | src | s | 3 crate-vis | — | Core half of `batch::secret_scan::container::pdf`: its store-layer items live in… |
@@ -3148,9 +3148,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/dreamer_runner/maintenance/curator.rs` | src | L | 1 struct · 1 enum · 5 fn · 1 re-export · 14 crate-vis | CuratorRubric, CuratorTrigger | Curator grading data and minimum-force findings |
 | `src/dreamer_runner/maintenance/curator/approved.rs` | src | s | 1 fn · 2 crate-vis | — | A curator rung the owner approved (FIX 3223) |
 | `src/dreamer_runner/maintenance/detectors.rs` | src | s | 1 crate-vis | — | The Coach's nightly detector pass (ARCH-0066 §4, OF-298): the tier-1 sweep over Gate receipts plus the… |
-| `src/dreamer_runner/maintenance/digest.rs` | src | m | 8 struct · 8 fn · 7 const · 6 re-export · 12 crate-vis | DigestCleanup, DigestNoteTombstones, ProactivityDelivery, ProactivityDigest, ProactivityPeriod, ProactivityPolicyProposal, ProactivityPolicyRequest, ProactivityPresentation | One durable proactivity digest per vault cadence, with intent-bound urgent wakes |
+| `src/dreamer_runner/maintenance/digest.rs` | src | m | 8 struct · 8 fn · 7 const · 6 re-export · 14 crate-vis | DigestCleanup, DigestNoteTombstones, ProactivityDelivery, ProactivityDigest, ProactivityPeriod, ProactivityPolicyProposal, ProactivityPolicyRequest, ProactivityPresentation | One durable proactivity digest per vault cadence, with intent-bound urgent wakes |
 | `src/dreamer_runner/maintenance/digest/after_notice.rs` | src | s | 1 struct · 1 const · 1 re-export · 3 crate-vis | DigestApplied | The applied-maintenance after-notice a regular digest carries (FIX 3226, OF-023): the Dreamer's maintenance… |
 | `src/dreamer_runner/maintenance/digest/assembly.rs` | src | m | 1 crate-vis | — | Assembles one digest in one write: select, mark seen, store, notify |
+| `src/dreamer_runner/maintenance/digest/erase.rs` | src | s | 5 crate-vis | — | PROACTIVITY-DIGEST-COPY-ERASURE (disk half): a stored digest keeps a proposal's predicate and value in its… |
 | `src/dreamer_runner/maintenance/digest/pending.rs` | src | s | 4 crate-vis | — | What a digest may carry that no digest carried yet, by its seen state |
 | `src/dreamer_runner/maintenance/digest/policy.rs` | src | m | 2 struct · 5 fn · 5 crate-vis | ProactivityPolicyBasis, ProactivityPolicyFiling | The policy request for the digest's shared cadence and presentation rows (FIX 8712, the ruled Grant) |
 | `src/dreamer_runner/maintenance/digest/policy_author.rs` | src | s | 3 crate-vis | — | Proposed shared digest rhythm from the existing owner's Weave verdict |
@@ -6612,7 +6613,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/secret_custody/control/permits.rs` | src | s | 7 crate-vis | — | Who may hold an active custody change's bytes (WILL L04 row 04): the recipients the owner permits, each… |
 | `src/secret_custody/control/revoked.rs` | src | m | 12 crate-vis | — | The owner's revoke on a custody request (WILL L04 row 04): its carrier records it with no byte, and every… |
 | `src/secret_custody/control/roster.rs` | src | s | 1 crate-vis | — | The holder's own rewrap when the roster gains one of the owner's machines (WILL L04 row 04, CALLS… |
-| `src/secret_custody/doors.rs` | src | m | 4 fn · 20 crate-vis | — | Name index, borrowing admission projection, sealed put, and Vault doors |
+| `src/secret_custody/doors.rs` | src | m | 4 fn · 21 crate-vis | — | Name index, borrowing admission projection, sealed put, and Vault doors |
 | `src/secret_custody/doors/admission.rs` | src | s | 1 crate-vis | — | Borrowing custody admission projection, defined in the store layer |
 | `src/secret_custody/duplicate_merge.rs` | src | s | 4 crate-vis | — | A custody record this install minted for a file's key, merged into the synced record of the same value once… |
 | `src/secret_custody/floor.rs` | src | s | 2 crate-vis | — | Stored custody floor resolution, defined in the store layer |
@@ -6878,7 +6879,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/side_table/decls/vault_meta_s.rs` | src | s | — | — | — |
 | `src/side_table/decls/vault_meta_t_z.rs` | src | s | — | — | — |
 | `src/side_table/erased.rs` | src | s | 9 crate-vis | — | The one side-table put that skips the side-row wall (FIX 5718): an erase's own write of a row's erased form |
-| `src/side_table/mod.rs` | src | L | 1 struct · 1 fn · 1 mod · 57 crate-vis | SideTable | One typed keyspace over the `vault_meta` and `sync_state` side tables |
+| `src/side_table/mod.rs` | src | L | 1 struct · 1 fn · 1 mod · 58 crate-vis | SideTable | One typed keyspace over the `vault_meta` and `sync_state` side tables |
 | `src/side_table/raw_reverse.rs` | src | s | 1 crate-vis | — | Descending raw side rows for readers that retain malformed values as facts |
 | `src/side_table/row_classes.rs` | src | s | 1 enum · 1 crate-vis | StorageTier | What a checkpoint does with each side table, written on the table's row (core split slice 1): the storage… |
 | `src/side_table/tests.rs` | test | L | — | — | — |
@@ -8628,7 +8629,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/mesh_machine_endpoint_index.rs` | src | s | 1 enum · 5 fn | IndexedEndpoint | Doors for `tests/mesh_machine_endpoint_index.rs` (census L3-28B): the endpoint lookup as the MACHINE… |
 | `src/test_doors/meso_extraction_width.rs` | src | m | 1 struct · 1 enum · 1 fn · 5 crate-vis | ExtractionWidth, PriorScenario | Door for `tests/dreamer_meso_width.rs` (FIX 21927 P2): measure the extraction calls in flight during one… |
 | `src/test_doors/microsoft_token.rs` | src | s | 1 struct · 6 fn · 1 crate-vis | ExchangedMicrosoftGrant | Door for `tests/microsoft365_oauth.rs` and `tests/microsoft365_refresh_write_back.rs`… |
-| `src/test_doors/mod.rs` | src | m | 1 fn · 410 mod · 3 re-export | — | Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD) |
+| `src/test_doors/mod.rs` | src | m | 1 fn · 411 mod · 3 re-export | — | Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD) |
 | `src/test_doors/model_binding_proposer.rs` | src | m | 1 struct · 2 fn · 1 const | TrialFixture | Fixture for the `model_binding_proposer_grant` server test: one completed held-out trial offer for a role… |
 | `src/test_doors/model_call_turn_link.rs` | src | s | 1 fn | — | Doors for `oneiron-server/tests/chat_model_call_turn_link.rs` (UNBUILT3-41, FIX [TURN-MODEL-LINK]): the… |
 | `src/test_doors/model_step_submission_codec.rs` | src | s | 1 fn | — | Doors for `tests/model_step_submission_codec.rs` (STEP-CORRECTION-HEALTH-PARK): a model step's submission… |
@@ -8670,6 +8671,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/pending_write_tray.rs` | src | s | 1 fn | — | Door for `tests/mcp_page_continuation_unknown_rows.rs` in oneiron-server (FIX-LIST L23762): park a claim in… |
 | `src/test_doors/policy_doors_between.rs` | src | s | 5 fn | — | Doors for changing the policy in force between the owner's check and write |
 | `src/test_doors/predicted_residence.rs` | src | s | 9 fn | — | Doors for the integration tests of the predicted residence level (census L7-46 + L10-14, ARCH-0023b… |
+| `src/test_doors/proactivity_digest_index.rs` | src | s | 9 fn | — | Doors for `tests/digest_erase_scrubs_stored_copies.rs` (PROACTIVITY-DIGEST-COPY-ERASURE) |
 | `src/test_doors/profiles_other_machine.rs` | src | s | 1 fn | — | Door for `tests/doors_read_standing_heads.rs` (FIX [FOREIGN-ANCHOR-CHAIN-COUNTS-IN-EVERY-CHAIN-PREDICATES]… |
 | `src/test_doors/project_replicated_revision.rs` | src | s | 1 fn | — | Door for `tests/frozen_project_answer_narrowing.rs` (FIX… |
 | `src/test_doors/provenance_body_checkpoint.rs` | src | s | 6 fn | — | Doors for the provenance-body checkpoint owner-erasure tests |
@@ -9925,6 +9927,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/device_burst_residence_admission.rs` | test | m | — | — | #9226 review round 2 and #9691 review round 1: an own device's update that a residence socket sent to a… |
 | `tests/device_join_census.rs` | test | s | — | — | A fresh vault that `device enrol` opens holds only its own seeds (FIX-LIST… |
 | `tests/device_pin.rs` | test | XL | — | — | The device PIN and the owner signing key it guards (row OCS-OWNER-PIN; lead ruling OCS-NO-PROMPT-DEVICE = D… |
+| `tests/digest_erase_scrubs_stored_copies.rs` | test | m | — | — | A CLAIM's hard or soft delete removes its proposal and rendered words from the stored proactivity digest… |
 | `tests/digest_notice_source_floor.rs` | test | s | — | — | A digest's inbox notice is a derived row (RECIPIENT-NOTICE-READ-BY-ANY-READER, owner half; Engine ANSWER 21… |
 | `tests/digest_view_drops_changed_claims.rs` | test | m | — | — | A delivered proactivity digest shows a Dreamer finding to the owner only while the proposed CLAIM still… |
 | `tests/disclosure_claim_facet.rs` | test | s | — | — | The owner's disclosure doors store their claim heads ([DISCLOSURE-SCOPE-CLAIM-FACET]… |
@@ -9934,6 +9937,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/dreamer_answer_schema_check.rs` | test | L | — | — | HOUSE-SCHEMA-CHECK stage 2: the nightly answer-schema check |
 | `tests/dreamer_answer_schema_switch.rs` | test | m | — | — | HOUSE-SCHEMA-SWITCH stage 1: the answer-schema switch the owner controls and the engine can pause |
 | `tests/dreamer_context_refusal_settles.rs` | test | m | — | — | A Dreamer step the provider refuses for its context window settles once (Engine 21 Nov 07:38): the try ends… |
+| `tests/dreamer_counterparty_turn_evidence_class.rs` | test | s | — | — | A consolidation claim's evidence meet classes a TURN by the same classifier the extraction path uses (FIX… |
 | `tests/dreamer_extraction_answer_schema.rs` | test | m | — | — | HOUSE-SCHEMA: the TURN extraction answer schema admits what the prompt's contract describes and refuses what… |
 | `tests/dreamer_extraction_parse_retry.rs` | test | m | — | — | [EXTRACTION-JSON-PARSE-RETRY-PROMPT-LOOKUP-OFF]: one Micro wake over one witnessed TURN |
 | `tests/dreamer_extraction_room.rs` | test | m | — | — | FIX DREAMER-EXTRACTION-INPUT-UNBOUNDED-BY-WINDOW: the main claim extraction call's input is sized by the… |
