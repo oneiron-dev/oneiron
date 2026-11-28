@@ -494,13 +494,6 @@ impl ConsolidationExecutor<'_> {
             now: ctx.now_ms / 1_000,
         };
         let declared = match ctx.vault.with_write_txn_grouped(|txn| {
-            // A delete committed while the model was answering; its eraser already removed SEEN.
-            if live_entity_row_in_txn(&ctx.vault.store, txn, &note.id)?.live_type()
-                != Some(ENTITY_TYPE_NOTE)
-            {
-                unpin_note_listing_in_txn(ctx.vault, txn, run.attempt_id, note.id)?;
-                return Ok(false);
-            }
             // The topic the NOTE's last review kept, when this review moves
             // it to another or to none: that group is declared again
             // without it (FIX 7459).
