@@ -441,11 +441,14 @@ pub use files::{
     part_file_path, text_excerpt,
 };
 mod folder_source;
-pub(crate) use folder_source::erase_folder_source_actor_in_txn;
-pub(crate) use folder_source::holds_file_text;
 pub use folder_source::{
+    DRIVE_WIRE_RATE_LIMITED, DriveCall, DriveChange, DriveChangesPage, DriveFileMeta, DriveOrigin,
+    DriveQuota, DriveSource, DriveStepBudget, DriveStepReport, DriveSyncState, DriveWire,
     FileOriginal, FolderFile, FolderFileState, FolderRescan, FolderRescanReport, FolderSource,
     FolderSourceFile, OriginalBytes,
+};
+pub(crate) use folder_source::{
+    MAX_DRIVE_DOWNLOAD_BYTES, erase_folder_source_actor_in_txn, holds_file_text,
 };
 mod import;
 #[cfg(oneiron_test_support)]

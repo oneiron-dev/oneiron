@@ -3,7 +3,8 @@
 //! worker all run it (OF-554, FIX 6942). The folder is read as `import
 //! notes` reads it, or as its Files source reads it, and each file the source
 //! includes is judged against the vault and the ledger. Nothing is ever
-//! written to the folder.
+//! written to the folder. A Drive source is read through its provider's
+//! wire instead, one bounded step at a time (ARCH-0027 #mail-drive).
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -12,8 +13,8 @@ use oneiron::EntityId;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::memory::MemoryResult;
 use oneiron::note::{
-    FileFacts, FileOriginal, FilesWorld, FolderFile, FolderFileState, FolderRescan,
-    FolderRescanReport, FolderSource, FolderSourceFile, ImportedFile, ImportedNote,
+    DriveStepBudget, FileFacts, FileOriginal, FilesWorld, FolderFile, FolderFileState,
+    FolderRescan, FolderRescanReport, FolderSource, FolderSourceFile, ImportedFile, ImportedNote,
     ImportedNoteStanding, NameOnlyFile, NameOnlyReason,
 };
 use oneiron::task_verb::sdk::{
@@ -150,12 +151,18 @@ const RESCAN_MTIME_SHORTCUT: bool = true;
 /// One rescan: the folder read as its source reads it, the files the
 /// source includes, each against the vault and the ledger; and the
 /// `[limits]` rows the read crossed. A file the last scan recorded with the
-/// same size and mtime is not read again.
+/// same size and mtime is not read again. A Drive source takes one step of
+/// its own instead, over this host's HTTPS.
 pub(crate) fn rescan(
     vault: &oneiron::Vault,
     owner: &AuthenticatedOwner,
     source: &FolderSource,
 ) -> anyhow::Result<(FolderRescanReport, Vec<ImportWarning>)> {
+    if source.drive.is_some() {
+        let step =
+            vault.drive_source_sync_step(owner, &source.folder, DriveStepBudget::default())?;
+        return Ok((step.rescan, Vec::new()));
+    }
     let folder = Path::new(&source.folder);
     // An unmounted or moved folder retracts nothing.
     anyhow::ensure!(
