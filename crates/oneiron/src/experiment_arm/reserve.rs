@@ -103,7 +103,7 @@ const fn wait_no() -> WaitRule {
 /// What a reserve compares under its logical key: the ask without its intent key and its wait
 /// (a waiting unit's attempts reserve with `wait: no`).
 #[derive(Serialize)]
-pub(super) struct UnitAsk<'a> {
+pub(crate) struct UnitAsk<'a> {
     line: EntityId,
     arm: EntityId,
     rung: u8,
@@ -122,7 +122,7 @@ pub(super) struct UnitAsk<'a> {
 }
 
 impl UnitReserveRequest {
-    pub(super) fn ask(&self) -> UnitAsk<'_> {
+    pub(crate) fn ask(&self) -> UnitAsk<'_> {
         UnitAsk {
             line: self.line,
             arm: self.arm,
