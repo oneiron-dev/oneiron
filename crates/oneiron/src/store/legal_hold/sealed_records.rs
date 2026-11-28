@@ -75,14 +75,6 @@ pub(crate) fn kept_copy_in_txn(
         if pending == Some(capture) {
             return Ok(Some(true));
         }
-        if let Some(named) = hold
-            .clone_captures
-            .iter()
-            .find(|named| *named.capture.as_bytes() == capture)
-            && holds_capture(vault, &hold.hold_id, &named.capture)?
-        {
-            return Ok(Some(true));
-        }
     }
     Ok(rows.then_some(false))
 }
