@@ -78,12 +78,37 @@ impl Vault {
     /// Installs the gate for this device's own unlock prompt. The host makes
     /// one gate for the process and installs that same gate on every vault
     /// handle. A handle without a gate cannot ask through a platform prompt.
+    /// [`Self::install_process_presence_gate`] does both for the platform's
+    /// own prompt.
     pub fn install_presence_gate(&self, gate: Arc<PresenceGate>) {
         *self
             .world_keys
             .presence_gate
             .lock()
             .unwrap_or_else(PoisonError::into_inner) = Some(gate);
+    }
+
+    /// Installs this process's one gate over the platform's own prompt
+    /// ([`PresenceGate::process_wide`]) on a handle that holds no gate. A
+    /// gate installed before stays ([`Self::install_presence_gate`]): a host
+    /// with a prompt of its own keeps it.
+    ///
+    /// The call of a host whose caller is at this device: a program that
+    /// opens the vault in its own process, or a command a person runs here.
+    /// From then on an important owner act on this handle asks through the
+    /// device's unlock prompt. On a platform with no prompt the gate answers
+    /// as a device that cannot ask, so the act stands as on a handle with no
+    /// gate. A process that serves callers on other devices does not call
+    /// it: its screen is not theirs.
+    pub fn install_process_presence_gate(&self) {
+        let mut installed = self
+            .world_keys
+            .presence_gate
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if installed.is_none() {
+            *installed = Some(PresenceGate::process_wide());
+        }
     }
 
     /// Returns a shared reference to the platform presence gate installed on this handle.

@@ -3159,6 +3159,60 @@ The ledger records the authenticated owner and a digest of the returned receipt.
 slot deletes its active selection but keeps this audit record. These records grant no standing
 consent and change no revision, installation or expected-active checks.
 
+## Confirm it's you
+
+An important change to your vault asks you to confirm that it is you, with whatever unlocks the
+device: Touch ID, your watch or your account password on a Mac. A change is important when it
+widens what somebody may do, or touches your identity: adding a device that can approve changes,
+a recovery kit act, a setting that opens more than it closes. A change that narrows, or moves no
+authority, does not ask, unless it touches your identity: removing a device's key asks too.
+
+One confirm serves every important change of the next 15 minutes in the same program, which is
+one running process: each `oneiron` command asks for itself. A locked screen ends that time.
+The lock is read at each important change and once a second, so a lock shorter than a second
+that no change meets can go unseen.
+
+Important changes that one program makes at the same moment show one prompt. Your answer is the
+answer for all of them: a confirm lets them all through, and a cancel refuses them all. A change
+that comes after a cancel asks again.
+
+It asks today on a Mac, in a program that opens the vault itself through an embedded SDK client
+(Rust, Node, Python, Swift) and in the `oneiron` commands that work on a stopped vault. What
+decides is who opened the vault, not the language: a client that works on a vault a server in
+the same program opened does not ask. A running server (`oneiron serve`, a managed vault) does
+not ask yet: whoever calls it is usually not at its screen. The macOS recorder does not ask yet
+either: its vault also answers your other devices. Windows does not ask yet.
+
+A device with no such prompt does not ask, and the change goes through: Linux, a program whose
+login has no screen session. Where the keystore is off (`[keystore] backend = "off"`) nothing
+asks either. Where a device PIN is set on the install, the PIN is checked in place of the
+prompt, on every device: an important change then needs the PIN entered within its own time,
+and a refusal there is the PIN's own, with none of the reason codes below.
+
+When the confirm does not happen, the change you asked for is not made, and the refusal says
+why. A command prints the sentence. An SDK client gets `INVALID_STATE` with two reason codes,
+`owner_presence_required` and one of these:
+
+| Reason code | What happened | What to do |
+| --- | --- | --- |
+| `here:declined` | The prompt was cancelled, or the unlock failed. | Stop. Start the change again if you meant it. |
+| `here:no_answer` | The prompt ended with no answer: nobody answered for 60 seconds, or the system took the prompt down. | Try again when you can answer. |
+| `here:screen_locked` | The screen is locked, or it locked while the prompt was up. | Unlock this device, then try again here. |
+| `here:prompt_failed` | The device's prompt failed. | Try again when the device's unlock prompt works. |
+
+The session the program runs in decides, not how you reached the Mac. A command run over ssh
+works in your signed-in session where there is one: with that screen locked, or with you
+switched out, it gets `here:screen_locked`, so unlock that Mac first. A program that the
+system gives no screen session at all does not ask, as above.
+
+A refusal undoes nothing the same command did before the change. `oneiron init` asks when you
+agree to conversation learning on a new vault and an auth secret is configured (`auth_secret`
+or `ONEIRON_AUTH_SECRET`): after a refusal the vault is made and configured, with learning off,
+and a second `oneiron init` does not ask the question again. With no auth secret it leaves
+learning off and shows no prompt. Turn learning on later with
+`PUT /v1/owner/conversation-learning`. `oneiron restore --join` has readied this
+install's own keys by the time it asks: after a refusal, run it again to join.
+
 ## Calling the owner routes
 
 Every `/v1/owner` route needs a verified, unattenuated owner slip held by a live human owner of

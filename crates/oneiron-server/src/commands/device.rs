@@ -185,7 +185,7 @@ fn open_joining_store(
         oneiron::OpenOptions::default().adopt_storage_id(storage_id),
     )
     .map_err(|error| anyhow::anyhow!("create vault {}: {error}", path.display()))?;
-    config.keystore.install_on(&vault, path);
+    config.keystore.install_for_command(&vault, path);
     vault.ensure_serving_install_profile_at_start(
         super::owner::configured_host_issuer(config, &vault, false).as_ref(),
         "device enrol",

@@ -2,6 +2,7 @@
 //! with the window one confirm opens, counts wrong typed secrets, and
 //! watches the screen lock.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 use std::{io, thread};
@@ -29,8 +30,14 @@ pub struct PresenceGate {
     /// Shared with the screen-lock watch, which holds it weakly.
     window: Arc<PresenceWindow>,
     /// Held while a prompt shows or a typed secret is checked, so acts that
-    /// arrive together share one confirm.
-    prompting: Mutex<()>,
+    /// arrive together share one prompt. It keeps the refusal of the last
+    /// prompt for the acts that waited while that prompt was up: `None`
+    /// after a confirm, and after an answer that a screen lock voided.
+    prompting: Mutex<Option<PresenceError>>,
+    /// How many prompts have been answered. An act reads it when it arrives;
+    /// a higher count once it holds `prompting` says that a prompt was
+    /// answered while it waited.
+    prompts_answered: AtomicU64,
     /// The wrong typed secrets counted, and the wait they started.
     tries: Mutex<TypedSecretTries>,
 }
@@ -61,6 +68,11 @@ fn wait_left_ms(since: PresenceInstant, now: PresenceInstant) -> u64 {
 
 const NO_SCREEN_LOCK_WATCH: &str = "the screen-lock watch could not start";
 
+/// Why the gate of a Windows host cannot ask ([`PresenceGate::process_wide`]).
+#[cfg(windows)]
+const WINDOWS_HOSTS_DO_NOT_ASK_YET: &str =
+    "Windows hosts do not ask yet: the Windows Hello dialog has not run on a device";
+
 impl PresenceGate {
     /// A gate that asks through `presence` and keeps `window`. The window
     /// tells `presence` each time it ends ([`UserPresence::window_ended`]).
@@ -70,7 +82,8 @@ impl PresenceGate {
         Self {
             presence,
             window: Arc::new(window),
-            prompting: Mutex::new(()),
+            prompting: Mutex::new(None),
+            prompts_answered: AtomicU64::new(0),
             tries: Mutex::new(TypedSecretTries::default()),
         }
     }
@@ -90,6 +103,68 @@ impl PresenceGate {
     #[must_use]
     pub fn platform() -> Self {
         Self::new(platform_user_presence(), PresenceWindow::system())
+    }
+
+    /// This process's one gate for a host to install on each vault handle it
+    /// opens: every call in one process answers the same gate, made at the
+    /// first call. One confirm serves all its handles, and acts that arrive
+    /// together share one prompt. On a Mac one screen-lock watch runs, where
+    /// it could start; the gate of a platform that cannot ask runs none. The
+    /// gate lives as long as the process.
+    ///
+    /// A child that `fork` made is another process: its first call makes a
+    /// gate of its own, with a closed window and, on a Mac, its own watch,
+    /// since the parent's watch thread does not exist in it. The gate it
+    /// inherited is leaked there and never dropped: a drop ends the window
+    /// under a lock that the parent's watch thread may have held at the
+    /// fork, and no thread of the child would release it. This call holds a
+    /// lock of its own while it runs, so a fork made while another thread of
+    /// the parent is inside this call leaves the child's call waiting for
+    /// good, as a fork does with any lock held at that moment: a host that
+    /// forks and does not `exec` forks before its threads call here.
+    ///
+    /// Two copies of this crate loaded into one process each hold a gate of
+    /// their own.
+    #[must_use]
+    pub fn process_wide() -> Arc<Self> {
+        static PROCESS_WIDE: Mutex<Option<(u32, Arc<PresenceGate>)>> = Mutex::new(None);
+        let process = std::process::id();
+        let mut held = PROCESS_WIDE.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some((made_in, gate)) = held.as_ref()
+            && *made_in == process
+        {
+            return Arc::clone(gate);
+        }
+        let gate = Arc::new(Self::for_hosts());
+        if let Some((_, inherited)) = held.replace((process, Arc::clone(&gate))) {
+            // Another process made it: this one is its forked child. Its
+            // drop would end the window under a lock that only a thread of
+            // the parent could release.
+            std::mem::forget(inherited);
+        }
+        gate
+    }
+
+    /// The gate a host asks through: this platform's prompt
+    /// ([`Self::platform`]).
+    #[cfg(not(windows))]
+    fn for_hosts() -> Self {
+        Self::platform()
+    }
+
+    /// The gate a host asks through. On Windows it cannot ask yet, so an
+    /// important act stands there as it does on a device with no prompt:
+    /// the Windows Hello dialog has not run on a device, and a host with
+    /// neither a console window nor a foreground window would be refused
+    /// every time (the pre-release line OWNER-CONFIRM-SHEET-DEVICE-PROBE-WINDOWS
+    /// and FIX row WINDOWS-PRESENCE-NO-OWNER-WINDOW-REFUSES-AS-PROMPT-FAILED).
+    /// [`Self::platform`] is the Hello gate itself; the device probe runs it.
+    #[cfg(windows)]
+    fn for_hosts() -> Self {
+        Self::new(
+            Arc::new(NoPromptPresence::new(WINDOWS_HOSTS_DO_NOT_ASK_YET)),
+            PresenceWindow::system(),
+        )
     }
 
     /// A gate over `presence` on the system's clocks, with its watch started
@@ -165,6 +240,14 @@ impl PresenceGate {
     /// A confirm opens the window; a refusal opens nothing. Never call it
     /// while holding a lock other work waits on.
     ///
+    /// Acts that arrive together share one prompt and the person's answer
+    /// to it: an act that waited while another act's prompt was up takes
+    /// that prompt's refusal as its own (declined, no answer, a fault of the
+    /// prompt) and shows no second prompt, as it takes the window a confirm
+    /// opened. An act that comes after the refusal asks again. An answer
+    /// that a screen lock voided is nobody's answer: each act that waited
+    /// asks for itself once the screen reads unlocked.
+    ///
     /// The answer is true when it is read. A screen lock after that is not
     /// seen here, so the caller signs at once.
     ///
@@ -175,10 +258,13 @@ impl PresenceGate {
     /// [`PresenceError::PinRequired`] outside a window: collect the PIN,
     /// call [`Self::confirm_with_secret`], and ask again.
     pub fn confirm(&self, reason: &str) -> Result<PresenceConfirmation, PresenceError> {
+        // Read before anything else: every prompt answered from here on was
+        // up, or came up, while this act was waiting.
+        let answered_at_arrival = self.prompts_answered.load(Ordering::Acquire);
         if self.earlier_confirm_holds()? {
             return Ok(PresenceConfirmation::WithinWindow);
         }
-        let _prompting = self
+        let mut last_refusal = self
             .prompting
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
@@ -187,6 +273,23 @@ impl PresenceGate {
         if self.earlier_confirm_holds()? {
             return Ok(PresenceConfirmation::WithinWindow);
         }
+        // A prompt refused while this act waited refused this act too.
+        if self.prompts_answered.load(Ordering::Acquire) != answered_at_arrival
+            && let Some(refusal) = *last_refusal
+        {
+            return Err(refusal);
+        }
+        let answer = self.prompt(reason);
+        // A screen lock voids the answer, so it is no refusal to share.
+        let voided = answer == Err(PresenceError::ScreenLocked);
+        *last_refusal = if voided { None } else { answer.err() };
+        self.prompts_answered.fetch_add(1, Ordering::AcqRel);
+        answer.map(|()| PresenceConfirmation::Prompted)
+    }
+
+    /// Shows the device's prompt and opens the window on a confirm that no
+    /// lock outlasted. The caller holds `prompting`.
+    fn prompt(&self, reason: &str) -> Result<(), PresenceError> {
         let pending = self.window.begin_confirm();
         self.presence.confirm(reason)?;
         // A lock that came while the prompt was up outlasts its answer:
@@ -194,7 +297,7 @@ impl PresenceGate {
         if self.screen_lock_ends_window() || !self.window.open(pending) {
             return Err(PresenceError::ScreenLocked);
         }
-        Ok(PresenceConfirmation::Prompted)
+        Ok(())
     }
 
     /// Whether an earlier confirm serves an act that comes now. No act is

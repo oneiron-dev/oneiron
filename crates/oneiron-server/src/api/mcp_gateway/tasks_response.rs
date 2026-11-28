@@ -528,7 +528,12 @@ pub(crate) fn mcp_engine_error(context: &'static str, error: oneiron::Error) -> 
         ErrorKind::HostActionRequiresSupportGrant => {
             McpGatewayError::new(-32020, MCP_HOST_ACTION_REFUSED, error.to_string())
         }
-        ErrorKind::LegalHold => mcp_facade_error(oneiron::MemoryError::from(error)),
+        // An owner act the device's prompt refused keeps its reason codes
+        // (`owner_presence_required`, `here:<reason>`), as the facade's door
+        // answers it: a caller tells a declined prompt from a locked screen.
+        ErrorKind::LegalHold | ErrorKind::OwnerPresenceRequired => {
+            mcp_facade_error(oneiron::MemoryError::from(error))
+        }
         _ => {
             let mut refusal =
                 McpGatewayError::new(-32603, "engine_error", format!("{context}: {error}"));

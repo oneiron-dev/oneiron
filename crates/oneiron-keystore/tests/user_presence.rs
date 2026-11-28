@@ -251,14 +251,104 @@ fn two_acts_at_once_show_one_prompt() {
     assert!(prompts.try_recv().is_err(), "one prompt served both acts");
 }
 
+/// A [`HeldPrompt`] that tells the test each time an act reads the screen
+/// lock. An act reads it once when it arrives and once more when its turn
+/// at the prompt comes, so three readings with one prompt up say that one
+/// act shows the prompt and the other waits for it.
+struct WatchedHeldPrompt {
+    held: HeldPrompt,
+    lock_readings: Mutex<mpsc::Sender<()>>,
+}
+
+impl UserPresence for WatchedHeldPrompt {
+    fn capability(&self) -> PresenceCapability {
+        self.held.capability()
+    }
+
+    fn confirm(&self, reason: &str) -> Result<(), PresenceError> {
+        self.held.confirm(reason)
+    }
+
+    fn screen_is_locked(&self) -> bool {
+        // The test stops listening once both acts have arrived.
+        let _ = self
+            .lock_readings
+            .lock()
+            .expect("the readings channel")
+            .send(());
+        false
+    }
+}
+
+#[test]
+fn two_acts_at_once_share_the_refusal_of_one_prompt() {
+    let (shown, prompts) = mpsc::channel();
+    let (answer, answers) = mpsc::channel();
+    let (lock_readings, readings) = mpsc::channel();
+    let gate = Arc::new(PresenceGate::new(
+        Arc::new(WatchedHeldPrompt {
+            held: HeldPrompt {
+                shown: Mutex::new(shown),
+                answer: Mutex::new(answers),
+            },
+            lock_readings: Mutex::new(lock_readings),
+        }),
+        PresenceWindow::new(clock()),
+    ));
+    let start = Arc::new(Barrier::new(3));
+    let spawn_act = || {
+        let (gate, start) = (gate.clone(), start.clone());
+        thread::spawn(move || {
+            start.wait();
+            gate.confirm(REASON)
+        })
+    };
+    let acts = [spawn_act(), spawn_act()];
+    start.wait();
+
+    // One act shows the prompt (two readings); the other has arrived and
+    // waits for it (one reading).
+    prompts.recv().expect("the first act's prompt shows");
+    for reading in 1..=3 {
+        readings
+            .recv()
+            .unwrap_or_else(|_| panic!("screen lock reading {reading} of 3"));
+    }
+    // Nobody answers the prompt: it ends with no answer.
+    drop(answer);
+
+    let outcomes = acts.map(|act| act.join().expect("the act ends"));
+    assert_eq!(
+        outcomes,
+        [Err(PresenceError::NoAnswer), Err(PresenceError::NoAnswer)],
+        "the act that waited takes the refusal of the prompt that was up"
+    );
+    assert!(
+        prompts.try_recv().is_err(),
+        "the act that waited showed a second prompt after the first was refused"
+    );
+    assert!(!gate.window_is_open(), "a refusal opened the window");
+
+    // An act that comes after the refusal asks again.
+    assert_eq!(gate.confirm(REASON), Err(PresenceError::NoAnswer));
+    assert!(
+        prompts.try_recv().is_ok(),
+        "an act that came after the refusal showed no prompt of its own"
+    );
+}
+
 #[test]
 fn a_screen_lock_while_a_prompt_is_up_refuses_its_answer_and_opens_no_window() {
     let (shown, prompts) = mpsc::channel();
     let (answer, answers) = mpsc::channel();
+    let (lock_readings, readings) = mpsc::channel();
     let gate = Arc::new(PresenceGate::new(
-        Arc::new(HeldPrompt {
-            shown: Mutex::new(shown),
-            answer: Mutex::new(answers),
+        Arc::new(WatchedHeldPrompt {
+            held: HeldPrompt {
+                shown: Mutex::new(shown),
+                answer: Mutex::new(answers),
+            },
+            lock_readings: Mutex::new(lock_readings),
         }),
         PresenceWindow::new(clock()),
     ));
@@ -269,8 +359,14 @@ fn a_screen_lock_while_a_prompt_is_up_refuses_its_answer_and_opens_no_window() {
 
     let first = spawn_act();
     prompts.recv().expect("the first act's prompt shows");
-    // A second act arrives while that prompt is up and waits behind it.
+    // A second act arrives while that prompt is up and waits behind it: the
+    // first act read the screen lock twice, the second once.
     let second = spawn_act();
+    for reading in 1..=3 {
+        readings
+            .recv()
+            .unwrap_or_else(|_| panic!("screen lock reading {reading} of 3"));
+    }
 
     // The screen locks with the prompt still up, and the answer lands after.
     gate.end_window();
@@ -285,10 +381,11 @@ fn a_screen_lock_while_a_prompt_is_up_refuses_its_answer_and_opens_no_window() {
         "an answer from before the lock opened the window"
     );
 
-    // The act that waited does not ride on the refused answer: it asks for
-    // itself, after the lock, and its confirm opens the window.
+    // The act that waited does not ride on the refused answer, and does
+    // not take its refusal either: it asks for itself, after the lock, and
+    // its confirm opens the window.
     prompts
-        .recv()
+        .recv_timeout(Duration::from_secs(5))
         .expect("the second act shows a prompt of its own");
     answer.send(()).expect("the second prompt takes its answer");
     assert_eq!(

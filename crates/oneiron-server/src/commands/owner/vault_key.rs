@@ -376,7 +376,12 @@ pub(crate) fn wrap_sealed_vault(
     }
     let path = &config.vault_path;
     let wrapped = (|| -> anyhow::Result<()> {
-        config.keystore.install_on_boot(&vault, path)?;
+        // Init is a command a person runs at this device: beside its
+        // keystore the handle takes the process's presence gate, as
+        // `KeystoreConfig::install_for_command` gives every other command.
+        if config.keystore.install_on_boot(&vault, path)? {
+            vault.install_process_presence_gate();
+        }
         if let Some(HostUnlock::Password(password)) = password {
             vault.set_vault_key_password(password, None)?;
         }

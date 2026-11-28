@@ -107,12 +107,33 @@ impl KeystoreConfig {
     /// escrowed seed of its live root before any issuer loads (FIX-LIST 10770),
     /// never a refusal. A platform with none does not stop serve: the signing and
     /// world-key doors answer `KeystoreUnavailable` without it, and reads and sync
-    /// go on. True when one was installed.
+    /// go on. True when one was installed. It installs no presence gate:
+    /// [`Self::install_for_command`] does.
     pub fn install_on(&self, vault: &oneiron::Vault, vault_path: &Path) -> bool {
         matches!(
             self.install(vault, vault_path),
             KeystoreInstall::Installed { .. }
         )
+    }
+
+    /// [`Self::install_on`] for a command a person runs at this device.
+    /// Beside an installed keystore the handle takes the process's presence
+    /// gate ([`oneiron::Vault::install_process_presence_gate`]), so an
+    /// important owner act of the command asks through the device's own
+    /// unlock prompt. With the keystore off or unavailable it installs no
+    /// gate. True when a keystore was installed.
+    ///
+    /// A process that serves callers on other devices keeps to
+    /// [`Self::install_on_boot`] or [`Self::install`], which leave the handle
+    /// without a gate: the server's screen is not its caller's, and until
+    /// the hand-over (row OWNER-CONFIRM-SHEET, PR 5) a refusal on a server
+    /// has nowhere to go.
+    pub fn install_for_command(&self, vault: &oneiron::Vault, vault_path: &Path) -> bool {
+        let installed = self.install_on(vault, vault_path);
+        if installed {
+            vault.install_process_presence_gate();
+        }
+        installed
     }
 
     /// [`Self::install_on`], saying what came of it: off, no keystore, or one

@@ -130,7 +130,9 @@ fn join_restored_install(config: &ServeConfig) -> anyhow::Result<()> {
         .ok_or_else(no_issuer)?;
     let refused = |error: oneiron::Error| anyhow::anyhow!("join this restored install: {error}");
     vault.restored_join_preflight(None).map_err(refused)?;
-    config.keystore.install_on(&vault, &config.vault_path);
+    config
+        .keystore
+        .install_for_command(&vault, &config.vault_path);
     let issuer = configured_host_issuer(config, &vault, false).ok_or_else(no_issuer)?;
     let issuer = std::sync::Arc::new(issuer);
     vault.hold_checkpoint_root_signer(issuer.clone());

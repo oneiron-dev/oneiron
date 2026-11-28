@@ -298,6 +298,10 @@ pub(crate) use self::mcp_gateway::run_board_pins_for_test;
 // The integration tests' door to the gateway's facade refusal vocabulary (UC-11).
 #[cfg(oneiron_test_support)]
 pub(crate) use self::mcp_gateway::mcp_refusal_for_test;
+// The integration tests' door to the answer the gateway gives a raw engine
+// error (row OWNER-CONFIRM-SHEET).
+#[cfg(oneiron_test_support)]
+pub(crate) use self::mcp_gateway::mcp_engine_refusal_for_test;
 // The integration tests' door to a run call's admitted lane (FIX-LIST 25102).
 #[cfg(oneiron_test_support)]
 pub(crate) use self::mcp_gateway::admit_run_call_for_test;

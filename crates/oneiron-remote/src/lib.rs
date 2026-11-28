@@ -609,6 +609,22 @@ impl OneironClient {
         }
     }
 
+    /// Whether this handle's native vault holds a presence gate, for
+    /// contract tests (row OWNER-CONFIRM-SHEET): a vault this crate opened
+    /// takes the process's gate beside its keystore, and a vault a host
+    /// attached keeps what the host installed.
+    ///
+    /// `None` for remote handles, which hold no vault.
+    #[must_use]
+    pub fn vault_holds_presence_gate(&self) -> Option<bool> {
+        match &self.backend {
+            Backend::Embedded(embedded) => {
+                Some(embedded.shared().vault().presence_gate().is_some())
+            }
+            Backend::Remote(_) | Backend::DreamerAttempt(_) => None,
+        }
+    }
+
     // ── the declared catalog ────────────────────────────────────────────
     //
 }
