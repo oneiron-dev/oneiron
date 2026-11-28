@@ -406,6 +406,13 @@ file of `team_id`, `status_ids` and `assignee_ids`. It is checked at startup
 (an invalid one stops it). With none, the route answers 404
 `linear_webhook_not_configured`.
 
+`POST /v1/hooks/gmail/push` takes Gmail's change notices from the owner's
+Pub/Sub push subscription (keyless; served only while `[gmail_push]` is set).
+Google's OIDC token on the delivery must be signed by a key of `jwks_uri`, for
+the section's `audience` and `service_account`; anything else answers 401. A
+signed delivery answers 204 and steps the mailbox it names at once. See
+`docs/ops/gmail-push.md`.
+
 Booking deposits (BK-DEPOSITS) run on the page owner's own Stripe account, in
 test mode only: a live key (`sk_live_`, `rk_live_`, `pk_live_`) is refused
 before any request, and a live-mode event is refused. The owner stores three

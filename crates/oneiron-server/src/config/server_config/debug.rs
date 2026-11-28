@@ -54,6 +54,7 @@ impl fmt::Debug for SyncServerConfig {
             .field("channel_endpoints", &self.channel_endpoints)
             .field("apns", &self.apns)
             .field("linear", &self.linear)
+            .field("gmail_push", &self.gmail_push)
             .field("ingress", &self.ingress)
             .field("merge_queue", &self.merge_queue)
             .field("trusted_organ_builds", &self.trusted_organ_builds)
@@ -146,6 +147,7 @@ impl fmt::Debug for ServeConfig {
             .field("channel_endpoints", &self.channel_endpoints)
             .field("apns", &self.apns)
             .field("linear", &self.linear)
+            .field("gmail_push", &self.gmail_push)
             .field("phonetic_embedder", &self.phonetic_embedder)
             .field("privacy_posture", &self.privacy_posture)
             .field(

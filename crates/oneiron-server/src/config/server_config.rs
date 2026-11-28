@@ -204,6 +204,10 @@ pub struct SyncServerConfig {
     /// ([`LinearConfig::or_environment`]); `None`, no mirror runs and the
     /// webhook maps nothing.
     pub linear: Option<LinearConfig>,
+    /// `[gmail_push]`: the Pub/Sub topic the host's Gmail mailboxes publish
+    /// their change notices to, and the push subscription its hook admits.
+    /// `None`: no mailbox is watched and the hook is not served.
+    pub gmail_push: Option<super::GmailPushConfig>,
     /// Who authenticates the requests this server takes.
     pub ingress: IngressAuth,
     /// `[merge_queue]`: the queue checker's executor (FIX 6868). `None` is
@@ -303,6 +307,7 @@ impl Default for SyncServerConfig {
             channel_endpoints: ChannelEndpointsConfig::default(),
             apns: ApnsConfig::default(),
             linear: None,
+            gmail_push: None,
             ingress: IngressAuth::Configured,
             merge_queue: None,
             agent_failure_healer: None,
@@ -462,6 +467,9 @@ pub struct ServeConfig {
     /// The `[linear]` section: the Linear mirror and its webhook's tracker
     /// mapping, absent until the config file names it.
     pub linear: Option<LinearConfig>,
+    /// The `[gmail_push]` section: the host's Gmail push topic and the push
+    /// subscription its hook admits, absent until the config file names it.
+    pub gmail_push: Option<super::GmailPushConfig>,
     /// The `[phonetic_embedder]` section: the model behind the learned
     /// phonetic rung, absent until the config file names it. Absent means
     /// no model: names keep their codes alone.
@@ -614,6 +622,7 @@ impl Default for ServeConfig {
             channel_endpoints: server.channel_endpoints.clone(),
             apns: server.apns.clone(),
             linear: None,
+            gmail_push: None,
             phonetic_embedder: None,
             // Hosting is opt-in: an operator must name the posture AND supply
             // its host-managed key reference before a vault is host-readable.
@@ -692,6 +701,7 @@ impl ServeConfig {
             channel_endpoints: self.channel_endpoints.clone(),
             apns: self.apns.clone(),
             linear: self.linear.clone(),
+            gmail_push: self.gmail_push.clone(),
             // A plain serve's own auth config; a managed vault declares its
             // supervisor's.
             ingress: IngressAuth::Configured,

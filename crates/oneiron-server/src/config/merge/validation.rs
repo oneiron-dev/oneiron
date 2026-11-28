@@ -48,6 +48,7 @@ pub(crate) fn settings_schema_keys(section: Option<&str>) -> Option<&'static [&'
         "channel_endpoints" => struct_fields::<crate::config::ChannelEndpointsConfig>(),
         "apns" => struct_fields::<crate::config::ApnsConfig>(),
         "linear" => struct_fields::<super::LinearConfig>(),
+        "gmail_push" => struct_fields::<super::GmailPushConfig>(),
         "phonetic_embedder" => struct_fields::<crate::config::PhoneticEmbedderConfig>(),
         _ => return None,
     };
@@ -140,6 +141,9 @@ pub(super) fn validate_serve_config(config: &ServeConfig) -> anyhow::Result<()> 
     }
     if let Some(native_mail) = &config.native_mail {
         native_mail.validate()?;
+    }
+    if let Some(gmail_push) = &config.gmail_push {
+        gmail_push.validate()?;
     }
     if let Some(device_sync) = &config.device_sync {
         device_sync.validate()?;

@@ -33,8 +33,8 @@ use crate::runtime::{
 };
 
 use super::{
-    BrowserConfig, DesktopConfig, DeviceSyncConfig, EmbeddingConfig, LineConfig, LinearConfig,
-    MergeQueueCheckerConfig, NativeMailConfig, embedder, remote_embedder,
+    BrowserConfig, DesktopConfig, DeviceSyncConfig, EmbeddingConfig, GmailPushConfig, LineConfig,
+    LinearConfig, MergeQueueCheckerConfig, NativeMailConfig, embedder, remote_embedder,
 };
 
 mod file_admission;
@@ -296,6 +296,7 @@ struct FileServeConfig {
     channel_endpoints: Option<super::ChannelEndpointsConfig>,
     apns: Option<super::ApnsConfig>,
     linear: Option<super::LinearConfig>,
+    gmail_push: Option<super::GmailPushConfig>,
     phonetic_embedder: Option<super::PhoneticEmbedderConfig>,
     privacy_posture: Option<HostingPrivacyPosture>,
     failure_signal_export: Option<bool>,
@@ -377,6 +378,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             channel_endpoints: value.channel_endpoints,
             apns: value.apns,
             linear: value.linear,
+            gmail_push: value.gmail_push,
             phonetic_embedder: value.phonetic_embedder,
             privacy_posture: value.privacy_posture,
             failure_signal_export: value.failure_signal_export,
@@ -483,6 +485,8 @@ struct PartialServeConfig {
     /// `[linear]` is file-only, as `[native_mail]` is; a plain serve's
     /// `ONEIRON_LINEAR_*` environment is read beside it at serve start.
     linear: Option<super::LinearConfig>,
+    /// `[gmail_push]` is file-only, as `[native_mail]` is.
+    gmail_push: Option<super::GmailPushConfig>,
     /// `[phonetic_embedder]` is file-only, as `[line]` is.
     phonetic_embedder: Option<super::PhoneticEmbedderConfig>,
     privacy_posture: Option<HostingPrivacyPosture>,
@@ -590,6 +594,7 @@ impl fmt::Debug for PartialServeConfig {
             .field("channel_endpoints", &self.channel_endpoints)
             .field("apns", &self.apns)
             .field("linear", &self.linear)
+            .field("gmail_push", &self.gmail_push)
             .field("phonetic_embedder", &self.phonetic_embedder)
             .field("privacy_posture", &self.privacy_posture)
             .field(
@@ -704,6 +709,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             channel_endpoints: None,
             apns: None,
             linear: None,
+            gmail_push: None,
             phonetic_embedder: None,
             privacy_posture: value.privacy_posture,
             failure_signal_export: value.failure_signal_export,
