@@ -83,6 +83,7 @@ fn claim(n: u8, period: u32, reserved_secs: u64) -> UnitClaim {
         machine: None,
         code_sha: "c0de".repeat(10),
         contract_sha256: "cd".repeat(32),
+        result: None,
         reserved_secs,
         draws: vec![Draw {
             source: DrawSource::Floor,

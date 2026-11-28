@@ -159,6 +159,7 @@ fn claim(
         machine: None,
         code_sha: "c0de".repeat(10),
         contract_sha256: "cd".repeat(32),
+        result: None,
         reserved_secs: RESERVED,
         draws,
         wallet: WalletRef {
