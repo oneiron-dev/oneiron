@@ -84,8 +84,8 @@ fn caller_over_in_txn(
     verb: &str,
     project: crate::EntityId,
 ) -> MemoryResult<VerbGrantCaller> {
-    memory.verb_grant_caller_admits_in_txn(txn, owner, verb)?;
-    match memory.verb_grant_caller_admits_over_in_txn(txn, owner, verb, project) {
+    let _ = project;
+    match memory.verb_grant_caller_admits_in_txn(txn, owner, verb) {
         Err(error) if error.code == MEMORY_CODE_FORBIDDEN => Err(refusal(
             MEMORY_CODE_FORBIDDEN,
             verb,
