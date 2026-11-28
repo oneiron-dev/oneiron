@@ -2643,11 +2643,20 @@ suite.test(test, "COORDINATION-09", "A planned wave readies A, then B, then C, a
     expect(applied).toMatchObject({ delivery_id: c.inputs.inboundEdit.event_id, status: "applied", task_ref: issueTask, issue,
       conflicts: [], replayed: false });
     expect(applied.mirror).toMatchObject({ status: "applied", direction: "issue_to_task", conflicts: [] });
+    // The one imported change is one TASK revision; the title edit stays owed with it.
+    const appliedMapping = await owner.call("vault.tasks.linear.mapping", { task_ref: issueTask });
+    expect(appliedMapping.task_revision).toBe(owed.task_revision + 1);
+    expect(appliedMapping.mapping_revision).toBe(linked.mapping_revision);
+    const appliedRows = await coordination09Provenance(owner, issueTask);
     const deliveries = [applied];
     for (let delivery = 1; delivery < c.inputs.inboundDeliveries; delivery++) {
       deliveries.push(coordination09Receipt(await coordination09Deliver(hook, c.inputs.inboundEdit.event_id, inboundBody, signingSecret)));
     }
     expect(deliveries.slice(1)).toEqual(Array(c.inputs.inboundDeliveries - 1).fill({ ...applied, replayed: true }));
+    // The replays wrote nothing for B: its TASK, dirty, mapping and link revisions and its provenance rows are as
+    // the first application left them (a replay that put the same body again would move the revisions).
+    expect(await owner.call("vault.tasks.linear.mapping", { task_ref: issueTask })).toEqual(appliedMapping);
+    expect(await coordination09Provenance(owner, issueTask)).toEqual(appliedRows);
     // Failure step: the same delivery id with another body is refused, never applied.
     const reusedBody = coordination09Delivery(c, { title: issueTitle, description: `${c.inputs.inboundEdit.value} (reused)` },
       { description: null, updatedAt: new Date(witnessAt).toISOString() }, editedAt);
@@ -2678,7 +2687,11 @@ suite.test(test, "COORDINATION-09", "A planned wave readies A, then B, then C, a
       external_actor: { id: c.inputs.inboundEdit.actor, kind: "user", name: c.inputs.inboundEdit.actor },
       changed_fields: [c.inputs.inboundEdit.field], webhook_id: COORDINATION09_WEBHOOK.webhookId,
       organization_id: COORDINATION09_WEBHOOK.organizationId, webhook_timestamp_ms: editedAt, writer_actor: null });
-    expect(typeof imported[0]?.event.payload_ref).toBe("string"); // The archived tracker body it came from.
+    // The archived tracker body it came from: the exact version payload_ref names holds the delivered bytes.
+    const archivedAt = /^blob:([0-9a-f]+)@(\d+)$/.exec(imported[0]?.event.payload_ref ?? "");
+    expect(archivedAt).not.toBeNull();
+    const archived = await owner.call("vault.artifacts.export", { artifact_ref: archivedAt![1]!, version: Number(archivedAt![2]) });
+    expect(Buffer.from(archived?.content_base64 ?? "", "base64").toString("utf8")).toBe(inboundBody);
     const titleEdits = rows.filter(row => row.event.direction === "task_edit");
     expect(titleEdits).toHaveLength(1);
     expect(titleEdits[0]?.event).toMatchObject({ status: "edited", task_ref: issueTask, writer_actor: ownerRef, writer_class: "human" });
@@ -2686,6 +2699,9 @@ suite.test(test, "COORDINATION-09", "A planned wave readies A, then B, then C, a
     expect(links).toHaveLength(1);
     expect(links[0]?.event).toMatchObject({ status: "link", task_ref: issueTask, writer_actor: ownerRef });
     expect(rows.filter(row => row.event.direction === "task_to_issue")).toEqual([]); // No send: see Unproved.
+    // No public door lists or counts a vault's TASKs (FIX TASKS-NO-PUBLIC-LIST-FOR-REPLAY-COUNT), so "the replay creates
+    // no TASK" is proved here as far as public reads reach: B's mapping and provenance did not move (above), the wave
+    // still names A, B and C, and their edges are unchanged.
     expect(c.expected.webhookReplayCreatesTasks).toBe(0);
     expect((await coordination09Wave(owner, queued.attempt_ref)).task_refs).toEqual(tasks);
     expect(await coordination09Edges(owner, tasks)).toEqual(edges);
