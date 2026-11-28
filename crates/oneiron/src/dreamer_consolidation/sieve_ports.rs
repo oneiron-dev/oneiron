@@ -42,8 +42,8 @@ use crate::model_step_context::{DurableStepContext, StepEffectBinding, StepOutco
 use crate::model_step_error::{DurableStepError, DurableStepResult, ReplyCheck};
 use oneiron_model::llm::{
     BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, LlmBackend, LlmMessage,
-    LlmMessageRole, LlmRequest, LlmResponse, LlmUsage, ModelTierRef, ResponseFormat, Scope,
-    TierPrecedence,
+    LlmMessageRole, LlmRequest, LlmResponse, LlmUsage, ModelLocality, ModelTierRef, ResponseFormat,
+    Scope, TierPrecedence,
 };
 
 /// A port's work: a future on the caller's own async path.
@@ -641,18 +641,21 @@ fn slice_request(
 /// request hash, differ: it is a durable step of its own, a new call and
 /// never a replay of the refused reply (a refused reply is never memoized),
 /// and it takes the slice's place with the refused reply's spend to charge.
-/// It goes out whichever rung answered: the sealed request's locality is
-/// its ladder's widest route, and a seat whose own server comes before a
-/// hosted rung seals as a third party's while its own server answers. A
-/// hosted rung's wire drops the switch, so there the retry is the same
-/// request sent again at once, ahead of the Retry park that asks it later.
-/// A cut reply, a contract or citation fault, or any other outcome leaves
-/// `step` as it was. Before the retry goes out, the try marks it pending
-/// under the original's hash (#10269 review, round 2): a retry a budget
-/// trap, the finalize window or a closed offer holds back then goes out in
-/// the original's place on the try's next run, never a fresh original with
-/// lookup on. A mark that does not write leaves `step` as it was, so the
-/// slice parks as a refused one did before the retry.
+/// It goes out only when the rung that answered runs on the device or on an
+/// own server: a hosted rung's wire drops the switch, so there the retry
+/// would be the same request sent again at once, ahead of the Retry park
+/// that asks it later. The rung that answered is the one the ladder's served
+/// receipt names. The sealed request's locality is its ladder's widest route
+/// (a seat whose own server comes before a hosted rung seals as a third
+/// party's while its own server answers), so it decides only for a reply no
+/// ladder stamped. A hosted answer, a cut reply, a contract or citation
+/// fault, or any other outcome leaves `step` as it was. Before the retry
+/// goes out, the try marks it pending under the original's hash (#10269
+/// review, round 2): a retry a budget trap, the finalize window or a closed
+/// offer holds back then goes out in the original's place on the try's next
+/// run, never a fresh original with lookup on. A mark that does not write
+/// leaves `step` as it was, so the slice parks as a refused one did before
+/// the retry.
 async fn retry_without_prompt_lookup(
     child: &NeighbourhoodExtraction<'_>,
     retry: ([u8; 32], LlmRequest),
@@ -668,6 +671,12 @@ async fn retry_without_prompt_lookup(
         }
         _ => return step,
     };
+    let answered = refused_usage
+        .served_locality()
+        .unwrap_or(retry.1.envelope.locality);
+    if answered == ModelLocality::ThirdParty {
+        return step;
+    }
     if let Err(error) = mark_follow_up_pending(child.step, &step.step_hash) {
         tracing::warn!(
             kind = ?error.kind(),

@@ -1,8 +1,8 @@
 //! Which model actually answered: the receipt field a ladder fills in.
 // The ladder stamps the engine's key for the rungs that failed before an
 // answer. Each of them was already charged on its own permit.
-use oneiron::LlmUsage;
 use oneiron::llm::{FAILED_RUNGS_KEY, ServedCacheHorizon};
+use oneiron::{LlmUsage, ModelLocality};
 use serde_json::{Map, Value as JsonValue};
 
 /// Key inside a provider usage object naming the model the reply reported.
@@ -18,12 +18,20 @@ pub(super) fn record_served_model(usage: Option<&mut JsonValue>, served: Option<
     usage.insert(SERVED_MODEL_KEY.to_owned(), served);
 }
 
+/// What a served receipt stamps about the rung that answered: its engine id
+/// and where it runs, when the receipt knows them. A receipt kept before
+/// either existed names neither.
+pub(super) struct ServedRungStamp<'a> {
+    pub(super) model_id: Option<&'a str>,
+    pub(super) locality: Option<ModelLocality>,
+}
+
 /// The receipt a ladder leaves on every answer: which rung served it, how
 /// many rungs were tried and failed before it, each rung it passed over and
 /// why (an offer refused for a limit names its class and the end of its
-/// cooldown), what the provider called the model, and the engine id of the
-/// rung that answered when the receipt knows it, beside the provider's
-/// own usage.
+/// cooldown), what the provider called the model, and the engine id and
+/// locality of the rung that answered when the receipt knows them, beside
+/// the provider's own usage.
 pub(super) fn served_receipt(
     provider: &str,
     requested: &str,
@@ -31,14 +39,20 @@ pub(super) fn served_receipt(
     failed_rungs: usize,
     passed_over: JsonValue,
     raw_provider: JsonValue,
-    model_id: Option<&str>,
+    answering: ServedRungStamp<'_>,
 ) -> JsonValue {
     let reported = raw_provider.get(SERVED_MODEL_KEY).cloned();
     let mut receipt = Map::new();
     receipt.insert(LlmUsage::SERVED_PROVIDER_KEY.into(), provider.into());
     receipt.insert("requested_model".into(), requested.into());
-    if let Some(model_id) = model_id {
+    if let Some(model_id) = answering.model_id {
         receipt.insert(LlmUsage::SERVED_MODEL_ID_KEY.into(), model_id.into());
+    }
+    if let Some(locality) = answering.locality {
+        receipt.insert(
+            LlmUsage::SERVED_LOCALITY_KEY.into(),
+            locality.as_str().into(),
+        );
     }
     receipt.insert("rung".into(), rung.into());
     receipt.insert(FAILED_RUNGS_KEY.into(), failed_rungs.into());

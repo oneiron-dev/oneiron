@@ -72,7 +72,7 @@ use super::forward::{Ended, forward};
 use super::http;
 use super::media::{HeldJob, MediaAnswer, MediaDispatchRelease, MediaRung, RetryHint, RungVoices};
 use super::offer::ServedOffer;
-use super::served::{served_receipt, stamp_cache_horizon};
+use super::served::{ServedRungStamp, served_receipt, stamp_cache_horizon};
 use super::source_admission::{self, SourceAdmission};
 use super::status::RungHealth;
 use super::walk::{Passed, Walk, ends_call, failure_kind, provider_down};
@@ -170,6 +170,11 @@ pub(super) struct PendingReceipt {
     /// field existed, which stamps a receipt with no `model_id` key.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     model_id: Option<String>,
+    /// Where the rung that answered runs: its binding's locality, which its
+    /// wire sent the call by. `None` for a row persisted before this field
+    /// existed, which stamps a receipt with no `locality` key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    locality: Option<ModelLocality>,
 }
 
 impl PendingReceipt {
@@ -182,7 +187,10 @@ impl PendingReceipt {
             self.failed,
             self.passed_over.clone(),
             raw_provider,
-            self.model_id.as_deref(),
+            ServedRungStamp {
+                model_id: self.model_id.as_deref(),
+                locality: self.locality,
+            },
         )
     }
 }
@@ -867,6 +875,7 @@ impl OfferLadder {
             failed: self.prefix.failed + walk.went_out(),
             passed_over: JsonValue::Array(self.passed_over(walk)),
             model_id: Some(rung.model.as_str().to_owned()),
+            locality: Some(rung.offer.binding.locality),
         }
     }
 

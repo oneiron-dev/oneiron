@@ -15,13 +15,17 @@
 //!    lookup off, on the try's next run, in place of a fresh original with lookup on.
 //! 9. A retry the backend gives back unsent (no rung serves at this hour) is not counted on the
 //!    stage line.
+//! 10. A parse failure a hosted rung answered, as its ladder's served receipt names it, is not
+//!     asked again: that rung's wire drops the switch, so the retry would be the same request
+//!     sent again at once. One an own server answered is asked again.
 //!
 //! Red on main 1b32efa6512: the first parse failure parks the try Retry after one call
 //! (cases 1, 2, 4, 6 fail). Red at 025c8df5887 (review round 1 of #10269, P1 1 and P1 2): the
 //! replay sends the original request a third time (case 6), and the stage line counts the
 //! refused retry (case 7). Red at 247b54b8331 (review round 2 of #10269, P1 2 and P1 3): the
 //! next run sends the original with lookup on (case 8), and the stage line counts the retry
-//! given back unsent (case 9). Doors: `oneiron::test_doors::seat_park_model_step`, built only under
+//! given back unsent (case 9). Red on main 8418b839a4ad: the hosted rung's parse failure is
+//! asked again (case 10). Doors: `oneiron::test_doors::seat_park_model_step`, built only under
 //! `--cfg oneiron_test_support`.
 #![cfg(oneiron_test_support)]
 
@@ -69,6 +73,9 @@ const PROMPT_LOOKUP_PARAM: &str = "oneiron_prompt_lookup";
 const STAGE_TARGET: &str = "oneiron::dreamer::stages";
 const BAD_JSON: Reply = ("this is not JSON", FinishReason::Stop);
 const NO_CANDIDATES: Reply = (r#"{"candidates": []}"#, FinishReason::Stop);
+/// The served receipt's key naming where the rung that answered runs
+/// (`LlmUsage::SERVED_LOCALITY_KEY`).
+const SERVED_LOCALITY_KEY: &str = "locality";
 
 fn block_on_ready<F: Future>(future: F) -> F::Output {
     let mut cx = Context::from_waker(Waker::noop());
@@ -101,13 +108,26 @@ struct ClockStep {
 
 /// An immediate backend that repeats its last reply if asked again. From call
 /// `outside_hours_from` (0-based) on, it answers that no rung serves at this hour, as a
-/// ladder whose only rung closed does: nothing goes out.
+/// ladder whose only rung closed does: nothing goes out. With `served`, each reply carries a
+/// ladder's served receipt naming that locality for the rung that answered.
 struct ScriptedBackend {
     replies: Vec<Reply>,
     requests: Mutex<Vec<LlmRequest>>,
     elapsed: Arc<AtomicU64>,
     clock_step: Option<ClockStep>,
     outside_hours_from: Option<usize>,
+    served: Option<ModelLocality>,
+}
+
+/// A ladder's served receipt for an answer from its first rung, which runs at `locality`.
+fn served_receipt(locality: ModelLocality) -> Value {
+    serde_json::json!({
+        (LlmUsage::SERVED_PROVIDER_KEY): "scripted",
+        "rung": 0,
+        "failed_rungs": 0,
+        (SERVED_LOCALITY_KEY): locality.as_str(),
+        "usage": {},
+    })
 }
 
 impl ScriptedBackend {
@@ -157,7 +177,7 @@ impl ScriptedBackend {
                     text: 10,
                     reasoning: 0,
                 },
-                raw_provider: Value::Null,
+                raw_provider: self.served.map_or(Value::Null, served_receipt),
                 call_metadata: None,
             },
             finish_reason: finish_reason.clone(),
@@ -371,6 +391,23 @@ fn run_backend_pass(
     replay: bool,
     outside_hours_from: Option<usize>,
 ) -> TestResult<ExtractionPass> {
+    run_pass(replies, clock_step, replay, outside_hours_from, None)
+}
+
+/// [`run_extraction_pass`] whose every reply names `served` as where the rung that answered
+/// runs.
+fn run_served_pass(replies: &[Reply], served: ModelLocality) -> TestResult<ExtractionPass> {
+    run_pass(replies, None, false, None, Some(served))
+}
+
+/// [`run_backend_pass`] whose replies carry a served receipt naming `served`, when given.
+fn run_pass(
+    replies: &[Reply],
+    clock_step: Option<ClockStep>,
+    replay: bool,
+    outside_hours_from: Option<usize>,
+    served: Option<ModelLocality>,
+) -> TestResult<ExtractionPass> {
     assert!(!replies.is_empty(), "the backend needs at least one reply");
     let clock = oneiron_store::ports::manual_clock::ManualClock::new(PASS_T);
     let mut config = VaultConfig::device();
@@ -393,6 +430,7 @@ fn run_backend_pass(
         elapsed: Arc::clone(&elapsed),
         clock_step,
         outside_hours_from,
+        served,
     };
     let guard = BudgetGuard::with_reserve_units(
         WAKE_LINE,
@@ -659,4 +697,27 @@ fn a_retry_no_rung_serves_at_this_hour_is_not_counted() -> TestResult {
         pass.stage_lines
     );
     Ok(())
+}
+
+#[test]
+fn a_parse_failure_a_hosted_rung_answered_is_not_asked_again() -> TestResult {
+    let hosted = run_served_pass(&[BAD_JSON, NO_CANDIDATES], ModelLocality::ThirdParty)?;
+    assert_eq!(
+        hosted.backend.calls(),
+        1,
+        "a hosted rung's wire drops the switch, so its retry would be the same request"
+    );
+    hosted.assert_retry("extraction response must be JSON")?;
+
+    let own = run_served_pass(&[BAD_JSON, NO_CANDIDATES], ModelLocality::OwnServer)?;
+    assert_eq!(
+        own.backend.calls(),
+        2,
+        "an own server's parse failure is asked again once"
+    );
+    assert_eq!(
+        own.backend.requests()[1].params.get(PROMPT_LOOKUP_PARAM),
+        Some(&Value::Bool(false))
+    );
+    own.assert_completed()
 }

@@ -11,7 +11,7 @@ use futures_util::StreamExt;
 use oneiron::store::ports::ManualClock;
 use oneiron::{
     EntityId, FatalLlmError, LlmError, LlmRequest, LlmResponse, LlmResult, LlmStreamEvent,
-    RetryableLlmError, Vault, VaultConfig,
+    LlmUsage, RetryableLlmError, Vault, VaultConfig,
 };
 use serde_json::{Value, json};
 
@@ -204,6 +204,8 @@ async fn a_quota_refusal_answers_from_the_next_offer_which_serves_until_the_rese
     assert_eq!(receipt["model_id"], json!(rungs[1].0.as_str()));
     assert_ne!(receipt["model_id"], json!(rungs[0].0.as_str()));
     assert_eq!(receipt["provider"], json!("second"));
+    // The hosted rung answered, though the seat's own server comes first.
+    assert_eq!(receipt[LlmUsage::SERVED_LOCALITY_KEY], json!("third_party"));
     assert_eq!(receipt["requested_model"], json!("big"));
     assert_eq!(receipt["failed_rungs"], json!(1));
     assert_eq!(
@@ -235,6 +237,10 @@ async fn a_quota_refusal_answers_from_the_next_offer_which_serves_until_the_rese
     let answer = ask(seat).await.expect("the first offer is back");
     assert_eq!(text_of(&answer.message), "first is back");
     assert_eq!(answer.usage.raw_provider.get("passed_over"), None);
+    assert_eq!(
+        answer.usage.served_locality(),
+        Some(ModelLocality::OwnServer)
+    );
     assert_eq!((first.seen().len(), second.seen().len()), (2, 2));
 }
 
@@ -941,4 +947,26 @@ fn a_receipt_persisted_before_model_id_stamps_no_model_id_key() {
     let stamped = receipt.stamp(json!({}));
     assert_eq!(stamped["provider"], json!("first"));
     assert_eq!(stamped.get("model_id"), None);
+}
+
+/// A `PendingReceipt` persisted before `locality` existed (a held media
+/// job's row, no `locality` key) still deserializes, serializes back with no
+/// `locality` key, and stamps a receipt that names no locality.
+#[test]
+fn a_receipt_persisted_before_locality_stamps_no_locality_key() {
+    let stored = json!({
+        "provider": "first",
+        "requested": "small",
+        "rung": 0,
+        "failed": 0,
+        "passed_over": [],
+        "model_id": "first/small@1",
+    });
+    let receipt: ladder::PendingReceipt =
+        serde_json::from_value(stored).expect("the pre-change shape deserializes");
+    let written = serde_json::to_value(&receipt).expect("the receipt serializes");
+    assert_eq!(written.get("locality"), None);
+    let stamped = receipt.stamp(json!({}));
+    assert_eq!(stamped["model_id"], json!("first/small@1"));
+    assert_eq!(stamped.get(LlmUsage::SERVED_LOCALITY_KEY), None);
 }
