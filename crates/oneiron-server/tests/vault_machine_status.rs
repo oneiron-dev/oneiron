@@ -2097,15 +2097,24 @@ fn a_bound_key_that_never_started_owes_no_return_and_housekeeping_asks_nothing()
     });
 }
 
-/// The node's report of `run` cut off at its maximum: `TimeLimit` after 90 measured seconds,
-/// its device released clean, and `partial` hashed as its returnable `verdict.json`.
+/// The node's report of `run` cut off at its maximum: the scripted clock moves on to the run's
+/// quoted maximum (it was seen running at 30 measured seconds), and the node ends it
+/// `TimeLimit` with that maximum measured, its device released clean, and `partial` hashed as
+/// its returnable `verdict.json`.
 fn cut_off_with_partial(rig: &Rig, run: &JobRun, partial: &[u8]) {
+    let maximum = run
+        .job
+        .chunk()
+        .expect("the job has a chunk")
+        .quote
+        .maximum_secs;
+    rig.clock.advance_secs(maximum.saturating_sub(30));
     let at_ms = rig.clock.now_ms();
     rig.node.revise(run.key(), |receipt| {
         receipt.state = JobState::Ended;
         receipt.started = true;
         receipt.end = Some(JobEnd::TimeLimit);
-        receipt.measured_secs = Some(90);
+        receipt.measured_secs = Some(maximum);
         receipt.device_id = Some("scripted-gpu".to_owned());
         receipt.release = DeviceRelease::Confirmed { at_ms };
         receipt.outputs = OutputsState::Hashed(vec![OutputDigest {
@@ -2121,7 +2130,8 @@ fn cut_off_with_partial(rig: &Rig, run: &JobRun, partial: &[u8]) {
 /// the partial result it wrote before the cutoff, as every ended key but a revoked one does
 /// ("Any other ended key returns its result", ARCH-0046). The returnable output is fetched,
 /// checked against the machine's signed digest and length, and proposed as the artifact's next
-/// version, pending Keep, made by the task; then the node may clean. The job ends `time_limit`,
+/// version, pending Keep, made by the task; then the node may clean. The job ends `time_limit`
+/// at its quoted maximum (review r1 P1: the cut is at the quote's own maximum, not before it),
 /// settled at no more than its quote. A time-limit end never lands bytes past the signed
 /// digest: a partial output whose bytes differ from the receipt's (the workload wrote on past
 /// the hash) is refused `digest_mismatch`, and nothing lands.
@@ -2140,7 +2150,6 @@ fn a_job_cut_at_its_maximum_returns_its_partial_result_and_never_bytes_past_its_
         rig.node
             .advance(run.key(), JobState::Running, Some(30), None, true);
         rig.step(&run).expect("poll the running job");
-        rig.clock.advance_secs(60);
         cut_off_with_partial(rig, &run, partial);
         rig.node.put_output(run.key(), "verdict.json", partial);
         let ended = rig.settle(&run);
@@ -2191,7 +2200,6 @@ fn a_job_cut_at_its_maximum_returns_its_partial_result_and_never_bytes_past_its_
         rig.node
             .advance(late.key(), JobState::Running, Some(30), None, true);
         rig.step(&late).expect("poll the running job");
-        rig.clock.advance_secs(60);
         cut_off_with_partial(rig, &late, partial);
         let mut past = partial.to_vec();
         past.extend_from_slice(b"\n{\"verdict\":\"late\"}");
