@@ -103,8 +103,13 @@ impl ClaimSourceReplay {
             // gate judge the source on local evidence: a soft-drop marker hides the CLAIM, at
             // arrival or later, and a restore shows it again with no replay (#10654 review r1).
             #[cfg(feature = "sync")]
-            if opened {
-                crate::sync::residence::put_cold_citation_in_txn(store, txn, &self.claim, &source)?;
+            if opened
+                && !crate::sync::residence::soft_drop_marker_exists_in_txn(
+                    store,
+                    txn,
+                    &source.to_hex(),
+                )?
+            {
                 continue;
             }
             pending = true;
