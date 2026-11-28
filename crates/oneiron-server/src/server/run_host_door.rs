@@ -389,7 +389,7 @@ impl AgentVerbDoor for RunHostDoor {
             })
             .flatten();
         let resident = resident_row(call.verb, &call.input);
-        let caller_row = self.program_caller_rows && caller_rows::is_caller_row(call.verb);
+        let caller_row = false && self.program_caller_rows && caller_rows::is_caller_row(call.verb);
         // What the door holds for the run's own brief (FIX 17594), read only
         // for `describe(self)`.
         let (brief, people_at) = match resident {
