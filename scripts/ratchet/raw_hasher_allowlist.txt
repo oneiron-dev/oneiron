@@ -49,6 +49,7 @@ crates/oneiron/src/llm/step/schema_runtime.rs sha256  # validator artifact pin m
 crates/oneiron/src/origin/lfs/store.rs sha256  # git-LFS object id check on read (LFS spec)
 crates/oneiron/src/origin/lfs/upload.rs sha256  # git-LFS object id of an upload (LFS spec)
 crates/oneiron/src/skill_hub/http_fetch.rs sha256  # agentskills.io publisher sha256 digest
+crates/oneiron-server/src/gpu_execution_node/jobs/checkpoints.rs sha256  # a checkpoint's manifest of per-file SHA-256 lines and its digest in the signed receipt (pass 34 row C1): the store copy and the restore check against them, and a person checks each line with sha256sum
 
 # Class B: part of a signature or key scheme.
 crates/oneiron-authority/src/authority/webauthn_assertion.rs sha256  # WebAuthn ES256 assertion: SHA-256(clientDataJSON) in the signed bytes (W3C WebAuthn), and the challenge, SHA-256 over a domain and the authority transcript, that the passkey signs

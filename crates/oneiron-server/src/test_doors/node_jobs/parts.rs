@@ -34,6 +34,8 @@ struct AdmissionState {
     staging_limit_secs: u64,
     /// Each template's checkpoint signal, when it names one.
     signals: BTreeMap<String, String>,
+    /// Resumable templates with their checkpoint directory under `out/`.
+    checkpoint_outputs: BTreeMap<String, String>,
     /// Session templates, by name, with their longest run in seconds.
     sessions: BTreeMap<String, u64>,
     receipt_keep_days: u64,
@@ -82,6 +84,7 @@ impl ScriptedAdmission {
                 issuer_refusal: None,
                 staging_limit_secs: 600,
                 signals: BTreeMap::new(),
+                checkpoint_outputs: BTreeMap::new(),
                 sessions: BTreeMap::new(),
                 receipt_keep_days: 30,
                 readiness_every_secs: NodeJobSettings::default().readiness_every_secs,
@@ -148,6 +151,24 @@ impl ScriptedAdmission {
             None => {
                 state.signals.remove(template);
             }
+        }
+    }
+
+    /// Sets a template's checkpoint directory when it is resumable. Its
+    /// scripted digest is unchanged, as for a checkpoint signal.
+    pub fn set_template_checkpoints(
+        &self,
+        template: &str,
+        resumable: bool,
+        checkpoint_output: Option<&str>,
+    ) {
+        let mut state = locked(&self.state);
+        if resumable && let Some(output) = checkpoint_output {
+            state
+                .checkpoint_outputs
+                .insert(template.to_owned(), output.to_owned());
+        } else {
+            state.checkpoint_outputs.remove(template);
         }
     }
 
@@ -268,6 +289,14 @@ impl NodeAdmission for ScriptedAdmission {
 
     fn template_signal(&self, template: &str) -> Option<String> {
         locked(&self.state).signals.get(template).cloned()
+    }
+
+    fn template_checkpoint_output(&self, pin: &WorkloadPin) -> Option<String> {
+        let state = locked(&self.state);
+        if state.templates.get(&pin.template)? != &pin.template_digest {
+            return None;
+        }
+        state.checkpoint_outputs.get(&pin.template).cloned()
     }
 
     fn template_session_max_secs(&self, template: &str) -> Option<u64> {

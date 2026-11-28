@@ -23,6 +23,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use oneiron::EntityId;
 
 use crate::gpu_execution_node::jobs::{NodeClock, NodeJobParts, NodeJobPaths, NodeJobs};
+pub use crate::gpu_execution_node::wire::CheckpointRecord;
 pub use devices::ScriptedDevices;
 pub use parts::{
     ScriptedAdmission, ScriptedAuthority, ScriptedFloor, ScriptedSigner, ScriptedStager,

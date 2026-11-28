@@ -45,6 +45,10 @@ use crate::gpu_execution_node::wire::{DeviceRelease, JobEnd, JobState, OutputsSt
 /// What the tick does with one launched key after reading it under the lock.
 enum KeyFollowUp {
     Nothing,
+    /// Look for a complete checkpoint while the unit runs (pass 34 row C1).
+    ScanCheckpoint {
+        pin: Box<WorkloadPin>,
+    },
     /// Hash the outputs, outside the lock.
     HashOutputs {
         pin: Box<WorkloadPin>,
@@ -187,7 +191,12 @@ impl NodeJobs {
         for key in launched {
             match self.settle_launched(&key) {
                 KeyFollowUp::Nothing => {}
-                KeyFollowUp::HashOutputs { pin } => self.hash_and_seal(&key, &pin),
+                KeyFollowUp::ScanCheckpoint { pin } => {
+                    self.follow_checkpoint(&key, pin, JobState::Running);
+                }
+                KeyFollowUp::HashOutputs { pin } => {
+                    self.follow_checkpoint(&key, pin, JobState::Ended);
+                }
             }
         }
         self.rearm_renewed_cutoffs();
@@ -248,7 +257,11 @@ impl NodeJobs {
             let sealed = journal
                 .table()
                 .iter()
-                .filter(|key| key.launch.is_some() && key.outputs != OutputsState::Pending)
+                .filter(|key| {
+                    key.launch.is_some()
+                        && key.outputs != OutputsState::Pending
+                        && !book.checkpoint_in_flight(&key.key)
+                })
                 .cloned()
                 .collect();
             (sealed, journal.epoch())
@@ -364,6 +377,13 @@ impl NodeJobs {
         else {
             return KeyFollowUp::Nothing;
         };
+        if known.state == JobState::Running {
+            return known.reserve.map_or(KeyFollowUp::Nothing, |reserve| {
+                KeyFollowUp::ScanCheckpoint {
+                    pin: Box::new(reserve.pin),
+                }
+            });
+        }
         if known.state != JobState::Ended {
             return KeyFollowUp::Nothing;
         }
@@ -699,13 +719,17 @@ impl NodeJobs {
     }
 
     /// Steps 3 and 4: hashes the outputs outside the lock, then records them
-    /// and keeps the signed terminal receipt.
-    fn hash_and_seal(&self, key: &str, pin: &WorkloadPin) {
+    /// and keeps the signed terminal receipt. On the tick, or on a checkpoint
+    /// worker after the end's scan; a closed service records nothing.
+    pub(super) fn hash_and_seal(&self, key: &str, pin: &WorkloadPin) {
         let payload_dir = super::JobKeyId::for_key(key).payload_dir(&self.paths().work_dir);
         let settings = self.parts().admission.job_settings();
         let outputs = hash_outputs(&payload_dir, pin, &settings);
         let now = self.now();
         let mut book = self.lock();
+        if self.service_closed() || book.gate != NodeGate::Open {
+            return;
+        }
         let Some(journal) = book.journal.as_mut() else {
             return;
         };

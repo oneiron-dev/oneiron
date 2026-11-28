@@ -65,6 +65,12 @@ pub struct NodeJobSettings {
     /// `jobs.outputs.hash_limit_secs`: the longest the hashing of one key's
     /// outputs takes in all. Default 60.
     pub output_hash_limit_secs: u64,
+    /// `jobs.checkpoints.scan_secs`: how often a running key of a resumable
+    /// template is scanned for a complete checkpoint. Default 60.
+    pub checkpoint_scan_secs: u64,
+    /// `jobs.checkpoints.hash_limit_secs`: the longest one checkpoint scan
+    /// takes. Default 900.
+    pub checkpoint_hash_limit_secs: u64,
     /// `jobs.outputs.returnable_max_bytes`: the most bytes an output may
     /// hold and still travel to the issuer. Default, and ceiling, one
     /// message piece ([`FETCH_MAX_BYTES`], 1,044,480): a wire bound.
@@ -101,6 +107,8 @@ impl Default for NodeJobSettings {
             submit_skew_secs: 120,
             staging_limit_secs: 600,
             output_hash_limit_secs: 60,
+            checkpoint_scan_secs: 60,
+            checkpoint_hash_limit_secs: 900,
             returnable_max_bytes: FETCH_MAX_BYTES,
             fast_exit_secs: 5,
             receipt_keep_days: 30,
@@ -211,6 +219,13 @@ pub trait NodeAdmission: Send + Sync {
     /// no-op for this template.
     fn template_signal(&self, template: &str) -> Option<String> {
         let _ = template;
+        None
+    }
+
+    /// The directory under `out/` a pin's resumable template writes its
+    /// checkpoints to. `None` unless the current template matches the
+    /// pin's digest and declares that directory.
+    fn template_checkpoint_output(&self, _pin: &WorkloadPin) -> Option<String> {
         None
     }
 
@@ -519,6 +534,16 @@ impl NodeAdmission for ExecutionNode {
 
     fn template_signal(&self, template: &str) -> Option<String> {
         ExecutionNode::template_signal(self, template)
+    }
+
+    fn template_checkpoint_output(&self, pin: &WorkloadPin) -> Option<String> {
+        let settings = ExecutionNode::settings(self).ok().flatten()?;
+        let template = settings.templates.get(&pin.template)?;
+        if !template.resumable {
+            return None;
+        }
+        let output = template.checkpoint_output.as_ref()?;
+        (template.digest().ok()? == pin.template_digest).then(|| output.clone())
     }
 
     fn template_session_max_secs(&self, template: &str) -> Option<u64> {

@@ -45,6 +45,7 @@ pub mod serving;
 pub mod staging;
 
 mod admission;
+mod checkpoints;
 mod end;
 mod launch;
 mod log_tail;
@@ -99,6 +100,13 @@ pub enum NodeGate {
     HistoryLost { why: String },
 }
 
+/// A key's checkpoint scan cadence and whether it has a worker now.
+#[derive(Default)]
+struct CheckpointScan {
+    last_started_boot_ns: Option<u64>,
+    in_flight: bool,
+}
+
 /// Everything under the admission lock.
 struct NodeBook {
     gate: NodeGate,
@@ -113,6 +121,8 @@ struct NodeBook {
     /// its first key. Empty after a start, so each live renewed run's
     /// cutoff is asked of the scope once again.
     armed_cutoffs: BTreeMap<String, u64>,
+    /// Checkpoint work by key. Scan times are not journaled.
+    checkpoint_scans: BTreeMap<String, CheckpointScan>,
 }
 
 struct NodeJobsShared {
@@ -174,8 +184,9 @@ impl NodeJobs {
     /// next step and leaves its key where it is, for the next opening to
     /// take up again (design 7.7: a key that has not launched is kept on the
     /// same boot), and the node's attached handle answers as a node with no
-    /// keys. The journal's writer lock frees once the last staging worker
-    /// has returned. It never waits for the admission lock.
+    /// keys. The journal's writer lock frees once the last staging or
+    /// checkpoint worker has returned. It never waits for the admission
+    /// lock.
     pub fn close(&self) {
         self.shared.closed.store(true, Ordering::SeqCst);
     }

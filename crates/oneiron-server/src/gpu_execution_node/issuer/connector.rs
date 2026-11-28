@@ -632,6 +632,9 @@ fn receipt_status(receipt: &JobReceipt) -> GpuResourceStatus {
         }
         JobState::Running | JobState::Ending => GpuResourceStatus::Running {
             used_secs: receipt.measured_secs.unwrap_or(0),
+            // Pass 34 row C1's restore part reports the receipt's checkpoint:
+            // a checkpoint turns on gpu_job's stop at its maximum and its
+            // resume offer, and a resumed chunk needs the restore.
             checkpoint: None,
         },
         JobState::Ended => match receipt.end {

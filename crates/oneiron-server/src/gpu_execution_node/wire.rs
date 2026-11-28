@@ -741,6 +741,12 @@ pub struct JobReceipt {
     /// as before.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub slice: Option<ReceiptSlice>,
+    /// The latest complete checkpoint of the key, as the node found it
+    /// (pass 34 row C1); `None` until the first scan records one. Absent
+    /// from the encoding when `None`, so such a receipt signs the same bytes
+    /// as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checkpoint: Option<CheckpointRecord>,
 }
 
 /// One chunk's paid bounds inside a session's run, on the node's boot clock
@@ -758,6 +764,19 @@ pub struct ReceiptSlice {
     pub renewal: u32,
     pub from_boot_ns: u64,
     pub to_boot_ns: u64,
+}
+
+/// The latest complete checkpoint of a key, as the node found it (pass 34
+/// row C1): the label LATEST named, the sha256 of its manifest, its bytes
+/// and files, and when the node recorded it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CheckpointRecord {
+    pub label: String,
+    /// Lower hex.
+    pub sha256: String,
+    pub bytes: u64,
+    pub files: u64,
+    pub saved_at_ms: u64,
 }
 
 /// A receipt with the node's machine-key signature under

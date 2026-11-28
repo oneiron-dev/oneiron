@@ -294,6 +294,15 @@ pub struct NodeTemplate {
     /// a template without it keeps its digest.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_max_secs: Option<u64>,
+    /// A pin of this template may be closed at a checkpoint and restored
+    /// from it (pass 34, 4.6, 4.7, row C1). Absent from the encoding and
+    /// digest when false, so a template without it keeps its digest.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub resumable: bool,
+    /// The directory under `out/` where the workload writes checkpoints.
+    /// Absent from the encoding and digest when unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checkpoint_output: Option<String>,
 }
 
 /// What a run of a template is: the wire's [`TemplateKind`], which a
@@ -310,6 +319,10 @@ pub const SESSION_MAX_SECS_CEILING: u64 = u64::MAX / 1_000_000;
 /// The signals a template may name as its checkpoint notice: each one a
 /// workload can catch and none that stops it.
 pub const CHECKPOINT_SIGNALS: &[&str] = &["HUP", "INT", "USR1", "USR2", "WINCH"];
+
+fn is_false(value: &bool) -> bool {
+    !*value
+}
 
 fn disk_reserve_gib_default() -> u64 {
     DISK_RESERVE_GIB_DEFAULT
@@ -642,6 +655,21 @@ impl NodeTemplate {
                 return Err(format!("returnable {name:?} must be a plain file name"));
             }
         }
+        if self.resumable && self.checkpoint_output.is_none() {
+            return Err("resumable requires checkpoint_output".to_owned());
+        }
+        if let Some(output) = &self.checkpoint_output {
+            if !valid_checkpoint_output(output) {
+                return Err(format!(
+                    "checkpoint_output {output:?} must be one normal path component of at most 64 bytes"
+                ));
+            }
+            if self.returnable.contains(output) {
+                return Err(format!(
+                    "checkpoint_output {output:?} must not be returnable"
+                ));
+            }
+        }
         if let Some(signal) = &self.checkpoint_signal
             && !CHECKPOINT_SIGNALS.contains(&signal.as_str())
         {
@@ -805,6 +833,12 @@ fn glob_segment(pattern: &[u8], text: &[u8]) -> bool {
         }
     }
     pattern[at_pattern..].iter().all(|byte| *byte == b'*')
+}
+
+/// Whether the checkpoint directory name is one normal path component of
+/// at most 64 bytes.
+pub(crate) fn valid_checkpoint_output(name: &str) -> bool {
+    (1..=64).contains(&name.len()) && !name.contains(['/', '\0']) && !matches!(name, "." | "..")
 }
 
 /// Whether `name` is 1 to `max` bytes of `a-z A-Z 0-9 . _ -`, and not `.`
