@@ -3082,12 +3082,17 @@ use oneiron::job_workload::WorkloadStarter;
 use oneiron::task_verb::TaskCreateSpec;
 use oneiron::work_order::ResultBinding;
 
+/// The text of the task a unit's result binding names.
+const RESULT_TASK_TEXT: &str = "Read the arm's verdict";
+/// The name of the artifact a unit's result binding names.
+const RESULT_ARTIFACT_NAME: &str = "verdict.txt";
+
 /// A task and an artifact the owner makes, as a unit's result binding.
 fn owner_result_binding(fixture: &Fixture) -> GpuJobResultBinding {
     let human = fixture.vault.memory(fixture.owner, EdgeActorClass::Human);
     let task = human
         .tasks_create(&TaskCreateSpec::new(
-            rmpv::Value::from("Read the arm's verdict"),
+            rmpv::Value::from(RESULT_TASK_TEXT),
             None,
             None,
             None,
@@ -3097,7 +3102,7 @@ fn owner_result_binding(fixture: &Fixture) -> GpuJobResultBinding {
         .expect("a landed task");
     let artifact = human
         .artifacts_create(&ArtifactCreateRequest {
-            name: "verdict.txt".to_owned(),
+            name: RESULT_ARTIFACT_NAME.to_owned(),
             media_type: "text/plain".to_owned(),
             content_base64: base64::Engine::encode(
                 &base64::engine::general_purpose::STANDARD,
@@ -3174,7 +3179,8 @@ fn a_unit_reserved_with_a_result_quotes_it_and_starts_only_with_it() {
 
 /// RSI-ARM-RESULT: an agent binds a unit's result only to rows its own read lane resolves. The
 /// reserve and the waiting door refuse any other binding `result_binding_unreadable` and write
-/// nothing: no claim, no order.
+/// nothing: no claim, no order. The refusal names no field of the rows the binding names: no
+/// artifact name and no task text.
 #[test]
 fn a_unit_result_on_a_row_the_agent_cannot_read_is_refused_and_writes_nothing() {
     let fixture = fixture();
@@ -3187,22 +3193,27 @@ fn a_unit_result_on_a_row_the_agent_cannot_read_is_refused_and_writes_nothing() 
         artifact: EntityId::now(),
         task: readable.task,
     });
-    refused_as(
-        fixture.reserve(Some(lead), &ask, NOW_MS),
-        MEMORY_CODE_FORBIDDEN,
-        "result_binding_unreadable",
-    );
+    let reserved = fixture
+        .reserve(Some(lead), &ask, NOW_MS)
+        .expect_err("the reserve refuses the binding");
     assert!(fixture.claims(&arm, 1).is_empty());
 
     ask.wait = WaitRule::Open;
     let (memory, owner) = fixture.caller(Some(lead));
-    let error = unit_order_as(&memory, owner, &ask, NOW_MS)
+    let ordered = unit_order_as(&memory, owner, &ask, NOW_MS)
         .expect_err("the waiting door refuses the binding");
-    assert_eq!(error.code, MEMORY_CODE_FORBIDDEN, "{error:?}");
-    assert!(
-        error.message.starts_with("result_binding_unreadable"),
-        "{error:?}"
-    );
+    for error in [&reserved, &ordered] {
+        assert_eq!(error.code, MEMORY_CODE_FORBIDDEN, "{error:?}");
+        assert!(
+            error.message.starts_with("result_binding_unreadable"),
+            "{error:?}"
+        );
+        let shown = format!("{error:?}");
+        assert!(
+            !shown.contains(RESULT_TASK_TEXT) && !shown.contains(RESULT_ARTIFACT_NAME),
+            "the refusal names a field of a bound row: {shown}"
+        );
+    }
     assert!(
         fixture
             .vault
