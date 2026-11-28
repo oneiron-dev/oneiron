@@ -53,6 +53,7 @@ fn prepared(instance: &str, until: Option<u64>) -> PreparedRecord {
         configured: BTreeMap::new(),
         required: Vec::new(),
         fence: Vec::new(),
+        credentials: Vec::new(),
         session_until_boot_ns: until,
     }
 }

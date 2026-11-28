@@ -431,11 +431,20 @@ fn serve(args: &[String], stream: &mut UnixStream) -> Result<Option<Vec<u8>>, St
             return Err(format!("workload_not_running: the unit is {state:?}"));
         }
     }
+    // A job's credentials are staged just before its unit starts; a start
+    // that fails and a stop remove the copy ([`super::credentials`]).
+    if verb == ControlVerb::Start {
+        super::credentials::stage_for_start(node_file, engine, &id)?;
+    }
     let args = verb
         .systemctl_args(&unit)
         .ok_or("verb_not_a_systemctl_request")?;
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
-    run_tool("systemctl", &args, SYSTEMCTL_TIMEOUT).map(|_| None)
+    let answer = run_tool("systemctl", &args, SYSTEMCTL_TIMEOUT).map(|_| None);
+    if verb == ControlVerb::Stop || (verb == ControlVerb::Start && answer.is_err()) {
+        super::credentials::withdraw(id.as_str());
+    }
+    answer
 }
 
 /// The uid of the process at the other end of `stream`, from the kernel

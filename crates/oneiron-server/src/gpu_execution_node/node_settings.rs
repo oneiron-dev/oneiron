@@ -183,6 +183,14 @@ pub struct ExecutionNodeSettings {
     /// file alone.
     #[serde(default = "owner_policy_default")]
     pub owner_policy: bool,
+    /// Whether a job of a template that names credentials launches only
+    /// while every template here requires the file wall (FIX
+    /// NODE-JOB-CREDENTIALS; ANSWER CREDENTIALS-SAME-UID-GUARD = A): every
+    /// job runs as the one job account, and only the Landlock wall keeps one
+    /// job out of another's files and memory. Default true; false on a node
+    /// that runs one job at a time.
+    #[serde(default = "credentials_need_walled_node_default")]
+    pub credentials_need_walled_node: bool,
     /// The most memory the node's jobs hold at once, in GiB. Absent: the machine's total.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub job_memory_gib: Option<u64>,
@@ -240,6 +248,13 @@ pub struct NodeTemplate {
     /// The outputs that may travel to the issuer.
     #[serde(default)]
     pub returnable: Vec<String>,
+    /// Root-owned files every job of this template gets as systemd
+    /// credentials, by name (FIX NODE-JOB-CREDENTIALS): the workload reads
+    /// `$CREDENTIALS_DIRECTORY/job_<name>`, and the engine never reads them.
+    /// Absent from the digest when empty, so a template without it keeps its
+    /// digest; a new file content keeps it too.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub credentials: BTreeMap<String, PathBuf>,
     /// The arguments a pin may pass, by name, each with the pattern its
     /// whole value matches. Absent: the arguments are not checked by name;
     /// declared, even empty, every argument must be one of them.
@@ -354,6 +369,9 @@ fn tasks_max_default() -> u64 {
     TASKS_MAX_DEFAULT
 }
 fn owner_policy_default() -> bool {
+    true
+}
+fn credentials_need_walled_node_default() -> bool {
     true
 }
 fn host_scope() -> Vec<ScopeClass> {
@@ -640,6 +658,19 @@ impl NodeTemplate {
         for name in &self.returnable {
             if !plain_name(name, 255) {
                 return Err(format!("returnable {name:?} must be a plain file name"));
+            }
+        }
+        for (name, path) in &self.credentials {
+            // The service manager skips a dot file of a credential directory.
+            if !plain_name(name, TEMPLATE_NAME_MAX) || name.starts_with('.') {
+                return Err(format!(
+                    "credentials name {name:?} must be 1 to {TEMPLATE_NAME_MAX} of a-z, A-Z, 0-9, '.', '_' and '-', not starting with '.'"
+                ));
+            }
+            if !path.is_absolute() || path.components().any(|part| part == Component::ParentDir) {
+                return Err(format!(
+                    "credentials.{name} must be an absolute path with no '..'"
+                ));
             }
         }
         if let Some(signal) = &self.checkpoint_signal

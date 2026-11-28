@@ -104,6 +104,7 @@ pub fn run(args: StepArgs) -> i32 {
         configured: BTreeMap::new(),
         required: Vec::new(),
         fence: Vec::new(),
+        credentials: Vec::new(),
         session_until_boot_ns: None,
     };
     let outcome = prepare(&context, &mut record);
@@ -119,6 +120,9 @@ pub fn run(args: StepArgs) -> i32 {
 }
 
 fn prepare(context: &StepContext, record: &mut PreparedRecord) -> Result<(), String> {
+    // The service manager loaded the job's credentials before this step:
+    // the staged copy goes first, whatever this step decides.
+    super::credentials::withdraw(&context.args.instance);
     if let Some(why) = &context.args.host_namespace_error {
         return Err(format!("host_mount_namespace_not_entered: {why}"));
     }
@@ -188,6 +192,8 @@ fn prepare(context: &StepContext, record: &mut PreparedRecord) -> Result<(), Str
     let unit = context.unit();
     effective_stop_grace_matches(&unit, settings.stop_grace_secs)?;
     let protected = installed_protected_paths(&unit_text, &settings.state_dir);
+    record.credentials =
+        super::credentials::check_for_launch(settings, template, &unit, &unit_text)?;
 
     let mut allowed = Vec::new();
     for device_id in leased_device_ids(&launch)? {
@@ -226,7 +232,7 @@ fn prepare(context: &StepContext, record: &mut PreparedRecord) -> Result<(), Str
     let payload = prepare_payload(context, &payload_path)?;
     publish_payload(instance, &payload)?;
     drop(payload);
-    let exec = exec_file(
+    let mut exec = exec_file(
         context,
         &launch,
         template,
@@ -235,6 +241,7 @@ fn prepare(context: &StepContext, record: &mut PreparedRecord) -> Result<(), Str
         &denied,
         protected,
     )?;
+    super::credentials::grant_exec(&mut exec.env, &mut exec.read, &unit, template);
     write_exchange(context, &exec)?;
     record.required.clone_from(&template.require);
     record.fence = exec

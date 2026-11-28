@@ -230,6 +230,9 @@ fn print_templates(settings: &ExecutionNodeSettings) {
         if let Some(digest) = settings.template_digest(name) {
             stdout_line!("template {name} digest {digest}");
         }
+        for line in super::credentials::install_lines(settings, name) {
+            stdout_line!("{line}");
+        }
     }
 }
 

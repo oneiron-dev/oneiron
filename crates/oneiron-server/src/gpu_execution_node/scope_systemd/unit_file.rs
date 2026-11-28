@@ -134,6 +134,9 @@ pub fn render_job_unit(inputs: &UnitInputs) -> String {
         "ExecStartPost=+{binary} job-prepare --after-exec {root_args} %i"
     );
     let _ = writeln!(text, "ExecStopPost=+{binary} job-ended {root_args} %i");
+    // The job's credentials, as root's control handler staged them before
+    // the start ([`super::credentials`]); the probe unit loads none.
+    let _ = writeln!(text, "{}", super::credentials::load_credential_line());
     for (name, value) in sandbox_properties(inputs, "%i") {
         let _ = writeln!(text, "{name}={value}");
     }
@@ -171,7 +174,8 @@ pub const CONTROL_HANDLER_RUNTIME_MAX_SECS: u64 = 30;
 /// job-control` as root, with the connection as its standard input and
 /// output. It reads the node file and may write beneath the state directory
 /// only for a session's renewal (pass 34, 2.5; row W1), which records the
-/// moved cutoff in the key's `prepared.json`.
+/// moved cutoff in the key's `prepared.json`. It holds root's directory of
+/// staged job credentials too ([`super::credentials`]).
 #[must_use]
 pub fn render_control_service(inputs: &UnitInputs) -> String {
     format!(
@@ -189,11 +193,12 @@ pub fn render_control_service(inputs: &UnitInputs) -> String {
          PrivateTmp=yes\n\
          ProtectSystem=strict\n\
          ProtectHome=read-only\n\
-         ReadWritePaths={}\n",
+         ReadWritePaths={}\n{}",
         quote_path(&inputs.binary),
         inputs.engine_account,
         quote_path(&inputs.node_file),
         quote_path(&inputs.state_dir),
+        super::credentials::control_service_lines(),
     )
 }
 
