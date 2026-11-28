@@ -40,6 +40,7 @@ mod claim_source_listing;
 mod claim_source_opened_mode;
 mod claim_source_registration;
 mod claim_source_typed_refs;
+mod summary_profile_source_registration;
 
 fn entity_id(byte: u8) -> EntityId {
     crate::test_util::entity(byte)

@@ -68,6 +68,8 @@ pub(super) fn put_or_stage(
     // its own-device lane to the put, and the batch threads it to the witness
     // check, which reads it for this row and these bytes only.
     let own_device = super::own_device::lane_in_txn(ctx, wtxn, &id, blob, data)?;
+    let held_before =
+        super::dependent_sources::held_learned_at_in_txn(ctx, wtxn, &id, header.entity_type)?;
     let put = ctx.vault.batch_in().put_replicated(
         &id,
         header.entity_type,
@@ -98,6 +100,10 @@ pub(super) fn put_or_stage(
             }
             None => put.apply_ingested(wtxn, None, own_device.as_ref())?,
         }
+        // A scope SUMMARY or a PSYCH_PROFILE names its sources in its body: an own-vault copy
+        // registers them as a CLAIM's non-locator sources (PR3 of
+        // [PORT-ONLY-DEPENDENCY-NOT-REPLICATED]).
+        super::dependent_sources::register_in_txn(ctx, wtxn, &id, header, blob, held_before)?;
     }
     // A row that lands here may be a source a CLAIM landed without: a cold source that lands
     // later, in this pass or another, is judged at its landing (PR2-TYPED-REF-ABSENCE = A).

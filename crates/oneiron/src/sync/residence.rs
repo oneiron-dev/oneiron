@@ -116,7 +116,8 @@ pub use home_handoff::{
 };
 pub(crate) use index_by_item::{
     cold_citation_sources_in_txn, cold_citers_of_source_in_txn, cold_source_dropped_in_txn,
-    delete_cold_citation_by_source_in_txn, put_cold_citation_in_txn,
+    delete_cold_citation_by_source_in_txn, delete_cold_citations_of_dependent_in_txn,
+    put_cold_citation_in_txn,
 };
 pub(crate) use index_by_item::{
     delete_index_by_item_for_listing_in_txn, delete_index_by_item_in_txn,

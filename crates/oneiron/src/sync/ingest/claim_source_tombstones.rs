@@ -1,10 +1,11 @@
-//! Which carrier tombstones an own-vault CLAIM put may take as a cited source's deletion. The
-//! window's tombstone pass runs after its entity pass, so the put reads the carrier itself, and it
-//! takes only a tombstone that pass replays (#10654 review r1): one that classifies as a replay of
-//! that id, with its residence proven for the window as `stage_tombstones_in_txn` requires. A
-//! wrong residence is refused there, and an unknown one in a world window is skipped unless the
-//! carrier holds the id's retained shell of this window. A tombstone the pass skips proves nothing,
-//! so a CLAIM put beside it never takes a durable stale mark from it.
+//! Which carrier tombstones an own-vault CLAIM, scope SUMMARY or PSYCH_PROFILE put may take as a
+//! cited source's deletion. The window's tombstone pass runs after its entity pass, so the put
+//! reads the carrier itself, and it takes only a tombstone that pass replays (#10654 review r1):
+//! one that classifies as a replay of that id, with its residence proven for the window as
+//! `stage_tombstones_in_txn` requires. A wrong residence is refused there, and an unknown one in a
+//! world window is skipped unless the carrier holds the id's retained shell of this window. A
+//! tombstone the pass skips proves nothing, so a put beside it never takes a durable stale mark
+//! from it.
 
 use super::{IngestCtx, TombstoneStep};
 use crate::EntityId;
@@ -16,12 +17,29 @@ use crate::sync::types::{
 use std::collections::BTreeSet;
 
 /// The sources the CLAIM in `body` cites whose carrier tombstone the tombstone pass replays.
-/// Empty with no carrier, an undecodable body or no locator citation: the put then judges each
-/// source on local evidence alone.
+/// Empty with no carrier, an undecodable body or no cited source: the put then judges each source
+/// on local evidence alone.
 pub(in crate::sync) fn proven_carrier_deletions_in_txn(
     ctx: &IngestCtx<'_>,
     txn: &heed::RoTxn<'_>,
     body: &[u8],
+) -> Result<BTreeSet<EntityId>> {
+    let Ok(claim) = crate::claim::decode_claim_body(body, true) else {
+        return Ok(BTreeSet::new());
+    };
+    let Ok(sources) = crate::dreamer_consolidation::replicated_sources::cited_sources(&claim)
+    else {
+        return Ok(BTreeSet::new());
+    };
+    proven_carrier_deletions_of_in_txn(ctx, txn, &sources)
+}
+
+/// The members of `sources` whose carrier tombstone the tombstone pass replays. Empty with no
+/// carrier: the put then judges each source on local evidence alone.
+pub(in crate::sync) fn proven_carrier_deletions_of_in_txn(
+    ctx: &IngestCtx<'_>,
+    txn: &heed::RoTxn<'_>,
+    sources: &BTreeSet<EntityId>,
 ) -> Result<BTreeSet<EntityId>> {
     let mut proven = BTreeSet::new();
     let (Some(doc), Some(window)) = (
@@ -30,17 +48,10 @@ pub(in crate::sync) fn proven_carrier_deletions_in_txn(
     ) else {
         return Ok(proven);
     };
-    let Ok(claim) = crate::claim::decode_claim_body(body, true) else {
-        return Ok(proven);
-    };
-    let Ok(sources) = crate::dreamer_consolidation::replicated_sources::cited_sources(&claim)
-    else {
-        return Ok(proven);
-    };
     let tombstones = doc.get_map("tombstones");
     let entities = doc.get_map("entities");
     let mut index = None;
-    for source in sources {
+    for source in sources.iter().copied() {
         let hex = source.to_hex();
         let Some(value) = map_get_bytes(&tombstones, &hex) else {
             continue;
