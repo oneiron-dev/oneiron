@@ -1481,6 +1481,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gpu_execution_node/issuer/register.rs` | src | s | 1 struct · 1 enum · 6 fn | NotTheIssuer, VaultMachineNotRegistered | Where the `vault_machine` backend may exist (pass 33, 8.1 and 8.7) |
 | `src/gpu_execution_node/issuer/returns.rs` | src | m | 1 struct · 3 fn | ResultReturns | The returned result (pass 33 row R4; EM-12 = A): what the issuer does with an ended key's outputs |
 | `src/gpu_execution_node/issuer/view.rs` | src | s | 1 fn | — | The four status fields of door 8 for a job the `vault_machine` backend runs (pass 33 row R4): built from the… |
+| `src/gpu_execution_node/job_cgroup.rs` | src | s | 1 struct · 3 fn · 4 const | JobCgroupSettings | The job units' place in the host's control groups (row NODE-JOB-SLICE-AND-WEIGHT; FLEET-TOOL-PARITY.md, kind… |
 | `src/gpu_execution_node/jobs/admission.rs` | src | L | 6 fn · 15 crate-vis | — | Admission on the node (design pass 33, 7.2 and 7.3): `Reserve`, `Release` and `Submit` on `oneiron/job/1`… |
 | `src/gpu_execution_node/jobs/breadcrumb.rs` | src | s | 1 const · 4 crate-vis | — | Breadcrumb lines (pass 34, `34-compute-general/DESIGN.md` section 7.3, row Q4): while a key runs, every tick… |
 | `src/gpu_execution_node/jobs/end.rs` | src | m | 1 fn · 7 crate-vis | — | The node's tick and the end of a launched key (design pass 33, 7.6 "The engine's end handling") |
@@ -1502,7 +1503,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/gpu_execution_node/jobs/staging/payload_dir.rs` | src | m | 2 struct · 2 enum · 3 fn · 1 crate-vis | WorkDirAccess, WorkDirFault, WorkDirUnsafe, WorkDirVerdict | The payload directory's ownership check (row R3c): the work directory's path walked from `/`, each directory… |
 | `src/gpu_execution_node/jobs/status.rs` | src | m | 4 fn · 1 const · 2 crate-vis | — | The status side's answers that admission does not give (design pass 33, 7.1 and 7.6 step 5; row R4): one… |
 | `src/gpu_execution_node/machine_policy.rs` | src | m | 15 fn | — | The two layers of a node's controls (pass 34, `34-compute-general/DESIGN.md` section 2.4; EM-17 = A, row… |
-| `src/gpu_execution_node/mod.rs` | src | s | 14 mod · 7 re-export | — | A vault machine that runs pinned workloads for the vault's issuer (pass 33, `33-exec-node/DESIGN.md`): the… |
+| `src/gpu_execution_node/mod.rs` | src | s | 15 mod · 7 re-export | — | A vault machine that runs pinned workloads for the vault's issuer (pass 33, `33-exec-node/DESIGN.md`): the… |
 | `src/gpu_execution_node/node.rs` | src | m | 3 struct · 2 enum · 29 fn · 3 const · 1 re-export | AuthorityEnded, ExecutionNode, GateAsk, NodeControls, NodeSnapshot | The execution node (pass 33, `33-exec-node/DESIGN.md` sections 5.2, 7.1, 7.3 and 7.9): this machine's own… |
 | `src/gpu_execution_node/node/keys.rs` | src | s | 1 trait | NodeKeys | The node's keys ([`NodeKeys`]): what the job service and the authority tick hand row R3a's journal once the… |
 | `src/gpu_execution_node/node/owner_policy.rs` | src | s | 2 fn · 4 crate-vis | — | The node's reads of the owner's machine policy rows (row P0; pass 34 DESIGN 2.4), and the admissions that… |
@@ -2539,6 +2540,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/eval_authoring_execute_unrecorded_end.rs` | test | s | — | — | `vault.evals.authoring.execute` when the writes that end the execution record fail (FIX… |
 | `tests/execution_node_device_query.rs` | test | L | — | — | FIX EXEC-NODE-PROBE-AFTER-HANDOVER (R6's first job, mel, 26 Nov 15:28): after the device hand-over only the… |
 | `tests/execution_node_gate.rs` | test | m | — | — | The execution node's opt-in and its gate (pass 33 row R1, `33-exec-node/DESIGN.md` section 11 T3, T4, T5… |
+| `tests/execution_node_job_cgroup.rs` | test | s | — | — | The job units' slice and CPU weights (row NODE-JOB-SLICE-AND-WEIGHT; FLEET-TOOL-PARITY.md, kind 11): the… |
 | `tests/execution_node_path_measure.rs` | test | s | — | — | The path measurement of the first job's step 2 (pass 33, `33-exec-node/DESIGN.md` section 12, "R6 in five… |
 | `tests/execution_node_session_cutoff.rs` | test | s | — | — | Pass 34 row W1 (`34-compute-general/DESIGN.md` 2.5), the systemd scope's half of a session's renewal: the… |
 | `tests/execution_node_templates.rs` | test | m | — | — | An execution node's template check (pass 33 row R1, `33-exec-node/DESIGN.md` section 11 T6, T7, T8; section… |

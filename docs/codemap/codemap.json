@@ -180937,6 +180937,20 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "JobCgroupSettings"
+     ],
+     "path": "src/gpu_execution_node/job_cgroup.rs",
+     "purpose": "The job units' place in the host's control groups (row NODE-JOB-SLICE-AND-WEIGHT; FLEET-TOOL-PARITY.md, kind…",
+     "surface": {
+      "const": 4,
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "L",
      "kind": "src",
      "notable": [],
@@ -181257,7 +181271,7 @@
      "path": "src/gpu_execution_node/mod.rs",
      "purpose": "A vault machine that runs pinned workloads for the vault's issuer (pass 33, `33-exec-node/DESIGN.md`): the…",
      "surface": {
-      "mod": 14,
+      "mod": 15,
       "re-export": 7
      }
     },
@@ -192288,6 +192302,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/execution_node_job_cgroup.rs",
+     "purpose": "The job units' slice and CPU weights (row NODE-JOB-SLICE-AND-WEIGHT; FLEET-TOOL-PARITY.md, kind 11): the…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/execution_node_path_measure.rs",
      "purpose": "The path measurement of the first job's step 2 (pass 33, `33-exec-node/DESIGN.md` section 12, \"R6 in five…",
      "surface": {}
@@ -195508,7 +195530,7 @@
     },
     "gpu_execution_node": {
      "entry": "crates/oneiron-server/src/gpu_execution_node/mod.rs",
-     "files": 76,
+     "files": 77,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -196065,8 +196087,8 @@
    },
    "over_bar": 73,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 2238,
-   "test_files": 639
+   "source_files": 2239,
+   "test_files": 640
   },
   "oneiron-setting-contract": {
    "files": [
