@@ -113,6 +113,17 @@ pub(crate) const RETAINED_SUBJECT_RULES: &[(&str, RetainedSubjectRule)] = &[
     ("EXPERIMENT_ARM_UNIT", NoRecord),
     ("EXPORT_RECEIPT", NoRecord),
     ("GATE_DECISION_LEDGER", NoRecord),
+    // A generation, then the answering MACHINE and the allocation id, which names a GPU
+    // line's lane project.
+    (
+        "GPU_ALLOCATION_NODE",
+        ParsedKey(allocation_node_key_records),
+    ),
+    // A job's side id. An actor erase rewrites the row and drops none
+    // (`gpu_job::erase_job_starter_in_txn`).
+    ("GPU_JOB", NoRecord),
+    // The FEDERATION_GRANT, which the value repeats; the agent's erase drops the row.
+    ("GPU_JOB_ALLOWANCE", KeyAndValue(allowance_records)),
     // The lane project; a period's lane project and big-endian u32 index. A period row whose
     // cohort seed is still sealed is withheld apart from this rule
     // (`archive_retained_side_rows::retained_row_withheld`).
@@ -128,6 +139,12 @@ pub(crate) const RETAINED_SUBJECT_RULES: &[(&str, RetainedSubjectRule)] = &[
         KeyAndValue(house_link_receipt_records),
     ),
     ("INQUIRY_RECEIPT", NoRecord),
+    // A chunk's idempotency key (the job's side id and the chunk index); a pin digest. The
+    // MACHINE a dispatch or an observation names drops neither, and an actor erase rewrites a
+    // workload and drops none (`job_workload::erase_workload_actor_in_txn`).
+    ("JOB_DISPATCH", NoRecord),
+    ("JOB_OBSERVATION", NoRecord),
+    ("JOB_WORKLOAD", NoRecord),
     // A digest key; the asker's erase drops the row.
     ("LANE_ECONOMY_INTENT", Value(lane_intent_records)),
     ("LEARNING_SETTING", ParsedKey(learning_setting_key_records)),
@@ -210,6 +227,9 @@ pub(crate) const RETAINED_SUBJECT_RULES: &[(&str, RetainedSubjectRule)] = &[
     // The owner, then the change id.
     ("WEAVE_DIGEST_SETTING_CHANGE", ID_AND_SIDE_ID),
     ("WEB_CONNECTOR_SETTING", NoRecord),
+    // An order's side id. An actor erase rewrites the order and drops none
+    // (`work_order::erase_order_actor_in_txn`).
+    ("WORK_ORDER", NoRecord),
 ];
 
 impl RetainedSubjectRule {
@@ -329,6 +349,18 @@ fn house_link_receipt_records(key: &[u8], value: &[u8]) -> Option<Vec<EntityId>>
 /// The records a stored standing escalation policy names in its governed scopes and answerers.
 fn standing_policy_records(value: &[u8]) -> Option<Vec<EntityId>> {
     crate::edit_distance::escalation::standing_policy_records(value)
+}
+
+/// The MACHINE a stored allocation answer's key names, and the lane project of its GPU line's
+/// allocation id.
+fn allocation_node_key_records(key: &[u8]) -> Option<Vec<EntityId>> {
+    crate::gpu_line::allocation_node_key_records(key)
+}
+
+/// The Grant a stored GPU job allowance is keyed by, its value the same, and the agent whose
+/// erase drops the row.
+fn allowance_records(key: &[u8], value: &[u8]) -> Option<Vec<EntityId>> {
+    crate::gpu_job::allowance_row_records(key, value)
 }
 
 /// The asker of a stored lane-economy intent, whose erase drops the row.

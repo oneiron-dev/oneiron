@@ -40,6 +40,7 @@ mod wire;
 mod write_off;
 
 pub use allowance::GpuJobAllowance;
+pub(crate) use allowance::allowance_row_records;
 pub(crate) use allowance::erase_allowance_actor_in_txn;
 pub use caller::{GpuJobActor, GpuJobAgent, GpuJobVerb};
 pub use claim_gate::{LineStartRefused, UNIT_JOB_TYPE, UnitJobStart};
@@ -72,6 +73,20 @@ pub(crate) fn notice_event_prefix(job: &EntityId, chunk: usize) -> String {
 }
 
 const GPU_JOBS: SideTable<EntityId, GpuJob, Named> = SideTable::new(&side_table::GPU_JOB);
+
+/// The JSON a stored job row holds from its starter: each chunk's quote inputs and the resume
+/// quote's, for the whole-vault export's credential rule. `None` when the bytes do not read as
+/// one row.
+pub(crate) fn stored_job_inputs(value: &[u8]) -> Option<Vec<serde_json::Value>> {
+    let job = GPU_JOBS.decode_value(value).ok()?;
+    Some(
+        job.chunks
+            .into_iter()
+            .map(|chunk| chunk.quote.inputs)
+            .chain(job.resume_quote.map(|quote| quote.inputs))
+            .collect(),
+    )
+}
 
 /// The unit a job's maximum and run time are counted in.
 fn seconds() -> LeaseUnit {

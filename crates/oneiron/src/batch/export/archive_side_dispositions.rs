@@ -128,6 +128,13 @@ pub(crate) const SIDE_TABLE_DISPOSITIONS: &[(&str, ArchiveSideDisposition)] = &[
         "GENUI_VOICE_GRANT_OFFER",
         ArchiveSideDisposition::Omitted(ImportOmissionReason::LocalAuthorityNotRestored),
     ),
+    // The lane economy's sibling tables (FIX LANE-ECONOMY-SIBLING-TABLES-ARCHIVE-CLASS), here
+    // and with the JOB_ and WORK_ORDER entries below: no landing group either, so no restore
+    // reopens a job, a dispatch, an observation, an order or an approval, puts back a machine's
+    // answer, or widens what an agent may start.
+    ("GPU_ALLOCATION_NODE", ArchiveSideDisposition::Retained),
+    ("GPU_JOB", ArchiveSideDisposition::Retained),
+    ("GPU_JOB_ALLOWANCE", ArchiveSideDisposition::Retained),
     ("GPU_LINE", ArchiveSideDisposition::Retained),
     ("GPU_LINE_PERIOD", ArchiveSideDisposition::Retained),
     (
@@ -140,6 +147,9 @@ pub(crate) const SIDE_TABLE_DISPOSITIONS: &[(&str, ArchiveSideDisposition)] = &[
     ("HOOKS_REGEN_RECEIPT", ArchiveSideDisposition::Retained),
     ("HOUSE_LINK_RECEIPT", ArchiveSideDisposition::Retained),
     ("INQUIRY_RECEIPT", ArchiveSideDisposition::Retained),
+    ("JOB_DISPATCH", ArchiveSideDisposition::Retained),
+    ("JOB_OBSERVATION", ArchiveSideDisposition::Retained),
+    ("JOB_WORKLOAD", ArchiveSideDisposition::Retained),
     ("LANE_ECONOMY_INTENT", ArchiveSideDisposition::Retained),
     ("LEARNING_SETTING", ArchiveSideDisposition::Retained),
     ("LEGAL_HOLD_EVENT", ArchiveSideDisposition::Retained),
@@ -307,6 +317,7 @@ pub(crate) const SIDE_TABLE_DISPOSITIONS: &[(&str, ArchiveSideDisposition)] = &[
         ArchiveSideDisposition::Retained,
     ),
     ("WEB_CONNECTOR_SETTING", ArchiveSideDisposition::Retained),
+    ("WORK_ORDER", ArchiveSideDisposition::Retained),
 ];
 
 /// The canonical tables other archive sections carry, with the section that carries each.

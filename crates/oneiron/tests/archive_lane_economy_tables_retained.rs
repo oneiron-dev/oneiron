@@ -161,14 +161,15 @@ impl Fixture {
         self.project_under(self.vault.root_project().expect("root project"), 2)
     }
 
-    /// The owner sets `lane`'s line with `rules` at `now_ms`.
+    /// The owner sets `lane`'s line with `rules` at `now_ms`, under an intent key of that lane:
+    /// an intent key names one ask of its asker and verb, whatever the project.
     fn set_line(&self, lane: EntityId, rules: Vec<RuleRef>, now_ms: u64) {
         self.vault
             .memory(self.owner, EdgeActorClass::Human)
             .set_gpu_line(
                 Some(&self.owner_proof),
                 &GpuLineSetRequest {
-                    intent_key: "set".to_owned(),
+                    intent_key: format!("set-{}", lane.to_hex()),
                     project: lane,
                     policy: policy(rules),
                 },
@@ -370,10 +371,10 @@ fn the_export_carries_each_lane_economy_table_and_holds_a_sealed_period_home() {
     );
 }
 
-/// A fresh destination whose engine-seed seconds differ from the source's, as
-/// `archive_import_retained_side_rows.rs` opens it.
+/// A fresh destination on the host's clock, later than any reading of the source's manual store
+/// clock, so the engine seeds' times differ without a wait, as `campaign_house_voice_guide.rs`
+/// opens its restored vault.
 fn open_later_vault() -> (tempfile::TempDir, Vault) {
-    std::thread::sleep(std::time::Duration::from_millis(1100));
     let dir = tempfile::tempdir().expect("temp dir for the destination vault");
     let vault =
         Vault::open(dir.path(), VaultConfig::default()).expect("open the destination vault");

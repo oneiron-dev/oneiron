@@ -454,6 +454,20 @@ pub fn record_node_answer_in_txn(
     NODES.put(&vault.store, txn, &key, &row)
 }
 
+/// The records a stored node answer's key names, for the whole-vault export's subject rule: its
+/// MACHINE, and the lane project of a GPU line's allocation id ([`gpu_line_allocation_id`]).
+/// `None` when the bytes do not read as a key of the table.
+pub(crate) fn allocation_node_key_records(key: &[u8]) -> Option<Vec<EntityId>> {
+    let (_, machine, allocation) = <(u64, EntityId, String) as SideKey>::decode_key(key)?;
+    let lane = allocation
+        .len()
+        .checked_sub(32)
+        .and_then(|at| allocation.get(at..))
+        .and_then(|hex| EntityId::from_hex(hex).ok())
+        .filter(|lane| gpu_line_allocation_id(lane) == allocation);
+    Some(std::iter::once(machine).chain(lane).collect())
+}
+
 /// The acquisition of this process's writer lease on the vault: one per start.
 fn serving_start(vault: &Vault) -> Option<[u8; 16]> {
     vault

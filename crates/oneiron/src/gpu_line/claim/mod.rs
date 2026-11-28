@@ -32,6 +32,7 @@ use crate::{EntityId, Vault};
 mod allocation;
 pub(crate) mod tables;
 
+pub(crate) use allocation::allocation_node_key_records;
 pub use allocation::{
     AllocationStanding, ClaimAdmissionRefused, ClaimHold, ClaimHoldRefused, UnattributedJob,
     UnattributedRecord, allocation_standing_in_txn, claim_hold_in_txn, open_claim_in_txn,
