@@ -267,8 +267,16 @@ fn set_device(
     };
     write_record(dir, &path, &record).map_err(|why| format!("{device}: record: {why}"))?;
     if let Err(why) = tool.set_limit(device, set_mw) {
-        // The card kept its limit: nothing of this run is left to put back.
-        let _ = std::fs::remove_file(&path);
+        // A failed call may still have changed the card (the deadline killed
+        // the tool after the driver took the limit). The record goes only
+        // while the card reads at the limit it had; otherwise it stays for
+        // the put-back, which removes it once the card takes its limit back.
+        if tool
+            .limits(device)
+            .is_ok_and(|now| now.current_mw == limits.current_mw)
+        {
+            let _ = std::fs::remove_file(&path);
+        }
         return Err(format!("{device}: {why}"));
     }
     Ok(())
@@ -387,12 +395,13 @@ mod tests {
     /// The limit the host's owner left on the card.
     const OWNER_MW: u64 = 300_000;
 
-    /// Cards as a driver holds them: each limit, and the cards that refuse a
-    /// new one.
+    /// Cards as a driver holds them: each limit, the cards that refuse a new
+    /// one, and the cards whose next call takes the limit and still fails.
     #[derive(Default)]
     struct ScriptedCards {
         limits: Mutex<BTreeMap<String, u64>>,
         refusing: Mutex<Vec<String>>,
+        taking_then_failing: Mutex<Vec<String>>,
     }
 
     impl ScriptedCards {
@@ -402,6 +411,22 @@ mod tests {
 
         fn refuse(&self, device: &str) {
             self.refusing
+                .lock()
+                .expect("the scripted cards")
+                .push(device.to_owned());
+        }
+
+        fn accept(&self, device: &str) {
+            self.refusing
+                .lock()
+                .expect("the scripted cards")
+                .retain(|id| id != device);
+        }
+
+        /// The card's next call takes the limit, then fails as a call the
+        /// tool's deadline killed.
+        fn take_then_fail(&self, device: &str) {
+            self.taking_then_failing
                 .lock()
                 .expect("the scripted cards")
                 .push(device.to_owned());
@@ -424,6 +449,16 @@ mod tests {
         }
 
         fn set_limit(&self, device: &str, mw: u64) -> Result<(), String> {
+            let mut taking = self.taking_then_failing.lock().expect("the scripted cards");
+            if let Some(at) = taking.iter().position(|id| id == device) {
+                taking.remove(at);
+                self.limits
+                    .lock()
+                    .expect("the scripted cards")
+                    .insert(device.to_owned(), mw);
+                return Err("nvidia-smi timed out after 15 s".to_owned());
+            }
+            drop(taking);
             if self
                 .refusing
                 .lock()
@@ -578,6 +613,36 @@ mod tests {
         .expect_err("refused");
         assert!(why.starts_with("power_not_restored: "), "{why}");
         assert_eq!(records(dir.path()).len(), 1);
+    }
+
+    /// A card that took the new limit although the call failed (the tool's
+    /// deadline killed it after the driver took the limit) keeps its record:
+    /// the prepare step's put-back restores the owner's limit and only then
+    /// removes it. When the card refuses that too, the record stays for the
+    /// end step and the card's next start.
+    #[test]
+    fn a_limit_the_card_took_before_its_call_failed_is_put_back_from_its_record() {
+        let dir = tempfile::tempdir().expect("ok");
+        let cards = cards(&[(CARD, OWNER_MW)]);
+        cards.take_then_fail(CARD);
+        let why =
+            apply(&cards, dir.path(), INSTANCE, &devices(&[CARD]), Some(450)).expect_err("failed");
+        assert!(why.starts_with("power_not_applied: "), "{why}");
+        assert_eq!(cards.limit(CARD), OWNER_MW);
+        assert!(records(dir.path()).is_empty());
+
+        cards.take_then_fail(CARD);
+        cards.refuse(CARD);
+        let why =
+            apply(&cards, dir.path(), INSTANCE, &devices(&[CARD]), Some(450)).expect_err("failed");
+        assert!(why.starts_with("power_not_applied: "), "{why}");
+        assert_eq!(cards.limit(CARD), 450_000);
+        let record = read_record(&dir.path().join(format!("{CARD}.json"))).expect("the record");
+        assert_eq!(record.before_mw, OWNER_MW);
+        cards.accept(CARD);
+        restore(&cards, dir.path(), INSTANCE).expect("ok");
+        assert_eq!(cards.limit(CARD), OWNER_MW);
+        assert!(records(dir.path()).is_empty());
     }
 
     #[test]

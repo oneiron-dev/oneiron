@@ -296,11 +296,11 @@ impl NodeJobs {
     /// directory of each key the issuer acknowledged at least
     /// `jobs.receipts.keep_days` ago, then journals `cleaned`. A removal
     /// that fails is tried again at the next tick. An unacknowledged key is
-    /// never cleaned here.
+    /// never cleaned here, and nothing is cleaned while a key holds the quiet
+    /// lease. One hold of the admission lock runs from that check to the
+    /// last removal and its record, so a quiet reserve cannot take the lease
+    /// in between.
     pub(super) fn clean_acknowledged_payloads(&self) {
-        if self.quiet_lease_held() {
-            return;
-        }
         let keep_ms = self
             .parts()
             .admission
@@ -308,15 +308,23 @@ impl NodeJobs {
             .receipt_keep_days
             .saturating_mul(MILLIS_PER_DAY);
         let now = self.now();
-        let due: Vec<NodeKey> = self
-            .keys()
-            .into_iter()
+        let mut book = self.lock();
+        let Some(journal) = book.journal.as_mut() else {
+            return;
+        };
+        if super::quiet_lease::holder(journal.table()).is_some() {
+            return;
+        }
+        let due: Vec<NodeKey> = journal
+            .table()
+            .iter()
             .filter(|known| !known.cleaned)
             .filter(|known| {
                 known
                     .acknowledged_at_ms
                     .is_some_and(|at| now.wall_ms >= at.saturating_add(keep_ms))
             })
+            .cloned()
             .collect();
         for known in due {
             let payload_dir = known.id.payload_dir(&self.paths().work_dir);
@@ -328,10 +336,6 @@ impl NodeJobs {
                     continue;
                 }
             }
-            let mut book = self.lock();
-            let Some(journal) = book.journal.as_mut() else {
-                return;
-            };
             if let Err(error) = journal.record(
                 &known.key,
                 known.issuer,

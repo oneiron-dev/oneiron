@@ -15,6 +15,12 @@
 //! - A marker whose key is gone is cleared at the next start: one an engine
 //!   left between the marker and the reserve's record, and one whose key
 //!   ended while the engine was down.
+//! - The lease follows the quiet key's reserve record: a template that stops
+//!   being quiet while its key runs does not end it.
+//! - A reserve the node refuses answers `Busy` and journals nothing while the
+//!   host is quiet, as an admitted one does.
+//! - A key whose release check left its device out keeps a quiet reserve
+//!   waiting, also when its workload never started.
 //!
 //! Against R3a's scripted unit manager, devices and clock. No privilege, no
 //! network, no GPU. The card's power limit (`gpu_power_watts`) is the job
@@ -32,11 +38,11 @@ use oneiron::job_workload::{DeviceClaim, DeviceKind, Sharing};
 use oneiron_server::gpu_execution_node::jobs::quiet_lease::QuietLease;
 use oneiron_server::gpu_execution_node::jobs::{JobKeyId, NodeJobs, NodeKey};
 use oneiron_server::gpu_execution_node::wire::{
-    HoldRef, JobAnswer, JobReceipt, JobReserve, JobState, JobStatusAnswer, JobSubmit, NetworkMode,
-    OutputDecl, OutputsState, ResourceRequest, ScopeKind, SignedJobSubmit, SlotSelector, Starter,
-    WorkloadPin,
+    DeviceRelease, HoldRef, JobAnswer, JobEnd, JobReceipt, JobReserve, JobState, JobStatusAnswer,
+    JobSubmit, NetworkMode, OutputDecl, OutputsState, ResourceRequest, ScopeKind, SignedJobSubmit,
+    SlotSelector, Starter, WorkloadPin,
 };
-use oneiron_server::test_doors::node_jobs::{ScriptedNode, ScriptedSigner};
+use oneiron_server::test_doors::node_jobs::{ScriptedNode, ScriptedSigner, ScriptedStart};
 
 /// The node's everyday template.
 const BATCH: &str = "open-models";
@@ -111,11 +117,22 @@ fn pin(template: &str) -> WorkloadPin {
     }
 }
 
+/// `template`'s pin with no device claim.
+fn pin_without_devices(template: &str) -> WorkloadPin {
+    let mut pin = pin(template);
+    pin.request.devices.clear();
+    pin
+}
+
 impl Fixture {
     fn reserve(&self, key: &str, template: &str) -> JobReserve {
+        self.reserve_pin(key, pin(template))
+    }
+
+    fn reserve_pin(&self, key: &str, pin: WorkloadPin) -> JobReserve {
         JobReserve {
             key: key.to_owned(),
-            pin: pin(template),
+            pin,
             slot: SlotSelector::default(),
             issuer: self.issuer,
             starter: Starter::Owner,
@@ -428,4 +445,120 @@ fn a_marker_whose_key_is_gone_is_cleared_at_the_next_start() {
         receipt(jobs.reserve(fixture.issuer, fixture.reserve("batch-1/chunk-0", BATCH))).state,
         JobState::Held
     );
+}
+
+/// The lease follows the quiet key's reserve record: once the run holds it,
+/// a node file whose template is no longer quiet does not end it. The marker
+/// stays and other work waits until the run's outputs are hashed.
+#[test]
+fn a_template_edited_during_the_run_does_not_end_its_lease() {
+    let fixture = fixture();
+    let jobs = fixture.node.open();
+    let timing = "timing-1/chunk-0";
+    let batch = "batch-1/chunk-0";
+    fixture.run(&jobs, timing, TIMING);
+    assert!(entry(&jobs, timing).expect("the quiet key").quiet);
+
+    // The owner edits the node file: `timing` is no longer quiet.
+    fixture.node.admission.set_quiet_lease(QuietLease {
+        tag: Some(fixture.tag.clone()),
+        templates: BTreeSet::new(),
+    });
+    jobs.tick();
+    fixture.assert_own_tag(timing, TIMING);
+    assert!(is_busy(
+        &jobs.reserve(fixture.issuer, fixture.reserve(batch, BATCH))
+    ));
+    assert!(entry(&jobs, batch).is_none());
+
+    // The run's hashing ends the lease, as before the edit.
+    fixture.end_to_hashed(&jobs, timing);
+    jobs.tick();
+    assert_eq!(fixture.tag_text(), None);
+    assert_eq!(
+        receipt(jobs.reserve(fixture.issuer, fixture.reserve(batch, BATCH))).state,
+        JobState::Held
+    );
+}
+
+/// While the host is quiet, a reserve the node refuses (here one with no
+/// time to run) answers `Busy` and journals nothing, as an admitted one
+/// does: during a quiet run's lease, and while another holder's marker is
+/// on the host. Once the host is free, the refusal is journaled.
+#[test]
+fn a_reserve_the_node_refuses_writes_nothing_while_the_host_is_quiet() {
+    let fixture = fixture();
+    let jobs = fixture.node.open();
+    let timing = "timing-1/chunk-0";
+    let refused = "batch-0/chunk-0";
+    let mut no_time = fixture.reserve(refused, BATCH);
+    no_time.pin.request.maximum_secs = 0;
+
+    fixture.run(&jobs, timing, TIMING);
+    assert!(is_busy(&jobs.reserve(fixture.issuer, no_time.clone())));
+    assert!(entry(&jobs, refused).is_none());
+
+    fixture.end_to_hashed(&jobs, timing);
+    jobs.tick();
+    std::fs::write(&fixture.tag, BOOKER_TAG).expect("the booker's marker");
+    assert!(is_busy(&jobs.reserve(fixture.issuer, no_time.clone())));
+    assert!(entry(&jobs, refused).is_none());
+
+    std::fs::remove_file(&fixture.tag).expect("the booker removes its marker");
+    let answer = receipt(jobs.reserve(fixture.issuer, no_time));
+    assert!(
+        matches!(&answer.end, Some(JobEnd::Refused { reason }) if reason == "maximum_zero"),
+        "{:?}",
+        answer.end
+    );
+}
+
+/// A key whose release check left its device out keeps a quiet reserve
+/// waiting, also when its prepare step refused and its workload never
+/// started: a process may still hold the card. A quiet run with no device
+/// claim of its own waits too. A clean probe frees the host.
+#[test]
+fn a_key_whose_release_left_its_device_out_keeps_the_host_from_a_quiet_run() {
+    let fixture = fixture();
+    let jobs = fixture.node.open();
+    let refused = "batch-1/chunk-0";
+    fixture
+        .node
+        .units
+        .set_next_start(ScriptedStart::RefuseInPrepare(
+            "scope_unavailable".to_owned(),
+        ));
+    fixture.node.devices.set_probe_fails(true);
+    assert_eq!(
+        receipt(jobs.reserve(fixture.issuer, fixture.reserve(refused, BATCH))).state,
+        JobState::Held
+    );
+    assert_eq!(
+        receipt(jobs.submit(fixture.issuer, fixture.submit(refused, BATCH))).state,
+        JobState::Accepted
+    );
+    wait_for(&jobs, refused, |entry| entry.state == JobState::Launching);
+    jobs.tick();
+    let held_out = wait_for(&jobs, refused, |entry| {
+        entry.is_ended() && matches!(entry.release, DeviceRelease::Unconfirmed { .. })
+    });
+    assert!(!held_out.started());
+
+    let timing = "timing-1/chunk-0";
+    let quiet = fixture.reserve_pin(timing, pin_without_devices(TIMING));
+    assert!(is_busy(&jobs.reserve(fixture.issuer, quiet.clone())));
+    assert!(entry(&jobs, timing).is_none());
+    assert_eq!(fixture.tag_text(), None);
+
+    // A clean probe releases the device: the host is free.
+    fixture.node.devices.set_probe_fails(false);
+    jobs.tick();
+    wait_for(&jobs, refused, |entry| {
+        matches!(entry.release, DeviceRelease::Confirmed { .. })
+    });
+    assert_eq!(
+        receipt(jobs.reserve(fixture.issuer, quiet)).state,
+        JobState::Held
+    );
+    fixture.assert_own_tag(timing, TIMING);
 }

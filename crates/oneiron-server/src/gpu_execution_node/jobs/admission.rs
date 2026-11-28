@@ -354,6 +354,7 @@ impl NodeJobs {
                     Ok(pin_digest) => JournalEvent::Reserved {
                         reserve,
                         pin_digest,
+                        quiet: false,
                     },
                     Err(_) => JournalEvent::Ended {
                         end: JobEnd::Refused {

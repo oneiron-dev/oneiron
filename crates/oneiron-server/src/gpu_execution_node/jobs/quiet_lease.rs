@@ -3,13 +3,15 @@
 //! timings measure the job and nothing else.
 //!
 //! - A quiet key is reserved only when every other key of the node is idle:
-//!   ended, and either never started or with its outputs hashed. A key whose
-//!   release check left its device out is not idle, as a process may still
-//!   hold the card.
+//!   ended, its release check not leaving its device out (a process may
+//!   still hold the card, whether or not the workload started), and either
+//!   never started or with its outputs hashed.
 //! - From its reserve until its own outputs are hashed (or its release check
 //!   leaves the device out), the key holds the lease: every other reserve
-//!   answers `Busy` and writes nothing, and the tick cleans no payload. No
-//!   other key can launch, so no other output is hashed during the lease.
+//!   answers `Busy` and writes nothing, not even a refusal, and the tick
+//!   cleans no payload. No other key can launch, so no other output is
+//!   hashed during the lease. The reserve's record says the key took the
+//!   lease, so a template edited afterwards does not end it.
 //! - With `execution_node.quiet_tag` set, the lease is also the host's quiet
 //!   marker, the fleet's existing convention (Orchestrator NOTE
 //!   KEL-WINDOW-ON-BUILD-LINE, 14:21 Sat 28 Nov): the file
@@ -21,7 +23,8 @@
 //!   taken over, its time refreshed at each tick while the lease is held (a
 //!   marker counts for 3 hours from its last touch), and removed by a rename
 //!   that checks the bytes it moved, so another holder's file is never
-//!   deleted. The node's line is
+//!   deleted. A stale marker of this node is removed that way and then
+//!   written again where no file is. The node's line is
 //!   `oneiron execution-node <machine> template <template> key <key id> (<host>)`.
 //! - A marker another holder wrote (a booker's, or a lane's `touch` before a
 //!   measurement) keeps every reserve of this node `Busy`: the host is quiet
@@ -30,7 +33,9 @@
 //!   tick after a start: a marker of this node whose key no longer holds the
 //!   lease (the key ended while the engine was down, or the engine stopped
 //!   between the marker and the reserve's record) is removed, and a lease
-//!   whose marker is gone (a sweep removed it) writes it again.
+//!   whose marker is gone (a sweep removed it) writes it again. It does so
+//!   under the admission lock, as the reserve does, so a reserve's new
+//!   marker is never read as one with no holder.
 
 use std::collections::BTreeSet;
 use std::io::Write as _;
@@ -76,27 +81,24 @@ impl QuietLease {
         let file = node.settings().ok().flatten();
         file.as_ref().map_or_else(Self::default, Self::of)
     }
-
-    fn is_quiet(&self, key: &NodeKey) -> bool {
-        key.reserve
-            .as_ref()
-            .is_some_and(|reserve| self.templates.contains(&reserve.pin.template))
-    }
-
-    /// The key that holds the lease now, if one does.
-    #[must_use]
-    pub fn holder<'table>(&self, table: &'table KeyTable) -> Option<&'table NodeKey> {
-        table
-            .iter()
-            .find(|key| self.is_quiet(key) && holds_lease(key))
-    }
 }
 
-/// Whether `key` is done with the host: ended, and either its workload never
-/// started or its outputs are hashed (or failed to hash).
+/// The key that holds the lease now, if one does: a key that took it at its
+/// reserve (its `Reserved` record), whatever its template says now.
+#[must_use]
+pub(super) fn holder(table: &KeyTable) -> Option<&NodeKey> {
+    table.iter().find(|key| key.quiet && holds_lease(key))
+}
+
+/// Whether `key` is done with the host: ended, its release check not leaving
+/// the device out, and either its workload never started or its outputs are
+/// hashed (or failed to hash). A key whose prepare step refused after the
+/// launch commit never started, yet its card may still be held.
 #[must_use]
 pub fn idle(key: &NodeKey) -> bool {
-    key.is_ended() && (!key.started() || key.outputs != OutputsState::Pending)
+    key.is_ended()
+        && !matches!(key.release, DeviceRelease::Unconfirmed { .. })
+        && (!key.started() || key.outputs != OutputsState::Pending)
 }
 
 /// Whether a quiet `key` still holds the lease: it is not idle, unless its
@@ -161,12 +163,13 @@ fn take_tag(path: &Path, line: &str) -> std::io::Result<()> {
     file.sync_all()
 }
 
-/// Replaces this node's own marker `path` with `line` in one rename.
-fn replace_own_tag(path: &Path, line: &str) -> std::io::Result<()> {
-    let staged = side_path(path, "take");
-    let _ = std::fs::remove_file(&staged);
-    take_tag(&staged, line)?;
-    std::fs::rename(&staged, path)
+/// Takes the place of this node's own stale marker `path`: removes it only
+/// while it is still this node's ([`release_tag`] checks the bytes it moved),
+/// then writes `line` where no file is. A holder that wrote the path in
+/// between keeps it, and the take answers `AlreadyExists`.
+fn retake_own_tag(path: &Path, machine: &str, line: &str) -> std::io::Result<()> {
+    release_tag(path, machine)?;
+    take_tag(path, line)
 }
 
 /// Moves the marker its time on: a marker counts for 3 hours from its last
@@ -215,52 +218,56 @@ fn busy() -> JobAnswer {
 }
 
 impl NodeJobs {
-    /// The reserve's quiet-lease step, under the admission lock, once the
-    /// reserve is admitted (`event` is its `Reserved` record): `Busy` while
-    /// another key holds the lease, while another holder's marker is on the
-    /// host, and, for a quiet key, while another key is not idle. A quiet
-    /// key then writes the marker before its record; a marker that cannot be
-    /// written ends the key `quiet_tag_unwritable`. Any other event passes.
+    /// The reserve's quiet-lease step, under the admission lock, before any
+    /// record (`event` is the reserve's `Reserved` record or its refusal).
+    /// While another key holds the lease, or another holder's marker is on
+    /// the host, every reserve answers `Busy` and writes nothing, a refusal
+    /// too. A quiet key is then `Busy` while another key is not idle; once
+    /// admitted, its record says it holds the lease, and it writes the marker
+    /// before that record. A marker that cannot be written ends the key
+    /// `quiet_tag_unwritable`. Any other event passes.
     pub(super) fn quiet_lease_admit(
         &self,
         table: &KeyTable,
         event: &mut JournalEvent,
     ) -> Option<JobAnswer> {
-        let JournalEvent::Reserved { reserve, .. } = &*event else {
-            return None;
-        };
-        let template = reserve.pin.template.clone();
-        let key = JobKeyId::for_key(&reserve.key);
-        let lease = self.parts().admission.quiet_lease();
-        let quiet = lease.templates.contains(&template);
-        if lease.holder(table).is_some() || (quiet && !table.iter().all(idle)) {
+        if holder(table).is_some() {
             return Some(busy());
         }
-        let path = lease.tag.as_deref()?;
+        let lease = self.parts().admission.quiet_lease();
         let machine = self.parts().machine.to_ulid();
-        let found = match read_tag(path) {
-            Ok(found) => found,
-            Err(_) if !quiet => return None,
+        let found = lease.tag.as_deref().map(read_tag);
+        if let Some(Ok(Some(text))) = &found
+            && !written_by(text, &machine)
+        {
+            return Some(busy());
+        }
+        let JournalEvent::Reserved { reserve, quiet, .. } = &mut *event else {
+            return None;
+        };
+        if !lease.templates.contains(&reserve.pin.template) {
+            return None;
+        }
+        if !table.iter().all(idle) {
+            return Some(busy());
+        }
+        *quiet = true;
+        let (Some(path), Some(found)) = (lease.tag.as_deref(), found) else {
+            return None;
+        };
+        let line = tag_line(
+            &machine,
+            &reserve.pin.template,
+            &JobKeyId::for_key(&reserve.key),
+        );
+        let taken = match found {
+            Ok(None) => take_tag(path, &line),
+            // A marker of this node with no holder is one a stopped engine left.
+            Ok(Some(_)) => retake_own_tag(path, &machine, &line),
             Err(error) => {
                 *event = refused(format!("quiet_tag_unreadable: {error}"));
                 return None;
             }
-        };
-        if found
-            .as_deref()
-            .is_some_and(|text| !written_by(text, &machine))
-        {
-            return Some(busy());
-        }
-        if !quiet {
-            return None;
-        }
-        let line = tag_line(&machine, &template, &key);
-        // A marker of this node with no holder is one a stopped engine left.
-        let taken = if found.is_some() {
-            replace_own_tag(path, &line)
-        } else {
-            take_tag(path, &line)
         };
         match taken {
             Ok(()) => None,
@@ -273,36 +280,27 @@ impl NodeJobs {
         }
     }
 
-    /// Whether a key holds the quiet lease now: the tick then cleans no
-    /// payload.
-    pub(super) fn quiet_lease_held(&self) -> bool {
-        let lease = self.parts().admission.quiet_lease();
-        let book = self.lock();
-        book.journal
-            .as_ref()
-            .is_some_and(|journal| lease.holder(journal.table()).is_some())
-    }
-
     /// The tick's quiet-marker step: the marker follows the journal. The
     /// holder's marker is written when it is gone and refreshed when it is
     /// there; a marker of this node with no holder, or naming another key,
-    /// goes. Another holder's marker is left alone.
+    /// goes. Another holder's marker is left alone. The step holds the
+    /// admission lock from its read of the journal to its change of the
+    /// file, as the reserve's step does.
     pub(super) fn keep_quiet_tag(&self) {
         let lease = self.parts().admission.quiet_lease();
         let Some(path) = lease.tag.as_deref() else {
             return;
         };
         let machine = self.parts().machine.to_ulid();
-        let line = {
-            let book = self.lock();
-            book.journal
-                .as_ref()
-                .and_then(|journal| lease.holder(journal.table()))
-                .and_then(|holder| {
-                    let template = &holder.reserve.as_ref()?.pin.template;
-                    Some(tag_line(&machine, template, &holder.id))
-                })
-        };
+        let book = self.lock();
+        let line = book
+            .journal
+            .as_ref()
+            .and_then(|journal| holder(journal.table()))
+            .and_then(|key| {
+                let template = &key.reserve.as_ref()?.pin.template;
+                Some(tag_line(&machine, template, &key.id))
+            });
         let found = match read_tag(path) {
             Ok(found) => found,
             Err(error) => {
@@ -313,7 +311,9 @@ impl NodeJobs {
         let kept = match (line, found) {
             (Some(line), None) => take_tag(path, &line),
             (Some(line), Some(text)) if text == line => refresh_tag(path),
-            (Some(line), Some(text)) if written_by(&text, &machine) => replace_own_tag(path, &line),
+            (Some(line), Some(text)) if written_by(&text, &machine) => {
+                retake_own_tag(path, &machine, &line)
+            }
             (Some(_), Some(text)) => {
                 tracing::warn!(path = %path.display(), holder = %text.trim(), "a quiet run holds the lease while another holder's marker is on the host");
                 Ok(())
@@ -321,6 +321,7 @@ impl NodeJobs {
             (None, Some(text)) if written_by(&text, &machine) => release_tag(path, &machine),
             (None, _) => Ok(()),
         };
+        drop(book);
         if let Err(error) = kept {
             tracing::warn!(path = %path.display(), %error, "quiet marker not kept; the next tick tries again");
         }

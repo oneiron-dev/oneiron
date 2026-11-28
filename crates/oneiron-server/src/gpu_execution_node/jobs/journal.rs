@@ -43,6 +43,12 @@ pub enum JournalEvent {
         reserve: JobReserve,
         /// The digest the node computed from the reserve's pin.
         pin_digest: String,
+        /// Whether the key took the quiet lease at its reserve (row
+        /// GPU-QUIET-LEASE): the lease follows this record, not the
+        /// template's setting now. Absent from the record of a key that did
+        /// not, so every earlier record reads as before.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        quiet: bool,
     },
     /// The signed submit was admitted; it is kept whole.
     Accepted { submit: SignedJobSubmit },
@@ -204,6 +210,9 @@ pub struct NodeKey {
     pub issuer: EntityId,
     pub reserve: Option<JobReserve>,
     pub pin_digest: Option<String>,
+    /// Whether the key took the quiet lease at its reserve (its `Reserved`
+    /// record).
+    pub quiet: bool,
     pub submit: Option<SignedJobSubmit>,
     pub state: JobState,
     pub launch: Option<KeyLaunch>,
@@ -235,6 +244,7 @@ impl NodeKey {
             issuer: record.issuer,
             reserve: None,
             pin_digest: None,
+            quiet: false,
             submit: None,
             state: JobState::Held,
             launch: None,
@@ -465,6 +475,7 @@ impl KeyTable {
                 JournalEvent::Reserved {
                     reserve,
                     pin_digest,
+                    quiet,
                 },
                 None,
             ) => {
@@ -473,6 +484,7 @@ impl KeyTable {
                 }
                 next.reserve = Some(reserve.clone());
                 next.pin_digest = Some(pin_digest.clone());
+                next.quiet = *quiet;
                 next.state = JobState::Held;
             }
             (JournalEvent::Accepted { submit }, Some(JobState::Held)) => {
