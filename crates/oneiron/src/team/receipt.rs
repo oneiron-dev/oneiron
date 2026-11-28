@@ -298,6 +298,53 @@ pub fn record_team_receipt_sourced(
     })
 }
 
+/// Writes an experiment arm's rung receipt in the caller's transaction: the
+/// copy of the rung's scored outcome for the generic payoff view (design
+/// pass 32 r2, sections 3.6 and 4.5). The arm's verdict or review calls it
+/// in the write that scores the rung, so the receipt and the outcome land
+/// together, once. The receipt arrives with its outcome set and is never
+/// settled again: the generic setter refuses its reference. It names no
+/// pattern skill and is one wide, below the market's floor, so it moves the
+/// family's payoff row and teaches no pattern. The stamp is the arm's, checked
+/// against the tree when the arm was admitted.
+///
+/// # Errors
+///
+/// [`Error::InvalidClaimBody`] for a reference outside the arms' namespace,
+/// a receipt with no outcome or one resting on another receipt, a malformed
+/// body, or a receipt that already exists; storage errors.
+pub(crate) fn record_arm_receipt_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    receipt: &TeamReceipt,
+) -> Result<()> {
+    if !receipt.team_ref.starts_with(ARM_RECEIPT_PREFIX) {
+        return Err(Error::InvalidClaimBody(
+            "an experiment arm's receipt is named arm:<arm hex>:r<rung>",
+        ));
+    }
+    if receipt
+        .outcome
+        .as_ref()
+        .map(|outcome| outcome.receipt.as_str())
+        != Some(receipt.team_ref.as_str())
+    {
+        return Err(Error::InvalidClaimBody(
+            "an experiment arm's receipt carries the rung's outcome, resting on itself",
+        ));
+    }
+    receipt.validate()?;
+    if TEAM_RECEIPT.contains(&vault.store, wtxn, &receipt.team_ref)? {
+        return Err(Error::InvalidClaimBody("a team receipt is written once"));
+    }
+    let stored = StoredTeamReceipt {
+        receipt: receipt.clone(),
+        fact_sources: None,
+        outcome_sources: None,
+    };
+    TEAM_RECEIPT.put(&vault.store, wtxn, &receipt.team_ref, &stored)
+}
+
 /// Settles a team run's anchored outcome and feeds its pattern skill's
 /// payoff. Settling again with the same receipt replaces the outcome. The
 /// outcome names and scores the critics of the team's bound deliverables

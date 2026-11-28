@@ -1,7 +1,7 @@
 //! The experiment arm doors of the lane economy (design pass 32 section 5):
-//! `vault.arms.admit`, `vault.arms.forecast`, `vault.arms.get`,
-//! `vault.arms.list`, `vault.arms.units.reserve` and
-//! `vault.arms.units.cancel`. Each proves
+//! `vault.arms.admit`, `vault.arms.forecast`, `vault.arms.verdict`,
+//! `vault.arms.review`, `vault.arms.get`, `vault.arms.list`,
+//! `vault.arms.units.reserve` and `vault.arms.units.cancel`. Each proves
 //! `verb_grant_caller`: the owner under their own proof, or an agent whose
 //! own live owner Grant lists the verb; an agent admits into and reads only
 //! the lines its Grant reaches, as the engine's act judges it again. Arms
@@ -20,6 +20,10 @@ use oneiron::experiment_arm::{
     ArmView, UnitCancel, UnitCancelRequest, UnitReserveAnswer, UnitReserveRequest, UnitView,
     arm_admit_as, arm_forecast_as, arm_get_as, arm_list_as, unit_cancel_as, unit_order_as,
     unit_ordered_view_as, unit_reserve_as,
+};
+use oneiron::experiment_arm::{
+    ARMS_REVIEW_VERB, ARMS_VERDICT_VERB, ArmReviewRequest, ArmVerdictRequest, arm_review_as,
+    arm_verdict_as,
 };
 use oneiron::gpu_job::{GpuJobActor, GpuJobConnector, GpuJobError, UnitJobStart};
 use oneiron::gpu_line::ClaimKey;
@@ -65,6 +69,38 @@ pub(crate) async fn vault_arms_forecast(
 ) -> Listed<ArmView> {
     verb_grant_door(server, auth, ARMS_FORECAST_VERB, move |_, memory, owner| {
         arm_forecast_as(memory, owner, &input, now_ms())
+    })
+    .await
+}
+
+/// `vault.arms.verdict`: the lead's verdict on the arm's current rung, in
+/// one write: a kill scores the rung at once with its receipt, a promote
+/// waits for its review, a hold keeps the rung open once, an invalid closes
+/// it unscored. A repeat of the same verdict at the same arm revision, under
+/// the same intent key or another, answers the same arm.
+pub(crate) async fn vault_arms_verdict(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: ArmVerdictRequest,
+) -> Listed<ArmView> {
+    verb_grant_door(server, auth, ARMS_VERDICT_VERB, move |_, memory, owner| {
+        arm_verdict_as(memory, owner, &input, now_ms())
+    })
+    .await
+}
+
+/// `vault.arms.review`: an independent reviewer's finding on a rung's
+/// promote, in one write: a confirm scores the rung with its receipt and
+/// opens the next rung (or closes the arm at its last), a change to kill
+/// scores it lost, a change to invalid closes it unscored, and unresolved
+/// leaves it waiting. A confirm publishes nothing.
+pub(crate) async fn vault_arms_review(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: ArmReviewRequest,
+) -> Listed<ArmView> {
+    verb_grant_door(server, auth, ARMS_REVIEW_VERB, move |_, memory, owner| {
+        arm_review_as(memory, owner, &input, now_ms())
     })
     .await
 }

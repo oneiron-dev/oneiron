@@ -1,0 +1,16 @@
+{
+  "name": "vault.arms.review",
+  "description": "Gives an independent reviewer's finding on a rung's promote in one write: confirm scores it and opens the next rung, kill scores it lost, invalid closes it. Only a reviewer Grant of the line calls it.",
+  "input": "crate::experiment_arm::ArmReviewRequest",
+  "output": "crate::experiment_arm::ArmView",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.arms.review\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "act_class": "reversible_work",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "verb_grant_caller"
+}
