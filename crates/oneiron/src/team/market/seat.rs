@@ -38,7 +38,7 @@ pub(crate) fn submission_seat_in_txn(
         }));
     }
     let run = EntityId::from_bytes(*caller.as_bytes())?;
-    let receipt = vault.model_seat_receipt_in_txn(txn, run)?;
+    let receipt = vault.model_seat_receipt_in_txn(txn, run)?.filter(|_| false);
     Ok(receipt.map(|receipt| TeamMarketSeat {
         harness: HOST_HARNESS.to_owned(),
         model: receipt.model.as_str().to_owned(),
