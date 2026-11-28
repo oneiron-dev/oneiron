@@ -1,4 +1,5 @@
-//! Runs one NOTE review for `tests/note_review_claim_depends_on_note.rs`.
+//! Runs one NOTE review for `tests/note_review_claim_depends_on_note.rs` and
+//! `tests/note_review_claim_takes_note_world.rs`.
 
 use std::collections::BTreeSet;
 use std::future::Future;
@@ -6,7 +7,8 @@ use std::pin::pin;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Waker};
 
-use crate::claim::ClaimApprovalStatus;
+use crate::claim::world_access::WorldAuthoritySet;
+use crate::claim::{ClaimApprovalStatus, PointRead, ScopedReadActorKey};
 use crate::dreamer_consolidation::{
     ConsolidationDecisions, ConsolidationExecutor, RoleBackends, note_review_seen_in_txn,
 };
@@ -259,6 +261,26 @@ pub(crate) fn run_after_reply_hook(vault: &Vault) {
 pub fn note_review_seen(vault: &Vault, note: EntityId) -> Result<bool> {
     let txn = vault.store.env.read_txn()?;
     note_review_seen_in_txn(&vault.store, &txn, &note)
+}
+
+/// Whether `claim` reads to the owner's lane held to `worlds` (base reality
+/// too when `base`): a point read under that world ceiling.
+///
+/// # Errors
+///
+/// The vault's, or the owner binding no longer holds.
+pub fn claim_reads_in_worlds(
+    vault: &Vault,
+    claim: EntityId,
+    base: bool,
+    worlds: &[EntityId],
+) -> Result<bool> {
+    let owner = crate::vault::embedded_owner_actor_id()?;
+    let read = vault
+        .scoped_read(ScopedReadActorKey::vault_owner(owner))
+        .within_worlds(WorldAuthoritySet::new(base, worlds.iter().copied())?);
+    let rows = read.read(&[PointRead::id(claim)], None)?;
+    Ok(rows.value[0].is_some())
 }
 
 /// Registers the promotion's NOTE dependencies in a grouped write transaction.

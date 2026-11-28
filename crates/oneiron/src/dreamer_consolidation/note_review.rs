@@ -133,6 +133,9 @@ struct Note {
     fingerprint: [u8; 32],
     facet: EntityId,
     project: EntityId,
+    /// The NOTE's one world in the review's snapshot, which its beliefs are
+    /// born in; `None` is base reality (NOTE-REVIEW-CLAIM-DROPS-NOTE-WORLD).
+    world: Option<EntityId>,
     version: ScopeResource,
     /// The known entities the markdown names, read as an extraction
     /// transcript's listing is (FIX 7506): entities only, no claims.
@@ -669,6 +672,16 @@ fn readable_notes(
         else {
             continue;
         };
+        // NOTE-REVIEW-CLAIM-DROPS-NOTE-WORLD (Q3 = a): its beliefs take its one
+        // world, by the single-world rule every read door places it by (base
+        // among others is base, as a base read keeps it); a NOTE in two worlds
+        // or whose edges do not read is skipped, as a NOTE with no facet is.
+        let Some(world) =
+            crate::federation::record_scope::note_world::note_worlds_in(&vault.store, &txn, *id)
+                .world()
+        else {
+            continue;
+        };
         // The entities the markdown names, by the transcript listing's own
         // probes, through the review's own scoped read: no claims, so the
         // review's scope holds no prior head. A NOTE carries no byline. A
@@ -701,6 +714,7 @@ fn readable_notes(
             fingerprint,
             facet,
             project,
+            world,
             listed,
         });
     }
