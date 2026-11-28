@@ -404,6 +404,7 @@ fn claim_on(arm: &ExperimentArm, state: ClaimState) -> UnitClaim {
         machine: None,
         code_sha: "c0de".repeat(10),
         contract_sha256: arm.contract.sha256.clone(),
+        result: None,
         reserved_secs: RUNG_1_SECS,
         draws: vec![Draw {
             source: DrawSource::FirstAllowance,

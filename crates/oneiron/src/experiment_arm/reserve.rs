@@ -84,6 +84,11 @@ pub struct UnitReserveRequest {
     /// The unit's seconds: exactly the workload pin's maximum, so the machine's own limit is
     /// the reservation.
     pub secs: u64,
+    /// Where the unit's returnable outputs land (row RSI-ARM-RESULT): the artifact whose next
+    /// version each becomes, pending Keep, and the task its made_by names. The caller's own
+    /// read lane reads both rows. `None` lands nothing.
+    #[serde(default)]
+    pub result: Option<crate::gpu_job::GpuJobResultBinding>,
     /// `no` (the default) reserves now or refuses; `open`, or `until` a time, makes a work
     /// order that holds nothing and reserves the unit when it can run (pass 34, 1.1).
     #[serde(default = "wait_no")]
@@ -111,6 +116,9 @@ pub(super) struct UnitAsk<'a> {
     code_sha: &'a str,
     contract_sha256: &'a str,
     secs: u64,
+    /// Left out when `None`, so an ask without a result keeps the digest it had before.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    result: Option<crate::gpu_job::GpuJobResultBinding>,
 }
 
 impl UnitReserveRequest {
@@ -128,6 +136,7 @@ impl UnitReserveRequest {
             code_sha: &self.code_sha,
             contract_sha256: &self.contract_sha256,
             secs: self.secs,
+            result: self.result,
         }
     }
 
@@ -182,6 +191,8 @@ impl UnitReserveRequest {
 /// its `GPU_LINE_REFUSAL` row is written; a store failure. `bad_request` for a wait other than
 /// `no` (the host's door makes a waiting unit's work order with [`super::unit_order_as`]), and
 /// `invalid_state` (`intent_key_ordered`) for an intent key a waiting unit's order holds.
+/// `forbidden` (`result_binding_unreadable`) for a `result` that binds a row the caller's
+/// credential does not read.
 pub fn unit_reserve_as(
     memory: &Memory<'_>,
     owner: Option<&AuthenticatedOwner>,
@@ -194,6 +205,7 @@ pub fn unit_reserve_as(
             "wait: a waiting unit is a work order; the host's vault.arms.units.reserve makes it",
         ));
     }
+    super::unit_result::check_result_binding(memory, request.result.as_ref())?;
     let vault = memory.vault();
     // An outer `Err` discards the write; an inner one commits it: a budget refusal keeps its
     // refusal row (and the period record a first touch minted).
@@ -482,6 +494,7 @@ pub(super) fn reserve_for_caller_in_txn(
         machine: request.machine,
         code_sha: request.code_sha.clone(),
         contract_sha256: request.contract_sha256.clone(),
+        result: request.result,
         reserved_secs: request.secs,
         draws,
         wallet: period.allocation.wallet.clone(),
