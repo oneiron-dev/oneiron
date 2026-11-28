@@ -391,3 +391,19 @@ pub(crate) async fn vault_gpu_jobs_allow(
     })
     .await
 }
+
+/// `vault.gpu.jobs.status` for an agent already bound to its own handle
+/// (`memory`), with no owner proof: the engine admits the agent under its
+/// own live Grant naming the verb, read now, then the job's status on the
+/// backend that runs it. A turn program's run door calls it for the
+/// program's own agent ([RSI-PROJECT-WORKFLOW]).
+pub(crate) fn gpu_job_status_for_agent(
+    server: &SyncServer,
+    memory: &Memory<'_>,
+    input: &GpuJobRef,
+) -> MemoryResult<GpuJobStatus> {
+    memory.gpu_job_admits(None, GpuJobVerb::Status)?;
+    let id = input.id()?;
+    let job = server.vault.gpu_job(&id)?.ok_or(GpuJobError::NotFound)?;
+    Ok(status_on_host(server, &job))
+}

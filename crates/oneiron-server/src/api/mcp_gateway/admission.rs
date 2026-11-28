@@ -1,6 +1,7 @@
 //! Scoped-call admission and actor resolution.
 
 use super::board_setup::{bare_child_served_rows, mcp_scope_admits_row};
+use super::static_admission::{StaticCaller, StaticCheck, StaticRefusal, static_admission};
 use super::{
     McpCallContext, McpGatewayError, McpToolCallParams, mcp_actor_result, mcp_api_error,
     mcp_engine_error, mcp_scoped_read, mcp_tool_validation_error,
@@ -129,7 +130,12 @@ pub(crate) fn mcp_admit_bound_tool(
     actor: &McpCallContext,
     tool_name: &str,
 ) -> Result<(), McpGatewayError> {
-    if actor.admits_tool(tool_name) {
+    if static_admission(
+        StaticCaller::connector(actor),
+        StaticCheck::BoundName(tool_name),
+    )
+    .is_ok()
+    {
         return Ok(());
     }
     Err(McpGatewayError::new(
@@ -215,14 +221,13 @@ fn mcp_admit_unscoped_execution(
     tool_name: &str,
     field: &'static str,
 ) -> Result<(), McpGatewayError> {
-    let scope = &actor.scope;
-    let facets = !matches!(scope.facets, oneiron::federation::ScopeAxis::All);
-    let axis = match (scope.world_ref.is_some(), facets) {
-        (false, false) => return Ok(()),
-        (true, false) => "world",
-        (false, true) => "facet",
-        (true, true) => "world and facet",
+    let Err(StaticRefusal::NarrowRegistration(axis)) = static_admission(
+        StaticCaller::connector(actor),
+        StaticCheck::UnscopedExecution,
+    ) else {
+        return Ok(());
     };
+    let axis = axis.as_str();
     Err(McpGatewayError::new(
         -32020,
         "mcp_scope_refused",
@@ -232,6 +237,15 @@ fn mcp_admit_unscoped_execution(
         ),
     )
     .with_field(field))
+}
+
+#[cfg(test)]
+pub(crate) fn mcp_admit_unscoped_execution_for_test(
+    actor: &McpCallContext,
+    tool_name: &str,
+    field: &'static str,
+) -> Result<(), McpGatewayError> {
+    mcp_admit_unscoped_execution(actor, tool_name, field)
 }
 
 /// The registered tool name one validated call resolved to.

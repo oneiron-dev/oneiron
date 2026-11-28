@@ -379,6 +379,7 @@ fn definition(skill: EntityId) -> oneiron::dreamer_runner::ProgramRecipePin {
         contract_digest: [0; 32],
         executor: "test".into(),
         args: "{}".into(),
+        project: None,
     }
 }
 

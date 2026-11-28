@@ -225,6 +225,7 @@ pub use claim_stale::{
     ClaimDemoteActionInput, ClaimDemoteRequest, ClaimDemoteView, ClaimFilteredListRequest,
     ClaimFilteredReadRequest, ReadFilterInput,
 };
+pub use claims::ClaimCorrectionInput;
 pub use claims::{
     ClaimChangeVerdict, ClaimInput, ClaimProposalReview, ClaimProposalReviewRequest,
     ClaimSettleDecision, ClaimSettleRequest, ClaimSettlement, ClaimSettlementAnswer,
@@ -350,6 +351,7 @@ pub use outbound::{
 };
 pub use read_selection::RecallWorlds;
 pub use reads::HeldMark;
+pub use reads::PendingCorrection;
 pub use reads::{
     ClaimListFilter, ClaimView, LexicalHit, NeighborHit, NeighborOpts, VaultReceiptsPage,
 };

@@ -146,7 +146,8 @@ pub(crate) fn checkpoint_read_cache_keys(
 
 /// Erase reach for the read caches of `items` (FIX 7608, owner ruling KEY
 /// STORE = A, FIX 10799): an erased item's cached body, text document,
-/// content-world witness, source provenance, opened marker, touch row and thin index rows go in the erase's own
+/// content-world witness, source provenance, opened marker, touch row, thin index rows
+/// and its by-item index rows (`ri:i:`) go in the erase's own
 /// transaction, under its id and its masked copy's alike. Absent-ok key
 /// deletes only: nothing is decoded, no mark is read, and an item with no
 /// cache erases as before.
@@ -178,6 +179,7 @@ pub(crate) fn erase_item_caches_in_txn(
     for key in &listed {
         store.sync_state.delete(txn, key)?;
     }
+    crate::sync::residence::delete_index_by_item_of_items_in_txn(store, txn, items)?;
     Ok(())
 }
 

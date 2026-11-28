@@ -2314,12 +2314,13 @@ fn a_written_off_units_job_ends_its_claim_in_the_same_write() {
 
 use std::cell::Cell;
 
-use oneiron::experiment_arm::unit_order_as;
+use oneiron::experiment_arm::{unit_order_as, unit_ordered_view_as};
 use oneiron::memory::MEMORY_CODE_BAD_REQUEST;
 use oneiron::work_order::{
     AttemptOutcome, AttemptRefused, AttemptToMake, CancelWhy, DecidedBy, EndKind, MachineFacts,
     MachineReach, OrderAttemptRef, OrderCharge, OrderHost, OrderState, Room, SlotDecision,
-    SlotName, TemplateFact, WorkOrder, WorkOrderRef, attempt_job_id, work_order_cancel_as,
+    SlotName, TemplateFact, WorkOrder, WorkOrderRef, attempt_job_id, ordered_view_as,
+    work_order_cancel_as,
 };
 
 fn h3_line_room(fixture: &Fixture, line: EntityId, period: u32) -> u64 {
@@ -2503,6 +2504,50 @@ fn a_waiting_unit_holds_no_claim_and_no_seconds_until_its_attempt() {
 }
 
 #[test]
+fn a_waiting_units_key_under_another_wait_is_a_different_ask() {
+    let fixture = fixture();
+    let lead = fixture.agent("lead");
+    let arm = fixture.lead_arm(lead, 0);
+    let (memory, owner) = fixture.caller(Some(lead));
+    let deadline_ms = NOW_MS + 60_000;
+    let mut open = fixture.ask(&arm, "open-unit", 60, Some(lead));
+    open.wait = WaitRule::Open;
+    let ordered = unit_order_as(&memory, owner, &open, NOW_MS).expect("order the open unit");
+    assert!(!ordered.replayed);
+
+    // The ask's digest leaves the wait out: the order's own wait refuses a deadline under its key.
+    let mut until = open.clone();
+    until.wait = WaitRule::Until { ms: deadline_ms };
+    let refused = unit_order_as(&memory, owner, &until, NOW_MS)
+        .expect_err("the same key and ask with a deadline is another ask");
+    assert_eq!(refused.code, MEMORY_CODE_INVALID_STATE);
+    assert_eq!(refused.message, DIFFERENT_ASK);
+
+    let replayed = unit_order_as(&memory, owner, &open, NOW_MS).expect("the same wait replays");
+    assert!(replayed.replayed);
+    assert_eq!(replayed.order.id, ordered.order.id);
+    assert_eq!(replayed.order.wait, WaitRule::Open);
+
+    let mut timed = fixture.ask(&arm, "timed-unit", 60, Some(lead));
+    timed.wait = WaitRule::Until { ms: deadline_ms };
+    let timed_order = unit_order_as(&memory, owner, &timed, NOW_MS).expect("order the timed unit");
+    let mut later = timed.clone();
+    later.wait = WaitRule::Until {
+        ms: deadline_ms + 60_000,
+    };
+    let later_err = unit_order_as(&memory, owner, &later, NOW_MS)
+        .expect_err("another deadline under the same key is another ask");
+    assert_eq!(later_err.code, MEMORY_CODE_INVALID_STATE);
+    assert_eq!(later_err.message, DIFFERENT_ASK);
+    let timed_again =
+        unit_order_as(&memory, owner, &timed, NOW_MS).expect("the same deadline replays");
+    assert!(timed_again.replayed);
+    assert_eq!(timed_again.order.id, timed_order.order.id);
+    assert_eq!(timed_again.order.wait, WaitRule::Until { ms: deadline_ms });
+    assert!(fixture.claims(&arm, 1).is_empty());
+}
+
+#[test]
 fn a_line_orders_attempt_reserves_its_claim_and_entry_in_one_write_and_starts_under_it() {
     let fixture = fixture();
     let lead = fixture.agent("lead");
@@ -2561,6 +2606,53 @@ fn a_line_orders_attempt_reserves_its_claim_and_entry_in_one_write_and_starts_un
         .work_order_pass(&host, NOW_MS + 1_000)
         .expect("second pass makes nothing");
     assert_eq!(host.calls.get(), 1);
+}
+
+#[test]
+fn a_waiting_units_answer_reads_its_order_under_the_reserve_grant_alone() {
+    let fixture = fixture();
+    let lead = fixture.agent("lead");
+    let arm = fixture.lead_arm(lead, 0);
+    let mut ask = fixture.ask(&arm, "answer-read", 60, Some(lead));
+    ask.wait = WaitRule::Open;
+    let (memory, owner) = fixture.caller(Some(lead));
+    let ordered = unit_order_as(&memory, owner, &ask, NOW_MS).expect("order the waiting unit");
+    let jobs = UnitJobs::new(None);
+    let host = H3Host {
+        vault: &fixture.vault,
+        jobs: &jobs,
+        now_ms: Cell::new(NOW_MS),
+        calls: Cell::new(0),
+        skip_start: Cell::new(false),
+    };
+    fixture
+        .vault
+        .work_order_pass(&host, NOW_MS)
+        .expect("the pass makes the attempt");
+    assert_eq!(host.calls.get(), 1);
+
+    // The lead's Grant names the reserve and not `vault.jobs.order`: the order door's read
+    // refuses it, and the reserve's answer reads the order on the reserve's Grant over the line.
+    let generic = ordered_view_as(&memory, owner, &ordered.order.id)
+        .expect_err("the order door's read needs a vault.jobs.order Grant");
+    assert_eq!(generic.code, MEMORY_CODE_FORBIDDEN);
+    let answer = unit_ordered_view_as(&memory, owner, ask.line, &ordered.order.id)
+        .expect("the reserve's caller reads its order")
+        .expect("the order stands and is the caller's");
+    assert_eq!(answer.order.id, ordered.order.id);
+    assert!(!answer.replayed);
+    assert!(matches!(
+        answer.order.state,
+        OrderState::Running { attempt: 1 }
+    ));
+    assert_eq!(answer.order.attempts.len(), 1);
+
+    // Another agent the line admits does not read this lead's order.
+    let other = fixture.agent("other-lead");
+    let (other_memory, other_owner) = fixture.caller(Some(other));
+    let unseen = unit_ordered_view_as(&other_memory, other_owner, ask.line, &ordered.order.id)
+        .expect("the reserve admits the other agent over the line");
+    assert!(unseen.is_none(), "{unseen:?}");
 }
 
 #[test]

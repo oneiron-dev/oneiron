@@ -19,12 +19,12 @@ use oneiron::experiment_arm::{
     ARMS_UNITS_RESERVE_VERB, ArmAdmitRequest, ArmForecastRequest, ArmList, ArmListRequest, ArmRef,
     ArmView, UnitCancel, UnitCancelRequest, UnitReserveAnswer, UnitReserveRequest, UnitView,
     arm_admit_as, arm_forecast_as, arm_get_as, arm_list_as, unit_cancel_as, unit_order_as,
-    unit_reserve_as,
+    unit_ordered_view_as, unit_reserve_as,
 };
 use oneiron::gpu_job::{GpuJobActor, GpuJobConnector, GpuJobError, UnitJobStart};
 use oneiron::gpu_line::ClaimKey;
 use oneiron::memory::{MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
-use oneiron::work_order::{OrderState, WaitRule, ordered_view_as};
+use oneiron::work_order::{OrderState, WaitRule};
 
 use super::support::Listed;
 use super::verb_grant::verb_grant_door;
@@ -109,7 +109,8 @@ pub(crate) async fn vault_arms_list(
 ///
 /// With a wait other than `no` (row H3) the door makes a work order instead,
 /// holding nothing (pass 34, 1.1), runs one pass of the loop at once, and
-/// answers the order as the caller reads it; the loop reserves the unit and
+/// answers the order as the caller reads it, judged on this verb over the line
+/// and not under a `vault.jobs.order` Grant; the loop reserves the unit and
 /// starts its job when it can run. An order no wait can clear answers its
 /// refusal, as `vault.jobs.order` does.
 pub(crate) async fn vault_arms_units_reserve(
@@ -154,7 +155,8 @@ pub(crate) async fn vault_arms_units_reserve(
                     return Ok(UnitReserveAnswer::Order(Box::new(view)));
                 }
                 locked_order_pass(&shared, now)?;
-                let view = ordered_view_as(memory, owner, &view.order.id)?.unwrap_or(view);
+                let view = unit_ordered_view_as(memory, owner, input.line, &view.order.id)?
+                    .unwrap_or(view);
                 if let OrderState::GivenUp { why } = &view.order.state
                     && let Some(refusal) = refusal_of_end(why)
                 {
@@ -262,4 +264,43 @@ pub(crate) async fn vault_arms_units_cancel(
         },
     )
     .await
+}
+
+/// `vault.arms.units.reserve`'s no-wait act for a caller already bound to
+/// its own handle (`memory`), with its owner proof when it has one: the
+/// one-issuer check, an offer of the line this host can start, the engine's
+/// reserve (which judges the caller, its Grant and the line again), then
+/// the claim's one job through the one start gate. A turn program's run
+/// door calls it for the program's own agent, with no owner proof
+/// ([RSI-PROJECT-WORKFLOW]).
+pub(crate) fn reserve_and_start_unit(
+    server: &SyncServer,
+    memory: &Memory<'_>,
+    owner: Option<&AuthenticatedOwner>,
+    input: &UnitReserveRequest,
+) -> MemoryResult<UnitView> {
+    if let Some(settings) = server.config.gpu_jobs.offer(&input.offer)
+        && let Err(refused) = not_the_issuer(server, &settings.backend)
+    {
+        let issuer = refused
+            .issuer
+            .map_or_else(|| "none".to_owned(), |issuer| issuer.to_hex());
+        return Err(MemoryError::new(
+            MEMORY_CODE_INVALID_STATE,
+            format!(
+                "{ARMS_UNITS_RESERVE_VERB}: {}: {refused} (issuer: {issuer})",
+                refused.code()
+            ),
+            &["Reserve on the vault's issuer of vault machine jobs."],
+        ));
+    }
+    let (offer, connector) = offer_with_backend(server, &input.offer).map_err(|error| {
+        MemoryError::new(
+            MEMORY_CODE_INVALID_STATE,
+            format!("{ARMS_UNITS_RESERVE_VERB}: offer_not_managed: {error}"),
+            &["Reserve on an offer of the line that this host can start."],
+        )
+    })?;
+    let reserved = unit_reserve_as(memory, owner, input, now_ms())?;
+    start_reserved_unit(server, memory, owner, offer, connector.as_ref(), reserved)
 }

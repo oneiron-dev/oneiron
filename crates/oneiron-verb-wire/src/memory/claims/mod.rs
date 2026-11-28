@@ -56,3 +56,14 @@ pub struct ClaimInput {
     #[serde(default)]
     pub confidence_details: Option<oneiron_contracts::claim::ConfidenceDetails>,
 }
+
+/// One claim that corrects a claim the caller wrote.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ClaimCorrectionInput {
+    /// The claim ref this claim replaces: the caller's own live claim, on
+    /// the same predicate and subject.
+    pub corrects: String,
+    /// The replacement claim.
+    pub claim: ClaimInput,
+}
