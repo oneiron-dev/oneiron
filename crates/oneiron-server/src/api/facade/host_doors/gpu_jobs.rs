@@ -263,7 +263,7 @@ fn result_manifest_is_json(memory: &Memory<'_>, quote: &GpuJobQuote) -> MemoryRe
     let Some(binding) = quote_result_binding(quote) else {
         return Ok(());
     };
-    if memory.vault().gpu_job_result_manifest_is_json(&binding)? {
+    if memory.gpu_job_result_manifest_is_json(&binding)? {
         return Ok(());
     }
     Err(MemoryError::new(

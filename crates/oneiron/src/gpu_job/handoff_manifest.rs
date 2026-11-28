@@ -26,9 +26,11 @@ use serde_json::json;
 
 use super::GpuJobResultBinding;
 use super::result_landing::{ResultLanding, gpu_job_output_run_ref};
+use crate::claim::ClaimReadStatus;
 use crate::edit_settle::PendingProposalView;
 use crate::error::Result;
 use crate::job_workload::WorkloadStarter;
+use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::{EntityId, Vault};
 
 /// The manifest's `schema`.
@@ -142,10 +144,42 @@ pub enum GpuJobHandoffLanding {
     Refused(&'static str),
 }
 
+impl Memory<'_> {
+    /// Whether `binding`'s manifest, when it names one, is an `application/json` artifact this
+    /// caller's own read lane reads ([`Vault::gpu_job_result_manifest_is_json`] behind that
+    /// lane). The start door and the unit reserve ask it after
+    /// [`Self::gpu_job_result_binding_admits`] and refuse a binding it answers `false` for
+    /// (`result_manifest_not_json`). A manifest the lane does not read answers `false`, so the
+    /// answer tells a caller nothing of a row it does not read.
+    ///
+    /// # Errors
+    ///
+    /// The caller's lane does not open, or a store read fails.
+    pub fn gpu_job_result_manifest_is_json(
+        &self,
+        binding: &GpuJobResultBinding,
+    ) -> MemoryResult<bool> {
+        let Some(manifest) = binding.manifest else {
+            return Ok(true);
+        };
+        if !self
+            .read_lane(ClaimReadStatus::Recorded)?
+            .all_refs_readable(&[manifest])
+            .map_err(MemoryError::from)?
+        {
+            return Ok(false);
+        }
+        self.vault()
+            .gpu_job_result_manifest_is_json(binding)
+            .map_err(MemoryError::from)
+    }
+}
+
 impl Vault {
     /// Whether `binding`'s manifest, when it names one, is an `application/json` artifact. The
-    /// start door and the unit reserve refuse a binding whose manifest is not
-    /// (`result_manifest_not_json`), and the landing refuses it again.
+    /// start door and the unit reserve ask it through
+    /// [`Memory::gpu_job_result_manifest_is_json`], under the caller's lane, and the landing
+    /// refuses a manifest that is not (`manifest_not_json`).
     ///
     /// # Errors
     ///

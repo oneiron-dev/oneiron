@@ -34,7 +34,7 @@ pub(super) fn check_result_binding(
             &["Bind an artifact and a task this credential reads."],
         ));
     }
-    if memory.vault().gpu_job_result_manifest_is_json(binding)? {
+    if memory.gpu_job_result_manifest_is_json(binding)? {
         return Ok(());
     }
     Err(MemoryError::new(
