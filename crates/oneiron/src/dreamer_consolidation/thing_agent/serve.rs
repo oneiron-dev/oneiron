@@ -189,6 +189,12 @@ impl ConsolidationExecutor<'_> {
         if lent.is_empty() {
             return Ok(Err(THING_CHILD_LOW_TRUST));
         }
+        // One agent never reads two projects' TURNs: a branch queued before
+        // the partition key held the project splits per project at the
+        // slicer, and then runs each slice on its own call.
+        if lent_slices_span_projects(lent.iter().filter_map(|at| pass.slices.get(*at))) {
+            return Ok(Err(super::THING_CHILD_SPANS_PROJECTS));
+        }
         if let Some(reason) = host.unavailable() {
             return Ok(Err(reason));
         }
@@ -677,6 +683,16 @@ fn per_slice(pass: &ThingPass<'_, '_>, reason: &'static str) -> ThingPassEnd {
     ThingPassEnd::Replay
 }
 
+/// Whether the slices a loan would lend hold TURNs of more than one stored
+/// project, `None` counting as one more (REVIEW-10633 round 1).
+fn lent_slices_span_projects<'a>(slices: impl IntoIterator<Item = &'a ExtractionSlice>) -> bool {
+    let mut projects = slices.into_iter().map(|slice| slice.project);
+    let Some(first) = projects.next() else {
+        return false;
+    };
+    projects.any(|project| project != first)
+}
+
 /// Whether a finished reply is taken, as today's path takes it: its
 /// fallback's policy under the live rules.
 fn accepted(
@@ -707,4 +723,45 @@ fn encode(value: &impl serde::Serialize) -> Result<serde_json::Value> {
 /// A count as a port answer states it.
 fn count(value: usize) -> u32 {
     u32::try_from(value).unwrap_or(u32::MAX)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{EntityId, ExtractionSlice, lent_slices_span_projects};
+
+    /// A clean slice of `project`'s TURNs, as the slicer builds one.
+    fn slice_of(project: Option<EntityId>) -> ExtractionSlice {
+        ExtractionSlice {
+            turns: vec![EntityId::now()],
+            transcript: String::new(),
+            scope: oneiron_model::llm::Scope::default(),
+            labels: crate::dreamer_consolidation::call_labels::CallLabelMap::default(),
+            low_trust: false,
+            sources: Vec::new(),
+            page_past_room: None,
+            project,
+        }
+    }
+
+    /// T7 (REVIEW-10633 round 1 P1 1): a loan over two projects' slices is
+    /// refused, so an old-form branch holding P's and Q's clean TURNs runs
+    /// each slice on its own call; one project's slices are still lent.
+    #[test]
+    fn a_thing_loan_never_lends_two_projects_slices() {
+        let (p, q) = (Some(EntityId::now()), Some(EntityId::now()));
+        assert!(
+            lent_slices_span_projects(&[slice_of(p), slice_of(q)]),
+            "a loan of P's and Q's slices would hand one agent both projects' TURNs"
+        );
+        assert!(
+            lent_slices_span_projects(&[slice_of(p), slice_of(None)]),
+            "a slice with no single project is another project for the loan"
+        );
+        assert!(
+            !lent_slices_span_projects(&[slice_of(p), slice_of(p)]),
+            "two slices of one project are lent together"
+        );
+        assert!(!lent_slices_span_projects(&[slice_of(q)]));
+        assert!(!lent_slices_span_projects(&[] as &[ExtractionSlice]));
+    }
 }

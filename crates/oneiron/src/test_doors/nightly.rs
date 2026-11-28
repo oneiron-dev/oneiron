@@ -58,6 +58,20 @@ pub fn witness_turn(
 ///
 /// A span whose words are not in its text, or the plan's reads.
 pub fn planned_things(vault: &Vault, spans: &[SpentSpan<'_>]) -> Result<Vec<PlannedThing>> {
+    planned_things_within(vault, spans, usize::MAX)
+}
+
+/// [`planned_things`] under the night's partition `limit`, as the recipe's
+/// `nightly_children` sets it: the (conversation, world, facet) buckets kept.
+///
+/// # Errors
+///
+/// A span whose words are not in its text, or the plan's reads.
+pub fn planned_things_within(
+    vault: &Vault,
+    spans: &[SpentSpan<'_>],
+    limit: usize,
+) -> Result<Vec<PlannedThing>> {
     let mut queue = spans.iter().map(sieve_span).collect::<Result<Vec<_>>>()?;
     // The queue readout: highest score first.
     queue.sort_by(|left, right| {
@@ -67,7 +81,8 @@ pub fn planned_things(vault: &Vault, spans: &[SpentSpan<'_>]) -> Result<Vec<Plan
             .then_with(|| left.id.cmp(&right.id))
     });
     let txn = vault.store.env.read_txn()?;
-    let things = crate::dreamer_wake::nightly::planned_thing_lines_in_txn(vault, &txn, &queue)?;
+    let things =
+        crate::dreamer_wake::nightly::planned_thing_lines_in_txn(vault, &txn, &queue, limit)?;
     Ok(things
         .into_iter()
         .map(|(entity, children)| PlannedThing { entity, children })

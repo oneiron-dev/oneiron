@@ -28,6 +28,10 @@ pub(in crate::dreamer_consolidation) struct ExtractionSlice {
     /// turns no room in the lent window: the extraction model is never
     /// called over it (FIX DREAMER-EXTRACTION-INPUT-UNBOUNDED-BY-WINDOW).
     pub(in crate::dreamer_consolidation) page_past_room: Option<PagePastRoom>,
+    /// The stored project of its TURNs, as its group was keyed: one slice
+    /// never holds two projects' TURNs, so a thing agent's loan reads it to
+    /// lend one project only (REVIEW-10633 round 1).
+    pub(in crate::dreamer_consolidation) project: Option<EntityId>,
 }
 
 impl ExtractionSlice {
@@ -167,7 +171,7 @@ impl BranchResources<'_> {
             crate::dreamer_consolidation::PreparedWake::hook_material,
         );
         let mut slices = Vec::new();
-        for ((_, (_, entities)), group) in groups {
+        for ((project, (_, entities)), group) in groups {
             let known = self.known.slice(&entities);
             let pages = known.pages(|id| self.priors.contains_key(id));
             let (texts, turn_room) = match bound.room {
@@ -294,6 +298,7 @@ impl BranchResources<'_> {
                         low_trust: slice_low_trust,
                         sources,
                         page_past_room: PagePastRoom::filling(page_bytes, bound.room),
+                        project,
                     });
                 }
                 Ok(built)

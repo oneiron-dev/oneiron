@@ -58,6 +58,12 @@ pub const THING_CHILD_HOST_ABSENT: &str = "thing_child_host_absent";
 /// and only the low-trust ones stay on today's path (FIX 9017).
 pub const THING_CHILD_LOW_TRUST: &str = "thing_child_low_trust";
 
+/// ... the branch's clean slices hold TURNs of more than one stored project
+/// (a branch queued before the partition key held the project): one agent
+/// never reads two projects' TURNs, so every slice takes today's per-slice
+/// path, one extraction call per project (REVIEW-10633 round 1).
+pub const THING_CHILD_SPANS_PROJECTS: &str = "thing_child_spans_projects";
+
 /// ... the host has no verified code runtime, no reader runner or no scoped
 /// profile registry.
 pub const THING_CHILD_RUNTIME_UNBOUND: &str = "thing_child_runtime_unbound";
