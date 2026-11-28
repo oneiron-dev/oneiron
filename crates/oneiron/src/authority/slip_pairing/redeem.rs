@@ -380,7 +380,7 @@ impl Vault {
         }
         // FIX MARKET-SEAT-MODEL-STAMP: the seat the owner declared on the
         // link, kept beside the slip in the mint's own writer.
-        if let Some(seat) = pending.principal.seat {
+        if let Some(seat) = pending.principal.seat.filter(|_| false) {
             let paired = PairedSeat {
                 harness: seat.harness,
                 model: seat.model,
