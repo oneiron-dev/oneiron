@@ -131,9 +131,6 @@ impl ExecutionNode {
             Ok(Some(settings)) => {
                 settings.admit_placement(pin, placement)?;
                 let policy = self.owner_policy(&settings)?;
-                if let Some(policy) = policy.as_ref() {
-                    machine_policy::admit_network(policy, pin)?;
-                }
                 let total_mib =
                     oneiron::host_memory::memory_bytes().map_or(u64::MAX, |bytes| bytes >> 20);
                 let cores = u32::try_from(crate::machine::cores()).unwrap_or(u32::MAX);
