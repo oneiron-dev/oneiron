@@ -243,6 +243,11 @@ side_tables! {
     /// The thin-residence index rows fetched for one window. Key: window key ":" item tag.
     SYNC_RESIDENCE_INDEX: SyncState b"ri:w:" Raw
         [restore: content] [family: unclassified] [tier: canonical];
+    /// The by-item twin of SYNC_RESIDENCE_INDEX, device-local and never synced: one row per thin index
+    /// listing, written and deleted with it, so a txn finds the windows that list an item without a scan.
+    /// Key: item tag ":" window key. Value: [1].
+    SYNC_RESIDENCE_INDEX_BY_ITEM: SyncState b"ri:i:" Raw
+        [restore: content] [family: unclassified] [tier: canonical];
     /// The window an opened thin-residence item came from. Key: hex32 (entity id).
     SYNC_RESIDENCE_OPENED_ITEM: SyncState b"ro:e:" Raw
         [restore: content] [family: unclassified] [tier: canonical];

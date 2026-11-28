@@ -15,6 +15,7 @@ mod sync_harness;
 mod agent_definition_peer_reenable;
 mod ask_option_link_replication;
 mod device_followed_tombstones;
+mod device_index_by_item;
 mod device_predicted_level;
 mod device_predicted_residence_live;
 mod device_world_follow;
