@@ -113,12 +113,18 @@ pub(crate) fn soft_drop_marker_exists_in_txn(
     SOFT_DROP.contains(dbs, txn, &item_hex.to_owned())
 }
 
-/// Device-local `ri:k:{claim}:{source}`: a cited source an opened device landed a CLAIM without.
+/// Device-local `ri:k:{claim}:{source}`: a cited source a device landed a CLAIM without.
 const COLD_CITATION: SideTable<String, [u8; 1], Raw> =
     SideTable::new(&side_table::SYNC_RESIDENCE_INDEX_COLD_CITATION);
 
-/// Records that `claim` landed on this opened device while its cited `source` was absent and
-/// unlisted, so the read gate can judge that source with no registration row.
+/// Device-local `ri:r:{source}:{claim}`: the by-source twin of a cold-citation row, kept until the
+/// source lands, so its landing finds the CLAIMs to judge without a scan.
+const COLD_CITATION_BY_SOURCE: SideTable<String, [u8; 1], Raw> =
+    SideTable::new(&side_table::SYNC_RESIDENCE_INDEX_COLD_CITATION_BY_SOURCE);
+
+/// Records that `claim` landed on this device while its cited `source` was absent and unlisted,
+/// so the read gate can judge that source with no registration row, and the source's landing
+/// judges it then (`replicated_sources::register_arrived_source_in_txn`).
 pub(crate) fn put_cold_citation_in_txn(
     store: &crate::store::Store,
     txn: &mut heed::RwTxn<'_>,
@@ -126,11 +132,45 @@ pub(crate) fn put_cold_citation_in_txn(
     source: &crate::EntityId,
 ) -> crate::Result<()> {
     let key = format!("{}:{}", claim.to_hex(), source.to_hex());
-    COLD_CITATION.put(store, txn, &key, &[1])
+    COLD_CITATION.put(store, txn, &key, &[1])?;
+    let twin = format!("{}:{}", source.to_hex(), claim.to_hex());
+    COLD_CITATION_BY_SOURCE.put(store, txn, &twin, &[1])
 }
 
-/// The sources `claim` landed without on this opened device, in key order. A key that does not
-/// decode fails closed, as a registration row that does not decode does.
+/// The CLAIMs that landed without `source` and have not been judged at its landing, in key order.
+/// A key that does not decode fails closed, as a cold-citation key that does not decode does.
+pub(crate) fn cold_citers_of_source_in_txn(
+    dbs: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    source: &crate::EntityId,
+) -> crate::Result<Vec<crate::EntityId>> {
+    let prefix = format!("ri:r:{}:", source.to_hex());
+    let mut claims = Vec::new();
+    for row in dbs.sync_state().prefix_iter(txn, &prefix)? {
+        let (key, _) = row?;
+        let claim = key
+            .strip_prefix(&prefix)
+            .and_then(|hex| crate::EntityId::from_hex(hex).ok())
+            .ok_or(crate::Error::CorruptedIndex("cold citation by-source key"))?;
+        claims.push(claim);
+    }
+    Ok(claims)
+}
+
+/// Deletes the by-source twin of `claim`'s cold citation of `source`; absent-ok.
+pub(crate) fn delete_cold_citation_by_source_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    source: &crate::EntityId,
+    claim: &crate::EntityId,
+) -> crate::Result<()> {
+    let twin = format!("{}:{}", source.to_hex(), claim.to_hex());
+    COLD_CITATION_BY_SOURCE.delete(store, txn, &twin)?;
+    Ok(())
+}
+
+/// The sources `claim` landed without on this device, in key order. A key that does not decode
+/// fails closed, as a registration row that does not decode does.
 pub(crate) fn cold_citation_sources_in_txn(
     dbs: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,

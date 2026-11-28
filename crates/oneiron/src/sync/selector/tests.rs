@@ -35,9 +35,11 @@ use crate::sync::manager::WindowManager;
 use crate::sync::quarantine::{QuarantineContainer, quarantined_records};
 use crate::temporal::TimeRange;
 
+mod claim_source_deep_doc;
 mod claim_source_listing;
 mod claim_source_opened_mode;
 mod claim_source_registration;
+mod claim_source_typed_refs;
 
 fn entity_id(byte: u8) -> EntityId {
     crate::test_util::entity(byte)
