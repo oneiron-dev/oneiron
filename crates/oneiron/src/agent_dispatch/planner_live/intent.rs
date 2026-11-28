@@ -498,7 +498,6 @@ impl AgentDispatcher<'_> {
             host.spend,
             at,
         )?;
-        self.check_market_plan(&request.ask, &plan, owner.actor_for_read(self.vault)?)?;
         Ok((placed, plan))
     }
 

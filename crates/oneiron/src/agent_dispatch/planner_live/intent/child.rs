@@ -193,7 +193,6 @@ impl AgentDispatcher<'_> {
             },
             at,
         )?;
-        self.check_market_plan(&request.ask, &plan, *actor)?;
         Ok((placed, plan))
     }
 
