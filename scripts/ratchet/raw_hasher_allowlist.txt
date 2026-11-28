@@ -48,8 +48,8 @@ crates/oneiron/src/ingest/meeting_audio/provenance.rs sha256  # pcm_sha256 that 
 crates/oneiron/src/llm/step/schema_runtime.rs sha256  # validator artifact pin minted by components/schema-validator/build.py
 crates/oneiron/src/origin/lfs/store.rs sha256  # git-LFS object id check on read (LFS spec)
 crates/oneiron/src/origin/lfs/upload.rs sha256  # git-LFS object id of an upload (LFS spec)
-crates/oneiron/src/skill_hub/http_fetch.rs sha256  # agentskills.io publisher sha256 digest
 crates/oneiron/src/team/market/referee.rs sha256  # a market referee's contract digest (sha256sum of the sealed NOTE text) and its verdict output's, which the referee machine hashes
+crates/oneiron/src/skill_hub/http_fetch.rs sha256  # agentskills.io publisher sha256 digest
 
 # Class B: part of a signature or key scheme.
 crates/oneiron-authority/src/authority/webauthn_assertion.rs sha256  # WebAuthn ES256 assertion: SHA-256(clientDataJSON) in the signed bytes (W3C WebAuthn), and the challenge, SHA-256 over a domain and the authority transcript, that the passkey signs
