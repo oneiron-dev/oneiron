@@ -69,7 +69,7 @@ pub(super) fn ranked_in_txn(
     let (best, winner) = scores[0];
     let (next, _) = scores[1];
     let floor = vault
-        .no_match_floors()
+        .no_match_floors_in_txn(txn)
         .resolve(vault.evidence_space(), Some(ENTITY_TYPE_PERSON))
         .floor;
     let margin = setting_value_in_txn(&vault.store, txn, &LINKER_VECTOR_MARGIN)?;

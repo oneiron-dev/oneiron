@@ -175,6 +175,14 @@ pub struct Memory<'v> {
     /// (FIX 3977, [`Memory::with_read_filter`]): a request, never
     /// authority. Every read lane the handle opens meets it.
     pub(super) read_filter: Option<crate::gate::RetrievalFilter>,
+    /// The projects the attached session this handle's call came from reads by default
+    /// (RECALL-SESSION-PROJECT, [`Memory::in_session_workspace`]): a request, never
+    /// authority. Every read key the handle builds carries it.
+    pub(super) session_projects: Option<crate::session_project::SessionProjects>,
+    /// The PROJECT an attached agent session's folder is bound to, on a handle for one of its
+    /// writes (`placing_in_session_workspace`): a claim written here that names no project is
+    /// placed in it. `None`: the root's default project, as before.
+    pub(super) session_placement: Option<crate::EntityId>,
     /// The leased agent attempt whose run makes this handle's calls, when a
     /// host bound one ([`Memory::with_dispatch_attempt`], census L9-37):
     /// telemetry context its graph_fs mount reads log, never authority.

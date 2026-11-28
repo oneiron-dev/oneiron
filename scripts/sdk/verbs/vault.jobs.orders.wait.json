@@ -1,5 +1,6 @@
 {
   "name": "vault.jobs.orders.wait",
+  "description": "Waits for a readable work order to start or finish, parking a code run or reporting immediately whether the milestone has been reached.",
   "input": "crate::work_order::WorkOrderWaitRequest",
   "output": "crate::work_order::WorkOrderWaitAnswer",
   "scope": "Read",

@@ -8,7 +8,11 @@
 # context lives on the card. Every line also goes to the evidence file, kept beside the node's configuration.
 #
 # usage: check_device_handoff.sh --phase nobody|oneiron-only --device <GPU-uuid> --job-account <name>
-#          [--also-account <name>]... [--allow-holder <command name>]... [--evidence <file>]
+#          [--engine-account <name>] [--also-account <name>]... [--allow-holder <command name>]... [--evidence <file>]
+#   --engine-account  the engine's account: in phase oneiron-only its GPU probe must read the card through the job
+#                   control socket (ONEIRON_JOB_CONTROL_SOCKET, default /run/oneiron-job-control.sock), whose root
+#                   handler runs the query as the job account (FIX EXEC-NODE-PROBE-AFTER-HANDOVER). Name it in
+#                   --also-account too, so its own open is checked closed.
 #   --also-account  an account to try besides the ordinary ones (UID_MIN..UID_MAX of /etc/login.defs): the engine's
 #                   account, or the private tool's account when either is a system account.
 #   --allow-holder  a process that may hold the card's files open, by its command name (e.g. nvidia-persistenced).
@@ -19,12 +23,13 @@
 # Fixtures (fixture_checks_in_container.sh): NVIDIA_PROC (default /proc/driver/nvidia), NVIDIA_DEV (default /dev) and
 # an nvidia-smi on PATH stand in for the driver.
 set -u
-PHASE=; DEVICE=; JOB=; ALSO=(); ALLOW=(); EVIDENCE=
+PHASE=; DEVICE=; JOB=; ENGINE=; ALSO=(); ALLOW=(); EVIDENCE=
 while [ $# -gt 0 ]; do
   case $1 in
     --phase) PHASE=$2; shift 2;;
     --device) DEVICE=$2; shift 2;;
     --job-account) JOB=$2; shift 2;;
+    --engine-account) ENGINE=$2; shift 2;;
     --also-account) ALSO+=("$2"); shift 2;;
     --allow-holder) ALLOW+=("$2"); shift 2;;
     --evidence) EVIDENCE=$2; shift 2;;
@@ -151,6 +156,22 @@ contexts=$(card_contexts "$DEVICE")
 if [ -n "$contexts" ]; then check compute-contexts FAIL "$(tr '\n' ';' <<< "$contexts")"
 else check compute-contexts PASS "none on $DEVICE"; fi
 if probe=$(card_probe "$DEVICE"); then check probe PASS "$probe"; else check probe FAIL "$probe"; fi
+
+# 6. The engine's GPU probe reads the card through the job control socket, as the job account, while the engine's own
+#    account stays closed to the card (3, with --also-account). One `device-query` request, as the engine sends it, and
+#    its reply read as the engine reads it: the length frame first, then the card's own UUID field (engine_probe.py,
+#    whose text goes to python3 as an argument, since the engine's account may not read this tree; its own red/green
+#    runs: engine_probe_fixture.sh).
+if [ -n "$ENGINE" ] && [ "$PHASE" = oneiron-only ]; then
+  control_socket=${ONEIRON_JOB_CONTROL_SOCKET:-/run/oneiron-job-control.sock}
+  answer=$(runuser -u "$ENGINE" -- python3 -c "$(cat "$(dirname "$0")/engine_probe.py")" "$control_socket" "$DEVICE" 2>&1)
+  probe_rc=$?
+  verdict=$(head -1 <<< "$answer")
+  # A PASS line counts only from a probe that also exited 0.
+  if [ "$probe_rc" -eq 0 ] && [[ $verdict == "PASS "* ]]; then
+    check engine-probe PASS "$ENGINE via $control_socket: ${verdict#PASS }"
+  else check engine-probe FAIL "$ENGINE via $control_socket: exit $probe_rc: ${verdict:-no answer}"; fi
+fi
 
 if [ ${#FAILED[@]} -eq 0 ]; then say "## TEST $TEST PASS phase=$PHASE evidence=$EVIDENCE"; exit 0; fi
 say "## TEST $TEST FAIL phase=$PHASE failed=[${FAILED[*]}] evidence=$EVIDENCE"

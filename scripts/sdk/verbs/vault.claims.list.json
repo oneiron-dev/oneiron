@@ -21,5 +21,6 @@
     "native": "agent_verb",
     "request": true
   },
-  "mcp_scope": "filtered"
+  "mcp_scope": "filtered",
+  "caller_code": "refused"
 }

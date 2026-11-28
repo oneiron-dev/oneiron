@@ -308,6 +308,9 @@ impl CallSources for CallPins<'_> {
         self.pins.source_version(&id).ok()?;
         Some(SourceShown {
             text: self.pins.cited_text(&id),
+            // Every TURN text a slice's transcript shows passes the one-line
+            // fence (resources/slices.rs), so a quote binds against that view.
+            one_line_fenced: true,
             project: self.pins.evidence_project(&[id]).ok().flatten(),
         })
     }

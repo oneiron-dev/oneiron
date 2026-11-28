@@ -34,7 +34,10 @@ pub(crate) use signals::facet as claim_facet;
 mod slices;
 pub(super) use slices::{ExtractionSlice, PagePastRoom, SliceBound};
 #[cfg(oneiron_test_support)]
-pub(crate) use slices::{fitted_calls_for_test, native_slice_calls_in_room_for_test};
+pub(crate) use slices::{
+    fitted_calls_for_test, native_slice_calls_in_room_for_test,
+    native_slice_sources_standing_for_test,
+};
 mod write;
 use super::provenance::{ConsolidationSink, PromotionCandidate};
 use super::support::invalid_consolidation;
@@ -46,7 +49,6 @@ use crate::claim::{
 };
 use crate::dreamer_runner::dreamer_turn_role;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
-use crate::federation::record_scope::disclosure_scope_for_stored_row;
 use crate::model_step_effect::StepEffectBinding;
 use crate::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN,
@@ -749,29 +751,4 @@ pub(super) fn document_version(document: EntityId, body: &[u8]) -> ScopeResource
     }
 }
 
-/// A stored row's PROJECT: a CLAIM's own body stamp; for any other row its
-/// record position, where both TURN write doors stamp a leader-chat turn's
-/// project, the same stamp the scoped read doors select. The vault default
-/// where the row carries no position; `None` where the position's audience
-/// is not exactly one project.
-pub(crate) fn stored_project(
-    store: &crate::store::Store,
-    txn: &heed::RoTxn<'_>,
-    id: EntityId,
-    kind: u8,
-    body: &[u8],
-) -> Result<Option<EntityId>> {
-    if kind == ENTITY_TYPE_CLAIM {
-        return Ok(Some(
-            crate::claim::decode_claim_body(body, true)?.scope_project,
-        ));
-    }
-    let position = disclosure_scope_for_stored_row(store, txn, id, kind, body)?;
-    Ok(match position.map(|position| position.audience) {
-        None => Some(crate::claim::default_project_id()),
-        Some(crate::federation::ScopeAxis::Some(ids)) if ids.len() == 1 => {
-            ids.into_iter().next().map(|id| id.0)
-        }
-        Some(_) => None,
-    })
-}
+pub(crate) use crate::federation::record_scope::stored_project;

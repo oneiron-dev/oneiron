@@ -26,6 +26,7 @@ fn recall_at(
             telemetry: None,
             filter: None,
             operation_id: None,
+            bar: None,
         },
         |_| vector.map(<[f32]>::to_vec),
     )
@@ -155,6 +156,7 @@ fn a_slow_channel_never_holds_a_call_mode_answer_past_its_deadline() {
                 telemetry: None,
                 filter: None,
                 operation_id: None,
+                bar: None,
             },
             |_| None,
             &RecallDoor {
@@ -214,6 +216,7 @@ fn a_deadline_that_never_fires_ranks_exactly_as_no_deadline() {
                         telemetry: None,
                         filter: None,
                         operation_id: None,
+                        bar: None,
                     },
                     |_| vector.map(<[f32]>::to_vec),
                 )
@@ -392,6 +395,7 @@ fn a_recall_door_is_handed_the_best_pack_ready_at_each_step() {
             telemetry: None,
             filter: None,
             operation_id: None,
+            bar: None,
         },
         |_| {
             // The empty pack is already published when the query embeds.
@@ -460,6 +464,7 @@ fn a_recall_past_its_door_deadline_stops_before_reading_its_items() {
                 telemetry: None,
                 filter: None,
                 operation_id: None,
+                bar: None,
             },
             |_| None,
             &RecallDoor {

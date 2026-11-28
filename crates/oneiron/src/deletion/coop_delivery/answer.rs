@@ -74,6 +74,7 @@ impl Vault {
         let courtesy_hold_id = (answer.kind == CooperativeDeletionDispositionKind::LegalHold)
             .then(|| self.store.clock.entity_id())
             .transpose()?;
+        let redacts = answer.kind == CooperativeDeletionDispositionKind::Redact;
         let written = self.with_write_txn_grouped(|txn| {
             let actor = owner.revalidate_in_txn(self, txn)?;
             let mut filed = INCOMING
@@ -178,7 +179,18 @@ impl Vault {
             .and_then(|answer| answer.delete_operation.as_ref())
         {
             Some(operation) => self.run_courtesy_delete(owner, &key, operation.operation_id),
-            None => Ok(filed),
+            None => {
+                // CLAIM-REDACTION-SKIPS-DERIVED-COPIES: a redaction's dependents past
+                // the first batch go before the answer returns; reads honour a walk
+                // left pending, and the next pass on open resumes it.
+                if redacts && let Err(error) = self.finish_dependent_walks() {
+                    tracing::warn!(
+                        kind = ?error.kind(),
+                        "a redaction's dependent walk did not finish; the next pass resumes it"
+                    );
+                }
+                Ok(filed)
+            }
         }
     }
 

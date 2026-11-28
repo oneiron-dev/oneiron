@@ -15,5 +15,6 @@
   "host_door_lists": true,
   "host_door_caller": true,
   "openapi": true,
-  "host_door_proof": "code_export_preview"
+  "host_door_proof": "code_export_preview",
+  "caller_code": "refused"
 }

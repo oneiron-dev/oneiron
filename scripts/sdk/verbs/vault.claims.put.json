@@ -1,5 +1,6 @@
 {
   "name": "vault.claims.put",
+  "description": "Writes one proposed claim when the run's gates admit it; a gate hold is answered to the caller and no claim is written.",
   "input": "crate::code_run::MemoryClaimInput",
   "output": "crate::code_run::MemoryWriteOutput",
   "scope": "Write",

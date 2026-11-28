@@ -1,0 +1,3 @@
+vault.writes.pending({ limit?: number })
+  -> [{ claim_ref, decision_ref, created_at, reason_codes }]
+  Your writes that are held for consent, newest first, each with the reason.

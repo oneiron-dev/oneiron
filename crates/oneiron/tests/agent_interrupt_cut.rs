@@ -608,6 +608,7 @@ fn run_wake(
     let config = EngineExecutorConfig {
         run_id: EntityId::from_bytes(*wake.attempt.id.as_bytes())?,
         task: "answer your inbox".to_owned(),
+        caller_source_digest: None,
         prompt_package_root: workspace_test_prompt_package_root()?,
         model: ModelId::new(MODEL)?,
         model_locality: ModelLocality::OwnServer,

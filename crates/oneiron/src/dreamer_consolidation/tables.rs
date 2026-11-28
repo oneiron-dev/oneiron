@@ -2,6 +2,32 @@
 //! build script places it in `side_table`'s catalogue.
 
 crate::side_table::side_tables! {
+    /// The answer-schema hold: the engine's pause of the Dreamer's claim extraction answer
+    /// schema, with the suspension that caused it. Key: (). Absence = no hold.
+    DREAMER_ANSWER_SCHEMA_HOLD: VaultMeta b"dreamer:answer_schema:hold:v1" Named Engine
+        [restore: live] [family: unclassified] [tier: canonical];
+    /// One answer-schema event: a suspension or a re-arm, content-free. Key: id16 (the event,
+    /// time-ordered).
+    DREAMER_ANSWER_SCHEMA_EVENT: VaultMeta b"dreamer:answer_schema:event:v1:" Named Engine
+        [restore: live] [family: unclassified] [tier: canonical];
+    /// One TURN extraction call built with the answer schema, kept for the nightly check's
+    /// shadow sample: the request whole, the TURN rows its transcript was read from, and when
+    /// it was kept. Key: id16 (child attempt) + hash32 (step).
+    DREAMER_ANSWER_SCHEMA_CAPTURE: VaultMeta b"dreamer:answer_schema:capture:v1:" Named
+        [restore: content] [family: dispatch Response] [tier: canonical]
+        => crate::dreamer_consolidation::answer_schema::capture::erase_capture_actor_in_txn;
+    /// The night's extraction ran past its budget: the stop kind, latched when an extraction
+    /// child of the night settled with a budget stop. Key: id16 (night).
+    DREAMER_ANSWER_SCHEMA_OVERRUN: VaultMeta b"dreamer:answer_schema:overrun:v1:" Named
+        [restore: live] [family: unclassified] [tier: canonical];
+    /// One shadow pair the nightly check scored: whole flags, candidate counts and F1 per arm.
+    /// Numbers only, never the turns or replies. Key: id16 (night) + u32be (index).
+    DREAMER_ANSWER_SCHEMA_PAIR: VaultMeta b"dreamer:answer_schema:pair:v1:" Named
+        [restore: live] [family: unclassified] [tier: canonical];
+    /// One night's check receipt: its selection and, once finished, its scores, window and
+    /// action. Key: id16 (night).
+    DREAMER_ANSWER_SCHEMA_NIGHT: VaultMeta b"dreamer:answer_schema:night:v1:" Named
+        [restore: live] [family: unclassified] [tier: canonical];
     /// FIX 2425: one candidate a Dreamer attempt decided a correction for, kept before the
     /// branch builds, filters or selects it: its subject, the claim it corrects and its kept
     /// decisions, never its value. Key: id16 (attempt) + u64be(position).

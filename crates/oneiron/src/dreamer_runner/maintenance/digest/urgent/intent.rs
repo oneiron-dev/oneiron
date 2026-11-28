@@ -116,7 +116,7 @@ pub(super) fn stated_intents_in(
 
 /// BLAKE3 of the stored claim `id`'s body bytes, as a digest revision is
 /// taken; `None` for no stored claim.
-pub(super) fn body_hash_in(
+pub(in super::super) fn body_hash_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     id: EntityId,

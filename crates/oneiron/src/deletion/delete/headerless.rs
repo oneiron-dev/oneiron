@@ -24,6 +24,7 @@ use super::super::topology_delete_intent::{
     TopologyDeletePhase, clear_own_topology_delete_in_txn, reserve_topology_delete_in_txn,
 };
 use super::DeleteEntityOutcome;
+use super::remaining::file_body_digests_in_txn;
 use crate::side_table::HexId;
 
 impl Vault {
@@ -270,6 +271,7 @@ impl Vault {
                 sweep_key: None,
                 turn_program_details: turn_program_details.clone(),
                 version_release: false,
+                released_file_digests: Vec::new(),
             });
         }
         let mut affected = self.hard_delete_affected_ids_in_txn(&wtxn, id)?;
@@ -281,6 +283,7 @@ impl Vault {
         } else {
             std::collections::BTreeSet::new()
         };
+        let released_file_digests = file_body_digests_in_txn(&self.store, &wtxn, id)?;
         let (existed, citing, purged_cancelled) = self.purge_entity_active_store_in_txn(
             &mut wtxn,
             id,
@@ -358,6 +361,7 @@ impl Vault {
                 sweep_key: None,
                 turn_program_details: turn_program_details.clone(),
                 version_release: false,
+                released_file_digests,
             });
         }
 
@@ -402,6 +406,7 @@ impl Vault {
             sweep_key: Some(sweep_key),
             turn_program_details,
             version_release: false,
+            released_file_digests,
         })
     }
 }

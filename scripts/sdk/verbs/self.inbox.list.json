@@ -20,5 +20,6 @@
   },
   "mcp_scope": "filtered",
   "mcp_served_output": "output.rows.iter().filter_map(|row| oneiron::EntityId::from_hex(&row.id).ok())",
-  "section": false
+  "section": false,
+  "caller_code": "refused"
 }

@@ -39,9 +39,9 @@ pub use availability::{
     GpuDeviceState, GpuDiskReading, GpuJobDisk,
 };
 pub use device::{
-    DeviceSample, GPU_QUERY_TIMEOUT, GpuComputeProcess, GpuDevice, GpuDeviceProbe, GpuProbeError,
-    NvidiaSmiProbe, parse_compute_process_lines, parse_device_lines, parse_sample_lines,
-    recorded_gpu_devices,
+    DeviceSample, DeviceToolAccount, GPU_QUERY_TIMEOUT, GpuComputeProcess, GpuDevice,
+    GpuDeviceProbe, GpuProbeError, NvidiaSmiProbe, NvidiaSmiQuery, NvidiaSmiRoute,
+    parse_compute_process_lines, parse_device_lines, parse_sample_lines, recorded_gpu_devices,
 };
 pub use node::{
     AuthorityEnded, ExecutionNode, GateAsk, NodeControls, NodeKeys, NodeSnapshot,

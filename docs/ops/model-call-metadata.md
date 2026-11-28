@@ -53,7 +53,7 @@ the existing revoke carry to the owner's other machines, under its normal rules.
 Archive, replay and checkpoint-restore scrubs gain no owner act and keep their
 local-only path. MESSAGE occurrences remain owned by their MESSAGE.
 
-## MCP execute_code capture
+## MCP execute capture
 
 The served code-mode backend can copy its existing configuration with one
 MCP execution's authenticated actor and the gateway's owned off-record session

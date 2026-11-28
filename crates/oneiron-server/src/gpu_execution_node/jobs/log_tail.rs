@@ -70,7 +70,7 @@ impl NodeJobs {
                 Err(answer) => return answer,
             };
             let epoch = journal.epoch().to_hex();
-            match own_key(journal.table().get(key), peer, epoch) {
+            match own_key(journal.table().holder(key), peer, epoch) {
                 Ok(known) => known,
                 Err(answer) => return answer,
             }

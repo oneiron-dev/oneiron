@@ -141,6 +141,31 @@ impl RecordingJsHost<'_, '_> {
         sink: &mut BodySink,
         record_only: bool,
     ) -> Result<bool> {
+        if self
+            .injection
+            .as_ref()
+            .is_some_and(ProgramInjection::caller_source_held)
+        {
+            return Ok(true);
+        }
+        if self
+            .injection
+            .as_ref()
+            .is_some_and(ProgramInjection::awaiting_caller_source_prefix)
+        {
+            if !record_only {
+                sink.finalize_sweep()?;
+                if self.recorded_store_path(&sink.digest()?).is_some() {
+                    return Ok(false);
+                }
+            }
+            if let Some(injection) = &mut self.injection {
+                injection.hold_caller_source_output(
+                    "caller source changed a stored result during replay",
+                );
+            }
+            return Ok(true);
+        }
         if !self.pending_walk_open() {
             return Ok(self.pending_replay_dry());
         }
@@ -232,11 +257,40 @@ impl RecordingJsHost<'_, '_> {
     pub(super) fn bind_stored_sourced(
         &mut self,
         storage: &ExecutorStorage<'_>,
-        sink: BodySink,
+        mut sink: BodySink,
         name: Option<String>,
         inherit: &[(EntityId, CodeRunRawOutput)],
         input_rows: Option<Vec<EntityId>>,
     ) -> Result<(CodeRunRawOutput, serde_json::Value)> {
+        // A matching store during caller-source replay reuses the existing
+        // occurrence and name without publishing again (FIX EXECUTE-CALLER-CODE).
+        if self
+            .injection
+            .as_ref()
+            .is_some_and(ProgramInjection::is_caller_source)
+        {
+            sink.finalize_sweep()?;
+            if let Some(path) = self.recorded_store_path(&sink.digest()?) {
+                let output = self
+                    .results
+                    .iter()
+                    .find(|output| output.path == path)
+                    .cloned()
+                    .ok_or(Error::CorruptedIndex("caller source stored result"))?;
+                let name = name.or_else(|| {
+                    self.bindings
+                        .iter()
+                        .find(|binding| binding.path == path)
+                        .map(|binding| binding.name.clone())
+                });
+                let card = result_card(storage, self.run_id, &output, name.as_deref())?;
+                self.replayed_stores.push(path);
+                if let Some(name) = name {
+                    self.bind(name, output.handle.clone(), output.path.clone());
+                }
+                return Ok((output, card));
+            }
+        }
         let output = self.publish_stored_sourced(storage, sink, inherit, input_rows, None)?;
         let name = name.unwrap_or_else(|| self.next_auto_name());
         self.bind(name.clone(), output.handle.clone(), output.path.clone());

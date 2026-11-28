@@ -344,6 +344,35 @@ impl Store {
         self.pending_gate_consents_in_txn(&rtxn, limit)
     }
 
+    /// The tray rows the newest `limit` sequence rows name, newest insertion
+    /// first. A sequence row that names no claim, or whose tray row is gone
+    /// or does not decode, is skipped, so a tray fault never fails the
+    /// caller's own read; [`Self::pending_gate_consent_slots_page_in_txn`]
+    /// reports those (FIX 7378, FIX 7601).
+    pub(crate) fn newest_pending_gate_consents_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        limit: usize,
+    ) -> Result<Vec<PendingGateConsentRecord>> {
+        let mut records = Vec::new();
+        for row in SEQUENCE_INDEX_BYTES
+            .iter_rev_range(self, txn, Bound::Unbounded, Bound::Unbounded)?
+            .take(limit)
+        {
+            let (_, value) = row?;
+            let Some(claim_id) = <[u8; 16]>::try_from(value.as_slice())
+                .ok()
+                .and_then(|raw| EntityId::from_bytes(raw).ok())
+            else {
+                continue;
+            };
+            if let Some(record) = self.lenient_tray_in_txn(txn, &claim_id)? {
+                records.push(record);
+            }
+        }
+        Ok(records)
+    }
+
     /// Reads one sequence-ordered page of pending gate consents after `cursor`.
     /// The cursor is the last internally allocated sequence returned by the preceding page.
     pub(crate) fn pending_gate_consents_page_in_txn(

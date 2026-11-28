@@ -35,6 +35,87 @@ impl Memory<'_> {
         bound
     }
 
+    /// This handle for one read of an attached agent session whose folder names
+    /// `folder_digests`, its own digest first (RECALL-SESSION-PROJECT; Engine ANSWER
+    /// RECALL-SESSION-PROJECT-INTENT, 26 Nov: Q1 = A, Q2 = A). Every read key it builds then
+    /// reads CLAIM, NOTE, MESSAGE and TURN rows placed in the folder's bound project or a project
+    /// below it, and none if no live project is bound; receipts name the axis. It binds a request,
+    /// never authority: the credential still decides what is read. A host binds it only on a
+    /// read that names no project; a storage failure binds the unbound default, never a wider
+    /// read.
+    #[must_use]
+    pub fn in_session_workspace(&self, folder_digests: &[String]) -> Self {
+        let mut bound = self.clone();
+        bound.session_projects = Some(self.session_projects_of(folder_digests).unwrap_or_else(
+            |error| {
+                tracing::warn!(
+                    error_kind = ?error.code,
+                    "an attached session's folder binding did not read; its reads read no claim"
+                );
+                crate::session_project::SessionProjects::Unbound
+            },
+        ));
+        bound
+    }
+
+    /// This handle for one write of an attached agent session whose folder names
+    /// `folder_digests`, its own digest first (RECALL-SESSION-PROJECT, the write default;
+    /// START-RECALL-WRITES-ROOT-PROJECT). A claim it writes that names no project is placed in
+    /// the folder's bound project, so the session's own reads read it back; a claim that names
+    /// its project lands there. A note it writes is placed there too, and so is a turn the
+    /// write mints with its messages. An unbound folder keeps the root's default project (Engine
+    /// ANSWER RECALL-SESSION-PROJECT-INTENT, 26 Nov, Q2 = A: writes keep the root default), and
+    /// so does a binding that does not read. It places, never grants: the writer still judges
+    /// each placed position under the caller's credential, and a placement the credential does
+    /// not cover refuses the write.
+    #[must_use]
+    pub fn placing_in_session_workspace(&self, folder_digests: &[String]) -> Self {
+        let mut placed = self.clone();
+        placed.session_placement =
+            self.vault
+                .workspace_project(folder_digests)
+                .unwrap_or_else(|error| {
+                    tracing::warn!(
+                        error = %error,
+                        "an attached session's folder binding did not read; its claims keep the \
+                         root's default project"
+                    );
+                    None
+                });
+        placed
+    }
+
+    /// Sets the default project already resolved for this session's writes: claims that name
+    /// no project, notes, and a turn the write mints with its messages.
+    pub(crate) fn with_session_placement(mut self, project: Option<crate::EntityId>) -> Self {
+        self.session_placement = project;
+        self
+    }
+
+    /// `input` placed in this handle's session project when the handle carries one and the
+    /// input's scope names no project (`scopeProjectId`); `None` leaves it as it is. A scope
+    /// that is not an object is left for the writer to refuse, as before.
+    pub(crate) fn placed_in_session_project(
+        &self,
+        input: &crate::memory::ClaimInput,
+    ) -> Option<crate::memory::ClaimInput> {
+        let project = self.session_placement?;
+        let mut scope = match &input.scope {
+            None => serde_json::Map::new(),
+            Some(serde_json::Value::Object(scope)) if !scope.contains_key("scopeProjectId") => {
+                scope.clone()
+            }
+            Some(_) => return None,
+        };
+        scope.insert(
+            "scopeProjectId".to_owned(),
+            serde_json::Value::String(project.to_hex()),
+        );
+        let mut placed = input.clone();
+        placed.scope = Some(serde_json::Value::Object(scope));
+        Some(placed)
+    }
+
     /// The caller filter this handle's reads are bound to, if any.
     pub(crate) fn read_filter(&self) -> Option<&crate::gate::RetrievalFilter> {
         self.read_filter.as_ref()
@@ -518,6 +599,7 @@ impl Memory<'_> {
             instrument,
             door: door.clone(),
             on_device: self.locality == crate::claim::CallerLocality::OnDevice,
+            session_workspace: None,
         };
         Some(VerbAskCredential::new(reference, witness))
     }

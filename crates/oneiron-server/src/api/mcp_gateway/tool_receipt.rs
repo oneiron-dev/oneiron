@@ -26,6 +26,17 @@ pub(super) fn mcp_call_receipt(
     called: Result<Value, McpGatewayError>,
 ) -> Result<Value, McpGatewayError> {
     let (outcome, result_digest) = match &called {
+        Ok(result) if crate::mcp::is_code_run_result(result) && result["isError"] == true => {
+            let error = &result["structuredContent"]["error"];
+            let code = error["code"].as_str().unwrap_or("code_run_failed");
+            let message = error["message"].as_str().unwrap_or_default();
+            (
+                oneiron::receipt::CallOutcome::Refused {
+                    code: code.to_owned(),
+                },
+                Some(oneiron::receipt::call_refusal_digest(code, message)),
+            )
+        }
         // A `reveal.wait` reply is digested with its value masked (OF-560).
         Ok(result) => (
             oneiron::receipt::CallOutcome::Ok,

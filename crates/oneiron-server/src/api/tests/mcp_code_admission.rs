@@ -17,8 +17,8 @@ use tokio::sync::mpsc;
 use super::support_mcp::{McpFixtureCodeBackend, McpFixtureCodeRuntime};
 use crate::mcp::{
     CodeRunLimits, McpCodeExecutionError, McpCodeExecutionHost, McpCodeExecutionRequest,
-    McpCodeModeProvider, McpConnectorScope, McpEngineNativeCodeHost, McpResolvedActor,
-    mcp_code_run_id,
+    McpCodeModeProvider, McpCodeRunInput, McpConnectorScope, McpEngineNativeCodeHost,
+    McpResolvedActor, mcp_code_run_id,
 };
 use crate::wire_telemetry::{LimitQuestions, LimitRow};
 
@@ -72,6 +72,7 @@ impl McpCodeModeProvider for HeldProvider {
         Ok(EngineExecutorConfig {
             run_id,
             task: task.to_owned(),
+            caller_source_digest: None,
             prompt_package_root: oneiron::prompt::workspace_test_prompt_package_root()
                 .expect("workspace test prompt package"),
             model: oneiron::ModelId::new("fixture/executor@v1").expect("fixture model id"),
@@ -103,6 +104,7 @@ impl oneiron::code_run::AgentVerbDoor for NoVerbs {
         Ok(Err(oneiron::code_run::AgentVerbRefusal {
             code: oneiron::code_run::AGENT_VERB_DOOR_UNBOUND.to_owned(),
             hook_notice: None,
+            reason_codes: Vec::new(),
         }))
     }
 
@@ -143,12 +145,13 @@ fn run<'a>(
         vault: Arc::clone(vault),
         actor,
         run_ref,
-        task: "summarize the launch plan",
+        input: McpCodeRunInput::Task("summarize the launch plan"),
         run_id: mcp_code_run_id(run_ref, actor),
         verbs: Arc::new(NoVerbs),
         off_record_session: None,
         consent_origin: None,
         brief: None,
+        run_end: None,
     })
 }
 

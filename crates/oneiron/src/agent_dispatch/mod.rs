@@ -98,6 +98,8 @@ pub(crate) use run_lineage::{
 };
 mod run_objectives;
 mod run_placement;
+pub use self::run_placement::{AGENTS_ROLE, PLACE_OPTIONS_MAX};
+pub(crate) use self::run_placement::{RunPlacement, run_placement_of};
 mod run_task;
 pub(crate) use self::run_task::{
     AGENT_RUN_FENCE_FIELD, AGENT_RUN_STOOD_DOWN, AgentRunFences, agent_run_fence_permits_effect,
@@ -142,6 +144,8 @@ mod workflow_pump;
 mod workflow_record;
 #[cfg(oneiron_test_support)]
 pub(crate) use self::workflow_record::dedupe_key_hash_for_test as workflow_dedupe_key_hash_for_test;
+#[cfg(oneiron_test_support)]
+pub(crate) use workflow::context_rows_for_test;
 pub(crate) use workflow::tool_wait::checkpoint as workflow_tool_checkpoint;
 #[cfg(oneiron_test_support)]
 pub(crate) use workflow::tool_wait::{

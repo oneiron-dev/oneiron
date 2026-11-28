@@ -1,0 +1,5 @@
+verbs.expand(path: string)
+  -> text. The tree one level deeper, the same call at every depth:
+     a branch gives its children, one line each, with the fields every verb takes;
+     a verb gives its full types and an example; a type name gives that type.
+  e.g. return await verbs.expand("vault.mail")          return await verbs.expand("vault.mail.inbox")

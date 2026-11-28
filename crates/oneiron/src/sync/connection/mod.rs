@@ -118,6 +118,12 @@ pub struct SyncConnection {
     /// Wakes the owner's residence directives naming this machine: the
     /// residence upkeep rings it once the authority history is in (OF-534).
     directive_wake: Arc<tokio::sync::Notify>,
+    /// Where the last round's read of the home's mesh bindings stopped
+    /// (MESH-AUTHORITY-REPLICATION): the next round goes on from there, on
+    /// this socket or the next, so a reconnect never starts the scan over
+    /// (REVIEW-10536 round 2). `None` once a scan reached the home's last
+    /// binding.
+    mesh_cursor: Arc<std::sync::Mutex<Option<crate::EntityId>>>,
     /// Wakes the predicted level's upkeep on this machine: the residence upkeep rings it once
     /// the authority history is in and a newly applied prediction rings it (ARCH-0023b
     /// #predicted-residence). A change of the app shell's fetch conditions wakes the upkeep
@@ -223,6 +229,7 @@ impl SyncConnection {
             mode,
             mode_publish: std::sync::Mutex::new(()),
             directive_wake: Arc::default(),
+            mesh_cursor: Arc::default(),
             predicted_wake: Arc::default(),
             predicted_connected: std::sync::atomic::AtomicBool::new(false),
             follow_wake: Arc::default(),

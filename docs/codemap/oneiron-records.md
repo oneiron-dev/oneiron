@@ -529,7 +529,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/can.rs` | src | s | 1 struct · 1 enum | CanVerbAnswer, CanVerbGate | Moved from `crates/oneiron/src/memory/can.rs` (lib split R2: record types below the lib) |
 | `src/memory/chat.rs` | src | s | 1 enum · 1 type | ChatAbstentionReason | Moved from `crates/oneiron/src/memory/chat.rs` (lib split R2: record types below the lib) |
 | `src/memory/claim_conflict.rs` | src | s | 3 struct · 1 enum | ClaimConflictBundle, ClaimConflictMember, ClaimConflictQuestion, ClaimConflictReceipt | Moved from `crates/oneiron/src/memory/claim_conflict.rs` (lib split R2: record types below the lib) |
-| `src/memory/claims/mod.rs` | src | s | 2 struct · 1 enum · 1 fn · 1 const · 12 re-export | DeleteReceipt, DeleteRequestState, PendingWrite | Moved from `crates/oneiron/src/memory/claims/mod.rs` (lib split R2: record types below the lib) |
+| `src/memory/claims/mod.rs` | src | s | 3 struct · 1 enum · 3 fn · 19 const · 12 re-export | DeleteReceipt, DeleteRequestState, PendingWrite, RemainingNotice | Moved from `crates/oneiron/src/memory/claims/mod.rs` (lib split R2: record types below the lib) |
 | `src/memory/code_doors/mod.rs` | src | s | 1 mod · 1 re-export | — | — |
 | `src/memory/code_doors/types.rs` | src | s | 5 struct · 1 enum · 6 re-export | CodeMutationEntry, CodeMutationLog, CodeMutationState, CodeSymbolLeaseView, CodeSymbolsDeclared, CodeSymbolsReleased | Moved from `crates/oneiron/src/memory/code_doors/types.rs` (lib split R2: record types below the lib) |
 | `src/memory/conversation_membership.rs` | src | s | 1 struct · 1 fn | MembershipWindow | Moved from `crates/oneiron/src/memory/conversation_membership.rs` (lib split R2: record types below the lib) |
@@ -544,7 +544,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/memory/merge_queue_doors/checker_types.rs` | src | s | 1 struct · 2 enum · 5 re-export | MergeQueueCheckState, MergeQueueCheckWorkKind, MergeQueueCheckWorkView | Moved from `crates/oneiron/src/memory/merge_queue_doors/checker_types.rs` (lib split R1: record types below… |
 | `src/memory/merge_queue_doors/mod.rs` | src | s | 3 mod · 7 re-export | — | — |
 | `src/memory/merge_queue_doors/types.rs` | src | s | 5 struct · 4 re-export | MergeQueueBatchView, MergeQueueObservation, MergeQueuePathView, MergeQueuePointersView, MergeQueueRequeueView | Moved from `crates/oneiron/src/memory/merge_queue_doors/types.rs` (lib split R2: record types below the lib) |
-| `src/memory/mod.rs` | src | s | 24 mod · 273 re-export | — | — |
+| `src/memory/mod.rs` | src | m | 24 mod · 278 re-export | — | — |
 | `src/memory/origin_doors/mod.rs` | src | s | 1 mod · 30 re-export | — | — |
 | `src/memory/origin_doors/workbench_types.rs` | src | s | 8 struct · 3 re-export | CodeForkDocumentView, CodeForkView, CodeIngressRef, CodePushIngressView, CodeRepoImportLink, CodeRepoView, CodeRunWorkFile, CodeRunWorkLink | Moved from `crates/oneiron/src/memory/origin_doors/workbench_types.rs` (lib split R2: record types below the… |
 | `src/memory/outbound/mod.rs` | src | s | 1 mod · 8 re-export | — | — |
@@ -908,4 +908,5 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/fingerprint_keep_policy_hash.rs` | test | s | 3 fn · 1 crate-vis | — | K-proof (oracle) for PLAN-UC-04 stage 3.4a: the hosted legal policy hash keeps its bytes |
 | `tests/identity_ask_key_hex.rs` | test | s | — | — | The identity ask key's hex form (UC-07 PR 8; FIX [IDENTITY-ASK-KEY-ACCEPTS-SIGN]) |
 | `tests/records_register_names.rs` | test | s | — | — | Register names (oneiron-records, wave A1): the names each hand table below wrote before its type became a… |
+| `tests/remaining_files_still_in_use.rs` | test | s | — | — | H5 T9 fallback: no existing pinned FILE-body delete fixture |
 | `tests/snapshot_id_side_key.rs` | test | s | — | — | `SnapshotId`'s side-table key (UC-06 PR 9) |

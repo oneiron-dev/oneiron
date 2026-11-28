@@ -175,6 +175,12 @@ pub const MEMORY_CODE_WORLD_PLACEMENT_UNVERIFIABLE: &str = "WORLD_PLACEMENT_UNVE
 /// request; the run proposed nothing and goes through once the disk has room.
 pub const MEMORY_CODE_SANDBOX_PROPOSAL_DISK_FLOOR: &str = "SANDBOX_PROPOSAL_DISK_FLOOR";
 
+/// The owner's delete or erase named a record they chose to keep stored and
+/// unused in answer to a deletion request (Q1 = A). Only the owner, on their
+/// own proof, meets it; every other caller keeps `NOT_FOUND`. The wire code
+/// is the lowercase `restricted` the ruling names.
+pub const MEMORY_CODE_RECORD_RESTRICTED: &str = "restricted";
+
 /// Typed facade error: stable `code` + human `message` + remediation
 /// `suggestions` (never empty). The central `From<Error>` impl is the one
 /// engine→binding error mapping (S8); the HTTP mapping stays server-side.

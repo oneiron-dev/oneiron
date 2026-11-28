@@ -144,6 +144,7 @@ pub(crate) const SIDE_TABLE_DISPOSITIONS: &[(&str, ArchiveSideDisposition)] = &[
     ("LEARNING_SETTING", ArchiveSideDisposition::Retained),
     ("LEGAL_HOLD_EVENT", ArchiveSideDisposition::Retained),
     ("LEGAL_HOLD_ROW", ArchiveSideDisposition::Retained),
+    ("LEGAL_HOLD_SEALED_RECORD", ArchiveSideDisposition::Retained),
     (
         "MAIL_PACK_COMPLIANCE_SETTING",
         ArchiveSideDisposition::Retained,

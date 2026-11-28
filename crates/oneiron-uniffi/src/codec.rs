@@ -20,19 +20,21 @@ use oneiron::memory as engine;
 use oneiron::retrieval_quality as quality;
 use oneiron::task_verb::sdk;
 
+use crate::dto::RemainingNotice;
 use crate::dto::{
     AdmitImportedClaimInput, BlobArtifactInput, BlobVersionAppendOutcome, BlobVersionView,
     CheckInDecision, CitedMessage, ClaimInput, ClaimListFilter, ClaimView, ClaimViews,
     CommitOutcome, CommitReceipt, ConsolidationJobInput, DeleteReceipt, DeleteRequestState,
     DreamerJobRef, DreamerJobView, Effort, EntityRead, EntityRefReceipt, EntityView, EntityViews,
-    ExportReceipt, FacadeReceipt, ForgetSelector, HabitCheckinInput, LexicalHit, LexicalHits,
-    MemoryItem, MemoryPack, MemoryProvenance, MemoryStaleStamp, MentionProvenance, NeighborHit,
-    NeighborHits, NeighborOpts, OutboundDraftInput, OutboundIntentReceipt, PendingWrite,
-    QueryAffect, QuoteSpan, ReadReceipt, ReadScope, RecallMedia, RecallResidence,
-    RecallResidenceHit, RecallResidenceSource, RecallScope, RecordRefusal, RefusalReason,
-    RerankReport, RerankSkip, RetrievalDegradation, RetrievalMeta, RetrievalQuality,
-    SafeDeleteReason, ScopeHonesty, StructuralPutInput, TemporalHint, TurnProgramWakeOutcome,
-    UnpersistedWakeReason, WireJson, WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn,
+    ExportReceipt, FacadeReceipt, ForgetSelector, HabitCheckinInput, HydrateMiss,
+    HydrateMissReason, LexicalHit, LexicalHits, LineProvenance, MemoryItem, MemoryPack,
+    MemoryProvenance, MemoryStaleStamp, MentionProvenance, NeighborHit, NeighborHits, NeighborOpts,
+    OutboundDraftInput, OutboundIntentReceipt, PendingWrite, QueryAffect, QuoteSpan, ReadReceipt,
+    ReadScope, RecallMedia, RecallResidence, RecallResidenceHit, RecallResidenceSource,
+    RecallScope, RecordRefusal, RefusalReason, RerankReport, RerankSkip, RetrievalDegradation,
+    RetrievalMeta, RetrievalQuality, SafeDeleteReason, ScopeHonesty, StructuralPutInput,
+    TemporalHint, TurnProgramWakeOutcome, UnpersistedWakeReason, WireJson, WitnessAuthor,
+    WitnessMessage, WitnessReceipt, WitnessTurn,
 };
 use crate::error::OneironError;
 
@@ -802,6 +804,14 @@ impl Lift<engine::DeleteReceipt> for DeleteReceipt {
                 }
             },
             check_in: Lift::lift(value.check_in)?,
+            remaining: value
+                .remaining
+                .into_iter()
+                .map(|entry| RemainingNotice {
+                    code: entry.code,
+                    text: entry.text,
+                })
+                .collect(),
         })
     }
 }
@@ -979,11 +989,30 @@ impl Lift<ScopedReadResult<Vec<engine::ClaimView>>> for ClaimViews {
     }
 }
 
-impl Lift<ScopedReadResult<Vec<engine::EntityView>>> for EntityViews {
-    fn lift(read: ScopedReadResult<Vec<engine::EntityView>>) -> Result<Self, OneironError> {
+impl Lift<engine::HydrateMissReason> for HydrateMissReason {
+    fn lift(reason: engine::HydrateMissReason) -> Result<Self, OneironError> {
+        Ok(match reason {
+            engine::HydrateMissReason::NotFound => Self::NotFound,
+            engine::HydrateMissReason::Malformed => Self::Malformed,
+        })
+    }
+}
+
+impl Lift<engine::HydrateMiss> for HydrateMiss {
+    fn lift(miss: engine::HydrateMiss) -> Result<Self, OneironError> {
         Ok(Self {
-            value: Lift::lift(read.value)?,
-            narrowing: ReadReceipt::lift(read.receipt)?,
+            reference: miss.reference,
+            reason: HydrateMissReason::lift(miss.reason)?,
+        })
+    }
+}
+
+impl Lift<engine::HydrateResult> for EntityViews {
+    fn lift(result: engine::HydrateResult) -> Result<Self, OneironError> {
+        Ok(Self {
+            value: Lift::lift(result.read.value)?,
+            narrowing: ReadReceipt::lift(result.read.receipt)?,
+            missing: Lift::lift(result.missing)?,
         })
     }
 }
@@ -1380,6 +1409,11 @@ impl Lift<engine::MemoryItem> for MemoryItem {
                 source_revision_ids: item.provenance.source_revision_ids,
                 evidence_turn_ids: item.provenance.evidence_turn_ids,
             },
+            line_provenance: item.line_provenance.map(|line| LineProvenance {
+                approval: line.approval,
+                learned_at: line.learned_at,
+                source_conversations: line.source_conversations,
+            }),
             stale: item.stale.map(|stamp| MemoryStaleStamp {
                 stale_since: stamp.stale_since,
                 age_secs: stamp.age_secs,

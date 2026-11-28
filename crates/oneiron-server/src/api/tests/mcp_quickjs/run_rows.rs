@@ -22,15 +22,6 @@ fn search_then_claim(claim: oneiron::EntityId, subject: oneiron::EntityId) -> St
     )
 }
 
-/// One `execute_code` call on `/mcp` under `credential`.
-fn run_request(actor: oneiron::EntityId, credential: &str, run_ref: &str) -> Request<Body> {
-    let args = mcp_merge_args(
-        mcp_endpoint_envelope(actor, "write_memory"),
-        json!({"run_ref": run_ref, "task": "search, then state a favorite drink"}),
-    );
-    mcp_endpoint_call_request("/mcp", credential, run_ref, "execute_code", args)
-}
-
 /// The outcome of the run's call to `effect`, from its step log.
 fn row_outcome(body: &Value, effect: &str) -> Value {
     body["result"]["structuredContent"]["steps"]
@@ -42,11 +33,10 @@ fn row_outcome(body: &Value, effect: &str) -> Value {
         .clone()
 }
 
-/// Review repro (burn engine-prs-03): a connector bound only to `execute_code`
-/// made its run `put_claim` and the claim committed, where `claim_upsert`
-/// would have answered `mcp_verb_not_bound`; its run's search read the index
-/// too. A run row now needs its own binding: refused, nothing stored. A
-/// connector bound to the rows by name runs both.
+/// Review repro (burn engine-prs-03): a connector bound only to the entry tool made its
+/// run `put_claim` and the claim committed, where `claim_upsert` would have answered
+/// `mcp_verb_not_bound`; its run's search read the index too. A run row now needs its own
+/// binding: refused, nothing stored. A connector bound to the rows by name runs both.
 #[tokio::test]
 async fn quickjs_run_rows_need_the_connectors_binding() {
     let subject = seeded_test_entity_id(0x0024_65b1);
@@ -64,11 +54,14 @@ async fn quickjs_run_rows_need_the_connectors_binding() {
         .unwrap();
 
     let bound = seeded_test_entity_id(0x0024_65b3);
-    register_bound_verb_mcp_actor(&mode.server, "quickjs-rows-bound", bound, &["execute_code"])
-        .await;
-    let (_, body) = route_json(
-        mode.server.clone(),
-        run_request(bound, "quickjs-rows-bound", "quickjs-rows-bound"),
+    register_bound_verb_mcp_actor(&mode.server, "quickjs-rows-bound", bound, &["execute"]).await;
+    // No MCP tool starts a task run anymore: the kept task handler enters it, rendering
+    // the old task shape (FIX EXECUTE-CALLER-CODE).
+    let body = execute_task_run_for_test(
+        &mode.server,
+        "quickjs-rows-bound",
+        "quickjs-rows-bound",
+        "search, then state a favorite drink",
     )
     .await;
     assert!(body.get("error").is_none(), "{body}");
@@ -104,7 +97,7 @@ async fn quickjs_run_rows_need_the_connectors_binding() {
         &mode.server,
         "quickjs-rows-named",
         named,
-        &["execute_code", "vault.search", "vault.claims.put"],
+        &["execute", "vault.search", "vault.claims.put"],
     )
     .await;
     // The claim's writer reads the PERSON it is about: a run row's subject
@@ -112,9 +105,11 @@ async fn quickjs_run_rows_need_the_connectors_binding() {
     // that is not a CLAIM only through a core:read grant. Else the put fails
     // INVENTED_REFERENCE.
     put_actor_read_grant(&mode.vault, named, None);
-    let (_, body) = route_json(
-        mode.server.clone(),
-        run_request(named, "quickjs-rows-named", "quickjs-rows-named"),
+    let body = execute_task_run_for_test(
+        &mode.server,
+        "quickjs-rows-named",
+        "quickjs-rows-named",
+        "search, then state a favorite drink",
     )
     .await;
     assert!(body.get("error").is_none(), "{body}");
@@ -194,9 +189,11 @@ async fn quickjs_a_revoked_slip_ends_its_runs_own_reads() {
     .await;
 
     // Step 0 runs under the live slip, then yields at the soft step limit.
-    let (_, body) = route_json(
-        mode.server.clone(),
-        run_request(actor, credential, credential),
+    let body = execute_task_run_for_test(
+        &mode.server,
+        credential,
+        credential,
+        "search, then state a favorite drink",
     )
     .await;
     assert!(body.get("error").is_none(), "{body}");
@@ -213,10 +210,16 @@ async fn quickjs_a_revoked_slip_ends_its_runs_own_reads() {
     // Re-enter the run, hold the model's answer for step 1 until the run
     // has asked for it, and revoke the slip before the guest's search runs.
     let held = mode.backend.scripts.lock().unwrap();
-    let run = tokio::spawn(route_json(
-        mode.server.clone(),
-        run_request(actor, credential, credential),
-    ));
+    let server = mode.server.clone();
+    let run = tokio::spawn(async move {
+        execute_task_run_for_test(
+            &server,
+            "quickjs-rows-revoked",
+            "quickjs-rows-revoked",
+            "search, then state a favorite drink",
+        )
+        .await
+    });
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
     while mode.backend.requests.lock().unwrap().len() < 2 {
         assert!(
@@ -233,7 +236,7 @@ async fn quickjs_a_revoked_slip_ends_its_runs_own_reads() {
     assert!(!revoked.is_empty(), "fixture check: the slip was live");
     drop(held);
 
-    let (_, body) = run.await.unwrap();
+    let body = run.await.unwrap();
     assert_mcp_structured_error(&body, "mcp_auth_required");
     assert!(body.get("result").is_none(), "{body}");
     let record = mode
@@ -367,24 +370,12 @@ async fn quickjs_a_runs_search_reads_under_the_credential_builders_key() {
     )
     .await;
 
-    // The agent's run names it as an agent: `run_request` asserts a human.
-    let args = mcp_merge_args(
-        mcp_endpoint_envelope(agent, "write_memory"),
-        json!({
-            "actor": mcp_actor_json(agent, "agent"),
-            "run_ref": "quickjs-key-agent",
-            "task": "search the vault",
-        }),
-    );
-    let (_, body) = route_json(
-        mode.server.clone(),
-        mcp_endpoint_call_request(
-            "/mcp",
-            "quickjs-key-agent",
-            "quickjs-key-agent",
-            "execute_code",
-            args,
-        ),
+    // The agent's run resolves its agent actor from its credential.
+    let body = execute_task_run_for_test(
+        &mode.server,
+        "quickjs-key-agent",
+        "quickjs-key-agent",
+        "search the vault",
     )
     .await;
     assert!(body.get("error").is_none(), "{body}");

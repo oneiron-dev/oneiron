@@ -10,7 +10,8 @@ use std::os::fd::{AsRawFd, BorrowedFd, FromRawFd, OwnedFd};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Component, Path};
 
-/// What `fstat` says of an open file.
+/// What `fstat` says of an open file, or `fstatat` of an entry
+/// ([`facts_beneath`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FileFacts {
     pub uid: u32,
@@ -19,7 +20,14 @@ pub struct FileFacts {
     pub mode: u32,
     pub is_dir: bool,
     pub is_regular: bool,
+    /// A symbolic link: only an entry's own facts ([`facts_beneath`]) say so.
+    pub is_link: bool,
     pub size: u64,
+    /// How many names the file has (hard links).
+    pub links: u64,
+    /// The file system's device and the file's inode: which file it is.
+    pub device: u64,
+    pub inode: u64,
 }
 
 fn c_name(name: &OsStr) -> io::Result<CString> {
@@ -59,16 +67,60 @@ pub fn facts(fd: BorrowedFd<'_>) -> io::Result<FileFacts> {
     // SAFETY: fstat fills the whole buffer when it succeeds.
     check(unsafe { libc::fstat(fd.as_raw_fd(), stat.as_mut_ptr()) })?;
     // SAFETY: fstat succeeded.
-    let stat = unsafe { stat.assume_init() };
+    Ok(facts_of(&unsafe { stat.assume_init() }))
+}
+
+/// `fstatat` of the entry `name` beneath `dir`, never through a link: a
+/// link's own facts, the file it names never opened.
+///
+/// # Errors
+///
+/// The kernel refused it (`NotFound` when nothing is at `name`).
+pub fn facts_beneath(dir: BorrowedFd<'_>, name: &str) -> io::Result<FileFacts> {
+    let c = c_name(OsStr::new(name))?;
+    let mut stat = std::mem::MaybeUninit::<libc::stat>::uninit();
+    // SAFETY: c is NUL terminated; fstatat fills the whole buffer when it
+    // succeeds, and AT_SYMLINK_NOFOLLOW stats a link itself.
+    check(unsafe {
+        libc::fstatat(
+            dir.as_raw_fd(),
+            c.as_ptr(),
+            stat.as_mut_ptr(),
+            libc::AT_SYMLINK_NOFOLLOW,
+        )
+    })?;
+    // SAFETY: fstatat succeeded.
+    Ok(facts_of(&unsafe { stat.assume_init() }))
+}
+
+fn facts_of(stat: &libc::stat) -> FileFacts {
     let kind = stat.st_mode & libc::S_IFMT;
-    Ok(FileFacts {
+    FileFacts {
         uid: stat.st_uid,
         gid: stat.st_gid,
         mode: stat.st_mode & 0o7777,
         is_dir: kind == libc::S_IFDIR,
         is_regular: kind == libc::S_IFREG,
+        is_link: kind == libc::S_IFLNK,
         size: u64::try_from(stat.st_size).unwrap_or(0),
-    })
+        // nlink_t, dev_t and ino_t are no wider than 64 bits on Linux.
+        links: stat.st_nlink as u64,
+        device: stat.st_dev as u64,
+        inode: stat.st_ino as u64,
+    }
+}
+
+/// The kind of file `found` is, in words.
+fn kind_words(found: &FileFacts) -> &'static str {
+    if found.is_link {
+        "a link"
+    } else if found.is_dir {
+        "a directory"
+    } else if found.is_regular {
+        "a regular file"
+    } else {
+        "a special file"
+    }
 }
 
 /// The directory `name` beneath `dir` (or the absolute path's first step
@@ -324,6 +376,126 @@ pub fn set_group_and_mode_beneath(
     check(unsafe { libc::fchmodat(dir.as_raw_fd(), c.as_ptr(), mode as libc::mode_t, 0) })
 }
 
+/// The mode of a lock file [`make_lock_beneath`] makes.
+const LOCK_FILE_MODE: u32 = 0o600;
+
+/// Whether the entry `name` beneath a directory, as `found` says, is the
+/// lock file [`make_lock_beneath`] makes: an empty regular file `owner`
+/// owns, mode 0600, with no other name (a hard link), so it is no file of
+/// another directory (review r1 of #10541: install's promise is an empty
+/// file of mode 0600, and a file with another mode or with content is not
+/// the one it made).
+fn lock_entry_fits(found: &FileFacts, owner: u32) -> bool {
+    found.is_regular
+        && found.uid == owner
+        && found.links == 1
+        && found.mode == LOCK_FILE_MODE
+        && found.size == 0
+}
+
+/// Why the entry `found` at `name` is no lock file for `owner`, in words.
+fn lock_entry_misfit(name: &str, found: &FileFacts, owner: u32) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidData,
+        format!(
+            "{name} is {} of uid {} with {} name(s), mode {:o} and {} byte(s), not an empty regular file of uid {owner} with one name and mode {LOCK_FILE_MODE:o}",
+            kind_words(found),
+            found.uid,
+            found.links,
+            found.mode,
+            found.size
+        ),
+    )
+}
+
+/// The lock file `name` beneath `dir`, open read-only to hold a lock on it:
+/// an empty regular file `owner` owns with one name and mode 0600, made
+/// beforehand ([`make_lock_beneath`]). Nothing at `name` is made, removed
+/// or replaced here, and an entry that is not such a file (a link, a hard
+/// link, a directory, a pipe, another owner's file, another mode, a file
+/// with content) is never opened: it is refused, as it is, and the refusal
+/// names it (review r2 of #10540, the Engine's extra review).
+///
+/// # Errors
+///
+/// Nothing at `name` (`NotFound`), an entry that is not such a file, an
+/// entry that changed between its check and its open, or a failed open.
+pub fn open_lock_beneath(dir: BorrowedFd<'_>, name: &str, owner: u32) -> io::Result<OwnedFd> {
+    let c = c_name(OsStr::new(name))?;
+    let before = facts_beneath(dir, name)?;
+    if !lock_entry_fits(&before, owner) {
+        return Err(lock_entry_misfit(name, &before, owner));
+    }
+    // SAFETY: c is NUL terminated; O_NOFOLLOW refuses a link, O_NONBLOCK
+    // keeps a pipe from holding the open, and nothing is made.
+    let fd = owned(unsafe {
+        libc::openat(
+            dir.as_raw_fd(),
+            c.as_ptr(),
+            libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_NOCTTY | libc::O_CLOEXEC | libc::O_NONBLOCK,
+        )
+    })?;
+    let held = facts(borrow(&fd))?;
+    if (held.device, held.inode) != (before.device, before.inode) || !lock_entry_fits(&held, owner)
+    {
+        return Err(io::Error::other(format!(
+            "{name} changed between its check and its open"
+        )));
+    }
+    Ok(fd)
+}
+
+/// Makes the lock file `name` beneath `dir` for [`open_lock_beneath`]: an
+/// empty regular file of this process's account, mode 0600 whatever the
+/// umask, made when nothing is at `name`; with whether this call made it. A
+/// fitting file that is there already is kept; anything else at `name`
+/// (another mode or content included) is refused, as it is, for its maker
+/// to remove.
+///
+/// # Errors
+///
+/// An entry that is not such a file, or a failed make.
+pub fn make_lock_beneath(dir: BorrowedFd<'_>, name: &str, owner: u32) -> io::Result<bool> {
+    let c = c_name(OsStr::new(name))?;
+    match facts_beneath(dir, name) {
+        Ok(found) if lock_entry_fits(&found, owner) => return Ok(false),
+        Ok(found) => return Err(lock_entry_misfit(name, &found, owner)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+    // SAFETY: c is NUL terminated; O_EXCL with O_NOFOLLOW makes a new file
+    // or fails.
+    let made = owned(unsafe {
+        libc::openat(
+            dir.as_raw_fd(),
+            c.as_ptr(),
+            libc::O_RDONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+            LOCK_FILE_MODE,
+        )
+    })?;
+    // The umask narrows the mode openat gives (umask 0777 makes it 0000):
+    // set it on the file made (review r1 of #10541).
+    set_mode(borrow(&made), LOCK_FILE_MODE)?;
+    let held = facts(borrow(&made))?;
+    if !lock_entry_fits(&held, owner) {
+        return Err(io::Error::other(format!(
+            "{name}: made, but {}",
+            lock_entry_misfit(name, &held, owner)
+        )));
+    }
+    Ok(true)
+}
+
+/// Sets the mode of the open file `fd`.
+///
+/// # Errors
+///
+/// The kernel refused it.
+pub fn set_mode(fd: BorrowedFd<'_>, mode: u32) -> io::Result<()> {
+    // SAFETY: fd is an open descriptor; fchmod follows no name.
+    check(unsafe { libc::fchmod(fd.as_raw_fd(), mode as libc::mode_t) })
+}
+
 /// Removes the file `name` beneath `dir`; an absent one is fine.
 ///
 /// # Errors
@@ -350,6 +522,16 @@ pub fn remove_beneath(dir: BorrowedFd<'_>, name: &str) -> io::Result<()> {
 ///
 /// The first path that is not, and why.
 pub fn require_root_owned(path: &Path) -> Result<(), String> {
+    require_owned_by_root_or(path, 0)
+}
+
+/// [`require_root_owned`], with `owner`'s steps allowed beside root's: for
+/// a step root runs, `owner` is root, and a test's own account stands in.
+///
+/// # Errors
+///
+/// The first path that is not, and why.
+pub fn require_owned_by_root_or(path: &Path, owner: u32) -> Result<(), String> {
     use std::os::unix::fs::MetadataExt as _;
     let mut current = Some(path);
     while let Some(step) = current {
@@ -358,7 +540,7 @@ pub fn require_root_owned(path: &Path) -> Result<(), String> {
         if meta.file_type().is_symlink() {
             return Err(format!("{}: a link; give the real path", step.display()));
         }
-        if meta.uid() != 0 {
+        if meta.uid() != 0 && meta.uid() != owner {
             return Err(format!(
                 "{}: owned by uid {}, not root",
                 step.display(),
@@ -393,6 +575,35 @@ pub fn host_network_namespace() -> String {
 /// No such account, or the lookup failed.
 pub fn account(name: &str) -> io::Result<(u32, u32, std::path::PathBuf)> {
     account_entry(name).map(|found| (found.uid, found.gid, found.home))
+}
+
+/// The groups of the account `name` whose primary group is `gid`, from the
+/// group database (`getgrouplist`): the groups a service run as that account
+/// starts with, before a unit's own `SupplementaryGroups=`.
+///
+/// # Errors
+///
+/// The lookup failed.
+pub fn account_groups(name: &str, gid: u32) -> io::Result<Vec<u32>> {
+    let c =
+        CString::new(name).map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
+    let mut room: libc::c_int = 32;
+    loop {
+        let mut groups: Vec<libc::gid_t> = vec![0; usize::try_from(room).unwrap_or(0)];
+        let mut found = room;
+        // SAFETY: `c` is NUL terminated, and `groups` holds `found` entries.
+        let read = unsafe { libc::getgrouplist(c.as_ptr(), gid, groups.as_mut_ptr(), &mut found) };
+        if read >= 0 {
+            groups.truncate(usize::try_from(found).unwrap_or(0));
+            return Ok(groups);
+        }
+        if found <= room || room >= 65_536 {
+            return Err(io::Error::other(format!(
+                "the group list of {name} did not read"
+            )));
+        }
+        room = found;
+    }
 }
 
 /// One account's entry in the account database.

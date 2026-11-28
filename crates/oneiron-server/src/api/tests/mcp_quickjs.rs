@@ -123,7 +123,7 @@ impl LlmBackend for Backend {
     }
 }
 
-fn factory() -> QuickJsRuntimeFactory {
+pub(super) fn factory() -> QuickJsRuntimeFactory {
     let directory = std::env::var_os("ONEIRON_QUICKJS_ARTIFACT_DIR").map_or_else(
         || {
             PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -289,6 +289,7 @@ pub(super) fn code_mode_server_with(
         EngineExecutorConfig {
             run_id: seeded_test_entity_id(0x0024_6504),
             task: "template".into(),
+            caller_source_digest: None,
             prompt_package_root: oneiron::prompt::workspace_test_prompt_package_root().unwrap(),
             model: ModelId::new("fixture/quickjs@v1").unwrap(),
             model_locality: ModelLocality::OnDevice,
@@ -408,7 +409,26 @@ async fn quickjs_execute_code_wire_resumes_one_actor_run_without_repeated_writes
     for path in ["/mcp", MCP_TOOL_FIRST_PATH] {
         let (_, listing) =
             route_json(server.clone(), mcp_list_request(path, credential, "list")).await;
-        assert!(mcp_listed_tool_names(&listing).contains(&"execute_code"));
+        let names = mcp_listed_tool_names(&listing);
+        for name in ["execute", "resume", "invoke_action"] {
+            assert!(names.contains(&name), "{path} lists {name}: {names:?}");
+        }
+        assert_eq!(
+            names.contains(&"setup_oneiron"),
+            path == "/mcp",
+            "{path}: {names:?}"
+        );
+        assert_eq!(
+            names.contains(&"vault.recall"),
+            path == MCP_TOOL_FIRST_PATH,
+            "{path}: {names:?}"
+        );
+        for retired in ["execute_code", "read_result"] {
+            assert!(
+                !names.contains(&retired),
+                "{path} lists no {retired}: {names:?}"
+            );
+        }
     }
     // 8bd904f78b5 (#3490, FIX 6692): discovery lists the capabilities by
     // family; health carries each family's count and the same digest.
@@ -428,12 +448,12 @@ async fn quickjs_execute_code_wire_resumes_one_actor_run_without_repeated_writes
     }
     let (discover, health) = (&bodies[0], &bodies[1]);
     for (token, family) in [
-        ("mcp.tool.execute_code", "mcp.tool"),
-        ("mcp.endpoint.primary.execute_code", "mcp.endpoint.primary"),
-        (
-            "mcp.endpoint.tool_first.execute_code",
-            "mcp.endpoint.tool_first",
-        ),
+        ("mcp.tool.execute", "mcp.tool"),
+        ("mcp.tool.resume", "mcp.tool"),
+        ("mcp.endpoint.primary.execute", "mcp.endpoint.primary"),
+        ("mcp.endpoint.primary.resume", "mcp.endpoint.primary"),
+        ("mcp.endpoint.tool_first.execute", "mcp.endpoint.tool_first"),
+        ("mcp.endpoint.tool_first.resume", "mcp.endpoint.tool_first"),
     ] {
         let group = &discover["feature_flags"]["groups"][family];
         assert!(
@@ -451,15 +471,15 @@ async fn quickjs_execute_code_wire_resumes_one_actor_run_without_repeated_writes
         health["capabilities"]["digest"],
         discover["feature_flags"]["digest"]
     );
-    let args = mcp_merge_args(
-        mcp_endpoint_envelope(actor_id, "write_memory"),
-        json!({"run_ref":"quickjs-one", "task":"write one claim then finish"}),
-    );
+    // No MCP tool starts a task run anymore: the kept task handler enters it, rendering
+    // the old task shape (FIX EXECUTE-CALLER-CODE).
     let mut results = Vec::new();
-    for request_id in ["first", "resume", "terminal-retry"] {
-        let (_, body) = route_json(
-            server.clone(),
-            mcp_endpoint_call_request("/mcp", credential, request_id, "execute_code", args.clone()),
+    for _request_id in ["first", "resume", "terminal-retry"] {
+        let body = execute_task_run_for_test(
+            &server,
+            credential,
+            "quickjs-one",
+            "write one claim then finish",
         )
         .await;
         assert!(body.get("error").is_none(), "{body}");
@@ -513,12 +533,7 @@ async fn quickjs_execute_code_wire_resumes_one_actor_run_without_repeated_writes
             .map(|(_, value)| value),
         Some(&rmpv::Value::Binary(actor_id.as_bytes().to_vec()))
     );
-    let changed = mcp_merge_args(args, json!({"task":"changed task"}));
-    let (_, body) = route_json(
-        server,
-        mcp_endpoint_call_request("/mcp", credential, "changed", "execute_code", changed),
-    )
-    .await;
+    let body = execute_task_run_for_test(&server, credential, "quickjs-one", "changed task").await;
     assert_mcp_structured_error(&body, "code_run_binding_failed");
 }
 
@@ -554,10 +569,9 @@ async fn witness_through_tool_list(
     assert!(body.get("error").is_none(), "{body}");
 }
 
-/// Done means (ARCH-0028, OF-246/OF-227): through the shipped HTTP MCP wire, an
-/// `execute_code` run calls `vault.recall({query, effort, scope})` and
-/// reads back a phrase saved earlier in the same vault. Before this change the
-/// method did not exist.
+/// Done means (ARCH-0028, OF-246/OF-227): a task run calls
+/// `vault.recall({query, effort, scope})` and reads back a phrase saved earlier in the
+/// same vault. Before this change the method did not exist.
 #[tokio::test]
 async fn quickjs_code_mode_recall_reads_back_a_phrase_saved_in_the_vault() {
     let mode = code_mode_server(vec![CODE_MODE_RECALL.to_owned()]);
@@ -578,13 +592,11 @@ async fn quickjs_code_mode_recall_reads_back_a_phrase_saved_in_the_vault() {
     )
     .await;
 
-    let args = mcp_merge_args(
-        mcp_endpoint_envelope(actor, "read_memory"),
-        json!({"run_ref": "quickjs-recall", "task": "recall the heron lantern"}),
-    );
-    let (_, body) = route_json(
-        mode.server.clone(),
-        mcp_endpoint_call_request("/mcp", credential, "recall", "execute_code", args),
+    let body = execute_task_run_for_test(
+        &mode.server,
+        credential,
+        "quickjs-recall",
+        "recall the heron lantern",
     )
     .await;
     assert!(body.get("error").is_none(), "{body}");
@@ -603,10 +615,9 @@ async fn quickjs_code_mode_recall_reads_back_a_phrase_saved_in_the_vault() {
     );
 }
 
-/// A long `execute_code` task is served, not refused for its length: a 64 KiB
-/// task goes through the HTTP MCP wire, reaches the model unchanged and the
-/// run completes. Before this change the gateway refused any task over 8,192
-/// characters with `tool_args_invalid`.
+/// A long task is served, not refused for its length: a 64 KiB task reaches the model
+/// unchanged and the run completes. Before this change the gateway refused any task over
+/// 8,192 characters with `tool_args_invalid`.
 #[tokio::test]
 async fn quickjs_execute_code_serves_a_64_kib_task() {
     let mode = code_mode_server(vec![CODE_MODE_DONE.to_owned()]);
@@ -621,15 +632,8 @@ async fn quickjs_execute_code_serves_a_64_kib_task() {
     .await;
 
     let task = "x".repeat(64 * 1024);
-    let args = mcp_merge_args(
-        mcp_endpoint_envelope(actor, "write_memory"),
-        json!({"run_ref": "quickjs-long-task", "task": task}),
-    );
-    let (_, body) = route_json(
-        mode.server.clone(),
-        mcp_endpoint_call_request("/mcp", credential, "long-task", "execute_code", args),
-    )
-    .await;
+    let body =
+        execute_task_run_for_test(&mode.server, credential, "quickjs-long-task", &task).await;
     assert!(body.get("error").is_none(), "{}", body["error"]);
     let structured = &body["result"]["structuredContent"];
     assert_eq!(structured["result"]["status"], "complete", "{structured}");
@@ -676,10 +680,7 @@ async fn quickjs_code_mode_keeps_connector_narrowing() {
         mcp_scoped_envelope(narrowed, "read_memory", &scope),
         json!({"arguments": {"spec": {"query": "heron lantern"}}}),
     );
-    let code = mcp_merge_args(
-        mcp_scoped_envelope(narrowed, "read_memory", &scope),
-        json!({"run_ref": "quickjs-world", "task": "recall the heron lantern"}),
-    );
+    let code = json!({"code": "return 1;", "run_ref": "quickjs-world"});
     // `vault.recall` is a filtered row (`mcp_scope: filtered`), so the tool
     // list answers a narrowed connector with its own world's memory instead
     // of refusing it (Engine ruling 07:14 Fri 13 Nov). The whole body is
@@ -702,10 +703,10 @@ async fn quickjs_code_mode_keeps_connector_narrowing() {
         let from = text.get(at.saturating_sub(160)..).unwrap_or(&text[at..]);
         panic!("the narrowed recall leaked another world's memory: {from}");
     }
-    // `execute_code` is refused at admission for a narrowed connector.
+    // `execute` is refused at admission for a narrowed connector.
     let body = mcp_refusal(
         &mode.server,
-        mcp_endpoint_call_request("/mcp", "quickjs-world", "code", "execute_code", code),
+        mcp_endpoint_call_request("/mcp", "quickjs-world", "code", "execute", code),
     )
     .await;
     assert_eq!(
@@ -719,14 +720,12 @@ async fn quickjs_code_mode_keeps_connector_narrowing() {
     );
 
     let bound = seeded_test_entity_id(0x0024_6524);
-    register_bound_verb_mcp_actor(&mode.server, "quickjs-bound", bound, &["execute_code"]).await;
-    let args = mcp_merge_args(
-        mcp_endpoint_envelope(bound, "read_memory"),
-        json!({"run_ref": "quickjs-bound", "task": "recall the heron lantern"}),
-    );
-    let (_, body) = route_json(
-        mode.server.clone(),
-        mcp_endpoint_call_request("/mcp", "quickjs-bound", "bound", "execute_code", args),
+    register_bound_verb_mcp_actor(&mode.server, "quickjs-bound", bound, &["execute"]).await;
+    let body = execute_task_run_for_test(
+        &mode.server,
+        "quickjs-bound",
+        "quickjs-bound",
+        "recall the heron lantern",
     )
     .await;
     assert!(body.get("error").is_none(), "{body}");
@@ -755,7 +754,13 @@ fn verb_call_outcomes(body: &Value) -> Vec<Value> {
 /// A verb call the door refused, as the step log records it: the door's
 /// stable code and no reason text.
 fn verb_refusal(code: &str) -> Value {
-    json!({"kind": "denied", "effect": "self.verbs.call", "outcome": code, "reason_codes": []})
+    verb_refusal_with(code, &[])
+}
+
+/// A verb call the door refused with its stable reason codes (FIX
+/// CODE-MODE-DENIAL-REASONS).
+fn verb_refusal_with(code: &str, reason_codes: &[&str]) -> Value {
+    json!({"kind": "denied", "effect": "self.verbs.call", "outcome": code, "reason_codes": reason_codes})
 }
 
 /// Code mode applies the per-verb argument rules a `tools/call` of the verb
@@ -774,13 +779,11 @@ async fn quickjs_code_mode_applies_the_tool_argument_rules() {
         oneiron::EdgeActorClass::Human,
     )
     .await;
-    let args = mcp_merge_args(
-        mcp_endpoint_envelope(actor, "read_board"),
-        json!({"run_ref": "quickjs-args", "task": "subscribe to nothing"}),
-    );
-    let (_, body) = route_json(
-        mode.server.clone(),
-        mcp_endpoint_call_request("/mcp", "quickjs-args", "args", "execute_code", args),
+    let body = execute_task_run_for_test(
+        &mode.server,
+        "quickjs-args",
+        "quickjs-args",
+        "subscribe to nothing",
     )
     .await;
     assert!(body.get("error").is_none(), "{body}");
@@ -871,13 +874,11 @@ async fn quickjs_code_mode_claims_carry_the_runs_generated_source() {
     // The upsert's writer reads the PERSON it is about (FIX 1218): else the
     // run's upsert fails INVENTED_REFERENCE and the step reports facade_error.
     put_actor_read_grant(&mode.vault, actor, None);
-    let args = mcp_merge_args(
-        mcp_endpoint_envelope(actor, "write_memory"),
-        json!({"run_ref": "quickjs-claim", "task": "state a favorite drink"}),
-    );
-    let (_, body) = route_json(
-        mode.server.clone(),
-        mcp_endpoint_call_request("/mcp", "quickjs-claim", "claim", "execute_code", args),
+    let body = execute_task_run_for_test(
+        &mode.server,
+        "quickjs-claim",
+        "quickjs-claim",
+        "state a favorite drink",
     )
     .await;
     assert!(body.get("error").is_none(), "{body}");
@@ -999,15 +1000,19 @@ async fn quickjs_a_propose_only_slip_runs_code_whose_rows_write_are_refused() {
         "fixture check: the proposer's live ceiling is `proposed`"
     );
 
-    let args = mcp_merge_args(
-        mcp_endpoint_envelope(proposer, "write_memory"),
-        json!({"run_ref": "quickjs-propose-only", "task": "state a favorite drink"}),
-    );
-    let body = mcp_refusal(
+    // No MCP tool starts a task run anymore: the kept task handler enters it, rendering
+    // the old task shape (FIX EXECUTE-CALLER-CODE).
+    let body = execute_task_run_for_test(
         &mode.server,
-        mcp_endpoint_call_request("/mcp", label, "proposer", "execute_code", args.clone()),
+        label,
+        "quickjs-propose-only",
+        "state a favorite drink",
     )
     .await;
+    assert!(
+        body.get("result").is_none(),
+        "this call was supposed to be refused: {body:?}"
+    );
     assert_eq!(
         body["error"]["data"]["error_code"], "code_run_failed",
         "/mcp: {body}"
@@ -1022,30 +1027,20 @@ async fn quickjs_a_propose_only_slip_runs_code_whose_rows_write_are_refused() {
             .is_some_and(|message| message.ends_with(refusal)),
         "/mcp: the run's claim write is refused: {body}"
     );
-    // On the tool-first endpoint `execute_code` is the generated verb row
-    // (scripts/sdk/verbs/execute_code.json: foreign code in the isolated
-    // tier, no host writes), whose input sits under `arguments`. A durable
-    // run's envelope is refused at decode, before anything runs (the
-    // 6bb2488ab0ec run).
+    // The Foreign row keeps its facade door only after the cutover: tool-first names no
+    // `execute_code` at all (FIX EXECUTE-CALLER-CODE).
     let body = mcp_refusal(
         &mode.server,
-        mcp_endpoint_call_request(MCP_TOOL_FIRST_PATH, label, "proposer", "execute_code", args),
+        mcp_endpoint_call_request(
+            MCP_TOOL_FIRST_PATH,
+            label,
+            "proposer",
+            "execute_code",
+            json!({"code": "return 1;"}),
+        ),
     )
     .await;
-    assert_eq!(
-        (
-            body["error"]["data"]["error_code"].clone(),
-            body["error"]["message"].clone()
-        ),
-        (
-            json!("tool_args_invalid"),
-            json!(
-                "execute_code arguments could not be decoded: unknown field `run_ref`, expected \
-                 one of `schema_version`, `actor`, `consent`, `arguments`, `page`, `cache`"
-            )
-        ),
-        "{MCP_TOOL_FIRST_PATH}: {body}"
-    );
+    assert_mcp_structured_error(&body, "unknown_tool");
     assert!(mode.vault.get_claim(&claim).unwrap().is_none());
     // So `/mcp` tells it, and a read-only slip, that they may run code: the
     // session admits a live credential that reads, and only a write inside
@@ -1111,17 +1106,16 @@ async fn quickjs_a_propose_only_slip_runs_code_whose_rows_write_are_refused() {
         code_admitted(&mode, "/mcp", "quickjs-writer").await,
         json!(true)
     );
+    // Both endpoints admit `execute` after the cutover (FIX EXECUTE-CALLER-CODE).
     assert_eq!(
         code_admitted(&mode, MCP_TOOL_FIRST_PATH, "quickjs-writer").await,
-        json!(false)
+        json!(true)
     );
-    let args = mcp_merge_args(
-        mcp_endpoint_envelope(writer, "write_memory"),
-        json!({"run_ref": "quickjs-full-access", "task": "state a favorite drink"}),
-    );
-    let (_, body) = route_json(
-        mode.server.clone(),
-        mcp_endpoint_call_request("/mcp", "quickjs-writer", "writer", "execute_code", args),
+    let body = execute_task_run_for_test(
+        &mode.server,
+        "quickjs-writer",
+        "quickjs-full-access",
+        "state a favorite drink",
     )
     .await;
     assert!(body.get("error").is_none(), "{body}");
@@ -1195,20 +1189,21 @@ async fn quickjs_code_mode_and_tool_list_refuse_a_field_the_schema_does_not_list
     assert!(body.get("error").is_none(), "{body}");
     assert!(body.to_string().contains("north gate"), "{body}");
 
-    let args = mcp_merge_args(
-        mcp_endpoint_envelope(actor, "read_memory"),
-        json!({"run_ref": "quickjs-closed", "task": "recall under a misspelled facet"}),
-    );
-    let (_, body) = route_json(
-        mode.server.clone(),
-        mcp_endpoint_call_request("/mcp", "quickjs-closed", "code", "execute_code", args),
+    let body = execute_task_run_for_test(
+        &mode.server,
+        "quickjs-closed",
+        "quickjs-closed",
+        "recall under a misspelled facet",
     )
     .await;
     assert!(body.get("error").is_none(), "{body}");
     let steps = body["result"]["structuredContent"]["steps"].to_string();
     assert_eq!(
         verb_call_outcomes(&body),
-        [verb_refusal("tool_args_invalid")],
+        [verb_refusal_with(
+            "tool_args_invalid",
+            &["args.unknown_field"]
+        )],
         "{steps}"
     );
     assert!(!steps.contains("north gate"), "{steps}");
@@ -1232,13 +1227,11 @@ async fn quickjs_code_mode_cannot_witness_a_users_words() {
         oneiron::EdgeActorClass::Human,
     )
     .await;
-    let args = mcp_merge_args(
-        mcp_endpoint_envelope(actor, "write_memory"),
-        json!({"run_ref": "quickjs-witness", "task": "record what the user said"}),
-    );
-    let (_, body) = route_json(
-        mode.server.clone(),
-        mcp_endpoint_call_request("/mcp", "quickjs-witness", "witness", "execute_code", args),
+    let body = execute_task_run_for_test(
+        &mode.server,
+        "quickjs-witness",
+        "quickjs-witness",
+        "record what the user said",
     )
     .await;
     assert!(body.get("error").is_none(), "{body}");
@@ -1310,27 +1303,19 @@ async fn serve_with_models(
     (dir, vault, server, host)
 }
 
-/// One `execute_code` call by `actor`, its run named `run_ref`.
+/// One task run under `credential`, its run named `run_ref`: no MCP tool starts a task
+/// run anymore, so the kept task handler enters it (FIX EXECUTE-CALLER-CODE).
 async fn execute_code(
     server: &Arc<SyncServer>,
     credential: &str,
-    actor: oneiron::EntityId,
+    _actor: oneiron::EntityId,
     run_ref: &str,
     task: &str,
 ) -> Value {
-    let args = mcp_merge_args(
-        mcp_endpoint_envelope(actor, "read_memory"),
-        json!({"run_ref": run_ref, "task": task}),
-    );
-    route_json(
-        server.clone(),
-        mcp_endpoint_call_request("/mcp", credential, run_ref, "execute_code", args),
-    )
-    .await
-    .1
+    execute_task_run_for_test(server, credential, run_ref, task).await
 }
 
-/// Done means (U16): the server the serve path builds serves `execute_code`.
+/// Done means (U16): the server the serve path builds serves task runs.
 /// With `[models]` filling the generative seat and `[models.code_mode]` naming
 /// a prompt package, `AiHost::attach` binds the checked-in component; a run's
 /// model step is that seat's model, and its `vault.recall` reads back a
@@ -1346,10 +1331,16 @@ async fn the_served_vault_runs_execute_code_on_its_generative_seat() {
     let (_dir, vault, server, _host) = serve_with_models(&models, credential, actor).await;
     let (_, listing) =
         route_json(server.clone(), mcp_list_request("/mcp", credential, "list")).await;
-    assert!(
-        mcp_listed_tool_names(&listing).contains(&"execute_code"),
-        "{listing}"
-    );
+    let names = mcp_listed_tool_names(&listing);
+    for name in ["execute", "resume", "invoke_action", "setup_oneiron"] {
+        assert!(names.contains(&name), "/mcp lists {name}: {names:?}");
+    }
+    for retired in ["execute_code", "read_result"] {
+        assert!(
+            !names.contains(&retired),
+            "/mcp lists no {retired}: {names:?}"
+        );
+    }
     witness_through_tool_list(
         &server,
         credential,
@@ -1394,9 +1385,9 @@ async fn the_served_vault_runs_execute_code_on_its_generative_seat() {
 
 const CODE_MODE_DONE: &str = "finish('done');";
 
-/// Runs `execute_code` twice on fresh runs against a fake model scripted with
-/// `replies`, code mode's meter `budget_units` and the generative seat's
-/// ladder `rungs`. The fake's calls are metered as account work: a keyless
+/// Runs one task twice on fresh runs against a fake model scripted with `replies`,
+/// code mode's meter `budget_units` and the generative seat's ladder `rungs`. The fake's
+/// calls are metered as account work: a keyless
 /// own-server provider is free work (FIX 9482), an unmetered lease no meter
 /// can deny. Returns how many provider requests the fake saw after the first
 /// run and after the second.

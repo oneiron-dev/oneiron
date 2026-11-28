@@ -12,5 +12,6 @@
     "unrestricted_record_scope": true
   },
   "section": false,
-  "host_door_proof": "substrate_reader"
+  "host_door_proof": "substrate_reader",
+  "caller_code": "refused"
 }

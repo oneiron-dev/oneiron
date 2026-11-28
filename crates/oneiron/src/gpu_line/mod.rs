@@ -19,16 +19,17 @@ mod fold;
 mod intent;
 mod mint;
 mod preset;
+mod refusal;
 mod store;
 pub(crate) mod tables;
 mod wire;
 
 pub use claim::{
     AllocationSettle, AllocationStanding, ClaimAdmissionRefused, ClaimHold, ClaimHoldRefused,
-    ClaimKey, ClaimState, UnattributedJob, UnitClaim, UnitEnd, UnitEndReport, UnitPurpose,
-    UnitSettleRefused, UnitSettlement, UnitTerminal, allocation_standing_in_txn, claim_hold_in_txn,
-    claim_in_txn, claims_at_rung_in_txn, claims_in_txn, open_claim_in_txn,
-    record_node_answer_in_txn, settle_unit_in_txn,
+    ClaimKey, ClaimState, UnattributedJob, UnattributedRecord, UnitClaim, UnitEnd, UnitEndReport,
+    UnitPurpose, UnitSettleRefused, UnitSettlement, UnitTerminal, allocation_standing_in_txn,
+    claim_hold_in_txn, claim_in_txn, claims_at_rung_in_txn, claims_in_txn, custody_lapsed_in_txn,
+    open_claim_in_txn, record_node_answer_in_txn, settle_unit_in_txn, unattributed_in_txn,
 };
 pub use cohort::{COHORT_BLOCK_ARMS, cohort_rule, cohort_seed_commit};
 pub use doors::{
@@ -43,11 +44,13 @@ pub use mint::{
     pools, posterior_sampling,
 };
 pub use preset::{LinePresetDocument, LinePresetRef, check_document, lay_over, resolve_policy};
+pub use refusal::{LineRefusal, LineRefusalKey, line_refusals_in_txn};
+pub(crate) use refusal::{erase_refusal_actor_in_txn, record_line_refusal_in_txn};
 pub(crate) use store::erase_line_actor_in_txn;
 pub(crate) use store::period_row_seals_seed;
 pub use store::{
-    MintedLine, gpu_seconds, line_in_txn, mint_first_in_txn, period_view_in_txn,
-    settled_tallies_in_txn, stored_period_in_txn,
+    MintedLine, gpu_seconds, line_in_txn, mint_first_in_txn, offer_line_managed_in_txn,
+    period_view_in_txn, settled_tallies_in_txn, stored_period_in_txn,
 };
 pub use wire::{
     GpuLineFamilyAdmitRequest, GpuLinePolicy, GpuLinePolicyFields, GpuLineRef, GpuLineSetRequest,

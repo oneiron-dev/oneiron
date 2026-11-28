@@ -378,6 +378,7 @@ impl ActorScopedVault {
             telemetry: None,
             filter: None,
             operation_id: None,
+            bar: None,
         };
         let memory = self.facade()?;
         let pack = typed_row(

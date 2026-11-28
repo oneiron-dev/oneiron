@@ -66,6 +66,7 @@ impl CallSources for WindowShown<'_> {
     fn shown(&self, id: EntityId) -> Option<SourceShown<'_>> {
         (id == self.source).then_some(SourceShown {
             text: Some(self.text),
+            one_line_fenced: false,
             project: None,
         })
     }

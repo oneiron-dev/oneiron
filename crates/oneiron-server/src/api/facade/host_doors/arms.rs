@@ -1,6 +1,7 @@
 //! The experiment arm doors of the lane economy (design pass 32 section 5):
 //! `vault.arms.admit`, `vault.arms.forecast`, `vault.arms.verdict`,
-//! `vault.arms.review`, `vault.arms.get` and `vault.arms.list`. Each proves
+//! `vault.arms.review`, `vault.arms.get`, `vault.arms.list`,
+//! `vault.arms.units.reserve` and `vault.arms.units.cancel`. Each proves
 //! `verb_grant_caller`: the owner under their own proof, or an agent whose
 //! own live owner Grant lists the verb; an agent admits into and reads only
 //! the lines its Grant reaches, as the engine's act judges it again. Arms
@@ -12,17 +13,25 @@
 
 use std::sync::Arc;
 
+use oneiron::consent::AuthenticatedOwner;
 use oneiron::experiment_arm::{
     ARMS_ADMIT_VERB, ARMS_FORECAST_VERB, ARMS_GET_VERB, ARMS_LIST_VERB, ARMS_REVIEW_VERB,
-    ARMS_VERDICT_VERB, ArmAdmitRequest, ArmForecastRequest, ArmList, ArmListRequest, ArmRef,
-    ArmReviewRequest, ArmVerdictRequest, ArmView, arm_admit_as, arm_forecast_as, arm_get_as,
-    arm_list_as, arm_review_as, arm_verdict_as,
+    ARMS_UNITS_CANCEL_VERB, ARMS_UNITS_RESERVE_VERB, ARMS_VERDICT_VERB, ArmAdmitRequest,
+    ArmForecastRequest, ArmList, ArmListRequest, ArmRef, ArmReviewRequest, ArmVerdictRequest,
+    ArmView, UnitCancel, UnitCancelRequest, UnitReserveRequest, UnitView, arm_admit_as,
+    arm_forecast_as, arm_get_as, arm_list_as, arm_review_as, arm_verdict_as, unit_cancel_as,
+    unit_reserve_as,
 };
+use oneiron::gpu_job::{GpuJobActor, GpuJobConnector, GpuJobError, UnitJobStart};
+use oneiron::gpu_line::ClaimKey;
+use oneiron::memory::{MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 
 use super::support::Listed;
 use super::verb_grant::verb_grant_door;
 use crate::auth::CoreAuth;
-use crate::gpu_host::now_ms;
+use crate::config::gpu_jobs::GpuOfferSettings;
+use crate::gpu_execution_node::issuer::not_the_issuer;
+use crate::gpu_host::{NoProvider, job_backend, now_ms, offer_with_backend};
 use crate::server::SyncServer;
 
 /// `vault.arms.admit`: admits one arm into a seated family of a GPU line,
@@ -111,5 +120,152 @@ pub(crate) async fn vault_arms_list(
     verb_grant_door(server, auth, ARMS_LIST_VERB, move |_, memory, owner| {
         arm_list_as(memory, owner, &input)
     })
+    .await
+}
+
+/// `vault.arms.units.reserve`: claims one unit of an arm's current rung on
+/// one of the line's offers, with its seconds drawn from the line's pools,
+/// in one write (design 5.2). The offer must have a backend on this host;
+/// the engine's act judges every other check. A repeat under the same intent
+/// key, or of the same ask under the same logical attempt, answers the same
+/// claim. After the reserve commits, the door starts the claim's one job
+/// through the one start gate (design 5.3): quoted on the claim's id, its
+/// workload and its reserved seconds, under the claim and not a
+/// `vault.gpu.jobs.start` Grant. A start the gate refuses releases the claim
+/// and answers the refusal; a provider's refusal holds the job and answers
+/// the released unit. A repeat of a unit that started or ended answers it as
+/// it stands.
+pub(crate) async fn vault_arms_units_reserve(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: UnitReserveRequest,
+) -> Listed<UnitView> {
+    verb_grant_door(
+        server,
+        auth,
+        ARMS_UNITS_RESERVE_VERB,
+        move |server, memory, owner| {
+            // R5's one-issuer check, the start gate's first call (pass 33, 8.7): a replica
+            // that is not the vault's issuer refuses a vault machine offer before reserving.
+            if let Some(settings) = server.config.gpu_jobs.offer(&input.offer)
+                && let Err(refused) = not_the_issuer(server, &settings.backend)
+            {
+                let issuer = refused
+                    .issuer
+                    .map_or_else(|| "none".to_owned(), |issuer| issuer.to_hex());
+                return Err(MemoryError::new(
+                    MEMORY_CODE_INVALID_STATE,
+                    format!(
+                        "{ARMS_UNITS_RESERVE_VERB}: {}: {refused} (issuer: {issuer})",
+                        refused.code()
+                    ),
+                    &["Reserve on the vault's issuer of vault machine jobs."],
+                ));
+            }
+            let (offer, connector) = offer_with_backend(server, &input.offer).map_err(|error| {
+                MemoryError::new(
+                    MEMORY_CODE_INVALID_STATE,
+                    format!("{ARMS_UNITS_RESERVE_VERB}: offer_not_managed: {error}"),
+                    &["Reserve on an offer of the line that this host can start."],
+                )
+            })?;
+            let reserved = unit_reserve_as(memory, owner, &input, now_ms())?;
+            start_reserved_unit(server, memory, owner, offer, connector.as_ref(), reserved)
+        },
+    )
+    .await
+}
+
+/// Starts the one job of the unit `reserved` names while its claim stands
+/// `Claimed`, and answers the unit as it stands after the start.
+fn start_reserved_unit(
+    server: &SyncServer,
+    memory: &Memory<'_>,
+    owner: Option<&AuthenticatedOwner>,
+    offer: &GpuOfferSettings,
+    connector: &dyn GpuJobConnector,
+    reserved: UnitView,
+) -> MemoryResult<UnitView> {
+    let key = ClaimKey::of(
+        reserved.arm,
+        reserved.rung,
+        &reserved.unit_key,
+        reserved.attempt,
+    );
+    let now = now_ms();
+    let Some(request) = server.vault.unit_job_request(&key, now)? else {
+        return Ok(reserved.current(&server.vault)?);
+    };
+    let quote = offer.offer.quote_for(
+        reserved.job,
+        &request,
+        server.config.gpu_jobs.default_maximum_secs,
+        now,
+    )?;
+    let agent;
+    let actor = match owner {
+        Some(owner) => GpuJobActor::Owner(owner),
+        None => {
+            agent = memory.gpu_job_agent();
+            GpuJobActor::Agent(&agent)
+        }
+    };
+    server.vault.start_claimed_gpu_job(
+        UnitJobStart {
+            actor,
+            offer: &offer.offer,
+            quote: &quote,
+        },
+        &key,
+        server.gpu_jobs.permits(),
+        connector,
+        now,
+    )?;
+    Ok(reserved.current(&server.vault)?)
+}
+
+/// `vault.arms.units.cancel`: withdraws a unit whose job has not started,
+/// ending its claim released and returning its seconds to the pools it
+/// drew, or cancels its started job through the scoped path (design 5.3):
+/// the act judged the line, the lead role and "the reserver, or the owner",
+/// and the caller needs no `vault.gpu.jobs.cancel` Grant. A cancelled job's
+/// claim ends at its terminal. The owner cancels any unit; an agent only one
+/// it reserved.
+pub(crate) async fn vault_arms_units_cancel(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: UnitCancelRequest,
+) -> Listed<UnitView> {
+    verb_grant_door(
+        server,
+        auth,
+        ARMS_UNITS_CANCEL_VERB,
+        move |server, memory, owner| match unit_cancel_as(memory, owner, &input, now_ms())? {
+            UnitCancel::Withdrawn(view) => Ok(view),
+            UnitCancel::JobStarted(started) => {
+                let job = server
+                    .vault
+                    .gpu_job(&started.job())?
+                    .ok_or(GpuJobError::NotFound)?;
+                let connector: Arc<dyn GpuJobConnector> = if job.state.is_live() {
+                    job_backend(server, &job)?
+                } else {
+                    Arc::new(NoProvider)
+                };
+                let view = started.view().clone();
+                match server.vault.cancel_unit_gpu_job(
+                    started,
+                    server.gpu_jobs.permits(),
+                    connector.as_ref(),
+                    now_ms(),
+                ) {
+                    // A provider that does not answer leaves the cancel standing; the
+                    // worker terminates the chunk on its next steps.
+                    Ok(_) | Err(GpuJobError::Connector(_)) => Ok(view.current(&server.vault)?),
+                    Err(error) => Err(error.into()),
+                }
+            }
+        },
+    )
     .await
 }

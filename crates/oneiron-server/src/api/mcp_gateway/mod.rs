@@ -26,11 +26,12 @@ mod owner_call;
 mod person_call;
 pub(crate) use self::person_call::person_socket_admits;
 mod question_answers_result;
-mod read_result;
 mod served_rows;
+mod session_workspace;
 pub(crate) mod skill_execution;
 mod stream_reads;
 mod tasks_response;
+mod tool_args_reasons;
 mod tool_receipt;
 mod type_feedback_release;
 mod verb_hooks;
@@ -94,12 +95,18 @@ pub(crate) use self::envelope::{
     mcp_method_not_allowed, mcp_tool_first_gateway, mcp_tool_first_socket_gateway,
 };
 pub(crate) use self::exec_board_verbs::{
-    deliver_run_board_hooks, drop_run_board, execute_mcp_execute_code, execute_run_board_verb,
-    execute_run_board_verb_in_session,
+    deliver_run_board_hooks, drop_run_board, execute_mcp_execute, execute_mcp_resume,
+    execute_run_board_verb, execute_run_board_verb_in_session,
 };
 use self::exec_board_verbs::{execute_mcp_board_verb, mcp_verb_family_error};
+// Tests enter a task run through the kept task handler, which no MCP tool
+// calls (FIX EXECUTE-CALLER-CODE).
+#[cfg(test)]
+pub(crate) use self::exec_board_verbs::execute_mcp_task_run_for_test;
+// Tests drive the claimed-call keep through its seam (P1-2).
+#[cfg(test)]
+pub(crate) use self::claimed_release::{capturing_for_test, kept_for_test};
 pub(crate) use self::owner_call::resolve_mcp_caller;
-pub(crate) use self::read_result::execute_mcp_read_result;
 use self::served_rows::McpServed;
 pub(crate) use self::stream_reads::{mcp_stream_reads_task, mcp_stream_task_row};
 // The integration tests' door to the envelope-error count (FIX
