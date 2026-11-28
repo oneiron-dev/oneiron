@@ -253,6 +253,12 @@ side_tables! {
     /// tombstone dropped its thin copy. Key: item tag (hex32 entity id). Value: [1].
     SYNC_RESIDENCE_INDEX_SOFT_DROP: SyncState b"ri:u:" Raw
         [restore: content] [family: unclassified] [tier: canonical];
+    /// A cited source an opened device landed a CLAIM without, device-local and never synced: the
+    /// source was absent and unlisted, so no registration row exists for it (a cold source has no
+    /// frontier). The read gate judges the source by this row on local evidence alone: a deletion
+    /// mark or a soft-drop marker. Key: CLAIM tag ":" source tag (hex32 entity ids). Value: [1].
+    SYNC_RESIDENCE_COLD_CITATION: SyncState b"ri:k:" Raw
+        [restore: content] [family: unclassified] [tier: canonical];
     /// The window an opened thin-residence item came from. Key: hex32 (entity id).
     SYNC_RESIDENCE_OPENED_ITEM: SyncState b"ro:e:" Raw
         [restore: content] [family: unclassified] [tier: canonical];

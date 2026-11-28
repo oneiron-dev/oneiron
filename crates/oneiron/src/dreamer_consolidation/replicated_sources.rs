@@ -27,12 +27,28 @@ fn map_entry<'a>(value: &'a Value, name: &str) -> Option<&'a Value> {
         .find_map(|(key, value)| (key.as_str() == Some(name)).then_some(value))
 }
 
+/// The MESSAGE ids a CLAIM's verified locators cite; empty without locator evidence.
+pub(crate) fn cited_sources(body: &ClaimBody) -> Result<std::collections::BTreeSet<EntityId>> {
+    let Some(evidence) = locator_evidence(body) else {
+        return Ok(std::collections::BTreeSet::new());
+    };
+    let citations = super::decode_verified_citations(evidence)
+        .map_err(|_| Error::InvalidClaimBody("invalid verified consolidation locators"))?;
+    Ok(citations
+        .into_iter()
+        .flat_map(|(_, _, spans)| spans.into_iter().map(|span| span.message))
+        .collect())
+}
+
 /// The row's own-vault replay context, not carried by other replicated puts.
 #[derive(Debug)]
 pub(crate) struct ClaimSourceReplay {
     pub(crate) claim: EntityId,
+    /// The cited sources whose carrier tombstone the window's tombstone pass replays
+    /// (`sync/ingest/claim_source_tombstones.rs`). A carrier tombstone the pass skips proves no
+    /// deletion, so it never marks the CLAIM stale (#10654 review r1).
     #[cfg(feature = "sync")]
-    pub(crate) tombstones: Option<loro::LoroMap>,
+    pub(crate) carrier_deleted: std::collections::BTreeSet<EntityId>,
 }
 
 impl ClaimSourceReplay {
@@ -42,23 +58,10 @@ impl ClaimSourceReplay {
         txn: &mut heed::RwTxn<'_>,
         body: &ClaimBody,
     ) -> Result<()> {
-        let Some(evidence) = locator_evidence(body) else {
-            return Ok(());
-        };
-        let citations = super::decode_verified_citations(evidence)
-            .map_err(|_| Error::InvalidClaimBody("invalid verified consolidation locators"))?;
-        let sources: std::collections::BTreeSet<_> = citations
-            .into_iter()
-            .flat_map(|(_, _, spans)| spans.into_iter().map(|span| span.message))
-            .collect();
+        let sources = cited_sources(body)?;
         if sources.is_empty() {
             return Ok(());
         }
-        #[cfg(feature = "sync")]
-        let tombstones = self
-            .tombstones
-            .as_ref()
-            .map(oneiron_store::loro_tombstones::TombstoneIndex::build);
         #[cfg(feature = "sync")]
         let opened = crate::sync::residence::device_residence_opened_in_txn(store, txn)?;
         let mut withdrawn = false;
@@ -70,9 +73,7 @@ impl ClaimSourceReplay {
                 ));
             }
             #[cfg(feature = "sync")]
-            let crdt_deleted = tombstones
-                .as_ref()
-                .is_some_and(|index| index.contains(&source));
+            let crdt_deleted = self.carrier_deleted.contains(&source);
             #[cfg(not(feature = "sync"))]
             let crdt_deleted = false;
             if crdt_deleted
@@ -96,17 +97,14 @@ impl ClaimSourceReplay {
             )? {
                 continue;
             }
-            // On an opened device an absent, unlisted, unmarked source lands the CLAIM readable
-            // with no registration row: a cold source has no frontier, and a hard erase of it
-            // never reaches an opened device (PR1-OPENED-COLD-SOURCE-MODE = A, 28 Nov).
+            // On an opened device an absent, unlisted source lands the CLAIM with no registration
+            // row: a cold source has no frontier, and a hard erase of it never reaches an opened
+            // device (PR1-OPENED-COLD-SOURCE-MODE = A, 28 Nov). Its cold-citation row lets the read
+            // gate judge the source on local evidence: a soft-drop marker hides the CLAIM, at
+            // arrival or later, and a restore shows it again with no replay (#10654 review r1).
             #[cfg(feature = "sync")]
-            if opened
-                && !crate::sync::residence::soft_drop_marker_exists_in_txn(
-                    store,
-                    txn,
-                    &source.to_hex(),
-                )?
-            {
+            if opened {
+                crate::sync::residence::put_cold_citation_in_txn(store, txn, &self.claim, &source)?;
                 continue;
             }
             pending = true;

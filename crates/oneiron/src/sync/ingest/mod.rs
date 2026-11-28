@@ -7,6 +7,7 @@
 //! hydration and the recovery preflight call the same entity ladder.
 
 mod birth_watch;
+mod claim_source_tombstones;
 mod delivery;
 mod dropped_carriers;
 mod entity;
@@ -25,6 +26,7 @@ mod task_pairs;
 mod tombstone;
 
 pub(in crate::sync) use self::birth_watch::{note_born, watch_births, watches};
+pub(in crate::sync) use self::claim_source_tombstones::proven_carrier_deletions_in_txn;
 pub(in crate::sync) use self::delivery::{
     Delivery, ShellDelivery, delivered_rows, delivered_tombstones, note_delivered_in_txn,
     payload_rows, with_delivery,

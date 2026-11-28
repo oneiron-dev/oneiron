@@ -32,7 +32,11 @@
 //!   replay primitive `apply_replayed_tombstone_for_sync` (writes real `dt:`;
 //!   headerless replay withdraws through the gate only, no walk).
 //! - M1: cold arrival, no planting. Asserts the landed 4b behavior: readable,
-//!   unheld, unregistered. No `dt:` leg (Q-DT = No).
+//!   unheld, unregistered, with its cold-citation row. No `dt:` leg (Q-DT = No).
+//! - R1a/R1b (#10654 review r1): the cold-citation row lets the gate hide a
+//!   cold-landed CLAIM on a later soft erase of its source, and lands a CLAIM
+//!   whose source is soft-dropped at arrival hidden, not held, so a restore
+//!   shows it with no replay.
 //!
 //! Hook-undone behavior (only R-f's added line undone):
 //! - O2/O2b/O3: the arrival `assert_registered` fails (nothing registers) and
@@ -40,8 +44,8 @@
 //!   `source_withdrawn_in` reads only the dependent's own reverse rows).
 //!   Listing/twin/marker/`dt:` asserts stay green (residence paths, not the
 //!   hook). O2's restore leg stays green.
-//! - M1: stays green (it asserts the absence of rows, which holds trivially
-//!   without the hook; readability holds either way on the opened row).
+//! - M1: its cold-citation row assert fails (no hook, no row); the absence and
+//!   readability asserts hold either way on the opened row.
 
 use super::{insert_blob, synced_device, test_vault_with_grant};
 use crate::{EntityId, Vault};
@@ -103,6 +107,14 @@ fn o_setup_inner(
     if listed {
         shared::assert_registered(&vault_b, claim, message, msg_learned_at);
     } else {
+        assert_eq!(
+            vault_b
+                .sync_state_get(&cold_citation_key(claim, message))
+                .expect("cold row read")
+                .as_deref(),
+            Some([1u8].as_slice()),
+            "the cold source leaves its cold-citation row for the read gate"
+        );
         let held = format!("rm:w:{}:{}", claim_window.as_str(), claim.to_hex());
         assert_eq!(
             vault_b.sync_state_get(&held).expect("held read"),
@@ -131,6 +143,11 @@ fn o_setup_inner(
         claim_learned_at,
         listing_window,
     }
+}
+
+/// The cold-citation row key of `claim` landed without `source` (`ri:k:{claim}:{source}`).
+fn cold_citation_key(claim: EntityId, source: EntityId) -> String {
+    format!("ri:k:{}:{}", claim.to_hex(), source.to_hex())
 }
 
 /// Delete one `ri:w:` row + its `ri:i:` twin: the row-deletion half the S1
@@ -318,5 +335,117 @@ fn a_cold_unlisted_source_on_an_opened_device_lands_readable_unregistered() {
     assert!(
         s.b.get_claim(&s.claim).expect("read B").is_some(),
         "the cold CLAIM stays readable on the opened device"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// R1a (#10654 review r1, P1 replicated_sources.rs:110): a CLAIM that landed against a cold source
+// hides once that source is listed and then soft-erased, and reads again on restore. Mode: opened
+// receiver. Undo the cold-citation row (or the gate's cold loop) and the hidden assert fails: the
+// CLAIM has no registration row for the gate to judge.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_cold_cited_source_listed_then_soft_erased_hides_the_claim() {
+    use super::claim_source_registration as shared;
+    let s = o_setup_inner(0x66, 0x52, "r1a cold then soft erased", 2_420, false);
+    // A later fetch lists the MESSAGE: the CLAIM still reads.
+    shared::plant_listing(&s.b, s.listing_window.as_str(), s.message, s.msg_learned_at);
+    assert!(
+        s.b.get_claim(&s.claim).expect("read B").is_some(),
+        "the CLAIM reads once its source is listed"
+    );
+    // The home soft-erases it: the REAL soft-drop door drops the listing and writes the marker.
+    let dropped =
+        crate::sync::client::drop_soft_deleted_thin_copy(&s.b, &s.listing_window, s.message)
+            .expect("the soft drop applies");
+    assert!(dropped, "the soft drop took the listing");
+    assert_marker(&s.b, s.message, true);
+    assert!(
+        s.b.get_claim(&s.claim).expect("read B").is_none(),
+        "the cold-landed CLAIM hides once its source carries the soft-drop marker"
+    );
+    shared::assert_unregistered(&s.b, s.claim);
+    // Restore: the next fetch lists the MESSAGE again and clears the marker.
+    shared::plant_listing(&s.b, s.listing_window.as_str(), s.message, s.msg_learned_at);
+    s.b.with_write_txn_grouped(|txn| {
+        crate::sync::residence::delete_soft_drop_marker_in_txn(
+            &s.b.store,
+            txn,
+            s.message.to_hex().as_str(),
+        )?;
+        Ok(())
+    })
+    .expect("clear the marker on re-list");
+    assert!(
+        s.b.get_claim(&s.claim).expect("read B").is_some(),
+        "the CLAIM reads again on restore"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// R1b (#10654 review r1, P1 index.rs:478): a CLAIM whose source carries a soft-drop marker when
+// it arrives lands hidden, not held, and reads once a restore lists the source again, with no
+// replay of the CLAIM's window. Mode: opened receiver. Before the fix the CLAIM was held under
+// rm:w:, and a restore never retried it.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_claim_whose_source_is_soft_dropped_lands_hidden_and_reads_on_restore() {
+    use super::claim_source_registration as shared;
+    let member_ref = member(0x67);
+    let (_dir_a, vault_a, _) = test_vault_with_grant(member_ref);
+    let (_turn, _conv, message, claim, msg_learned_at, claim_learned_at) =
+        shared::witnessed_claim_on(&vault_a, 0x53, "r1b soft dropped first", 2_430);
+    let (_dir_b, vault_b, _) = test_vault_with_grant(member_ref);
+    shared::set_mode(&vault_b, crate::sync::SyncResidenceMode::Opened);
+    let claim_window = crate::sync::WindowKey::from_timestamp(claim_learned_at);
+    let listing_window = crate::sync::WindowKey::from_timestamp(msg_learned_at);
+    // The home listed the MESSAGE, then soft-erased it: no listing, marker down.
+    shared::plant_listing(&vault_b, listing_window.as_str(), message, msg_learned_at);
+    assert!(
+        crate::sync::client::drop_soft_deleted_thin_copy(&vault_b, &listing_window, message)
+            .expect("the soft drop applies"),
+        "the soft drop took the listing"
+    );
+    assert_marker(&vault_b, message, true);
+    // The CLAIM arrives: stored with its cold-citation row, hidden, not held.
+    let doc_a = crate::sync::schema::create_window_doc("a", &claim_window);
+    insert_blob(&doc_a, claim, &shared::raw_of(&vault_a, claim));
+    doc_a.commit();
+    let _doc_b = synced_device(&doc_a, &claim_window, &vault_b);
+    assert!(
+        vault_b.get_claim(&claim).expect("read B").is_none(),
+        "the CLAIM hides while its source carries the soft-drop marker"
+    );
+    let held = format!("rm:w:{}:{}", claim_window.as_str(), claim.to_hex());
+    assert_eq!(
+        vault_b.sync_state_get(&held).expect("held read"),
+        None,
+        "the CLAIM is not held under rm:w:"
+    );
+    assert_eq!(
+        vault_b
+            .sync_state_get(&cold_citation_key(claim, message))
+            .expect("cold row read")
+            .as_deref(),
+        Some([1u8].as_slice()),
+        "the put committed the CLAIM's cold-citation row"
+    );
+    // Restore: listed again, marker cleared. No replay of the CLAIM's window follows.
+    shared::plant_listing(&vault_b, listing_window.as_str(), message, msg_learned_at);
+    vault_b
+        .with_write_txn_grouped(|txn| {
+            crate::sync::residence::delete_soft_drop_marker_in_txn(
+                &vault_b.store,
+                txn,
+                message.to_hex().as_str(),
+            )?;
+            Ok(())
+        })
+        .expect("clear the marker on re-list");
+    assert!(
+        vault_b.get_claim(&claim).expect("read B").is_some(),
+        "the CLAIM reads on restore with no replay"
     );
 }

@@ -79,11 +79,16 @@ pub(super) fn put_or_stage(
     if header.entity_type == crate::registry::ENTITY_TYPE_CLAIM
         && !super::peer_import::peer_row_in_txn(ctx.vault, wtxn, ctx.window_key, &id, blob)?
     {
+        let carrier_deleted = super::claim_source_tombstones::proven_carrier_deletions_in_txn(
+            ctx,
+            wtxn,
+            &blob[ENTITY_METADATA_HEADER_LEN..],
+        )?;
         return put.apply_ingested_claim(
             wtxn,
             crate::dreamer_consolidation::replicated_sources::ClaimSourceReplay {
                 claim: id,
-                tombstones: ctx.carrier_doc().map(|doc| doc.get_map("tombstones")),
+                carrier_deleted,
             },
         );
     }

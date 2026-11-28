@@ -124,8 +124,8 @@ fn with_a_sync_all_row_a_cold_source_claim_is_held() {
 /// M3: a switch from opened to sync-all rewrites the row and the next put holds. It proves the
 /// row is written at EVERY resolution (PR1-OPENED-COLD-SOURCE-MODE = A): the owner stops being
 /// treated as opened at the next one. CLAIM 1 stays readable after the switch: it landed with no
-/// registration row, so the gate has nothing to judge it by (I4: only the dependent's own reverse
-/// rows are read); only the next cold put holds.
+/// registration row, and its cold-citation row falls only to local evidence (a deletion mark or a
+/// soft-drop marker), which a switch is not; only the next cold put holds.
 #[test]
 fn a_switch_from_opened_to_sync_all_rewrites_the_row_and_the_next_put_holds() {
     use super::claim_source_registration as shared;
@@ -184,10 +184,10 @@ fn a_switch_from_opened_to_sync_all_rewrites_the_row_and_the_next_put_holds() {
         Some([1u8].as_slice()),
         "the held CLAIM 2 leaves its rm:w: marker"
     );
-    // CLAIM 1 stays readable: with no registration row the gate has nothing to judge.
+    // CLAIM 1 stays readable: its cold-citation row falls only to local evidence.
     assert!(
         vault_b.get_claim(&claim1).expect("read B").is_some(),
-        "CLAIM 1 stays readable after the switch: unregistered, nothing to withdraw"
+        "CLAIM 1 stays readable after the switch: no evidence drops its cold source"
     );
 }
 

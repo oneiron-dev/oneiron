@@ -830,3 +830,48 @@ fn the_claim_stays_readable_when_its_source_window_leaves_the_index() {
         "the CLAIM stays readable when its source window leaves the index (4b)"
     );
 }
+
+// ---------------------------------------------------------------------------
+// T6 (#10654 review r1, P1 replicated_sources.rs:75): a carrier tombstone the tombstone pass skips
+// proves no deletion. B has never seen the MESSAGE, so its residence is unknown. A plain window
+// replays such a tombstone, so it proves the deletion; a world window skips it, so it proves
+// nothing, and a CLAIM put beside it takes no stale mark. Undo the residence check (take every
+// carrier tombstone) and the world-window assert fails.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn a_carrier_tombstone_the_tombstone_pass_skips_proves_no_deletion() {
+    let member_ref = member(0x57);
+    let (_dir_a, vault_a, _) = test_vault_with_grant(member_ref);
+    let (_dir_b, vault_b, _) = test_vault_with_grant(member_ref);
+    let (_turn, _conv, message, claim, _msg_learned, claim_learned) =
+        witnessed_claim_on(&vault_a, 0x14, "unproven tombstone", 1_772_430_000);
+    let body = raw_of(&vault_a, claim)[crate::batch::ENTITY_METADATA_HEADER_LEN..].to_vec();
+    let world = crate::sync::WindowKey::for_world(claim_learned, member(0x58));
+    for (key, proves) in [(window_key(), true), (world, false)] {
+        let doc = crate::sync::schema::create_window_doc("a", &key);
+        insert_tombstone_v2(&doc, message, TombstoneReason::UserDelete, 1_772_431_000);
+        doc.commit();
+        let tombstones =
+            crate::sync::loro_support::TombstoneIndex::build(&doc.get_map("tombstones"));
+        let ctx = crate::sync::ingest::IngestCtx::new(
+            &vault_b,
+            key.as_str(),
+            crate::sync::lease::DEFAULT_LEASE_VAULT_ID,
+            &tombstones,
+        )
+        .with_residence(crate::sync::ingest::Residence::Forward {
+            doc: &doc,
+            trusted: false,
+        });
+        let txn = vault_b.store.env.read_txn().expect("read txn");
+        let proven = crate::sync::ingest::proven_carrier_deletions_in_txn(&ctx, &txn, &body)
+            .expect("carrier proof read");
+        assert_eq!(
+            proven.contains(&message),
+            proves,
+            "window {}: the carrier tombstone proves the deletion only where the pass replays it",
+            key.as_str()
+        );
+    }
+}

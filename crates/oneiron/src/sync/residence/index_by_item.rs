@@ -113,6 +113,56 @@ pub(crate) fn soft_drop_marker_exists_in_txn(
     SOFT_DROP.contains(dbs, txn, &item_hex.to_owned())
 }
 
+/// Device-local `ri:k:{claim}:{source}`: a cited source an opened device landed a CLAIM without.
+const COLD_CITATION: SideTable<String, [u8; 1], Raw> =
+    SideTable::new(&side_table::SYNC_RESIDENCE_COLD_CITATION);
+
+/// Records that `claim` landed on this opened device while its cited `source` was absent and
+/// unlisted, so the read gate can judge that source with no registration row.
+pub(crate) fn put_cold_citation_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    claim: &crate::EntityId,
+    source: &crate::EntityId,
+) -> crate::Result<()> {
+    let key = format!("{}:{}", claim.to_hex(), source.to_hex());
+    COLD_CITATION.put(store, txn, &key, &[1])
+}
+
+/// The sources `claim` landed without on this opened device, in key order. A key that does not
+/// decode fails closed, as a registration row that does not decode does.
+pub(crate) fn cold_citation_sources_in_txn(
+    dbs: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    claim: &crate::EntityId,
+) -> crate::Result<Vec<crate::EntityId>> {
+    let prefix = format!("ri:k:{}:", claim.to_hex());
+    let mut sources = Vec::new();
+    for row in dbs.sync_state().prefix_iter(txn, &prefix)? {
+        let (key, _) = row?;
+        let source = key
+            .strip_prefix(&prefix)
+            .and_then(|hex| crate::EntityId::from_hex(hex).ok())
+            .ok_or(crate::Error::CorruptedIndex("cold citation key"))?;
+        sources.push(source);
+    }
+    Ok(sources)
+}
+
+/// Whether local evidence drops an absent cold-cited source: a deletion mark (`dt:`, a row fence,
+/// a deletion state) or a soft-drop marker. The mode row and a missing listing never do, so a CLAIM
+/// that landed readable stays readable until such evidence arrives (#10654 review r1).
+pub(crate) fn cold_source_dropped_in_txn(
+    dbs: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    source: &crate::EntityId,
+) -> crate::Result<bool> {
+    Ok(
+        crate::ports::source_deleted_or_withdrawn_in_txn(dbs, txn, source)?
+            || soft_drop_marker_exists_in_txn(dbs, txn, &source.to_hex())?,
+    )
+}
+
 /// The first decodable thin index listing of `item_hex` in any window: the `ri:w:{window}:{item}`
 /// twin behind a `ri:i:{item}:{window}` row, decoded as the home listed it. `None` when no window
 /// lists the item or no twin decodes; an undecodable twin is skipped, never an error. Windows scan
