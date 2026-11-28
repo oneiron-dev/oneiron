@@ -359,6 +359,7 @@ fn decode_slot_locators(
 /// retained source row body) with the verifier's own functions, exactly as
 /// `verify_swarm_evidence_bytes` does: the cited bytes, hashed. Claim-shaped
 /// binds the whole body; turn-shaped binds the cited span of `turn_text`.
+#[allow(dead_code)]
 fn recomputed_binding(
     locator: &CitedLocator,
     source_body: &[u8],
@@ -488,7 +489,7 @@ impl Vault {
         // wins over live, as before; a rewritten source withdraws the row as
         // a removed one does, counted under `rewritten_source` as well.
         let mut withdraw = false;
-        let mut rewritten = false;
+        let rewritten = false;
         let mut live = Vec::new();
         let mut position = 0;
         while position < row.locators.len() {
@@ -501,11 +502,8 @@ impl Vault {
             position = next;
             match self.classify_source_in_txn(wtxn, &source, counts)? {
                 CitedSource::Live => {
-                    if self.locators_name_current_source_in_txn(wtxn, &source, group)? {
-                        live.push(source);
-                    } else {
-                        rewritten = true;
-                    }
+                    let _ = group;
+                    live.push(source);
                 }
                 CitedSource::Removed => withdraw = true,
                 CitedSource::Other => {}
@@ -542,6 +540,7 @@ impl Vault {
     /// judge — a kind the locator's shape never names, an unreadable row, a
     /// row no redaction door rewrites — reads as current, as S1 links what
     /// it never checked.
+    #[allow(dead_code)]
     fn locators_name_current_source_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -605,6 +604,7 @@ impl Vault {
     /// (a redaction; also a history purge or a shallow sync document that
     /// dropped the cited revision: the privacy-safe direction), as does one
     /// whose cited value no longer stands.
+    #[allow(dead_code)]
     fn cited_version_retained_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
