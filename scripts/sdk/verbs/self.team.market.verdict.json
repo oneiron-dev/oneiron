@@ -1,6 +1,6 @@
 {
   "name": "self.team.market.verdict",
-  "description": "Relays one referee run's verdict output for one market submission; it scores only when the run's machine-hashed output, harness and sealed contract match.",
+  "description": "Relays one referee run's verdict output for one market submission; it scores only when the run's machine-hashed output, harness and sealed contract match, and spends the run's GPU seconds from the member's share.",
   "input": "crate::team::run::TeamMarketVerdictInput",
   "output": "crate::team::TeamRunAnswer",
   "scope": "Write",

@@ -9,7 +9,8 @@
 //! where each round keeps the top half and protected exploration keeps a
 //! wildcard; M3 islands, where an agent may pay from its share to peek at
 //! another island's submissions. Price markets are rejected: nothing here
-//! bids or prices.
+//! bids or prices. The lease counts in GPU seconds ([`lease`]): each verdict
+//! spends what its referee run charged from the submitting member's share.
 
 use std::collections::BTreeMap;
 
@@ -17,6 +18,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
 use crate::side_table::{self, Named, SideTable};
+use crate::team::run::TeamLeaseUnit;
 use crate::{EntityId, Vault};
 
 /// Markets, by team reference.
@@ -35,6 +37,7 @@ pub use oneiron_records::team::market::{
     Submission, VerdictEvidence,
 };
 
+pub mod lease;
 pub mod referee;
 pub mod seat;
 
@@ -44,6 +47,7 @@ pub struct Market {
     pub team_ref: String,
     pub mode: MarketMode,
     pub referee: SignedReferee,
+    /// The run's lease entering the market, in `unit`.
     pub pool: u64,
     /// Units not granted to any share: the bounty.
     pub bounty: u64,
@@ -58,6 +62,10 @@ pub struct Market {
     /// scores.
     #[serde(default)]
     pub contract: Option<RefereeContract>,
+    /// The unit the pool and every share count in; none for a market opened
+    /// before the unit was recorded, which no verdict spends from.
+    #[serde(default)]
+    pub unit: Option<TeamLeaseUnit>,
 }
 
 impl Market {
@@ -121,7 +129,8 @@ fn update<T>(vault: &Vault, team_ref: &str, f: impl FnOnce(&mut Market) -> Resul
 impl Market {
     /// A market as it opens: the run's `pool` minted, the bounty held back,
     /// the rest granted as equal shares (islands assigned in turn) and the
-    /// referee recorded. Nothing is stored.
+    /// referee recorded, in the default unit ([`lease::DEFAULT_LEASE_UNIT`]).
+    /// Nothing is stored.
     ///
     /// # Errors
     ///
@@ -203,6 +212,7 @@ impl Market {
             opened_at: now,
             result: None,
             contract: None,
+            unit: Some(lease::DEFAULT_LEASE_UNIT),
         };
         market.post(now, None, LedgerKind::Mint, pool);
         for agent in agents {
@@ -223,6 +233,7 @@ impl Market {
             && self.referee.digest == other.referee.digest
             && self.referee.signed_by == other.referee.signed_by
             && self.contract == other.contract
+            && self.unit == other.unit
             && self.pool == other.pool
             && self.participants.len() == other.participants.len()
             && self

@@ -7,6 +7,7 @@ pub use oneiron_verb_wire::team::run::TeamDecisionInput;
 pub use oneiron_verb_wire::team::run::TeamMarketOutcome;
 pub use oneiron_verb_wire::team::run::TeamMarketSeat;
 pub use oneiron_verb_wire::team::run::TeamMarketSeatSource;
+pub use oneiron_verb_wire::team::run::TeamMarketSpend;
 pub use oneiron_verb_wire::team::run::TeamMarketSubmissionView;
 pub use oneiron_verb_wire::team::run::TeamMarketSubmitInput;
 pub use oneiron_verb_wire::team::run::TeamMarketVerdictInput;
@@ -90,6 +91,10 @@ pub enum TeamRunAnswer {
         team_ref: String,
         submission_ref: String,
         outcome: TeamMarketVerdictOutcome,
+        /// What this verdict spent from its member's share; none on a
+        /// replay, an invalid verdict, or a market with no unit.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        spend: Option<TeamMarketSpend>,
         /// Whether the same verdict was already recorded.
         replay: bool,
     },

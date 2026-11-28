@@ -23,7 +23,7 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use super::{
-    ContractBar, ContractComparator, InvalidVerdict, LedgerKind, MARKET, MarketResult,
+    ContractBar, ContractComparator, InvalidVerdict, LedgerKind, MARKET, Market, MarketResult,
     RefereeContract, ScreenScore, Submission, VerdictEvidence,
 };
 use crate::agent_dispatch::{AGENT_DISPATCH_ATTEMPT_TYPE, attempt_team_stamp};
@@ -32,8 +32,8 @@ use crate::error::Result;
 use crate::gpu_line::{ClaimKey, ClaimState, UnitClaim, UnitEnd, UnitTerminal, claim_in_txn};
 use crate::side_table::{self, Named, SideTable};
 use crate::team::run::{
-    TeamMarketOutcome, TeamMarketSubmitInput, TeamMarketVerdictInput, TeamMarketVerdictOutcome,
-    TeamOverrideInput, TeamOverrideView, TeamRunAnswer,
+    TeamMarketOutcome, TeamMarketSpend, TeamMarketSubmitInput, TeamMarketVerdictInput,
+    TeamMarketVerdictOutcome, TeamOverrideInput, TeamOverrideView, TeamRunAnswer,
 };
 use crate::{EntityId, Vault};
 
@@ -414,12 +414,14 @@ pub(crate) fn submit_candidate(
 fn verdict_answer(
     input: &TeamMarketVerdictInput,
     outcome: TeamMarketVerdictOutcome,
+    spend: Option<TeamMarketSpend>,
     replay: bool,
 ) -> TeamRunAnswer {
     TeamRunAnswer::MarketVerdict {
         team_ref: input.team_ref.clone(),
         submission_ref: input.submission_ref.clone(),
         outcome,
+        spend,
         replay,
     }
 }
@@ -486,7 +488,8 @@ fn read_evidence(
 /// submission, relayed by the team's leader or the submitting member.
 /// Refused with nothing written: an unknown market or submission, another
 /// relay, a market with no contract, a run not ended yet, a closed market, a
-/// claim another submission's verdict used, or a second sealed verdict.
+/// claim another submission's verdict used, a second sealed verdict, or a
+/// member's share that cannot pay the run's GPU seconds ([`super::lease`]).
 ///
 /// # Errors
 ///
@@ -535,7 +538,7 @@ pub(crate) fn relay_verdict(
         if let Some(evidence) = &kept.evidence {
             return Ok(
                 if Some(evidence.claim) == claim_id && evidence.output_sha256 == sha256 {
-                    Ok(verdict_answer(input, scored(kept, evidence), true))
+                    Ok(verdict_answer(input, scored(kept, evidence), None, true))
                 } else {
                     Err("team_market_verdict_final")
                 },
@@ -548,7 +551,7 @@ pub(crate) fn relay_verdict(
             let outcome = TeamMarketVerdictOutcome::Screened {
                 score: screen.score,
             };
-            return Ok(Ok(verdict_answer(input, outcome, true)));
+            return Ok(Ok(verdict_answer(input, outcome, None, true)));
         }
         if market.result.is_some() {
             return Ok(Err("team_market_closed"));
@@ -581,6 +584,11 @@ pub(crate) fn relay_verdict(
                 )
                 .map(|read| (read, claim))
             }
+        };
+        let verdict_claim = read.as_ref().ok().map(|(_, claim)| *claim);
+        let spend = match super::lease::charge_verdict(&mut market, index, verdict_claim, now) {
+            Ok(spend) => spend,
+            Err(why) => return Ok(Err(why)),
         };
         let submission = &mut market.submissions[index];
         let outcome = match read {
@@ -628,7 +636,7 @@ pub(crate) fn relay_verdict(
             }
         };
         MARKET.put(&vault.store, txn, &market.team_ref, &market)?;
-        Ok(Ok(verdict_answer(input, outcome, false)))
+        Ok(Ok(verdict_answer(input, outcome, spend, false)))
     })
 }
 
@@ -654,7 +662,7 @@ fn override_view(kept: &MarketOverride) -> TeamOverrideView {
 }
 
 fn outcome_of(
-    submissions: &[Submission],
+    market: &Market,
     result: &MarketResult,
     kept: Option<&MarketOverride>,
 ) -> TeamMarketOutcome {
@@ -664,7 +672,9 @@ fn outcome_of(
         bounty: result.bounty,
         closed_at: result.closed_at,
         referee_override: kept.map(override_view),
-        submissions: super::seat::submission_views(submissions),
+        submissions: super::seat::submission_views(&market.submissions),
+        unit: market.unit,
+        lease: super::lease::lease_views(market),
     }
 }
 
@@ -686,7 +696,7 @@ pub(crate) fn market_outcome_in_txn(
         return Ok(None);
     };
     let kept = OVERRIDE.get(&vault.store, txn, &team_ref.to_owned())?;
-    Ok(Some(outcome_of(&market.submissions, result, kept.as_ref())))
+    Ok(Some(outcome_of(&market, result, kept.as_ref())))
 }
 
 /// [`market_outcome_in_txn`] in its own read.
@@ -768,7 +778,7 @@ pub(crate) fn settle_market(
             }
         };
         MARKET.put(&vault.store, txn, &key, &market)?;
-        Ok(Ok(outcome_of(&market.submissions, &result, kept.as_ref())))
+        Ok(Ok(outcome_of(&market, &result, kept.as_ref())))
     })
 }
 

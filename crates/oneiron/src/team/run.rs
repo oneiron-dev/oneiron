@@ -81,6 +81,9 @@ pub use oneiron_verb_wire::team::run::{
 #[doc(hidden)]
 pub use oneiron_records::team::run::{SelfTeamCall, TeamMemberAnswer, TeamRunAnswer};
 
+#[doc(hidden)]
+pub use oneiron_verb_wire::team::run::{TeamLeaseUnit, TeamMarketLeaseView, TeamMarketSpend};
+
 /// The stamp a start opens: the tournament's market, else the leader's own
 /// team. A refusal is the guest's typed failure code.
 pub(crate) fn start_stamp(
@@ -205,7 +208,7 @@ pub(crate) fn market_opening(
         signed_by: setter,
         signed_at: now,
     };
-    Market::opening(
+    let mut market = Market::opening(
         team_ref,
         market_mode(terms.mode),
         referee,
@@ -214,7 +217,11 @@ pub(crate) fn market_opening(
         agents,
         &terms.protected,
         now,
-    )
+    )?;
+    if let Some(unit) = terms.unit {
+        market.unit = Some(unit);
+    }
+    Ok(market)
 }
 
 const fn referee_kind(kind: TeamRefereeKindInput) -> RefereeKind {
