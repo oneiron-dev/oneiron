@@ -15,7 +15,7 @@ use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::ports::{EdgeDirection, EntityStoreRead};
-use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
+use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
 
 /// Marks `turn` for embedding at its current text, committed with the write
 /// that changed it.
@@ -52,7 +52,9 @@ pub(crate) fn mark_turn_in_txn(
 }
 
 /// The publication half: a write that moved the text of a TURN, or of a
-/// MESSAGE inside one, marks that turn again in the same transaction.
+/// MESSAGE inside one, marks that turn again in the same transaction. A
+/// PERSON's body is no embedding input, but publishing it marks the person
+/// at its public `about` line again ([`super::person`]).
 pub(crate) fn mark_on_publication_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -65,6 +67,9 @@ pub(crate) fn mark_on_publication_in_txn(
     match entity_type {
         ENTITY_TYPE_TURN => mark_turn_in_txn(vault, wtxn, *entity),
         ENTITY_TYPE_MESSAGE => mark_turns_in_txn(vault, wtxn, turns_of(vault, wtxn, entity)?),
+        ENTITY_TYPE_PERSON => {
+            super::person::mark_person_on_publication_in_txn(vault, wtxn, *entity)
+        }
         _ => Ok(()),
     }
 }
