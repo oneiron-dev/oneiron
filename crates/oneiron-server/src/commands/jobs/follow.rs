@@ -82,7 +82,7 @@ impl Follow<'_> {
         let id = order.to_hex();
         let mut logs: Vec<AttemptLog> = Vec::new();
         let mut own_stop = None;
-        let mut cancel_asked = false;
+        let mut cancel_asked = true;
         let mut misses = 0;
         let mut seen = String::new();
         loop {
