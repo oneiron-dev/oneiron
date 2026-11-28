@@ -8,8 +8,8 @@ use super::{ExecutorCallSite, HostSelfDispatcher};
 use crate::claim::ClaimReadStatus;
 use crate::code_run::storage::{ExecutorStorage, NewReaderJob, SpawnAdmission};
 use crate::code_run::types::{
-    RunCall, SelfDispatchOutcome, SelfDurableWait, SelfDurableWaitReason, SelfEffect,
-    SelfFailedResult,
+    RunCall, SelfDeniedResult, SelfDispatchOutcome, SelfDurableWait, SelfDurableWaitReason,
+    SelfEffect, SelfFailedResult,
 };
 use crate::code_run::{
     ReaderActor, ReaderJob, ReaderJobKind, ReaderJobState, ReaderRoute, SelfSummarizeCall,
@@ -46,9 +46,10 @@ impl HostSelfDispatcher<'_> {
     /// admits a summarize with (the run's own turn key when it binds no
     /// door), with the NOTE's kind policy, grants and diary gate, its lifted
     /// keys masked as the run's actor reads them. `Err` is the refusal the
-    /// whole call answers: the door's own, [`SUMMARIZE_NOTE_UNREADABLE`] for
-    /// an id that names no NOTE the caller reads, or
-    /// [`SUMMARIZE_NOTES_OFF_RECORD`] in an off-record run.
+    /// whole call answers, as its code and reason codes: the door's own, with
+    /// the reason codes it gave (FIX EXECUTE-CALLER-CODE),
+    /// [`SUMMARIZE_NOTE_UNREADABLE`] for an id that names no NOTE the caller
+    /// reads, or [`SUMMARIZE_NOTES_OFF_RECORD`] in an off-record run.
     ///
     /// # Errors
     ///
@@ -56,14 +57,14 @@ impl HostSelfDispatcher<'_> {
     pub(crate) fn summarize_note_text(
         &self,
         note_ref: &str,
-    ) -> Result<std::result::Result<(EntityId, String), String>> {
-        let unreadable = || Ok(Err(SUMMARIZE_NOTE_UNREADABLE.to_owned()));
+    ) -> Result<std::result::Result<(EntityId, String), (String, Vec<String>)>> {
+        let unreadable = || Ok(Err((SUMMARIZE_NOTE_UNREADABLE.to_owned(), Vec::new())));
         let ExecutorStorage::Canonical(vault) = &self.storage else {
-            return Ok(Err(SUMMARIZE_NOTES_OFF_RECORD.to_owned()));
+            return Ok(Err((SUMMARIZE_NOTES_OFF_RECORD.to_owned(), Vec::new())));
         };
         let key = match self.admit_run_call(RunCall::Bridge(SelfEffect::Summarize))? {
             Ok(read_as) => read_as.unwrap_or_else(|| self.host_turn_read_key()),
-            Err(refusal) => return Ok(Err(refusal.code)),
+            Err(refusal) => return Ok(Err((refusal.code, refusal.reason_codes))),
         };
         let Ok(note) = crate::vault::entity_refs::resolve_entity_ref(vault, note_ref) else {
             return unreadable();
@@ -93,6 +94,16 @@ impl HostSelfDispatcher<'_> {
         }
     }
 
+    /// The caller's receipted spawn refusal, before any summary member is read.
+    pub(crate) fn summarize_spawn_refusal(
+        &self,
+        call: &SelfSummarizeCall,
+    ) -> Result<Option<SelfDeniedResult>> {
+        Ok(self
+            .check_spawn_powers(SelfEffect::Summarize, None, &summarize_power_request(call))?
+            .err())
+    }
+
     /// `summarize`: the members the host bound, in order, by the call's
     /// recipe. A memo hit answers the summary's card. Otherwise the run's
     /// summary job over them is queued (or found), under the seat a spawn
@@ -111,6 +122,13 @@ impl HostSelfDispatcher<'_> {
                 disk_floor: None,
             })
         };
+        // SPAWN-KNOB (FIX CODE-MODE-LENDING-W5): a summary is made by a
+        // reader job of the run, so the caller's `spawn` decides first, as
+        // at `self.spawn`, before any seat, member or memo is read. The job
+        // is still born with no powers of its own: it spawns nothing.
+        if let Some(denied) = self.summarize_spawn_refusal(&call)? {
+            return Ok(SelfDispatchOutcome::Denied(denied));
+        }
         let (Some(seat), Some(site)) = (&self.reader_spawn, site) else {
             return Ok(failed("summarize_unbound"));
         };
@@ -211,6 +229,14 @@ impl HostSelfDispatcher<'_> {
         self.storage
             .summary_output_card(found.owner, &found.path, &found.handle, task)
     }
+}
+
+/// The canonical request a summarize's power refusal is receipted with: the
+/// results and then the NOTEs the call names, in order, one per line.
+fn summarize_power_request(call: &SelfSummarizeCall) -> Vec<u8> {
+    let mut named = call.members();
+    named.extend(call.note_refs.iter().flatten().map(String::as_str));
+    named.join("\n").into_bytes()
 }
 
 /// A summary job's `{task, state}`, and why it settled short.

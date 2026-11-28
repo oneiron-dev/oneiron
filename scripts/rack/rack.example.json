@@ -1,0 +1,107 @@
+{
+  "hosts": {
+    "bel": {
+      "box_names": [
+        "bel",
+        "bella"
+      ]
+    },
+    "kel": {
+      "box_names": [
+        "kel",
+        "kelly"
+      ],
+      "issuer": {
+        "loopback_allowed": false
+      }
+    }
+  },
+  "issuer": {
+    "base_url": "https://issuer.example.invalid",
+    "secret_env": "ONEIRON_SECRET",
+    "binding_key_env": "ONEIRON_BINDING_KEY",
+    "loopback_allowed": false
+  },
+  "oneiron_bin": "oneiron",
+  "command_timeout_secs": 15,
+  "proc_root": "/proc",
+  "evidence_dir": "",
+  "canary": {
+    "target_machines": [
+      "<32-hex machine id>"
+    ],
+    "exec_machine": "<32-hex machine id>",
+    "offer": "<offer name>",
+    "probe": {
+      "template": "probe",
+      "commit": "<40-hex commit>",
+      "contract_path": "<path in the checkout>",
+      "contract_sha256": "<64 hex>",
+      "entry": "<path in the checkout>",
+      "args": [],
+      "cpu_threads": 1,
+      "memory_mib": 512,
+      "disk_mib": 64,
+      "maximum_secs": 300,
+      "project": "",
+      "check_in_ref": ""
+    },
+    "order_deadline_secs": 900,
+    "poll_secs": 5,
+    "model_list_url": ""
+  },
+  "drain": {
+    "tool_process_patterns": [
+      "/usr/local/bin/gpu",
+      "fleet-booking",
+      "okc_then_render.sh",
+      "sol_slot.py",
+      "lane_git_gate"
+    ],
+    "tool_unit_patterns": [
+      "fleet-*",
+      "engine-sshfs@*"
+    ],
+    "ignore_mounts": [],
+    "rack_addresses": [],
+    "control_socket_globs": [
+      "~/.ssh/cm-*",
+      "~/.ssh/sockets/*"
+    ],
+    "transfer_programs": [
+      "rsync",
+      "scp",
+      "sftp"
+    ],
+    "ssh_system_config": "/etc/ssh/ssh_config"
+  },
+  "keys": {
+    "login_accounts": [
+      "<rack login account>"
+    ],
+    "authorized_keys_file_patterns": [
+      ".ssh/authorized_keys",
+      ".ssh/authorized_keys2"
+    ],
+    "authorized_keys_files": [],
+    "client_key_globs": [
+      "~/.ssh/*.pub"
+    ],
+    "rack_client_keys_dir": "",
+    "owner_devices": [
+      "mac"
+    ],
+    "sshd_units": [
+      "sshd.service"
+    ],
+    "rack_connections": [
+      "addr=<a rack machine's address as this box sees it>,host=<its name>"
+    ],
+    "sshd_program": "sshd",
+    "authorized_keys_commands": [
+      "/usr/bin/userdbctl ssh-authorized-keys %u"
+    ],
+    "freeze_unix": 0,
+    "journal_since_unix": 0
+  }
+}

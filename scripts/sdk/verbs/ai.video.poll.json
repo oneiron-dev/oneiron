@@ -12,5 +12,6 @@
     "unrestricted_record_scope": true
   },
   "section": false,
-  "host_door_proof": "video_job_owner_grade"
+  "host_door_proof": "video_job_owner_grade",
+  "caller_code": "refused"
 }

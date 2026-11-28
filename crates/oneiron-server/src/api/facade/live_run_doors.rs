@@ -8,6 +8,7 @@ use oneiron::code_run::{
     ReportBlockedInput, ReportBlockedOutput, TaskRefuseInput, TaskRefuseOutput,
 };
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
+use oneiron::task_verb::run_doors::{ConsultLandReply, ConsultLandRequest};
 use oneiron::task_verb::sdk::LiveRunRequest;
 
 use super::host_doors::support::{Listed, internal};
@@ -35,6 +36,58 @@ pub(crate) async fn tasks_refuse(
     )
     .await;
     (answer, Vec::new())
+}
+
+/// `tasks.consult.result` (`host_door_lists`): the attached agent lands its
+/// answer or abstention on the consult TASK its live run leased, judged
+/// under this credential's read key. The reply serves the TASK, result and
+/// evidence or reason rows the landing read, so it lists them.
+pub(crate) async fn tasks_consult_result(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    session: Option<oneiron::EntityId>,
+    input: LiveRunRequest<ConsultLandRequest>,
+) -> Listed<ConsultLandReply> {
+    let reader = match credential_reader(server, auth) {
+        Ok(reader) => reader,
+        Err(error) => return (Err(error), Vec::new()),
+    };
+    let answer = on_live_run(
+        server,
+        auth,
+        session,
+        input.live_run,
+        "tasks.consult.result",
+        move |dispatcher| dispatcher.land_consult_from_host(input.spec, reader),
+    )
+    .await;
+    match answer {
+        Ok((reply, rows)) => (Ok(reply), rows),
+        Err(error) => (Err(error), Vec::new()),
+    }
+}
+
+/// The read key of the caller's own verified credential, bound where the
+/// connection's rows go: its locality with the machine it proved, as every
+/// facade read binds it (FIX 4937). The lane a live-run landing must read
+/// every ref it names on.
+fn credential_reader(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+) -> MemoryResult<oneiron::claim::ScopedReadActorKey> {
+    let refused = || {
+        MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            "a live-run call requires this agent's own verified credential",
+            &["Present the same credential that attached to the run."],
+        )
+    };
+    let proof = auth.verified_slip().ok_or_else(refused)?;
+    let key = server
+        .vault()
+        .credential_read_key(proof)?
+        .ok_or_else(refused)?;
+    Ok(key.for_destination(&auth.destination()))
 }
 
 /// `self.report_blocked` (`host_door_lists`): the reply is the witnessed

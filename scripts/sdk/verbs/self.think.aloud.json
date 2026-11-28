@@ -1,5 +1,6 @@
 {
   "name": "self.think.aloud",
+  "description": "Publishes one thought from the run as a visible message at its next recorded position.",
   "input": "crate::code_run::ThinkAloudInput",
   "output": "crate::code_run::SpeechOutput",
   "scope": "Write",

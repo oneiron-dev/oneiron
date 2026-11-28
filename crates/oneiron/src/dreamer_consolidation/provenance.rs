@@ -460,10 +460,16 @@ pub(super) fn evidence_source_from_claim(body: &crate::claim::ClaimBody) -> Clai
 /// Classification, most-restrictive-wins from the Dreamer's own `Generated`
 /// floor (the same start `evidence_trust_meet` uses):
 ///
-/// * an imported TURN is `Imported` (ARCH-0027), whatever hop names it;
+/// * an imported transcript's TURN is `Imported`, whatever its role and
+///   whatever hop names it (ARCH-0027), and so is a TURN that
+///   `turn_trust_class` classes `Imported` (read through
+///   `native_turn_source`, the extraction path's own classifier): a
+///   Counterparty's even unstamped (FIX DREAMER-TURN-TRUST-TWO-CLASSIFIERS:
+///   one classifier for both paths);
 /// * a ref named by an `AnswerTurn` hop is peer TOOL OUTPUT — `ToolOutput`;
 /// * any other stored TURN contributes the Dreamer floor `Generated` (a
-///   `UserStated` turn cannot lift a meet that already starts at the floor);
+///   `UserStated` turn cannot lift a meet that already starts at the floor;
+///   a role that classifier never classes contributes the floor, as before);
 /// * a CLAIM ref contributes its own stored source folded with its recorded
 ///   evidence taint, so a tainted prior cannot launder itself upward;
 /// * an unresolvable ref fails closed at `Imported`, the lattice bottom.
@@ -481,10 +487,12 @@ pub fn evidence_chain_source(
     for entry in evidence_refs {
         if vault.get_entity_type(entry)? == Some(ENTITY_TYPE_TURN)
             && vault.get_raw(entry)?.is_some_and(|raw| {
-                super::watermark::decode_turn_body(
-                    &raw[crate::batch::ENTITY_METADATA_HEADER_LEN.min(raw.len())..],
-                )
-                .imported
+                let body = &raw[crate::batch::ENTITY_METADATA_HEADER_LEN.min(raw.len())..];
+                // The stamp is read apart from the role: the classifier
+                // refuses a role it never classes before it reads the stamp.
+                super::watermark::decode_turn_body(body).imported
+                    || super::resources::native_turn_source(vault, body)
+                        .is_ok_and(|source| source == ClaimSource::Imported)
             })
         {
             meet = source_meet(meet, ClaimSource::Imported);

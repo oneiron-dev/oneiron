@@ -13,8 +13,10 @@
 //! - [`ExecutionNode::controls`] are the local controls: enabled (the file,
 //!   and `disable` at the box), paused (`pause <why>` at the box, handed to
 //!   the GPU slot table's pause on each tick and each `Availability`) and
-//!   drained (the GPU slot table's drain, cleared only by `resume` at the
-//!   box).
+//!   drained (the GPU slot table's drain, cleared by `resume` at the box, or
+//!   by a passed readiness check while the machine's `machines.drain.clear_by`,
+//!   within the box file's own ceiling, is `after_readiness_check`, the
+//!   default: `jobs::readiness`). The issuer keeps a drain of its own.
 //! - [`ExecutionNode::admit_pin`] is the template check of reserve step 5.
 //! - [`ExecutionNode::authority_tick`] reads the node's own fold on every
 //!   mesh tick and hands a withdrawn grant or an ended standing to the

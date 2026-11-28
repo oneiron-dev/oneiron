@@ -187,6 +187,9 @@ pub(crate) struct Admission<'a> {
     pub(crate) transform: Option<&'a str>,
     /// Where vector evidence starts in the space it serves.
     pub(crate) evidence: VectorEvidenceFloors,
+    /// The relevance bar measured in that space, when the provider runs it as it was measured
+    /// (RECALL-CARRIER-THRESHOLD).
+    pub(crate) recall_bar: Option<f32>,
 }
 
 impl Admission<'_> {
@@ -196,7 +199,8 @@ impl Admission<'_> {
         if let Some(transform) = self.transform {
             vault.adopt_embedding_transform(transform)?;
         }
-        vault.set_vector_evidence(self.evidence)
+        vault.set_vector_evidence(self.evidence)?;
+        vault.set_measured_recall_bar(self.recall_bar)
     }
 }
 
@@ -472,6 +476,7 @@ impl EmbedderSlot {
                             Admission {
                                 transform: served.transform(),
                                 evidence: served.evidence(&self.config),
+                                recall_bar: served.recall_bar(&self.config),
                             },
                             admit,
                         )
@@ -497,6 +502,10 @@ impl EmbedderSlot {
                 transform: Some(local.transform()),
                 evidence: local::evidence::pinned_evidence_resolved(&self.config, Some(&resolved))
                     .unwrap_or_default(),
+                recall_bar: local::evidence::pinned_recall_bar_resolved(
+                    &self.config,
+                    Some(&resolved),
+                ),
             },
             admit,
         )?;

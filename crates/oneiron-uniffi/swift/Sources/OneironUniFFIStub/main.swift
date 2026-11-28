@@ -177,10 +177,12 @@ func deletionAndConsentCompile(client: Oneiron) throws {
             basis: "own_proof",
             checkIn: nil,
             requester: nil
-        )
+        ),
+        remaining: [RemainingNotice(code: "history_sweep", text: "compile-only")]
     )
     let _: Bool = deletion.existed
     let _: String? = deletion.checkIn?.basis
+    let _: [RemainingNotice] = deletion.remaining
 
     let pending = PendingWrite(
         claimRef: "claim:compile-only",
@@ -245,7 +247,7 @@ func readsCompile(client: Oneiron) throws {
     let _: ReadReceipt = hits.narrowing
     let _: ReadReceipt = neighbors.narrowing
     let _: EntityView? = EntityRead(value: nil, narrowing: receipt).value
-    let _: [EntityView] = EntityViews(value: [], narrowing: receipt).value
+    let _: [EntityView] = EntityViews(value: [], narrowing: receipt, missing: []).value
     let _: [ClaimView] = ClaimViews(value: [], narrowing: receipt).value
     let _: [LexicalHit] = LexicalHits(value: [], narrowing: receipt, residence: nil).value
     let _: [NeighborHit] = NeighborHits(value: [], narrowing: receipt).value

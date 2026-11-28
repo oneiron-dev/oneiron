@@ -31,7 +31,10 @@
 //! each withdrawal replays as a tombstone, only from a home that proved
 //! itself a machine of the vault ([`admit_own_device_grants`]).
 
+mod mesh;
 mod parts;
+
+pub(crate) use mesh::catch_up_mesh_authority;
 
 use base64::Engine;
 use serde::Deserialize;

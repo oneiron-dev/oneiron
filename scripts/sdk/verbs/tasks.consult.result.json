@@ -1,10 +1,17 @@
 {
   "name": "tasks.consult.result",
+  "description": "Records the leased agent run's answer with evidence, or its abstention with a reason, on the consult task it is allowed to answer.",
   "input": "crate::task_verb::run_doors::ConsultLandRequest",
   "output": "crate::task_verb::run_doors::ConsultLandReply",
   "scope": "Write",
   "act_class": "unstated",
   "context": "run",
   "effect": "ConsultResult",
+  "host": {
+    "host_door_precheck": false,
+    "input": "crate::task_verb::sdk::LiveRunRequest<crate::task_verb::run_doors::ConsultLandRequest>",
+    "description": "Lands this credential's attached agent run's answer, citing its evidence, or its abstention, giving its reason, on the consult TASK that run leased; this credential's read key must read the TASK, the result and every evidence or reason ref, and the engine owns who may land and replay.",
+    "host_door_lists": true
+  },
   "run_surface": "live"
 }

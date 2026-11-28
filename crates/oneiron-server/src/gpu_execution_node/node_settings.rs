@@ -245,7 +245,8 @@ pub struct NodeTemplate {
     /// declared, even empty, every argument must be one of them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub params: Option<BTreeMap<String, String>>,
-    /// The longest run, in seconds.
+    /// The longest run of a job, and the longest chunk of a session, in
+    /// seconds.
     pub max_secs: u64,
     /// The job's memory ceiling.
     pub memory_gib: u64,
@@ -280,7 +281,31 @@ pub struct NodeTemplate {
     /// no request asks more.
     #[serde(default = "cpu_threads_default")]
     pub cpu_threads: u32,
+    /// What a run of this template is (pass 34, 2.5): a finite `job`, cut
+    /// off at its maximum, or a `session`, whose one run continues through
+    /// the paid chunks its issuer renews (row W1). Absent from the digest as
+    /// a job, so a template without it keeps its digest.
+    #[serde(default, skip_serializing_if = "TemplateKind::is_job")]
+    pub kind: TemplateKind,
+    /// A session's longest run across its renewals, in seconds, from its
+    /// launch: no renewal moves the cutoff past it, and the job unit's
+    /// backstop covers it. Applies only to a `session`; None:
+    /// [`SESSION_MAX_SECS_DEFAULT`]. Absent from the digest when unset, so
+    /// a template without it keeps its digest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_max_secs: Option<u64>,
 }
+
+/// What a run of a template is: the wire's [`TemplateKind`], which a
+/// template states and its offer carries.
+pub use super::wire::TemplateKind;
+
+/// Default of a session template's `session_max_secs`: seven days.
+pub const SESSION_MAX_SECS_DEFAULT: u64 = 7 * 24 * 60 * 60;
+
+/// The longest `session_max_secs`: the job unit's `RuntimeMaxSec` backstop
+/// takes it, and systemd holds that in microseconds.
+pub const SESSION_MAX_SECS_CEILING: u64 = u64::MAX / 1_000_000;
 
 /// The signals a template may name as its checkpoint notice: each one a
 /// workload can catch and none that stops it.
@@ -443,6 +468,7 @@ impl ExecutionNodeSettings {
                     network: template.network.clone(),
                     returnable: template.returnable.clone(),
                     require: template.require.clone(),
+                    kind: template.kind,
                 })
             })
             .collect()
@@ -524,9 +550,26 @@ impl NodeTemplate {
     ///
     /// The template does not encode.
     pub fn digest(&self) -> Result<String, String> {
-        let bytes = oneiron::llm::canonical_json_bytes(self)
+        // A session's default longest run, stated or not, is one template.
+        let mut canonical = self.clone();
+        if canonical.session_max_secs == Some(SESSION_MAX_SECS_DEFAULT) {
+            canonical.session_max_secs = None;
+        }
+        let bytes = oneiron::llm::canonical_json_bytes(&canonical)
             .map_err(|error| format!("template_unencodable: {error}"))?;
         Ok(ContentHash::of(&bytes).to_hex())
+    }
+
+    /// A session's longest run from its launch, in seconds; `None` for a
+    /// job, whose run ends at its submit's maximum.
+    #[must_use]
+    pub fn session_max_secs(&self) -> Option<u64> {
+        match self.kind {
+            TemplateKind::Job => None,
+            TemplateKind::Session => {
+                Some(self.session_max_secs.unwrap_or(SESSION_MAX_SECS_DEFAULT))
+            }
+        }
     }
 
     /// The bytes each of a run's log files keeps.
@@ -564,6 +607,26 @@ impl NodeTemplate {
         }
         if self.cpu_threads == 0 {
             return Err("cpu_threads must be at least 1".to_owned());
+        }
+        match (self.kind, self.session_max_secs) {
+            (TemplateKind::Job, Some(_)) => {
+                return Err("session_max_secs applies only to kind = \"session\"".to_owned());
+            }
+            (TemplateKind::Session, _) => {
+                let longest = self.session_max_secs.unwrap_or(SESSION_MAX_SECS_DEFAULT);
+                if longest > SESSION_MAX_SECS_CEILING {
+                    return Err(format!(
+                        "session_max_secs {longest} must be at most {SESSION_MAX_SECS_CEILING}"
+                    ));
+                }
+                if longest < self.max_secs {
+                    return Err(format!(
+                        "session_max_secs {longest} must be at least max_secs {}",
+                        self.max_secs
+                    ));
+                }
+            }
+            (TemplateKind::Job, None) => {}
         }
         if self.tasks_max < TASKS_MAX_FLOOR {
             return Err(format!(

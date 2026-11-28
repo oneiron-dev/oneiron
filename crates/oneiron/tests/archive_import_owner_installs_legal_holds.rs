@@ -24,6 +24,9 @@ use std::sync::Arc;
 use oneiron::deletion::{LegalHoldEventKind, LegalHoldReason, LegalHoldTarget};
 use oneiron::memory::{EraseOptions, EraseReason};
 use oneiron::registry::ENTITY_TYPE_PERSON;
+use oneiron::verbs::{
+    OwnerConfirmPreviewRequest, RecordEraseConfirmRequest, preview_owner_confirm,
+};
 use oneiron::{EdgeActorClass, EntityId, HostingPrivacyPosture, TimeRange, Vault, VaultConfig};
 use retained_side_rows::{export_whole, owner_proof, retained_rows, rows_for};
 
@@ -79,8 +82,12 @@ fn table_count(summary: &serde_json::Value, table: &str, field: &str) -> Option<
         .as_u64()
 }
 
-/// The two live tables a standing hold installs; no target index is written.
-const STANDING_TABLES: [&str; 2] = ["LEGAL_HOLD_ROW", "LEGAL_HOLD_EVENT"];
+/// The three live tables a standing hold installs; no target index is written.
+const STANDING_TABLES: [&str; 3] = [
+    "LEGAL_HOLD_ROW",
+    "LEGAL_HOLD_EVENT",
+    "LEGAL_HOLD_SEALED_RECORD",
+];
 
 /// The owner restore installs the standing hold and its log live, but its
 /// record still deletes; a repeat import leaves the hold rows unchanged.
@@ -606,4 +613,245 @@ fn a_hosted_privacy_erase_erases_a_held_record_without_in_place_hold_rows() {
             "the privacy erase archive carries no {table} row"
         );
     }
+}
+
+/// The `held_back` entries for `table` in a `retained_side_rows` JSON summary, as (reason,
+/// rows); empty when the table entry or the list is absent.
+fn held_back(summary: &serde_json::Value, table: &str) -> Vec<(String, u64)> {
+    summary
+        .get("tables")
+        .and_then(|tables| tables.as_array())
+        .and_then(|tables| {
+            tables.iter().find(|entry| {
+                entry.get("source_table").and_then(|name| name.as_str()) == Some(table)
+            })
+        })
+        .and_then(|entry| entry.get("held_back"))
+        .and_then(|held| held.as_array())
+        .map(|held| {
+            held.iter()
+                .map(|count| {
+                    (
+                        count
+                            .get("reason")
+                            .and_then(|reason| reason.as_str())
+                            .unwrap_or_default()
+                            .to_owned(),
+                        count
+                            .get("rows")
+                            .and_then(|rows| rows.as_u64())
+                            .unwrap_or_default(),
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The owner import installs a hold's sealed-record rows with it, and holds back the rows of a
+/// hold whose primary stays live: after the destination widens the restored hold, a repeat
+/// import keeps the live primary and holds its archived sealed rows back as inconsistent
+/// companions.
+#[test]
+fn the_owner_import_installs_sealed_record_rows_and_holds_back_those_of_a_kept_live_hold() {
+    let (_source_dir, _source_store_dir, source) = open_source_vault();
+    let source_owner = owner_proof(&source);
+    let first = fixed_id(0x50);
+    let second = fixed_id(0x51);
+    source
+        .put_entity(
+            &first,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: 10, end: 10 },
+            10,
+            b"first record",
+        )
+        .expect("the source stores the first record");
+    source
+        .put_entity(
+            &second,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: 11, end: 11 },
+            11,
+            b"second record",
+        )
+        .expect("the source stores the second record");
+    let hold = source
+        .place_legal_hold(
+            &source_owner,
+            vec![
+                LegalHoldTarget::Record(first),
+                LegalHoldTarget::Record(second),
+            ],
+            Some("matter-005".to_owned()),
+            None,
+        )
+        .expect("the owner places the source hold");
+    assert!(hold.stands(), "the source hold stands: {hold:?}");
+    let archive = export_whole(&source);
+    assert_eq!(
+        rows_for(&retained_rows(&archive), "LEGAL_HOLD_SEALED_RECORD").len(),
+        2,
+        "the archive carries one sealed-record row per Record target"
+    );
+
+    let (_dest_dir, _dest_store_dir, dest) = open_later_vault();
+    let dest_owner = owner_proof(&dest);
+    let receipt = dest
+        .import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &dest_owner)
+        .expect("the owner import succeeds");
+    let summary =
+        serde_json::to_value(&receipt.retained_side_rows).expect("the summary serializes");
+    assert_eq!(
+        table_count(&summary, "LEGAL_HOLD_SEALED_RECORD", "installed_rows"),
+        Some(2),
+        "the owner import installs both sealed-record rows: {summary}"
+    );
+
+    let third = fixed_id(0x52);
+    dest.put_entity(
+        &third,
+        ENTITY_TYPE_PERSON,
+        TimeRange { start: 12, end: 12 },
+        12,
+        b"third record",
+    )
+    .expect("the destination stores the widening record");
+    dest.widen_legal_hold(
+        &dest_owner,
+        hold.hold_id,
+        vec![LegalHoldTarget::Record(third)],
+    )
+    .expect("the destination widens the restored hold");
+    let repeat = dest
+        .import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &dest_owner)
+        .expect("the repeat owner import succeeds");
+    let repeat_summary =
+        serde_json::to_value(&repeat.retained_side_rows).expect("the repeat summary serializes");
+    assert_eq!(
+        table_count(&repeat_summary, "LEGAL_HOLD_ROW", "kept_live_rows"),
+        Some(1),
+        "the repeat import keeps the widened live primary: {repeat_summary}"
+    );
+    assert_eq!(
+        table_count(
+            &repeat_summary,
+            "LEGAL_HOLD_SEALED_RECORD",
+            "installed_rows"
+        ),
+        Some(0),
+        "the repeat import installs no sealed-record row: {repeat_summary}"
+    );
+    assert_eq!(
+        held_back(&repeat_summary, "LEGAL_HOLD_SEALED_RECORD"),
+        vec![("inconsistent_companion".to_owned(), 2)],
+        "the repeat import holds both sealed-record rows back: {repeat_summary}"
+    );
+}
+
+/// The legal copy count in the owner's erase preview of `record`, absent when none counts.
+fn previewed_legal_copies(vault: &Vault, record: EntityId) -> Option<serde_json::Value> {
+    let owner = owner_proof(vault);
+    let actor = vault
+        .ensure_embedded_owner_actor()
+        .expect("the embedded owner actor");
+    let memory = vault.memory(actor, EdgeActorClass::Human);
+    let input = RecordEraseConfirmRequest {
+        record,
+        confirm: None,
+        also_same_bytes: false,
+        check_in_ref: None,
+    };
+    let preview = preview_owner_confirm(
+        &memory,
+        &owner,
+        OwnerConfirmPreviewRequest {
+            verb: "vault.records.erase_confirm".to_owned(),
+            input: serde_json::to_value(&input).expect("the erase input encodes"),
+        },
+    )
+    .expect("the owner previews the erase");
+    preview
+        .takes
+        .expect("a record erase preview shows what the erase takes")
+        .get("legal_copies_kept")
+        .cloned()
+}
+
+/// A restored hold counts no copy until the destination seals one: the archive carries the
+/// hold row, which names the source's capture, and its sealed-record row, but not the
+/// source's capture file or hold key. The destination's own widening seals a capture that
+/// counts for its new target only.
+#[test]
+fn a_restored_hold_counts_no_copy_until_the_destination_seals_one() {
+    let (_source_dir, _source_store_dir, source) = open_source_vault();
+    let source_owner = owner_proof(&source);
+    let first = fixed_id(0x58);
+    source
+        .put_entity(
+            &first,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: 10, end: 10 },
+            10,
+            b"first record",
+        )
+        .expect("the source stores the held record");
+    let hold = source
+        .place_legal_hold(
+            &source_owner,
+            vec![LegalHoldTarget::Record(first)],
+            Some("matter-006".to_owned()),
+            None,
+        )
+        .expect("the owner places the source hold");
+    assert!(hold.stands(), "the source hold stands: {hold:?}");
+    assert_eq!(
+        previewed_legal_copies(&source, first),
+        Some(serde_json::Value::from(1)),
+        "the source counts its own sealed copy"
+    );
+    let archive = export_whole(&source);
+
+    let (_dest_dir, _dest_store_dir, dest) = open_later_vault();
+    let dest_owner = owner_proof(&dest);
+    dest.import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &dest_owner)
+        .expect("the owner import succeeds");
+    assert_eq!(
+        dest.legal_holds(&dest_owner)
+            .expect("list the restored holds")
+            .len(),
+        1,
+        "the owner import installs the hold"
+    );
+    assert_eq!(
+        previewed_legal_copies(&dest, first),
+        None,
+        "the destination's hold store holds no copy of the restored target"
+    );
+
+    let second = fixed_id(0x59);
+    dest.put_entity(
+        &second,
+        ENTITY_TYPE_PERSON,
+        TimeRange { start: 11, end: 11 },
+        11,
+        b"second record",
+    )
+    .expect("the destination stores the widening record");
+    dest.widen_legal_hold(
+        &dest_owner,
+        hold.hold_id,
+        vec![LegalHoldTarget::Record(second)],
+    )
+    .expect("the destination widens the restored hold");
+    assert_eq!(
+        previewed_legal_copies(&dest, second),
+        Some(serde_json::Value::from(1)),
+        "the destination's own capture counts its new target"
+    );
+    assert_eq!(
+        previewed_legal_copies(&dest, first),
+        None,
+        "the source's capture still counts nothing beside the destination's own key"
+    );
 }

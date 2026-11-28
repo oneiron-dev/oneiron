@@ -1,5 +1,6 @@
 {
   "name": "vault.questions.edit",
+  "description": "Saves a new version of a standing question under the caller's read scope when the expected version matches.",
   "input": "crate::receipt::QuestionEditRequest",
   "output": "crate::llm::decision::questions::QuestionRecord",
   "call": "crate::task_verb::sdk::host_only(memory, \"vault.questions.edit\", &input)?",

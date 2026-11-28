@@ -12,5 +12,6 @@
     "unrestricted_record_scope": true
   },
   "section": false,
-  "host_door_proof": "packs_setup"
+  "host_door_proof": "packs_setup",
+  "caller_code": "refused"
 }

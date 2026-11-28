@@ -145,6 +145,7 @@ mod sync_outbox;
 mod sync_quarantine;
 // ROLE-TRAINING-RUN: the owner's role prepare and the bounded run read.
 mod training_runs;
+pub mod tree;
 mod trusted_contact;
 mod turn_program_resume;
 mod uncertain_send;
@@ -571,11 +572,12 @@ pub use verb_table::{GeneratedVerbTable, VERB_TABLE};
 /// The verb table as code mode serves it, each row at its full path (`vault.recall`,
 /// `self.focus.refresh`, a bare `describe`): the rows a host door answers, then
 /// the rows the run answers itself. The guest's method table, the executor
-/// prompt and dispatch all read this list.
+/// prompt and dispatch all read this list. A row served by its HTTP facade
+/// door only (`"mcp": "facade"`, FIX EXECUTE-CALLER-CODE) is not in it.
 pub fn code_mode_verb_names() -> impl Iterator<Item = &'static str> + Clone {
     let host = AgentVerb::ALL
         .iter()
-        .filter(|verb| RunVerb::from_name(verb.as_str()).is_none())
+        .filter(|verb| verb.is_code_mode() && RunVerb::from_name(verb.as_str()).is_none())
         .map(|verb| verb.as_str());
     host.chain(RunVerb::ALL.iter().map(|verb| verb.as_str()))
 }
@@ -811,6 +813,7 @@ fn a_recall_the_engine_refuses_never_embeds_its_query() {
         telemetry: None,
         filter: None,
         operation_id: None,
+        bar: None,
     };
     let call = |deadline_ms| RecallRequest {
         effort: Some(crate::memory::RecallEffort::Call),

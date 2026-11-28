@@ -1,5 +1,6 @@
 {
   "name": "self.code.proposal_resolve",
+  "description": "Proposes a whole-file resolution for a conflict in the run's work without landing the change.",
   "input": "crate::memory::repo_doors::RepoProposalResolveInput",
   "output": "crate::memory::repo_doors::RepoProposalSubmitOutput",
   "scope": "Write",

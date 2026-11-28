@@ -69,6 +69,23 @@ pub fn line_in_txn(
     LINES.get(&vault.store, txn, project)
 }
 
+/// Whether a GPU line names the offer `offer`. Such an offer is line-managed: a job starts on
+/// it only through the one start gate, under a unit claim of a line (design pass 32 r2, 5.3).
+///
+/// # Errors
+///
+/// A store read failure.
+pub fn offer_line_managed_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    offer: &str,
+) -> crate::Result<bool> {
+    Ok(LINES
+        .scan(&vault.store, txn)?
+        .iter()
+        .any(|(_, line)| line.offers.iter().any(|name| name == offer)))
+}
+
 /// Writes `line` as its project's row.
 pub(crate) fn put_line_in_txn(
     vault: &Vault,

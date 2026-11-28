@@ -215,6 +215,48 @@ impl Vault {
         self.import_history_in_facet(owner, source, conversation, imported_at, None)
     }
 
+    /// [`Self::import_history`] for a host session log whose folder names
+    /// `folder_digests`, its own digest first (SESSION-PROJECT-NOTE-MESSAGE-PLACEMENT,
+    /// Engine ruling Q9 = a): each TURN the import mints lands with its MESSAGEs in the
+    /// project the folder is bound to, as an attached session's minted turn does; a message
+    /// the import appends to a TURN that landed before keeps that TURN's project; no digests,
+    /// an unbound folder, or a binding that does not read land at the default project, as
+    /// [`Self::import_history`] does. It places, never grants.
+    ///
+    /// # Errors
+    ///
+    /// A failure of the vault itself, and a source's sharing that maps a
+    /// member to no live PERSON. A turn the write door or a gate refuses is
+    /// counted in the report instead, and the import goes on.
+    pub fn import_history_in_session_folder(
+        &self,
+        owner: &AuthenticatedOwner,
+        source: HistorySource,
+        conversation: &HistoryConversation,
+        imported_at: u64,
+        folder_digests: &[String],
+    ) -> MemoryResult<HistoryImportReport> {
+        let placement = if folder_digests.is_empty() {
+            None
+        } else {
+            self.workspace_project(folder_digests).unwrap_or_else(|error| {
+                tracing::warn!(
+                    error = %error,
+                    "a history import's session folder binding did not read; it lands at the default project"
+                );
+                None
+            })
+        };
+        self.import_history_placed_as(
+            HistoryImportCaller::Owner(owner),
+            source,
+            conversation,
+            imported_at,
+            None,
+            placement,
+        )
+    }
+
     /// [`Self::import_history`], with each TURN it births born under `facet`
     /// when one is named: a shared workspace's own FACET (Engine ruling
     /// L2-18-WORKSPACE-FACET-CARRIER = A). The CONVERSATION and its MESSAGEs
@@ -254,6 +296,19 @@ impl Vault {
         imported_at: u64,
         facet: Option<EntityId>,
     ) -> MemoryResult<HistoryImportReport> {
+        self.import_history_placed_as(caller, source, conversation, imported_at, facet, None)
+    }
+
+    /// Lands the import with `placement` resolved by its caller (`None`: the default project).
+    pub(super) fn import_history_placed_as(
+        &self,
+        caller: HistoryImportCaller<'_>,
+        source: HistorySource,
+        conversation: &HistoryConversation,
+        imported_at: u64,
+        facet: Option<EntityId>,
+        placement: Option<EntityId>,
+    ) -> MemoryResult<HistoryImportReport> {
         if let Some(facet) = &facet
             && self.live_entity_row(facet)?.live_type() != Some(crate::registry::ENTITY_TYPE_FACET)
         {
@@ -262,7 +317,9 @@ impl Vault {
             ));
         }
         let mut report = HistoryImportReport::new(conversation);
-        let memory = self.memory(caller.owner(self)?, EdgeActorClass::Human);
+        let memory = self
+            .memory(caller.owner(self)?, EdgeActorClass::Human)
+            .with_session_placement(placement);
         // The container's readers, as this export names them, are set before
         // any of its rows lands.
         let sharing = conversation

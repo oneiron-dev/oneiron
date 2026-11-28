@@ -418,6 +418,15 @@ pub struct CheckInDecision {
     pub requester: Option<String>,
 }
 
+/// One thing a delete or erase leaves behind that the person is told.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct RemainingNotice {
+    /// The remainder's code.
+    pub code: String,
+    /// The remainder's words, as the answer shows them.
+    pub text: String,
+}
+
 /// Receipt for one named deletion.
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct DeleteReceipt {
@@ -434,6 +443,9 @@ pub struct DeleteReceipt {
     /// check-in its call spent. None for an agent's delete under its
     /// Grant.
     pub check_in: Option<CheckInDecision>,
+    /// What the delete leaves behind that the person is told, one entry
+    /// per remainder.
+    pub remaining: Vec<RemainingNotice>,
 }
 
 /// One gated write parked for consent.
@@ -648,13 +660,35 @@ pub struct EntityRead {
     pub narrowing: ReadReceipt,
 }
 
-/// `vault.hydrate` result: every view, with the read's receipt.
+/// Why `vault.hydrate` returned no view for one ref.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum HydrateMissReason {
+    /// No readable view. Absent and withheld records share this reason so
+    /// the miss cannot reveal which records exist.
+    NotFound,
+    /// The ref or its revision suffix failed the syntax check.
+    Malformed,
+}
+
+/// One ref `vault.hydrate` returned no view for, in request order.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct HydrateMiss {
+    /// The exact ref the caller supplied, including any revision suffix.
+    pub reference: String,
+    /// What can be said about the miss without exposing a withheld record.
+    pub reason: HydrateMissReason,
+}
+
+/// `vault.hydrate` result: the found views, the refs it did not find, and
+/// the read's receipt.
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct EntityViews {
-    /// Views, in request order.
+    /// Views, in request order; the missing refs are skipped.
     pub value: Vec<EntityView>,
     /// The read's receipt.
     pub narrowing: ReadReceipt,
+    /// The refs with no view, in request order; empty when all resolved.
+    pub missing: Vec<HydrateMiss>,
 }
 
 /// `vault.claims.list` / `vault.claims.history` result, with the read's receipt.
@@ -844,6 +878,14 @@ pub struct MemoryProvenance {
     pub evidence_turn_ids: Vec<String>,
 }
 
+/// Extra provenance on a recall that asked for a relevance bar.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct LineProvenance {
+    pub approval: Option<String>,
+    pub learned_at: u64,
+    pub source_conversations: Vec<String>,
+}
+
 /// A retained foreign world's immutable stale stamp.
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
 pub struct MemoryStaleStamp {
@@ -879,6 +921,7 @@ pub struct MemoryItem {
     pub confidence_basis: Option<String>,
     /// Provenance.
     pub provenance: MemoryProvenance,
+    pub line_provenance: Option<LineProvenance>,
     pub stale: Option<MemoryStaleStamp>,
     /// World ref, when world-scoped.
     pub world: Option<String>,

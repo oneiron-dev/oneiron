@@ -13,5 +13,6 @@
   "host_door": true,
   "host_door_lists": true,
   "openapi": true,
-  "host_door_proof": "owner"
+  "host_door_proof": "owner",
+  "caller_code": "refused"
 }

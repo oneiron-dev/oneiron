@@ -1,6 +1,6 @@
 {
   "name": "vault.jobs.history",
-  "description": "Lists ended job attempts, newest end first, with totals by machine, line, family and period, read from stored jobs, unit claims and work orders. The owner sees all; an agent whose Grant names it sees its own.",
+  "description": "Lists ended job attempts, newest end first, with totals by machine, line, family and period, from stored jobs, unit claims, work orders and receipts. The owner sees all, unattributed seconds too; an agent whose Grant names it sees its own.",
   "input": "crate::job_history::JobHistoryRequest",
   "output": "crate::job_history::JobHistory",
   "call": "crate::job_history::job_history_embedded(memory, &input)?",

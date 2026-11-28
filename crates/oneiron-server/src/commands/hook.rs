@@ -4,8 +4,12 @@
 //! host's event JSON on stdin.
 //!
 //! - `session-start` binds a vault ([`bind`]), prints one line naming it,
-//!   and recalls a short block for the project ([`recall`]).
-//! - `prompt` recalls a short block for the prompt from the bound vault.
+//!   which also gives the bind command when no project is bound to the
+//!   session's folder ([`recall::folder_unbound`]). Given the task's words
+//!   (`--query`), it pushes the lines that clear the owner's start bar, at most
+//!   3 ([`recall`]); keyed on nothing but the folder, it recalls nothing.
+//! - `prompt` pushes the lines for the prompt that clear the owner's carrier
+//!   bar, from the bound vault.
 //! - `hand-over` queues the session's log for the running `serve` to import,
 //!   or sends it to the selected hosted vault every start of the session
 //!   bound and recorded ([`hand_over`], [`session_binding`]).
@@ -30,6 +34,7 @@
 
 mod bind;
 mod continue_command;
+mod focus_refresh;
 mod hand_over_ask;
 mod hand_over_queue;
 mod hosted_command;
@@ -38,6 +43,7 @@ mod hosted_selection;
 mod hosted_sign_in;
 mod recall;
 mod session_binding;
+mod tool_result;
 
 pub use self::continue_command::continue_work;
 #[cfg(oneiron_test_support)]
@@ -52,6 +58,7 @@ use std::process::{Child, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
 use oneiron::ingest::history::HistorySource;
+use oneiron::memory::RecallSource;
 use serde_json::{Map, Value};
 
 use self::bind::HandOverTarget;
@@ -63,16 +70,30 @@ use crate::cli::{HookArgs, HookBindArgs, HookEvent, HookHandOverArgs, HookHost, 
 /// The most of the host's event read from stdin.
 const MAX_EVENT_BYTES: u64 = 1 << 20;
 /// How long the project's git root may take to find.
-const GIT_TIMEOUT: Duration = Duration::from_secs(2);
 /// The longest first line of a Codex rollout read for its meta, which holds
 /// the session's base instructions: tens of KiB.
 const MAX_ROLLOUT_META_BYTES: u64 = 4 << 20;
+/// What the vault line at `url` adds when no project is bound to the session's
+/// folder (RECALL-SESSION-PROJECT; Engine ANSWER RECALL-SESSION-PROJECT-INTENT,
+/// 26 Nov: Q2 = A, the bind command in the start hook's vault line; Q3 = A,
+/// binding is the owner's act, so the line names who runs it). The command names
+/// the vault by `--base-url`, so it binds the folder on the vault the line names,
+/// whatever `ONEIRON_URL` holds where the owner runs it.
+fn unbound_folder_words(url: &str) -> String {
+    format!(
+        " No project is bound to this folder, so a read that names no project reads no \
+         claims here; the owner binds one by running `oneiron project bind <project-ref> \
+         --base-url {url}` in this folder."
+    )
+}
 
 pub fn hook(args: HookArgs) {
     let host = args.host;
     let said = match args.event {
         HookEvent::SessionStart(args) => context_reply(host, &session_start(host, &args)),
         HookEvent::Prompt(args) => context_reply(host, &prompt(host, &args)),
+        HookEvent::ToolResult(args) => tool_result::tool_result(host, &args),
+        HookEvent::FocusRefresh(args) => focus_refresh::focus_refresh(host, &args),
         HookEvent::HandOver(args) => {
             hand_over(host, &args);
             None
@@ -151,7 +172,8 @@ fn session_start(host: HookHost, args: &HookRecallArgs) -> Vec<String> {
     );
     // A session's hand-over sends its log only to the vault every start of
     // it bound.
-    if let Some(session) = session_id(host, &event) {
+    let session = session_id(host, &event);
+    if let Some(session) = session {
         let earlier = earlier_turns(host, &event);
         session_binding::record(host, session, bound.hosted.as_ref(), &earlier);
     }
@@ -162,26 +184,46 @@ fn session_start(host: HookHost, args: &HookRecallArgs) -> Vec<String> {
     let Some(auth) = recall_auth(bound.hosted.as_ref(), args.credential_file.as_deref()) else {
         return said;
     };
-    let query = args.query.clone().unwrap_or_else(|| {
-        project_dir(&event)
-            .map_or_else(String::new, |dir| project_name(&dir, deadline))
-            .replace(['-', '_'], " ")
-    });
-    if !query.trim().is_empty() {
-        let recall = recall::Recall {
-            host,
-            oneiron: &oneiron,
-            url: &url,
-            auth,
-            query: &query,
-            limit: args.limit,
-            effort: args.effort,
-            deadline,
-        };
-        said.extend(recall.block(&format!(
-            "From your Oneiron vault, for \"{query}\" (recalled at session start; may be dated):"
-        )));
+    let folder = project_dir(&event);
+    // One `initialize`, no recall: in a folder with no project bound, a read
+    // that names no project reads no claims, so the vault line says how the
+    // owner binds one (Q2 = A).
+    if let (Some(dir), Some(line)) = (folder.as_deref(), said.first_mut())
+        && recall::folder_unbound(&oneiron, &url, auth, dir, deadline)
+    {
+        line.push_str(&unbound_folder_words(&url));
     }
+    // A start keyed on nothing but the folder's name recalls nothing: on such a query no
+    // relevance bar separates true lines from traps (RECALL-AB-THRESHOLD-DATA, 26 Nov: a true
+    // note at 0.416 under two traps at 0.428 and 0.419). Given the task's words, the start
+    // pushes what clears the owner's start bar (RECALL-CARRIER-THRESHOLD).
+    let Some(query) = args
+        .query
+        .as_deref()
+        .filter(|query| !query.trim().is_empty())
+    else {
+        return said;
+    };
+    let recall = recall::Recall {
+        host,
+        oneiron: &oneiron,
+        url: &url,
+        auth,
+        workspace: folder.as_deref(),
+        query,
+        limit: args.limit,
+        effort: args.effort,
+        deadline,
+        bar: RecallSource::Start,
+        session,
+        expect_vault: None,
+    };
+    said.extend(recall.block(
+        &format!(
+            "From your Oneiron vault, for \"{query}\" (recalled at session start; may be dated):"
+        ),
+        &recall::query_lead(query),
+    ));
     said
 }
 
@@ -233,17 +275,33 @@ fn prompt(host: HookHost, args: &HookRecallArgs) -> Vec<String> {
         return Vec::new();
     };
     let oneiron = oneiron(args.common.oneiron.as_deref());
+    let folder = project_dir(&event);
     let recall = recall::Recall {
         host,
         oneiron: &oneiron,
         url: &url,
         auth,
+        workspace: folder.as_deref(),
         query: &query,
         limit: args.limit,
         effort: args.effort,
         deadline,
+        bar: RecallSource::Carrier,
+        session: session_id(host, &event),
+        expect_vault: None,
     };
-    recall.block("From your Oneiron vault, for this prompt (may be dated):")
+    let lead = match args
+        .query
+        .as_deref()
+        .filter(|given| !given.trim().is_empty())
+    {
+        Some(_) => recall::query_lead(&query),
+        None => "From your Oneiron vault, for this prompt".to_owned(),
+    };
+    recall.block(
+        "From your Oneiron vault, for this prompt (may be dated):",
+        &lead,
+    )
 }
 
 /// Whom a recall from the vault bound runs as: the hosted vault step 3
@@ -465,38 +523,6 @@ fn codex_rollout_start(event: &Map<String, Value>) -> EarlierTurns {
         }
         _ => EarlierTurns::Own,
     }
-}
-
-/// The git repository's folder name, else the working directory's.
-fn project_name(cwd: &Path, deadline: Instant) -> String {
-    let top = git_top(cwd, deadline).unwrap_or_else(|| cwd.to_path_buf());
-    top.file_name()
-        .map_or_else(String::new, |name| name.to_string_lossy().into_owned())
-}
-
-fn git_top(cwd: &Path, deadline: Instant) -> Option<PathBuf> {
-    let deadline = deadline.min(Instant::now() + GIT_TIMEOUT);
-    if Instant::now() >= deadline {
-        return None;
-    }
-    let mut child = oneiron_spawn::command("git")
-        .arg("-C")
-        .arg(cwd)
-        .args(["rev-parse", "--show-toplevel"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .ok()?;
-    let Some(status) = wait_until(&mut child, deadline) else {
-        let _ = child.kill();
-        let _ = child.wait();
-        return None;
-    };
-    let mut top = String::new();
-    child.stdout.take()?.read_to_string(&mut top).ok()?;
-    let top = top.trim();
-    (status.success() && !top.is_empty()).then(|| PathBuf::from(top))
 }
 
 fn deadline(timeout: f64) -> Instant {

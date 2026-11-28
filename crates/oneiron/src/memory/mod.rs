@@ -119,6 +119,7 @@ pub mod extraction;
 pub mod foreign_code;
 pub mod graph_fs_doors;
 pub mod hook_regen_doors;
+mod hydrate_result;
 pub mod identity_doors;
 mod inspection;
 mod key_value;
@@ -133,6 +134,7 @@ mod note_tombstone;
 mod notes;
 pub mod origin_doors;
 mod outbound;
+mod own_held;
 mod owner_door;
 mod presented_credential;
 mod proactivity_digest;
@@ -141,8 +143,10 @@ pub use proactivity_digest::ProactivityDigestRequest;
 
 mod read_lane;
 mod read_selection;
+pub(crate) use read_selection::project_descendant_closure_of;
 mod reads;
-mod recall;
+// The catalogue names `recall::bar`'s setting rows by their path (build.rs).
+pub(crate) mod recall;
 pub(crate) mod recall_replay;
 pub use recall::RecallRequest;
 pub mod repo_doors;
@@ -226,8 +230,9 @@ pub use claims::{
     ClaimSettleDecision, ClaimSettleRequest, ClaimSettlement, ClaimSettlementAnswer,
     ClaimSettlementReason, ClaimSettlementRevert, ClaimSettlementVerdict, CommitOutcome,
     CommitReceipt, DELETE_RECEIPT_VERSION_RELEASE, DeleteReceipt, DeleteRequestState,
-    MULTI_CARDINALITY_PREDICATES, MemoryReceipt, PendingWrite, RecordRefusal, RefusalReason,
-    SafeDeleteReason, SettleWarning, SettleWarningCode,
+    MULTI_CARDINALITY_PREDICATES, MemoryReceipt, PendingWrite, REMAINING_HISTORY_SWEEP,
+    REMAINING_HISTORY_SWEEP_TEXT, RecordRefusal, RefusalReason, RemainingNotice, SafeDeleteReason,
+    SettleWarning, SettleWarningCode, remaining_after_delete,
 };
 pub use conflict_settle::{
     DreamerCandidateDecisionsRequest, DreamerDecidedCandidateView,
@@ -333,6 +338,7 @@ pub use oneiron_contracts::memory::{CHECK_IN_PENDING_REASON_PREFIX, MEMORY_CODE_
 // consent record admits a session row to manage.
 /// The recipient a host proved for a handle's repo reads (FIX 7608 2b-ii).
 pub use crate::origin::secret_projection::recipient::RepoRevealRecipient;
+pub use hydrate_result::{HydrateMiss, HydrateMissReason, HydrateResult};
 pub use oneiron_contracts::memory::MEMORY_CODE_ROOM_MANAGEMENT;
 pub use oneiron_contracts::memory::MEMORY_CODE_WORLD_PLACEMENT_UNVERIFIABLE;
 pub use oneiron_contracts::memory::MEMORY_CODE_WORLD_RECIPIENT_LIMIT;
@@ -343,6 +349,7 @@ pub use outbound::{
     OutboundIntentReceipt, OutboundScheduleContext,
 };
 pub use read_selection::RecallWorlds;
+pub use reads::HeldMark;
 pub use reads::{
     ClaimListFilter, ClaimView, LexicalHit, NeighborHit, NeighborOpts, VaultReceiptsPage,
 };
@@ -352,10 +359,10 @@ pub(crate) use recall::check_recall_request;
 pub use recall::{
     CONTAINER_KINDS, CitedMessage, DEFAULT_CALL_MODE_DEADLINE, Effort, HOME_RECALL_MERGE_ORDER,
     HomeRecallCaller, HomeRecallMergeOrder, MEMORY_PACK_VERSION, MemoryItem, MemoryPack,
-    MemoryProvenance, MemoryStaleStamp, RecallEffort, RecallRerank, RecallRerankHost,
-    RecallResidence, RecallResidenceHit, RecallResidenceSource, RecallScope, RerankDocument,
-    RerankEgress, RerankReport, RerankScores, RerankSkip, RetrievalMeta, ScopeHonesty,
-    resolve_recall_dial,
+    MemoryProvenance, MemoryStaleStamp, PUSH_LINES, RecallBarAsk, RecallBarOutcome, RecallBarRule,
+    RecallEffort, RecallRerank, RecallRerankHost, RecallResidence, RecallResidenceHit,
+    RecallResidenceSource, RecallScope, RecallSource, RerankDocument, RerankEgress, RerankReport,
+    RerankScores, RerankSkip, RetrievalMeta, ScopeHonesty, resolve_recall_dial,
 };
 pub(crate) use recall::{ConversationGate, conversation_candidate_admits};
 #[cfg(feature = "sync")]

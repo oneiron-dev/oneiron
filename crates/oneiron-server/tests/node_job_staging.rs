@@ -19,6 +19,9 @@
 //! not made, a work directory reached through the engine's own link stages,
 //! and the unstage test waits for a completed staging first.
 //!
+//! The read-only work directory rule tests cover foreign owners, open and
+//! sticky ancestors, and missing components.
+//!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron-server --all-features --test node_job_staging`.
 #![cfg(all(oneiron_test_support, unix))]
 
@@ -30,7 +33,10 @@ use std::time::{Duration, Instant};
 
 use oneiron::EntityId;
 use oneiron::job_workload::{DeviceClaim, DeviceKind, Sharing};
-use oneiron_server::gpu_execution_node::jobs::staging::{CHECKOUT_DIR_NAME, GIT_VIEW_DIR_NAME};
+use oneiron_server::gpu_execution_node::jobs::staging::{
+    CHECKOUT_DIR_NAME, GIT_VIEW_DIR_NAME, WorkDirAccess, WorkDirFault, WorkDirUnsafe,
+    WorkDirVerdict, work_dir_verdict, work_dir_verdict_for,
+};
 use oneiron_server::gpu_execution_node::jobs::{
     JobKeyId, MirrorStager, NodeJobs, NodeKey, StagingRefusal, TemplateMirrors,
 };
@@ -319,6 +325,7 @@ impl Fixture {
                 generation: 1,
             },
             authority_heads: Vec::new(),
+            continues: None,
         };
         SignedJobSubmit::sign(submit, ScriptedSigner::new(self.issuer).as_ref())
             .expect("the issuer signs")
@@ -760,6 +767,292 @@ fn a_work_directory_reached_through_the_engines_own_link_stages() {
         .join(CHECKOUT_DIR_NAME)
         .join(CONTRACT);
     assert_eq!(std::fs::read(staged).expect("contract"), CONTRACT_V1);
+}
+
+#[test]
+fn the_work_dir_rule_names_an_ancestor_another_account_owns() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let root = dir.path().canonicalize().expect("resolved temp dir");
+    let a = root.join("a");
+    let work = a.join("work");
+    make_work_dir_test_directory(&a, 0o755);
+    make_work_dir_test_directory(&work, 0o755);
+    let euid = rustix::process::geteuid().as_raw();
+    let engine = if euid == 0 {
+        std::os::unix::fs::chown(&a, Some(65534), Some(65534)).expect("give a to another account");
+        0
+    } else {
+        euid + 1
+    };
+    let verdict = work_dir_verdict(&work, engine);
+    let WorkDirVerdict::Unsafe(u) = verdict else {
+        panic!("expected a foreign owner on the path: {verdict:?}");
+    };
+    assert!(
+        matches!(u.fault, WorkDirFault::ForeignOwner { uid } if uid != 0 && uid != engine),
+        "expected a foreign owner: {u:?}"
+    );
+    assert!(work.starts_with(&u.path), "not on the work path: {u:?}");
+    if euid == 0 {
+        assert_eq!(
+            u.path, a,
+            "the temp root and its ancestors must pass for root"
+        );
+    }
+}
+
+#[test]
+fn the_work_dir_rule_names_an_ancestor_others_may_rename_in() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let root = dir.path().canonicalize().expect("resolved temp dir");
+    let open = root.join("open");
+    let work = open.join("work");
+    make_work_dir_test_directory(&open, 0o777);
+    make_work_dir_test_directory(&work, 0o755);
+    let euid = rustix::process::geteuid().as_raw();
+    let verdict = work_dir_verdict(&work, euid);
+    assert!(
+        matches!(
+            &verdict,
+            WorkDirVerdict::Unsafe(WorkDirUnsafe {
+                path,
+                fault: WorkDirFault::OthersMayRename { mode },
+            }) if path == &open && *mode & 0o022 != 0
+        ),
+        "expected the open ancestor to fail; the temp root and its ancestors must pass for uid {euid}: {verdict:?}"
+    );
+}
+
+#[test]
+fn a_sticky_ancestor_others_may_write_in_passes_the_work_dir_rule() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let root = dir.path().canonicalize().expect("resolved temp dir");
+    let shared = root.join("shared");
+    let work = shared.join("work");
+    make_work_dir_test_directory(&shared, 0o1777);
+    make_work_dir_test_directory(&work, 0o755);
+    let euid = rustix::process::geteuid().as_raw();
+    assert_eq!(
+        work_dir_verdict(&work, euid),
+        WorkDirVerdict::Passes(work),
+        "expected the sticky ancestor to pass; the temp root and its ancestors must pass for uid {euid}"
+    );
+}
+
+#[test]
+fn a_missing_work_dir_reads_missing_and_the_rule_makes_nothing() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let root = dir.path().canonicalize().expect("resolved temp dir");
+    let a = root.join("a");
+    let b = a.join("b");
+    let work = b.join("work");
+    make_work_dir_test_directory(&a, 0o755);
+    let euid = rustix::process::geteuid().as_raw();
+    assert_eq!(
+        work_dir_verdict(&work, euid),
+        WorkDirVerdict::Missing {
+            first_missing: b.clone(),
+            engine_may_make: true,
+        },
+        "expected the first missing component; the temp root and its ancestors must pass for uid {euid}"
+    );
+    assert!(
+        !b.exists(),
+        "the read-only rule made the first missing component"
+    );
+}
+
+#[test]
+fn the_work_dir_rule_judged_for_the_engine_takes_the_engines_file_access() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let root = dir.path().canonicalize().expect("resolved temp dir");
+    let closed = root.join("closed");
+    let work = closed.join("work");
+    make_work_dir_test_directory(&closed, 0o700);
+    make_work_dir_test_directory(&work, 0o755);
+    let euid = rustix::process::geteuid().as_raw();
+    let me = WorkDirAccess::this_process().expect("this process has an account");
+    if euid != 0 {
+        // Only root can take another account's file access.
+        let other = WorkDirAccess {
+            uid: euid + 1,
+            gid: me.gid,
+            groups: Vec::new(),
+        };
+        let why = work_dir_verdict_for(&work, &other)
+            .expect_err("a process that is not root judges only for itself");
+        assert!(why.contains("can take neither root's"), "{why}");
+        assert_eq!(
+            work_dir_verdict_for(&work, &me),
+            Ok(work_dir_verdict(&work, euid)),
+            "judged for its own account, the walk runs here"
+        );
+        return;
+    }
+    // As root: the temp root opens to every account, `closed` is root's
+    // alone (0700), and the work directory inside it is the engine's.
+    std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o755))
+        .expect("open the temp root");
+    std::os::unix::fs::chown(&work, Some(65534), Some(65534)).expect("give work to the engine");
+    assert_eq!(
+        work_dir_verdict(&work, 65534),
+        WorkDirVerdict::Passes(work.clone()),
+        "with root's own file access the chain passes; the temp root and its ancestors must pass for root"
+    );
+    let engine = WorkDirAccess {
+        uid: 65534,
+        gid: 65534,
+        groups: Vec::new(),
+    };
+    let verdict =
+        work_dir_verdict_for(&work, &engine).expect("root takes the engine's file access");
+    let WorkDirVerdict::Unsafe(u) = verdict else {
+        panic!(
+            "the engine may not search {}: {verdict:?}",
+            closed.display()
+        );
+    };
+    assert!(
+        matches!(&u.fault, WorkDirFault::Unreadable(why) if why.contains("ermission denied")),
+        "expected the engine's lookup to be refused: {u:?}"
+    );
+    assert!(work.starts_with(&u.path), "not on the work path: {u:?}");
+    assert_eq!(
+        rustix::process::geteuid().as_raw(),
+        0,
+        "the judgement's thread took the engine's access, not the process"
+    );
+}
+
+#[test]
+fn an_engine_work_dir_the_engine_may_not_write_in_fails_the_rule() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let root = dir.path().canonicalize().expect("resolved temp dir");
+    let ro = root.join("ro");
+    let work = ro.join("work");
+    make_work_dir_test_directory(&ro, 0o755);
+    make_work_dir_test_directory(&work, 0o555);
+    let me = WorkDirAccess::this_process().expect("this process's file access");
+    let engine = if me.uid == 0 {
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o755))
+            .expect("open the temp root");
+        std::os::unix::fs::chown(&work, Some(65534), Some(65534)).expect("give work to the engine");
+        assert_eq!(
+            work_dir_verdict(&work, 65534),
+            WorkDirVerdict::Passes(work.clone()),
+            "with root's own file access the read-only work dir passes"
+        );
+        WorkDirAccess {
+            uid: 65534,
+            gid: 65534,
+            groups: Vec::new(),
+        }
+    } else {
+        me
+    };
+    assert_eq!(
+        work_dir_verdict_for(&work, &engine),
+        Ok(WorkDirVerdict::Unsafe(WorkDirUnsafe {
+            path: work.clone(),
+            fault: WorkDirFault::EngineMayNotWrite,
+        })),
+        "judged for the engine, its read-only work dir fails"
+    );
+    std::fs::set_permissions(&work, std::fs::Permissions::from_mode(0o755)).expect("restore work");
+}
+
+#[test]
+fn a_missing_work_dir_the_engine_may_not_make_reads_missing_unmakeable() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let root = dir.path().canonicalize().expect("resolved temp dir");
+    let shut = root.join("shut");
+    let open = root.join("open");
+    make_work_dir_test_directory(&shut, 0o555);
+    make_work_dir_test_directory(&open, 0o755);
+    let shut_work = shut.join("work");
+    let open_work = open.join("work");
+    let euid = rustix::process::geteuid().as_raw();
+    let access = if euid != 0 {
+        WorkDirAccess::this_process().expect("this process has an account")
+    } else {
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o755))
+            .expect("open the temp root");
+        std::os::unix::fs::chown(&shut, Some(65534), Some(65534)).expect("give shut to the engine");
+        std::os::unix::fs::chown(&open, Some(65534), Some(65534)).expect("give open to the engine");
+        WorkDirAccess {
+            uid: 65534,
+            gid: 65534,
+            groups: Vec::new(),
+        }
+    };
+    assert_eq!(
+        work_dir_verdict_for(&shut_work, &access),
+        Ok(WorkDirVerdict::Missing {
+            first_missing: shut_work.clone(),
+            engine_may_make: false,
+        }),
+        "the engine may not make its work dir in a read-only parent"
+    );
+    assert_eq!(
+        work_dir_verdict_for(&open_work, &access),
+        Ok(WorkDirVerdict::Missing {
+            first_missing: open_work.clone(),
+            engine_may_make: true,
+        }),
+        "the engine may make its work dir in a writable parent"
+    );
+    assert!(
+        !shut_work.exists() && !open_work.exists(),
+        "the read-only rule made a missing work directory"
+    );
+    std::fs::set_permissions(&shut, std::fs::Permissions::from_mode(0o755)).expect("restore shut");
+}
+
+#[test]
+fn a_caller_with_the_engines_uid_but_other_groups_does_not_judge_for_it() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let root = dir.path().canonicalize().expect("resolved temp dir");
+    let ok = root.join("ok");
+    let work = ok.join("work");
+    make_work_dir_test_directory(&ok, 0o755);
+    make_work_dir_test_directory(&work, 0o755);
+    let me = WorkDirAccess::this_process().expect("this process's file access");
+    let other_gid = me.groups.iter().copied().fold(me.gid, u32::max) + 1;
+    let mut extra_group = me.clone();
+    extra_group.groups.push(other_gid);
+    if me.uid == 0 {
+        work_dir_verdict_for(&work, &extra_group)
+            .expect("root judges for its own uid with other groups on a thread");
+        assert_eq!(rustix::process::geteuid().as_raw(), 0);
+        assert_eq!(
+            WorkDirAccess::this_process().expect("this process's file access after judgement"),
+            me,
+            "the judgement's thread took the groups, not the process"
+        );
+        return;
+    }
+    let mut other_primary = me.clone();
+    other_primary.gid = other_gid;
+    let why = work_dir_verdict_for(&work, &other_primary)
+        .expect_err("another primary gid is not this process's file access");
+    assert!(why.contains("but not its file access"), "{why}");
+    let why = work_dir_verdict_for(&work, &extra_group)
+        .expect_err("an extra group is not this process's file access");
+    assert!(why.contains("but not its file access"), "{why}");
+    let mut same_set = me.clone();
+    same_set.groups.reverse();
+    same_set.groups.push(me.gid);
+    assert_eq!(
+        work_dir_verdict_for(&work, &same_set),
+        Ok(work_dir_verdict(&work, me.uid)),
+        "the same group set in another order judges here"
+    );
+}
+
+fn make_work_dir_test_directory(path: &Path, mode: u32) {
+    std::fs::create_dir(path).expect("make test directory");
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode))
+        .expect("test directory mode");
 }
 
 #[test]

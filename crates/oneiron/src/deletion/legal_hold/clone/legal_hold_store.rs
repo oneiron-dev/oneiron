@@ -110,9 +110,43 @@ fn refuse_inside_vault(root: &Path, vault_dir: &Path) -> Result<()> {
 impl LegalHoldStore {
     /// The hold's directory: the vault id keeps two vaults of one install apart.
     pub(crate) fn hold_dir(&self, vault: &Vault, hold: &EntityId) -> PathBuf {
-        self.root
-            .join(bytes_to_hex_lower(vault.vault_id().as_bytes()))
-            .join(hold.to_hex())
+        hold_dir_under(&self.root, vault, hold)
+    }
+}
+
+/// `<root>/<vault id>/<hold id>`: the one layout of a hold's directory.
+fn hold_dir_under(root: &Path, vault: &Vault, hold: &EntityId) -> PathBuf {
+    root.join(bytes_to_hex_lower(vault.vault_id().as_bytes()))
+        .join(hold.to_hex())
+}
+
+/// Whether this install's hold store holds `capture` of `hold`: the hold's `hold.key` and
+/// the capture's `<capture>.clone` both exist. Reads only and creates nothing, so a vault
+/// with no hold store holds none. A hold row restored from an archive names its source's
+/// captures, whose files stay in the source's store.
+pub(crate) fn holds_capture(vault: &Vault, hold: &EntityId, capture: &EntityId) -> Result<bool> {
+    let Some(root) = vault.config.legal_hold_store.as_deref() else {
+        return Ok(false);
+    };
+    let dir = hold_dir_under(root, vault, hold);
+    Ok(is_file(&dir.join("hold.key"))?
+        && is_file(&dir.join(format!("{}.clone", capture.to_hex())))?)
+}
+
+/// Whether `path` is a file: a missing path, or one under a non-directory, is not; every
+/// other io error is returned.
+fn is_file(path: &Path) -> Result<bool> {
+    match fs::metadata(path) {
+        Ok(meta) => Ok(meta.is_file()),
+        Err(error)
+            if matches!(
+                error.kind(),
+                io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
+            ) =>
+        {
+            Ok(false)
+        }
+        Err(error) => Err(error.into()),
     }
 }
 
@@ -197,12 +231,20 @@ impl Drop for HoldCloneFile {
     }
 }
 
+/// What one seal wrote: its captures, and the `Records` capture's id with the record ids it
+/// holds (record targets and the inquiries' kept copy CLAIMs), for the hold's sealed-record rows.
+pub(crate) struct SealedHoldClone {
+    pub(crate) captures: Vec<HoldCloneCapture>,
+    pub(crate) records: Option<(EntityId, Vec<[u8; 16]>)>,
+}
+
 /// Writes one sealed capture per scope kind in `targets` for `hold_id`:
 /// `Records` for its record targets and its inquiries' kept copy CLAIMs,
 /// `Inquiries` for its inquiry targets (ARCH-0038 #company-hold), then the
 /// gate-decision extents for its gate-partition targets. Each capture
 /// streams through a collector in the exact frame format a host receives,
-/// sealed to the hold's own key.
+/// sealed to the hold's own key. Returns what the seal wrote, with the
+/// `Records` capture's members for the hold's sealed-record rows.
 ///
 /// It runs INSIDE the caller's LMDB writer and reads through `txn`, the
 /// writer's own view, so the hold row and its copies commit or roll back
@@ -217,7 +259,7 @@ pub(crate) fn write_hold_clone_in_txn(
     txn: &RoTxn<'_>,
     hold_id: EntityId,
     targets: &[LegalHoldTarget],
-) -> Result<Vec<HoldCloneCapture>> {
+) -> Result<SealedHoldClone> {
     let store = configured(vault)?;
     let vault_id = *vault.vault_id().as_bytes();
     let dir = store.hold_dir(vault, &hold_id);
@@ -235,6 +277,7 @@ pub(crate) fn write_hold_clone_in_txn(
     let secret = hold_secret(vault, &vault_id, &hold_id, &dir)?;
     let public = secret.public_key();
     let mut captures = Vec::new();
+    let mut records: Option<(EntityId, Vec<[u8; 16]>)> = None;
     let mut written: Vec<PathBuf> = Vec::new();
     let outcome = (|| -> Result<()> {
         let mut inquiry_ids: Vec<EntityId> = targets
@@ -278,6 +321,7 @@ pub(crate) fn write_hold_clone_in_txn(
                 Ok((counts, CaptureExtent::Records))
             })?;
             captures.push(capture);
+            records = Some((capture.capture, record_ids));
             written.push(path);
         }
         if let Some(scope) = &inquiries {
@@ -352,7 +396,7 @@ pub(crate) fn write_hold_clone_in_txn(
         }
         return Err(error);
     }
-    Ok(captures)
+    Ok(SealedHoldClone { captures, records })
 }
 
 /// Streams the gate decisions `request`'s scope selects, through the same

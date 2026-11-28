@@ -1247,10 +1247,11 @@ mod tests {
         }
     }
 
-    // python3 -I -c "import ast; ...": len(AGENT_VERBS_TS) == 6181, 38 newlines, the last character a newline.
+    // python3 -I -c "import ast; ...": len(AGENT_VERBS_TS) == 6210 since #7711, 38 newlines, the last character a
+    // newline (FIX GENERATOR-AGENT-VERBS-TS-PIN-STALE).
     #[test]
     fn agent_verbs_ts_is_the_python_literal() {
-        assert_eq!(AGENT_VERBS_TS.chars().count(), 6181);
+        assert_eq!(AGENT_VERBS_TS.chars().count(), 6210);
         assert_eq!(AGENT_VERBS_TS.matches('\n').count(), 38);
         assert!(
             AGENT_VERBS_TS

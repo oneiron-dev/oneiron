@@ -627,8 +627,8 @@ impl Vault {
     /// Production bridge code uses direct transactional access so multi-key
     /// sync-state updates stay atomic. `prefix` must overlap a declared
     /// `SyncState` table — a family prefix shorter than the declared one
-    /// (`"rm:"` over `rm:w:` and `rmp:w:`) or a single leading byte from a
-    /// whole-table diagnostic sweep are both accepted; see
+    /// (`"rm"` over `rm:w:`, `rmh:w:` and `rmp:w:`) or a single leading byte from
+    /// a whole-table diagnostic sweep are both accepted; see
     /// [`side_table::host_declared_sync_state_scan`].
     #[doc(hidden)]
     pub fn sync_state_keys_with_prefix(&self, prefix: &str) -> Result<Vec<String>> {

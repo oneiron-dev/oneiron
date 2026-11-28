@@ -6,8 +6,11 @@
         "mcp",
         "--surface",
         "tool-first",
+        "--carrier-in-content",
         "--credential-file",
-        "${HOME}/.config/oneiron/claude-code.cred"
+        "${HOME}/.config/oneiron/claude-code.cred",
+        "--workspace",
+        "."
       ]
     }
   }

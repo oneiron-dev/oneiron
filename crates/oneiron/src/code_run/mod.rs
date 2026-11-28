@@ -41,6 +41,7 @@ mod replay_parts;
 mod repo_calls;
 mod repo_model;
 mod result_read;
+pub mod run_result_read;
 pub(crate) mod run_verb_call;
 mod run_verbs;
 mod scoped_call_control;
@@ -80,6 +81,7 @@ pub use self::codec::{
     CODE_RUN_STEP_CHECKPOINT_KEYS, decode_code_run_replay_record, encode_code_run_replay_record,
 };
 pub(crate) use self::codec::{continuation_prefix_digest, encode_code_run_replay_value};
+pub(crate) use self::compaction_fork::source_row_withdrawn_in;
 pub use self::compaction_fork::{
     AdmittedLiveFork, CACHE_BOUNDARIES_KEY, CacheBoundary, HOST_PROVIDER_OPTIONS,
     LiveCompactionFork, LiveForkRung, cache_boundaries, live_fork_offer_digest,
@@ -136,6 +138,7 @@ pub use self::correction::{
     CodeRunCorrectionCheckpoint, CodeRunCorrectionOutcome, CodeRunCorrectionPolicy,
     ExecutorWireRepairs,
 };
+pub(crate) use self::dispatcher::RecordedProducer;
 pub(crate) use self::dispatcher::{
     ExecutorCallSite, ExecutorReply, ExecutorReplyPublisher, agent_attempt_run_ref,
     check_write_gate_against_vault, envelope_run_ref, recorded_verb_call,
@@ -143,7 +146,7 @@ pub(crate) use self::dispatcher::{
 };
 pub use self::dispatcher::{
     GatedActorWrite, HostPlannerBinding, HostPlannerDecisions, HostSelfDispatcher,
-    RepoRequestWitness, SELF_MEMORY_SEARCH_MAX_RESULTS,
+    RECORDED_ANSWER_UNIDENTIFIED, RepoRequestWitness, SELF_MEMORY_SEARCH_MAX_RESULTS,
 };
 pub(crate) use self::dispatcher::{HookedCall, TextAnswerPost};
 pub(crate) use self::model_call::{
@@ -216,6 +219,7 @@ pub use self::storage::{
     CodeRunRoomSecretLiftRequest, CodeRunSecretLiftDismiss, CodeRunSecretLiftDismissal,
     CodeRunSecretLiftProposalView, CodeRunSecretLiftRequest, CodeRunSecretLiftStatus,
 };
+pub(crate) use self::storage::{FinishedOutput, ReplyBody, SessionCheckpointBody};
 pub(crate) use self::storage::{InheritedCompaction, StartCompaction};
 pub(crate) use self::storage::{
     OccurrenceRef, ReaderFoldReceipt, ReaderSubstrateRef, ReceiptFinding, ReceiptPartial,
@@ -230,7 +234,6 @@ pub(crate) use self::storage::{
 pub(crate) use self::storage::{
     ReadWorldSeal, ReadWorldSnapshot, captured_step_read_scopes_in_txn, read_world_snapshot_in_txn,
 };
-pub(crate) use self::storage::{ReplyBody, SessionCheckpointBody};
 // L2-37: a parked run's idle fold rechecks its park and lands in one write.
 pub(crate) use self::storage::{
     StagedSinks, clear_parked_wait_in_txn, code_run_body_file_of_row, code_run_body_held_in_txn,

@@ -6,12 +6,17 @@
 //! are ambiguous, none is not found. Exact bytes are tried first. When they
 //! occur nowhere, one fallback folds each run of Unicode whitespace to one
 //! space on both sides (no case, punctuation or Unicode normalization) and
-//! maps the match back to the source's own bytes, under the same rule. A
-//! quote spanning two sources matches neither: each source is searched
+//! maps the match back to the source's own bytes, under the same rule.
+//! A source its call showed through the one-line fence (a TURN line of
+//! the extraction transcript) is searched in that fenced view, both ways,
+//! so a quote copied from the shown line binds where it occurs once there;
+//! its range maps back to the stored bytes.
+//! A quote spanning two sources matches neither: each source is searched
 //! alone. "Short" is the prompt's advice, never a cap.
 
 use crate::EntityId;
 use crate::dreamer_consolidation::call_labels::SourceShown;
+use std::borrow::Cow;
 
 /// Whether a quote found nowhere byte for byte is looked for once more with
 /// each whitespace run folded to one space.
@@ -67,8 +72,19 @@ pub(in crate::dreamer_consolidation) fn bind_quote(
         return QuoteBinding::UnknownSourceLabel;
     };
     let text = shown.text.unwrap_or_default();
-    let found = match exact(text, quote) {
-        Found::Absent if QUOTE_WHITESPACE_FOLD => folded(text, quote),
+    // A fenced call showed the fenced view: the quote is found there and
+    // its range mapped back to the stored bytes.
+    let view: Cow<'_, str> = if shown.one_line_fenced {
+        Cow::Owned(crate::context_board::one_line_token(text))
+    } else {
+        Cow::Borrowed(text)
+    };
+    let found = match exact(&view, quote) {
+        Found::Absent if QUOTE_WHITESPACE_FOLD => folded(&view, quote),
+        found => found,
+    };
+    let found = match found {
+        Found::One(start, end) if shown.one_line_fenced => stored_range(text, &view, start, end),
         found => found,
     };
     match found {
@@ -123,6 +139,26 @@ fn folded(text: &str, quote: &str) -> Found {
     }
 }
 
+/// The byte range of `text` behind `view[start..end]`. The one-line
+/// fence replaces characters one for one, so the two strings'
+/// characters pair in order; a range that does not start and end on
+/// paired character boundaries finds nothing.
+fn stored_range(text: &str, view: &str, start: usize, end: usize) -> Found {
+    let mut stored_start = None;
+    for ((at, c), (shown_at, shown)) in text.char_indices().zip(view.char_indices()) {
+        if shown_at == start {
+            stored_start = Some(at);
+        }
+        if shown_at + shown.len_utf8() == end {
+            return match stored_start {
+                Some(stored_start) => Found::One(stored_start, at + c.len_utf8()),
+                None => Found::Absent,
+            };
+        }
+    }
+    Found::Absent
+}
+
 /// `text` with each run of whitespace folded to one space, and for each
 /// folded character its byte offset in the folded text and the byte range
 /// of `text` it stands for.
@@ -149,4 +185,111 @@ fn fold(text: &str) -> (String, Vec<(usize, usize, usize)>) {
         }
     }
     (folded, spans)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{QuoteBinding, SourceShown, bind_quote};
+
+    #[test]
+    fn a_quote_copied_from_a_fenced_turn_line_binds_the_stored_words() {
+        let source = crate::EntityId::now();
+        let stored = "I moved to\nLisbon\u{2028}in May\r\nlast year";
+        let shown = crate::context_board::one_line_token(stored);
+        let quote_start = shown.find("to ").expect("the shown words include 'to'");
+        for (last_word, expected_quote, expected_stored) in [
+            ("May", "to Lisbon in May", "to\nLisbon\u{2028}in May"),
+            (
+                "last",
+                "to Lisbon in May  last",
+                "to\nLisbon\u{2028}in May\r\nlast",
+            ),
+        ] {
+            let quote_end = shown
+                .find(last_word)
+                .expect("the shown words include the end")
+                + last_word.len();
+            let quote = &shown[quote_start..quote_end];
+            assert_eq!(
+                quote, expected_quote,
+                "copy the quote from the fenced words"
+            );
+            let binding = bind_quote(
+                Some((
+                    source,
+                    SourceShown {
+                        text: Some(stored),
+                        one_line_fenced: true,
+                        project: None,
+                    },
+                )),
+                quote,
+            );
+            let QuoteBinding::Bound {
+                source: bound_source,
+                start,
+                end,
+            } = binding
+            else {
+                panic!("expected {quote:?} to bind to the stored words; got {binding:?}");
+            };
+            assert_eq!(bound_source, source, "the quote binds to its source");
+            assert_eq!(&stored[start..end], expected_stored, "bind to stored bytes");
+        }
+    }
+
+    fn bind(stored: &str, one_line_fenced: bool, quote: &str) -> (crate::EntityId, QuoteBinding) {
+        let source = crate::EntityId::now();
+        let shown = SourceShown {
+            text: Some(stored),
+            one_line_fenced,
+            project: None,
+        };
+        (source, bind_quote(Some((source, shown)), quote))
+    }
+
+    #[test]
+    fn a_quote_once_in_the_fenced_line_binds_where_the_stored_fold_finds_two() {
+        let stored = "I moved\nto Lisbon; I moved  to Lisbon";
+        let quote = "I moved to Lisbon";
+        let (source, binding) = bind(stored, true, quote);
+        let QuoteBinding::Bound {
+            source: bound_source,
+            start,
+            end,
+        } = binding
+        else {
+            panic!("expected {quote:?} to bind to the stored words; got {binding:?}");
+        };
+        assert_eq!(bound_source, source);
+        assert_eq!(&stored[start..end], "I moved\nto Lisbon");
+
+        let (_, binding) = bind(stored, false, quote);
+        assert_eq!(
+            binding,
+            QuoteBinding::QuoteAmbiguous,
+            "a source shown raw keeps the fold rule"
+        );
+    }
+
+    #[test]
+    fn a_fenced_quote_maps_back_across_multibyte_and_non_whitespace_controls() {
+        let stored = "x\u{1b}y and\u{2028}z";
+        for (quote, expected_stored) in [("x y", "x\u{1b}y"), ("y and z", "y and\u{2028}z")] {
+            let (source, binding) = bind(stored, true, quote);
+            let QuoteBinding::Bound {
+                source: bound_source,
+                start,
+                end,
+            } = binding
+            else {
+                panic!("expected {quote:?} to bind to the stored words; got {binding:?}");
+            };
+            assert_eq!(bound_source, source);
+            assert_eq!(&stored[start..end], expected_stored);
+        }
+
+        let (_, binding) = bind(stored, false, "x y");
+        assert_eq!(binding, QuoteBinding::QuoteNotFound);
+    }
 }

@@ -106,13 +106,13 @@ async fn quickjs_code_mode_walks_the_live_head_through_the_graph_fs_rows() {
         &format!("{NEEDLE} the second note"),
     );
 
-    let args = mcp_merge_args(
-        mcp_endpoint_envelope(actor, "read_memory"),
-        json!({"run_ref": "quickjs-graph-fs", "task": "walk the claims as files"}),
-    );
-    let (_, body) = route_json(
-        mode.server.clone(),
-        mcp_endpoint_call_request("/mcp", credential, "walk", "execute_code", args),
+    // No MCP tool starts a task run anymore: the kept task handler enters it, rendering
+    // the old task shape (FIX EXECUTE-CALLER-CODE).
+    let body = execute_task_run_for_test(
+        &mode.server,
+        credential,
+        "quickjs-graph-fs",
+        "walk the claims as files",
     )
     .await;
     assert!(body.get("error").is_none(), "{body}");
@@ -175,11 +175,10 @@ async fn quickjs_code_mode_walks_the_live_head_through_the_graph_fs_rows() {
     assert_eq!(hits, seeded, "{first} {second}");
 }
 
-/// An actor whose binding lists `execute_code` alone runs code but reaches no
-/// graph-FS row: the mount and a grep under a hand-written live-head mount
-/// are each refused with the door's stable `mcp_verb_not_bound`, so a mount
-/// descriptor is a content selector, never authority, and no claim text
-/// leaves.
+/// An actor whose binding lists the entry tool alone runs code but reaches no graph-FS
+/// row: the mount and a grep under a hand-written live-head mount are each refused with
+/// the door's stable `mcp_verb_not_bound`, so a mount descriptor is a content selector,
+/// never authority, and no claim text leaves.
 #[tokio::test]
 async fn quickjs_code_mode_graph_fs_rows_refuse_an_actor_bound_to_execute_code_alone() {
     let owner = seeded_test_entity_id(0x0033_8011);
@@ -210,27 +209,14 @@ async fn quickjs_code_mode_graph_fs_rows_refuse_an_actor_bound_to_execute_code_a
         owner,
         &format!("{NEEDLE} a note the bound actor never reads"),
     );
-    register_bound_verb_mcp_actor(
+    register_bound_verb_mcp_actor(&mode.server, "quickjs-graph-fs-bound", bound, &["execute"])
+        .await;
+
+    let body = execute_task_run_for_test(
         &mode.server,
         "quickjs-graph-fs-bound",
-        bound,
-        &["execute_code"],
-    )
-    .await;
-
-    let args = mcp_merge_args(
-        mcp_endpoint_envelope(bound, "read_memory"),
-        json!({"run_ref": "quickjs-graph-fs-bound", "task": "walk the claims as files"}),
-    );
-    let (_, body) = route_json(
-        mode.server.clone(),
-        mcp_endpoint_call_request(
-            "/mcp",
-            "quickjs-graph-fs-bound",
-            "bound",
-            "execute_code",
-            args,
-        ),
+        "quickjs-graph-fs-bound",
+        "walk the claims as files",
     )
     .await;
     assert!(body.get("error").is_none(), "{body}");

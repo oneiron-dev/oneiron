@@ -1,5 +1,6 @@
 {
   "name": "self.code.symbols.definitions",
+  "description": "Lists exact-name Rust definitions in a snapshot on grant-readable paths.",
   "input": "crate::memory::repo_doors::RepoSymbolsDefinitionsInput",
   "output": "crate::memory::repo_doors::RepoSymbolsDefinitionsOutput",
   "scope": "Read",

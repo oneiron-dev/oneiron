@@ -237,7 +237,8 @@ pub struct GpuJobStatus {
     /// `reserved`, `running`, `ending`, `stopped`, `ended` or `held`.
     pub state: String,
     /// Why it ended or is ending: `exited`, `at_maximum`, `cancelled`,
-    /// `gone`, or `unconfirmed` (written off by the owner).
+    /// `gone`, `unconfirmed` (written off by the owner), `time_limit` (its backend ended it
+    /// at its maximum), or `never_started` (its machine refused or withdrew it before it ran).
     pub end_reason: Option<String>,
     /// Why the provider refused its chunk, for a held job.
     pub held_reason: Option<String>,
@@ -338,6 +339,8 @@ fn end_reason_name(reason: GpuEndReason) -> &'static str {
         GpuEndReason::Cancelled => "cancelled",
         GpuEndReason::Gone => "gone",
         GpuEndReason::Unconfirmed => "unconfirmed",
+        GpuEndReason::TimeLimit => "time_limit",
+        GpuEndReason::NeverStarted => "never_started",
     }
 }
 

@@ -301,6 +301,7 @@ pub(crate) fn redact_claim_value_fields_in_txn(
         vault.store.reject_restricted_records_in_txn(txn, &[id])?;
         vault.put_claim_value_redaction_in_txn(txn, &id, &ClaimValueRedactionRow(rewritten))?;
         drop_room_copies(vault, txn, &id);
+        withdraw_derived_copies_in_txn(vault, txn, &id)?;
     }
     let mut receipt = LocalClaimValueRedaction {
         record: id,
@@ -329,6 +330,7 @@ pub(crate) fn redact_claim_value_fields_in_txn(
     if !live_changed {
         vault.store.reject_restricted_records_in_txn(txn, &[id])?;
         drop_room_copies(vault, txn, &id);
+        withdraw_derived_copies_in_txn(vault, txn, &id)?;
     }
     // Every rewritten historical row keeps its ordinary family/source-trust
     // admission too; a retained reserved proof is not made into a raw edit.
@@ -481,6 +483,27 @@ pub(crate) fn redact_claim_value_fields_in_txn(
 /// commits ([`crate::embed::drop_room_media_copies_in_txn`]).
 fn drop_room_copies(vault: &crate::Vault, txn: &heed::RwTxn<'_>, id: &EntityId) {
     crate::embed::drop_room_media_copies_in_txn(&vault.store, txn, id);
+}
+
+/// CLAIM-REDACTION-SKIPS-DERIVED-COPIES: what was derived from the removed
+/// words withdraws (the dependent walk's first batch here, the rest after
+/// the commit), and the stored proactivity digests drop their copy of the
+/// CLAIM, in the redaction's own writer. The CLAIM itself stays, redacted.
+/// The identity, Coach and topology-audit erasers are not run: they hold
+/// copies of a record that goes, and this record stays.
+fn withdraw_derived_copies_in_txn(
+    vault: &crate::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    let write = crate::secret_custody::CustodyWrite::of(vault);
+    crate::ports::invalidate_source_in_txn(
+        &write,
+        txn,
+        id,
+        crate::ports::DependentWalkDoor::ClaimValueRedaction,
+    )?;
+    crate::dreamer_runner::maintenance::digest::erase_sources_in_txn(&write, txn, id)
 }
 
 fn check_family(body: &crate::claim::ClaimBody) -> Result<()> {

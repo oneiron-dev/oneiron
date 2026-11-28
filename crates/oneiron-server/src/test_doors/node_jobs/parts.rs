@@ -34,6 +34,8 @@ struct AdmissionState {
     staging_limit_secs: u64,
     /// Each template's checkpoint signal, when it names one.
     signals: BTreeMap<String, String>,
+    /// Session templates, by name, with their longest run in seconds.
+    sessions: BTreeMap<String, u64>,
     receipt_keep_days: u64,
     readiness_every_secs: u64,
     drain_clear_by: DrainClearBy,
@@ -80,6 +82,7 @@ impl ScriptedAdmission {
                 issuer_refusal: None,
                 staging_limit_secs: 600,
                 signals: BTreeMap::new(),
+                sessions: BTreeMap::new(),
                 receipt_keep_days: 30,
                 readiness_every_secs: NodeJobSettings::default().readiness_every_secs,
                 drain_clear_by: DrainClearBy::default(),
@@ -144,6 +147,20 @@ impl ScriptedAdmission {
             }
             None => {
                 state.signals.remove(template);
+            }
+        }
+    }
+
+    /// Makes `template` a session template whose run lasts at most
+    /// `max_secs` from its launch (`None`: a job template again).
+    pub fn set_template_session(&self, template: &str, max_secs: Option<u64>) {
+        let mut state = locked(&self.state);
+        match max_secs {
+            Some(secs) => {
+                state.sessions.insert(template.to_owned(), secs);
+            }
+            None => {
+                state.sessions.remove(template);
             }
         }
     }
@@ -251,6 +268,10 @@ impl NodeAdmission for ScriptedAdmission {
 
     fn template_signal(&self, template: &str) -> Option<String> {
         locked(&self.state).signals.get(template).cloned()
+    }
+
+    fn template_session_max_secs(&self, template: &str) -> Option<u64> {
+        locked(&self.state).sessions.get(template).copied()
     }
 
     fn template_mirrors(&self) -> Vec<(String, PathBuf)> {

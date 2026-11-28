@@ -58,6 +58,7 @@ pub(in crate::api::mcp_gateway) fn mcp_code_consent_origin(
             instrument,
             door,
             on_device: caller.locality() == CallerLocality::OnDevice,
+            session_workspace: caller.session_workspace.clone(),
         },
         endpoint: match caller.mode {
             McpSurfaceMode::Primary => CodeConsentRunEndpoint::Primary,

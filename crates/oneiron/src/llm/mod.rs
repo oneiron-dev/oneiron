@@ -13,6 +13,7 @@ mod autocheck;
 mod budget;
 mod defaults;
 pub(crate) use defaults::read_effective_defaults;
+pub(crate) use defaults::vault_allows_provider_model_in_txn;
 pub use defaults::{
     PurposeDefaultProposal, PurposeDefaultProposalStatus, PurposeDefaultSubmission,
     PurposeDefaultSubmitter, purpose_default_grant_target,
@@ -104,10 +105,13 @@ pub(crate) use step::{
 pub(crate) use step::{compaction_response_holders_in, is_compaction_step_row};
 // SEAT-PARK-MODEL-STEP-PATH: when a spent seat's refusal says it resets.
 pub(crate) use step::stated_reset_at;
+// HOUSE-SCHEMA-CHECK: the replies a check's calls keep, for its test door.
+#[cfg(oneiron_test_support)]
+pub(crate) use step::kept_step_responses_of;
 // KS-2B1: row-held step responses under body custody.
 pub(crate) use step::{
-    erase_step_state_owner_in_txn, owner_gone_in_txn, retire_step_claim_in_rows,
-    retire_step_claim_in_txn, step_state_carriage, step_state_owners,
+    erase_step_state_key_in_txn, erase_step_state_owner_in_txn, owner_gone_in_txn,
+    retire_step_claim_in_rows, retire_step_claim_in_txn, step_state_carriage, step_state_owners,
 };
 // FIX 9929: a public model-step submission's kept copies.
 pub(crate) use step::{

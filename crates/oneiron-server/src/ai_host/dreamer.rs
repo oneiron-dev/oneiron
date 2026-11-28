@@ -43,6 +43,7 @@ use oneiron_driver::{
 
 use super::policy::{DreamerRoute, dreamer_role_purpose, dreamer_route, extraction_egress};
 
+mod answer_schema_check;
 mod claim_authoring;
 mod claim_source_recheck;
 mod compaction_check;
@@ -414,6 +415,7 @@ async fn supervise(
             weaver: None,
             weaver_ladder: None,
             weaver_run: None,
+            house: None,
             task_route: None,
             inner: None,
             status: Arc::clone(&status),
@@ -568,6 +570,9 @@ struct ObservedFactory {
     /// The run the ladder above sends on: an inherited resident lends it with
     /// the pass's remaining deadline overlaid, its meter and identity unchanged.
     weaver_run: Option<RunAdmission>,
+    /// The extraction role's house route for the answer-schema check: the model with the
+    /// ladder and run its route sends on. The check resolves the house rung from it.
+    house: Option<(ModelId, Arc<OfferLadder>, RunAdmission)>,
     /// The route a TASK realizes on: narrative, else extraction, with the
     /// ladder and run its backend sends on.
     task_route: Option<(ModelRole, RoleBackend, RoleSends)>,
@@ -733,6 +738,13 @@ impl ObservedFactory {
         self.weaver_run = runs
             .get(&DREAMER_NARRATIVE_ROLE)
             .map(|(_, run)| run.clone());
+        self.house = routes
+            .iter()
+            .find(|route| route.0 == DREAMER_EXTRACTION_ROLE)
+            .and_then(|(role, route)| {
+                runs.get(role)
+                    .map(|(ladder, run)| (route.model.clone(), Arc::clone(ladder), run.clone()))
+            });
         self.task_route = [DREAMER_NARRATIVE_ROLE, DREAMER_EXTRACTION_ROLE]
             .into_iter()
             .find_map(|role| Some((role, roles.get(role).cloned()?, runs.remove(&role)?)));
@@ -900,6 +912,16 @@ impl PassExecutorFactory for ObservedFactory {
                 rubric: &self.compaction_check_rubric,
                 window: self.windows.get(&weaver.model).copied(),
             });
+        let house_check =
+            self.house
+                .as_ref()
+                .map(|(_, ladder, run)| answer_schema_check::CheckLend {
+                    vault: &self.vault,
+                    ladder,
+                    run,
+                    guard,
+                    egress: self.egress,
+                });
         Ok(ObservedExecutor {
             inner: self
                 .inner
@@ -911,6 +933,7 @@ impl PassExecutorFactory for ObservedFactory {
             resident,
             task,
             check,
+            house_check,
             decisions: &self.decisions,
             coach_heal: self
                 .question_timer
@@ -981,6 +1004,16 @@ impl PassExecutorFactory for ObservedFactory {
                 rubric: &self.compaction_check_rubric,
                 window: self.windows.get(&weaver.model).copied(),
             });
+        let house_check =
+            self.house
+                .as_ref()
+                .map(|(_, ladder, run)| answer_schema_check::CheckLend {
+                    vault: &self.vault,
+                    ladder,
+                    run,
+                    guard,
+                    egress: self.egress,
+                });
         self.inner
             .as_mut()
             .expect("prepared factory")
@@ -995,6 +1028,7 @@ impl PassExecutorFactory for ObservedFactory {
                         resident,
                         task,
                         check,
+                        house_check,
                         decisions,
                         coach_heal: coach_heal.clone(),
                         coach_host: coach_host.clone(),
@@ -1190,6 +1224,8 @@ struct ObservedExecutor<'p, E> {
     task: Option<TaskLend<'p>>,
     /// What a self-written compaction's check borrows; none without a weaver.
     check: Option<compaction_check::CheckLend<'p>>,
+    /// What the answer-schema check borrows; none without a house route.
+    house_check: Option<answer_schema_check::CheckLend<'p>>,
     /// The server's decision host, which judges a completed TASK try's Done.
     decisions: &'p Arc<std::sync::OnceLock<DecisionHost>>,
     coach_heal: Option<super::coach_heal::WakeExecutor>,
@@ -1573,6 +1609,22 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ObservedExecutor<'_, 
             match self.check {
                 Some(lend) => lend.check(attempt, ctx, self.decisions).await,
                 None => Ok(oneiron::dreamer_runner::maintenance::compaction_check::unlent()),
+            }
+        } else if attempt.status.payload.attempt_type
+            == oneiron::dreamer_consolidation::answer_schema::check::ATTEMPT
+        {
+            // HOUSE-SCHEMA-CHECK: re-sent on the house rung alone; without a house
+            // route the night skips with its reason.
+            match self.house_check {
+                Some(lend) => lend.check(attempt, ctx).await,
+                None => {
+                    oneiron::dreamer_consolidation::answer_schema::check::run_answer_schema_check(
+                        &attempt.status,
+                        ctx,
+                        None,
+                    )
+                    .await
+                }
             }
         } else if attempt.status.payload.attempt_type
             == oneiron::dreamer_runner::maintenance::CLAIM_SOURCE_RECHECK_FACET

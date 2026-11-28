@@ -1,28 +1,27 @@
-//! The served `execute_code` host: the run limits one server works under,
+//! The served `execute` host: the run limits one server works under,
 //! and the engine-native adapter that enters each durable run on the
 //! injected provider.
 
 use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
-use oneiron::code_run::SpawnHostSeat;
 use oneiron::engine_executor::{EngineExecutorOutcome, EngineExecutorStatus, SelfBriefPort};
 
 use super::active_run::{ActiveRun, ActiveRuns};
-use super::compaction_home::caller_compaction_seat;
-use super::native_run::run_engine_native_code_mode;
+use super::native_run::{run_engine_native_caller_source, run_engine_native_code_mode};
 use super::{
     McpCodeExecutionError, McpCodeExecutionHost, McpCodeExecutionRequest, McpCodeModeProvider,
-    McpCodeRunResumeCondition, McpCodeRunResumed, mcp_code_run_id, run_read_worlds,
+    McpCodeRunInput, McpCodeRunResumeCondition, McpCodeRunResumed, mcp_code_run_id,
+    run_read_worlds,
 };
 use crate::admission::{Admission, Permit};
-use crate::mcp::run_seats::RunSeats;
 use crate::wire_telemetry::{LimitQuestions, LimitRow};
+use oneiron_contracts::fingerprint::ContentHash;
 
-/// How many `execute_code` runs one server works on at once.
+/// How many `execute` runs one server works on at once.
 ///
 /// Each run is an OS thread with its own reactor and sandbox runtime, so the
 /// bound is on runs, not calls: a run holds its place until its worker ends,
@@ -69,12 +68,15 @@ pub struct McpEngineNativeCodeHost {
     /// Each run's single flight: one entry at a time, the next in arrival
     /// order (FIX 9505).
     pub(super) active: ActiveRuns,
-    seats: Arc<Mutex<RunSeats>>,
     /// Keyed by the credential's stream connection, its registered
     /// fingerprint.
     pub(super) runs: Admission<String>,
-    /// Where each run's seat to spawn reader children comes from; none
-    /// binds no seat, and `self.spawn` answers `reader_spawn_unbound`.
+    /// Where the off-record facade run's seat to spawn reader children comes
+    /// from (mcp/exec_host/off_record_run.rs, a direct facade door, not an
+    /// MCP run); none binds no seat, and `self.spawn` answers
+    /// `reader_spawn_unbound`. An MCP run is lent none: its children would
+    /// spend on the host's meter, which no direct call reaches
+    /// (CODE-MODE-LENDING-RUN-SPEND = A, FIX CODE-MODE-LENDING-W5).
     pub(super) reader_seats: Option<Arc<crate::server::ReaderSeats>>,
     /// The operator's own Git door base each run's checkouts point at (FIX
     /// 7181); `None` keeps a run's own base.
@@ -99,15 +101,17 @@ impl McpEngineNativeCodeHost {
         Self {
             provider,
             active: ActiveRuns::new(limits.wait),
-            seats: Arc::default(),
             runs: Admission::new(LimitRow::CodeRuns, questions, limits.total, limits.wait),
             reader_seats: None,
             git_door_base: None,
         }
     }
 
-    /// Lends each run a seat to spawn reader children under, from `seats`,
-    /// which notes where the run's caller sits for its children's reads.
+    /// Lends the off-record facade run a seat to spawn reader children
+    /// under, from `seats`, which notes where the run's caller sits for its
+    /// children's reads. An MCP run is lent none: its children would spend
+    /// on the host's meter, which no direct call reaches
+    /// (CODE-MODE-LENDING-RUN-SPEND = A, FIX CODE-MODE-LENDING-W5).
     #[must_use]
     pub(crate) fn with_reader_seats(mut self, seats: Arc<crate::server::ReaderSeats>) -> Self {
         self.reader_seats = Some(seats);
@@ -127,7 +131,7 @@ impl McpEngineNativeCodeHost {
     }
 
     /// The permits every run of this host waits its turn for, an
-    /// `execute_code` run's and a host worker's alike.
+    /// `execute` run's and a host worker's alike.
     pub(crate) fn runs(&self) -> &Admission<String> {
         &self.runs
     }
@@ -146,31 +150,6 @@ impl McpEngineNativeCodeHost {
         self.active.acquire(request.run_id).await
     }
 
-    /// The seat `request`'s run spawns reader children under, when this
-    /// host lends seats. The run spends under no scope, so its children
-    /// spend on the host's meter, as its own calls do, on a clock one window
-    /// from its first spawn. The seat's reader jobs are the vault's own and
-    /// its children read as the run's writer does.
-    fn reader_seat(
-        &self,
-        request: &McpCodeExecutionRequest<'_>,
-    ) -> Result<Option<SpawnHostSeat>, McpCodeExecutionError> {
-        self.reader_seats
-            .as_ref()
-            .map(|lent| {
-                lent.seat(
-                    &oneiron::code_run::ReaderJobs::canonical(&request.vault),
-                    oneiron::code_run::ReaderActor::of(request.actor.write_actor()),
-                    request.run_id,
-                    None,
-                    request.actor.destination(),
-                    self.provider.reader_window_tokens(),
-                )
-            })
-            .transpose()
-            .map_err(|error| McpCodeExecutionError::RunBinding(error.to_string()))
-    }
-
     /// `request`'s run permit. Past the bound the run waits its
     /// credential's turn. The permit moves into the run's worker, so a
     /// caller who hangs up frees nothing its run still holds.
@@ -186,24 +165,27 @@ impl McpEngineNativeCodeHost {
 
     /// One entry of `request`'s run, once its single flight (`guard`) and
     /// its run permit are the entry's own: the run's config, read under
-    /// single flight, its model seat, and its worker. The worker releases
-    /// the single flight and the permit before it wakes the entry.
+    /// single flight, and its worker. The worker cleans up terminal runs
+    /// before releasing single flight and the permit, then wakes the entry.
     async fn run_admitted(
         &self,
         request: McpCodeExecutionRequest<'_>,
         guard: ActiveRun,
         permit: Permit,
-        reader_seat: Option<SpawnHostSeat>,
     ) -> Result<EngineExecutorOutcome, McpCodeExecutionError> {
         let vault = Arc::clone(&request.vault);
         let provider = Arc::clone(&self.provider);
-        let seats = Arc::clone(&self.seats);
         let write_actor = request.actor.write_actor();
-        let model_call_context = request
-            .actor
-            .auth
-            .as_ref()
-            .map(|_| (request.actor.actor_ref, request.off_record_session.clone()));
+        // A caller-source run makes no model calls, so it binds no model-call caller (FIX
+        // EXECUTE-CALLER-CODE).
+        let model_call_context = match request.input {
+            McpCodeRunInput::Task(_) => request
+                .actor
+                .auth
+                .as_ref()
+                .map(|_| (request.actor.actor_ref, request.off_record_session.clone())),
+            McpCodeRunInput::CallerSource(_) => None,
+        };
         let placement = (request.actor.scope.world_ref, request.actor.scope.facet_ref);
         let birth_position = request.actor.scope.birth_position();
         let verbs = Arc::clone(&request.verbs);
@@ -216,13 +198,29 @@ impl McpEngineNativeCodeHost {
         let git_door_base = self.git_door_base.clone();
         // Read under single-flight: what the provider derives from the
         // run's record is not raced by another attempt making it.
-        let config = provider
-            .executor_config(&vault, request.run_id, request.task)
-            .map_err(|error| McpCodeExecutionError::RunBinding(error.to_string()))?;
-        if config.run_id != request.run_id || config.task != request.task {
-            return Err(scoped_identity_changed());
-        }
-        let run_id = request.run_id;
+        let (config, code) = match request.input {
+            McpCodeRunInput::Task(task) => {
+                let config = provider
+                    .executor_config(&vault, request.run_id, task)
+                    .map_err(|error| McpCodeExecutionError::RunBinding(error.to_string()))?;
+                if config.run_id != request.run_id || config.task != task {
+                    return Err(scoped_identity_changed());
+                }
+                (config, None)
+            }
+            // A caller-source run binds its code's digest (FIX EXECUTE-CALLER-CODE).
+            McpCodeRunInput::CallerSource(code) => {
+                let config = provider
+                    .source_executor_config(&vault, request.run_id, code)
+                    .map_err(|error| McpCodeExecutionError::RunBinding(error.to_string()))?;
+                if config.run_id != request.run_id
+                    || config.caller_source_digest != Some(ContentHash::of(code.as_bytes()))
+                {
+                    return Err(scoped_identity_changed());
+                }
+                (config, Some(code.to_owned()))
+            }
+        };
         // The slip the caller's credential proved at admission: it and
         // its parent are the run's own lineage (FIX 4705). Never a tool
         // argument.
@@ -232,27 +230,16 @@ impl McpEngineNativeCodeHost {
             .as_ref()
             .and_then(|auth| auth.verified_slip())
             .cloned();
-        // The run's read scope (FIX 11768): its seat is born under it.
-        // A scope the vault cannot read is not born.
-        let worlds = run_read_worlds(&vault, opener.as_ref(), placement.0)
-            .map_err(McpCodeExecutionError::RunBinding)?;
-        let mut seat = seats
-            .lock()
-            .map_err(|_| McpCodeExecutionError::RunBinding("run seats poisoned".into()))?
-            .take(run_id)
-            .or_else(|| {
-                caller_compaction_seat(
-                    &vault,
-                    provider.as_ref(),
-                    request.actor,
-                    write_actor,
-                    opener.clone(),
-                )
-            });
-        if let Some(seat) = seat.as_mut() {
-            // Its summaries are born where the run's credential writes.
-            seat.place(placement.0, placement.1);
-        }
+        // The run's read scope (FIX 11768): a task run's seat is born under it. A caller-source
+        // run takes no seat, so it reads no worlds (FIX EXECUTE-CALLER-CODE).
+        let worlds = match code.as_ref() {
+            None => run_read_worlds(&vault, opener.as_ref(), placement.0)
+                .map_err(McpCodeExecutionError::RunBinding)?,
+            Some(_) => Vec::new(),
+        };
+        let run_end = request.run_end;
+        // An MCP run takes no compaction seat, for either input: its window
+        // stays raw (CODE-MODE-LENDING-RUN-SPEND = A, FIX CODE-MODE-LENDING-W6).
         let (sender, receiver) = tokio::sync::oneshot::channel();
         // The engine REPL driver holds `&mut dyn JsCodeModeRuntime` across
         // its own awaits, so its future is deliberately not `Send`. It runs
@@ -262,43 +249,65 @@ impl McpEngineNativeCodeHost {
         let worker = crate::engine_thread("mcp-execute-code".to_owned())
             .spawn(move || {
                 // FIX 17594 D5: under the run's single flight, past its
-                // identity, admission and config checks, the run's brief
+                // identity, admission and config checks, a task run's brief
                 // is installed for this entry before it runs; one that
-                // does not install leaves the entry without it.
-                let installed = brief.as_ref().is_some_and(|brief| brief.install());
+                // does not install leaves the entry without it. A caller-source run makes no
+                // model calls, so it installs none (FIX EXECUTE-CALLER-CODE).
+                let installed =
+                    code.is_none() && brief.as_ref().is_some_and(|brief| brief.install());
                 let port = brief
                     .as_deref()
                     .filter(|_| installed)
                     .map(|brief| brief as &dyn SelfBriefPort);
-                let outcome = run_engine_native_code_mode(
-                    &vault,
-                    provider.as_ref(),
-                    write_actor,
-                    model_call_context,
-                    &run_ref,
-                    &config,
-                    verbs,
-                    opener.as_ref(),
-                    worlds,
-                    birth_position,
-                    reader_seat,
-                    seat.as_mut(),
-                    git_door_base,
-                    consent_origin,
-                    port,
-                );
-                let ended = outcome
-                    .as_ref()
-                    .is_ok_and(|outcome| matches!(outcome.status, EngineExecutorStatus::Complete));
+                let outcome = match code.as_ref() {
+                    Some(code) => run_engine_native_caller_source(
+                        &vault,
+                        provider.as_ref(),
+                        write_actor,
+                        &run_ref,
+                        &config,
+                        code,
+                        verbs,
+                        opener.as_ref(),
+                        birth_position,
+                        git_door_base,
+                        consent_origin,
+                    ),
+                    None => run_engine_native_code_mode(
+                        &vault,
+                        provider.as_ref(),
+                        write_actor,
+                        model_call_context,
+                        &run_ref,
+                        &config,
+                        verbs,
+                        opener.as_ref(),
+                        worlds,
+                        birth_position,
+                        git_door_base,
+                        consent_origin,
+                        port,
+                    ),
+                };
+                let ended = match &outcome {
+                    Ok(outcome) => matches!(outcome.status, EngineExecutorStatus::Complete),
+                    Err(error) => error.ends_run(),
+                };
                 // The run's brief closes as the run completes, here and
                 // not with its waiter, so a caller who hung up cannot
                 // keep it; a resumable outcome or a failure the same
-                // `run_ref` re-enters keeps it.
-                if ended && let Some(brief) = &brief {
+                // `run_ref` re-enters keeps it. A window outgrown ends the
+                // run as completion does: entering again meets it again
+                // (FIX CODE-MODE-LENDING-W6). A caller-source run installed none.
+                if ended
+                    && code.is_none()
+                    && let Some(brief) = &brief
+                {
                     brief.close();
                 }
-                if let (Some(seat), Ok(mut seats)) = (seat, seats.lock()) {
-                    seats.put(run_id, seat, ended);
+                // End the run's resources under single flight even if the caller hung up.
+                if ended && let Some(run_end) = run_end {
+                    run_end.end();
                 }
                 // Completion must release single-flight and the run's
                 // permit before waking an awaiter that may immediately
@@ -312,7 +321,7 @@ impl McpEngineNativeCodeHost {
         // blocking a runtime worker to join it.
         drop(worker);
         receiver.await.map_err(|_| {
-            McpCodeExecutionError::Run("execute_code worker ended without a result".to_owned())
+            McpCodeExecutionError::Run("execute worker ended without a result".to_owned())
         })?
     }
 }
@@ -328,6 +337,10 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
         self.provider.production_runtime_available()
     }
 
+    fn task_runtime_available(&self) -> bool {
+        self.provider.task_runtime_available()
+    }
+
     fn engine_native(&self) -> Option<&McpEngineNativeCodeHost> {
         Some(self)
     }
@@ -339,12 +352,18 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
         Box<dyn Future<Output = Result<EngineExecutorOutcome, McpCodeExecutionError>> + Send + 'a>,
     > {
         Box::pin(async move {
+            // A task entry on a host without task readiness refuses with the existing
+            // model-unavailable kind, before single flight, and changes no record (FIX
+            // EXECUTE-CALLER-CODE).
+            if matches!(request.input, McpCodeRunInput::Task(_)) && !self.task_runtime_available() {
+                return Err(McpCodeExecutionError::ProviderUnavailable { retry_after: 0 });
+            }
             let guard = self.single_flight(&request).await?;
-            // A caller's own call is lent its reader seat before it waits
-            // for its permit.
-            let reader_seat = self.reader_seat(&request)?;
+            // An MCP run is lent no reader seat, for either input: its
+            // children would spend on the host's meter, which no direct call
+            // reaches (CODE-MODE-LENDING-RUN-SPEND = A, FIX CODE-MODE-LENDING-W5).
             let permit = self.permit(&request).await?;
-            self.run_admitted(request, guard, permit, reader_seat).await
+            self.run_admitted(request, guard, permit).await
         })
     }
 
@@ -362,13 +381,18 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
     ) -> Pin<Box<dyn Future<Output = Result<McpCodeRunResumed, McpCodeExecutionError>> + Send + 'a>>
     {
         Box::pin(async move {
+            // As in [`Self::execute`]: a task re-entry without task readiness refuses with the
+            // existing model-unavailable kind and changes no record (FIX EXECUTE-CALLER-CODE).
+            if matches!(request.input, McpCodeRunInput::Task(_)) && !self.task_runtime_available() {
+                return Err(McpCodeExecutionError::ProviderUnavailable { retry_after: 0 });
+            }
             let guard = self.single_flight(&request).await?;
             let permit = self.permit(&request).await?;
             if !condition.stands(&request.vault) {
                 return Ok(McpCodeRunResumed::Superseded);
             }
-            let reader_seat = self.reader_seat(&request)?;
-            self.run_admitted(request, guard, permit, reader_seat)
+            // An MCP run is lent no reader seat, as in [`Self::execute`].
+            self.run_admitted(request, guard, permit)
                 .await
                 .map(|outcome| McpCodeRunResumed::Entered(Box::new(outcome)))
         })
