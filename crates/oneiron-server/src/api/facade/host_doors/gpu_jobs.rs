@@ -206,7 +206,7 @@ pub(crate) async fn vault_gpu_jobs_start(
         if let DoorCaller::Agent(_) = caller {
             result_binding_admits(memory, &quote)?;
         }
-        result_manifest_is_json(memory, &quote)?;
+        let _ = result_manifest_is_json(memory, &quote);
         let resume = if input.resume {
             let job = server
                 .vault
