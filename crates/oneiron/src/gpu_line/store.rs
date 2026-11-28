@@ -121,6 +121,38 @@ pub(super) fn seated_elsewhere_in_txn(
         .any(|(key, line)| key != project && line.seat(family).is_some()))
 }
 
+/// The line that seats `family` (design pass 32 r2, section 5.1: family ->
+/// line): the one where its seat is live, else the one that holds its newest
+/// seat by admission time. A family holds a live seat on one line at most
+/// ([`seated_elsewhere_in_txn`] refuses a second). `None` when no line ever
+/// seated it.
+///
+/// # Errors
+///
+/// A store read failure.
+pub(crate) fn family_line_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    family: &EntityId,
+) -> crate::Result<Option<GpuLine>> {
+    let mut newest: Option<(u64, GpuLine)> = None;
+    for (_, line) in LINES.scan(&vault.store, txn)? {
+        if line.seat(family).is_some() {
+            return Ok(Some(line));
+        }
+        let Some(at_ms) = line.last_seat(family).map(|seat| seat.admitted_at_ms) else {
+            continue;
+        };
+        if newest
+            .as_ref()
+            .is_none_or(|(newest_ms, _)| at_ms > *newest_ms)
+        {
+            newest = Some((at_ms, line));
+        }
+    }
+    Ok(newest.map(|(_, line)| line))
+}
+
 /// The stored record of period `index` of `project`'s line, if it was
 /// minted.
 ///

@@ -1,22 +1,34 @@
-//! `vault.planner.card` (design pass 32 section 5, row 12; ARCH-0079
+//! `vault.planner.card` (design pass 32 r2, sections 5.1 and 5.4; ARCH-0079
 //! #planner): the planner card of one project and task type, as a read door.
 //!
-//! The door answers what the planner's deterministic floor reads at spawn:
-//! the project's payoff rows (else the vault's) and every admitted pattern
-//! skill's estimate, own runs, borrowed cell and UNTESTED mark, ranked by
-//! the shared selector ranking. It calls the pure read
-//! ([`super::payoff::planner_card_in_txn`]) in one snapshot and never runs
-//! the planner ladder, whose model rungs load packs and can reserve trial
-//! spend. Beside the card it answers a `digest` of the whole answer, so a
-//! session can prove which card it read before it admits an arm.
+//! The door answers one snapshot in three labelled parts:
+//! - `lane_arms`: when a GPU line seats the project as a family, the
+//!   family's own arms on that line, its room this period, its refusals and
+//!   its forecast scores, from the line's own rows ([`lane_arms`]);
+//! - `payoff_rows`: the project's payoff rows, else the vault's, each marked
+//!   `scope: project` or `scope: vault_prior`, so a vault row is never shown
+//!   as the lane's result;
+//! - `coordination_patterns`: every admitted pattern skill's estimate, own
+//!   runs, borrowed cell and UNTESTED mark, ranked by the shared selector
+//!   ranking. Lane arms do not train these cells (section 3.6), and the card
+//!   says so.
+//!
+//! It calls the pure reads ([`super::payoff::planner_card_in_txn`]) in one
+//! snapshot and never runs the planner ladder, whose model rungs load packs
+//! and can reserve trial spend. Beside the card it answers a `digest` of the
+//! whole answer, so a session can prove which card it read before it admits
+//! an arm (`vault.arms.admit` stores it on the arm).
 //!
 //! The caller is the vault owner under their own proof, or an agent whose
 //! own live Grant from a live owner lists the verb
 //! ([`crate::memory::verb_grant_caller`]), judged at each call in the
-//! snapshot the card is read in. A host that collects producers is handed
-//! every row the card was read from
-//! ([`super::payoff::planner_card_sources_in_txn`]), so an answer derived
-//! from a row its destination may not see is withheld there.
+//! snapshot the card is read in. When a line seats the project, the Grant
+//! must also reach the line's project and hold a role on the line (lead,
+//! reviewer or planner; section 5.1): a Grant of another line is refused
+//! `not_this_line`. A host that collects producers is handed every row the
+//! card was read from ([`super::payoff::planner_card_sources_in_txn`]), so
+//! an answer derived from a row its destination may not see is withheld
+//! there.
 
 use std::collections::BTreeMap;
 
@@ -27,6 +39,7 @@ use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::gpu_line::{GpuLine, LineRole, doors_caller, family_line_in_txn};
 use crate::learning::doors::{LearningCellKey, MeasuredLearningEstimate};
 use crate::memory::{Memory, MemoryResult};
 use crate::receipt::task_type_ref::TypeRef;
@@ -37,6 +50,12 @@ use super::payoff::{
     PatternCardEntry, PayoffRow, PlannerCard, planner_card_in_txn, planner_card_sources_in_txn,
 };
 
+mod lane_arms;
+
+pub use lane_arms::{
+    PLANNER_CARD_ARMS_PAGE, PlannerCardArm, PlannerCardBucket, PlannerCardLaneArms, PlannerCardRoom,
+};
+
 /// The verb's registered name.
 pub const PLANNER_CARD_VERB: &str = "vault.planner.card";
 
@@ -44,7 +63,8 @@ pub const PLANNER_CARD_VERB: &str = "vault.planner.card";
 pub const PLANNER_CARD_MODELS_MAX: usize = 32;
 
 /// `vault.planner.card`'s input: the project and the task type the card is
-/// for, and the executor models whose mix keys the pattern cells.
+/// for, the executor models whose mix keys the pattern cells, and the page
+/// of the lane arms to read.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PlannerCardRequest {
@@ -56,11 +76,36 @@ pub struct PlannerCardRequest {
     /// the mix `unknown`.
     #[serde(default)]
     pub models: Vec<String>,
+    /// The `lane_arms.next_cursor` an earlier card answered: the lane arms
+    /// after it. Absent reads the newest page.
+    #[serde(default)]
+    pub cursor: Option<String>,
+}
+
+impl PlannerCardRequest {
+    /// The project the card is for.
+    fn project(&self) -> Result<EntityId> {
+        EntityId::from_hex(&self.project_ref)
+            .map_err(|_| Error::InvalidClaimBody("the planner card's project_ref is an entity id"))
+    }
+}
+
+/// Whose runs a payoff row counts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PayoffScope {
+    /// The card's own project's runs.
+    Project,
+    /// The vault's runs, read because the project has none: a prior, never
+    /// the project's or the lane's result.
+    VaultPrior,
 }
 
 /// One payoff row on the card.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PlannerCardPayoffRow {
+    /// `project` only for a row of the card's own project's receipts.
+    pub scope: PayoffScope,
     /// The receipts' frozen project; absent is the vault's runs.
     pub project_ref: Option<String>,
     pub type_ref: TypeRef,
@@ -82,9 +127,15 @@ pub struct PlannerCardPayoffRow {
     pub duplicate_work: u64,
 }
 
-impl From<PayoffRow> for PlannerCardPayoffRow {
-    fn from(row: PayoffRow) -> Self {
+impl PlannerCardPayoffRow {
+    /// `row` on the card of `project`.
+    fn of(row: PayoffRow, project: EntityId) -> Self {
         Self {
+            scope: if row.project == Some(project) {
+                PayoffScope::Project
+            } else {
+                PayoffScope::VaultPrior
+            },
             project_ref: row.project.map(|project| project.to_hex()),
             type_ref: row.type_ref,
             pattern: row.pattern,
@@ -149,11 +200,19 @@ pub struct PlannerCardView {
     pub project_ref: String,
     pub type_ref: TypeRef,
     pub executor_mix: String,
-    /// The project's own payoff rows, else the vault's (each row names its
-    /// scope).
-    pub rows: Vec<PlannerCardPayoffRow>,
+    /// The family's arms on the GPU line that seats the project, and its
+    /// room, refusals and forecast scores there; `None` when no line ever
+    /// seated it.
+    pub lane_arms: Option<PlannerCardLaneArms>,
+    /// The project's own payoff rows, else the vault's; each row names its
+    /// scope.
+    pub payoff_rows: Vec<PlannerCardPayoffRow>,
     /// Highest score first; ties by skill id.
-    pub patterns: Vec<PlannerCardPattern>,
+    pub coordination_patterns: Vec<PlannerCardPattern>,
+    /// Always `false`: an arm's rung receipt is a width-one market receipt,
+    /// below the pattern's floor, so lane arms never train these cells
+    /// (design pass 32 r2, section 3.6).
+    pub lane_arms_train_patterns: bool,
     /// The content hash (BLAKE3, lower hex) of the card's JSON as the engine
     /// read it, with this field empty: one card answers one digest. It names
     /// the engine's card, so a verb hook that rewrites the view on its way
@@ -162,13 +221,23 @@ pub struct PlannerCardView {
 }
 
 impl PlannerCardView {
-    fn of(project: EntityId, card: PlannerCard) -> Result<Self> {
+    fn of(
+        project: EntityId,
+        card: PlannerCard,
+        lane_arms: Option<PlannerCardLaneArms>,
+    ) -> Result<Self> {
         let mut view = Self {
             project_ref: project.to_hex(),
             type_ref: card.type_ref,
             executor_mix: card.executor_mix,
-            rows: card.rows.into_iter().map(Into::into).collect(),
-            patterns: card.patterns.into_iter().map(Into::into).collect(),
+            lane_arms,
+            payoff_rows: card
+                .rows
+                .into_iter()
+                .map(|row| PlannerCardPayoffRow::of(row, project))
+                .collect(),
+            coordination_patterns: card.patterns.into_iter().map(Into::into).collect(),
+            lane_arms_train_patterns: false,
             digest: String::new(),
         };
         let bytes = serde_json::to_vec(&view)
@@ -178,26 +247,17 @@ impl PlannerCardView {
     }
 }
 
-/// The planner card `input` names, read in one snapshot. It writes nothing.
-///
-/// # Errors
-///
-/// A malformed project id, type stamp or model list; a type stamp the
-/// project's recorded task-type tree does not hold; storage errors.
-pub fn planner_card_view(vault: &Vault, input: &PlannerCardRequest) -> Result<PlannerCardView> {
-    let txn = vault.store.env.read_txn()?;
-    Ok(planner_card_read_in_txn(vault, &txn, input)?.0)
-}
-
-/// [`planner_card_view`] in the caller's snapshot, beside every row the card
-/// was read from ([`planner_card_sources_in_txn`]).
+/// The planner card `input` names in the caller's snapshot `txn`, for
+/// `project` and the line that seats it, at `now_ms`, beside every row the
+/// card was read from ([`planner_card_sources_in_txn`]). It writes nothing.
 fn planner_card_read_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     input: &PlannerCardRequest,
+    project: EntityId,
+    line: Option<&GpuLine>,
+    now_ms: u64,
 ) -> Result<(PlannerCardView, Vec<EntityId>)> {
-    let project = EntityId::from_hex(&input.project_ref)
-        .map_err(|_| Error::InvalidClaimBody("the planner card's project_ref is an entity id"))?;
     if input.models.len() > PLANNER_CARD_MODELS_MAX {
         return Err(Error::InvalidClaimBody(
             "the planner card names at most 32 executor models",
@@ -236,52 +296,74 @@ fn planner_card_read_in_txn(
         &candidates,
     )?;
     let sources = planner_card_sources_in_txn(vault, txn, &card)?;
-    Ok((PlannerCardView::of(project, card)?, sources))
+    let lane_arms = line
+        .map(|line| {
+            lane_arms::lane_arms_in_txn(vault, txn, line, project, input.cursor.as_deref(), now_ms)
+        })
+        .transpose()?;
+    Ok((PlannerCardView::of(project, card, lane_arms)?, sources))
 }
 
-/// `vault.planner.card` for the owner under `owner`'s proof, judged in the
-/// card's own snapshot.
+/// `vault.planner.card` for the owner under `owner`'s proof at `now_ms`,
+/// judged in the card's own snapshot. The owner reads every line.
 ///
 /// # Errors
 ///
-/// An owner proof that no longer holds; as [`planner_card_view`].
+/// An owner proof that no longer holds; a malformed project id, type stamp,
+/// model list or cursor; a type stamp the project's recorded task-type tree
+/// does not hold; storage errors.
 pub fn planner_card_as_owner(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     input: &PlannerCardRequest,
+    now_ms: u64,
 ) -> Result<PlannerCardView> {
     let txn = vault.store.env.read_txn()?;
     owner.revalidate_in_txn(vault, &txn)?;
-    Ok(planner_card_read_in_txn(vault, &txn, input)?.0)
+    let project = input.project()?;
+    let line = family_line_in_txn(vault, &txn, &project)?;
+    Ok(planner_card_read_in_txn(vault, &txn, input, project, line.as_ref(), now_ms)?.0)
 }
 
-/// `vault.planner.card` for this handle's caller: the owner under `owner`,
-/// or an agent whose own live Grant lists the verb, judged in the snapshot
-/// the card is read in. That snapshot judges at the store's clock and
-/// refreshes none, so the door commits no write (T24), as the GPU job
-/// caller's reads judge. The rows the card was read from go to the
-/// handle's producer listing.
+/// `vault.planner.card` for this handle's caller at `now_ms`: the owner
+/// under `owner`, or an agent whose own live Grant lists the verb, judged in
+/// the snapshot the card is read in. When a GPU line seats the project, that
+/// Grant must also reach the line's project and hold a role on the line
+/// (section 5.1). That snapshot judges at the store's clock and refreshes
+/// none, so the door commits no write (T24), as the GPU job caller's reads
+/// judge. The rows the card was read from go to the handle's producer
+/// listing.
 ///
 /// # Errors
 ///
-/// `forbidden` for a caller the verb does not admit; as
-/// [`planner_card_view`].
+/// `forbidden` for a caller the verb does not admit, and `not_this_line`
+/// for a Grant with no role on the project's line; as
+/// [`planner_card_as_owner`].
 pub fn planner_card_as(
     memory: &Memory<'_>,
     owner: Option<&AuthenticatedOwner>,
     input: &PlannerCardRequest,
+    now_ms: u64,
 ) -> MemoryResult<PlannerCardView> {
     let vault = memory.vault();
     let txn = vault.store.env.read_txn().map_err(Error::from)?;
     memory.verb_grant_caller_admits_in_txn(&txn, owner, PLANNER_CARD_VERB)?;
-    let (view, sources) = planner_card_read_in_txn(vault, &txn, input)?;
+    let project = input.project()?;
+    let line = family_line_in_txn(vault, &txn, &project)?;
+    if let Some(line) = &line {
+        doors_caller::admit_in_txn(memory, &txn, owner, PLANNER_CARD_VERB, line.project)?
+            .require_role(line, &LINE_READ_ROLES, PLANNER_CARD_VERB)?;
+    }
+    let (view, sources) =
+        planner_card_read_in_txn(vault, &txn, input, project, line.as_ref(), now_ms)?;
     drop(txn);
     memory.produced_from(sources);
     Ok(view)
 }
 
-/// `vault.planner.card` on a bound handle: the embedded owner reads under
-/// its own proof, any other caller under its own Grant.
+/// `vault.planner.card` on a bound handle, at the vault's clock: the
+/// embedded owner reads under its own proof, any other caller under its own
+/// Grant.
 ///
 /// # Errors
 ///
@@ -291,5 +373,9 @@ pub fn planner_card_embedded(
     input: &PlannerCardRequest,
 ) -> MemoryResult<PlannerCardView> {
     let owner = memory.embedded_owner(PLANNER_CARD_VERB).ok();
-    planner_card_as(memory, owner.as_ref(), input)
+    let now_ms = memory.vault().now_recorded_ms();
+    planner_card_as(memory, owner.as_ref(), input, now_ms)
 }
+
+/// The roles that read a line's card: any of the three.
+const LINE_READ_ROLES: [LineRole; 3] = [LineRole::Lead, LineRole::Reviewer, LineRole::Planner];
