@@ -33,11 +33,34 @@ The booker does not open kel's bind, and it opens no listener of its own. `--res
 ## Before each order
 
 - **The commit must be in the node's mirror.** The node never fetches (staging.rs). Push the
-  head into the template's mirror first (OPUS-COORD-E2E's `push_head.sh`, row NODE-MIRROR-PUSH).
-  If the commit is missing, the attempt ends `launch_refused_changed` or `never_started`.
-- **The contract is the check script, hashed as main holds it** (row ONEIRON-CHECK-TEMPLATE).
-  The booker reads the sha256 from the commit with `git cat-file`, so the working tree's copy is
-  never what gets hashed.
+  head into the template's mirror first, with OPUS-COORD-E2E's `push_head.sh` (row
+  NODE-MIRROR-PUSH, docs/ops/execution-node-mirror-and-check.md):
+  `scripts/execution-node/mirror/push_head.sh --vendor nelly oneiron-check <full sha>`. If the
+  commit is missing, the attempt ends `launch_refused_changed` or `never_started`.
+- **The contract is the check script, hashed as main holds it** (row ONEIRON-CHECK-TEMPLATE). For
+  the `oneiron-check` template, `--contract` and `--entry` are both
+  `scripts/execution-node/check/oneiron_check.sh`, and `--contract-commit` is main's sha. A head
+  that edits the check script is then refused at staging (`contract_changed`), so it is never
+  checked by its own script. The booker reads the bytes from that commit with `git cat-file`, so
+  the working tree's copy is never what gets hashed. For any other template, `--contract-commit`
+  defaults to `--commit`.
+
+A lane check, end to end:
+
+```sh
+scripts/execution-node/mirror/push_head.sh --vendor nelly oneiron-check "$HEAD"
+oneiron jobs run --url http://127.0.0.1:47231 --credential-file ~/.config/oneiron/booker.cred \
+  --template oneiron-check --commit "$HEAD" --contract-commit "$MAIN" \
+  --entry scripts/execution-node/check/oneiron_check.sh \
+  --contract scripts/execution-node/check/oneiron_check.sh \
+  --offer nelly-cpu --host nelly --mem 28G --disk 60G --threads 6 --timeout 3h \
+  --returnable-output verdict.json --key "<lane>/check/$HEAD" \
+  -- packages=oneiron-server features=all tests=oneiron-server:lib
+```
+
+The check's arguments are `name=value`, each matched whole by the template's params. The booker
+binds no result artifact, so `verdict.json` stays on the node, and its sha256 is in the
+attempt's signed receipt. The log and the exit code are the booking's result.
 
 ## The booker principal: five owner acts
 
@@ -111,6 +134,7 @@ act 3, the order waits on `allowance_exceeded`. Without act 2, every call is `fo
 | `--sync <dir>` | `--commit <sha> --repo <checkout>`, after the mirror push | `--repo`: the working directory (chosen) |
 | `-- cmd args` | `--entry <path in the commit> -- args` (no shell) | required |
 | | `--contract <path in the commit>` | required |
+| | `--contract-commit <sha>` (the revision the contract is hashed at) | `--commit`. For `oneiron-check`, main's sha |
 | | `--offer <name>` (`ONEIRON_BOOKER_OFFER`) | required |
 | | `--project <id>` (`ONEIRON_BOOKER_PROJECT`) | none: no grant covers the pin |
 | | `--network none\|host` | `none` (pin.rs). `host` waits for NODE-NETWORK-HOST-UNIT |

@@ -231,9 +231,9 @@ impl Rack {
                 "template_digest": TEMPLATE_DIGEST,
                 "commit": COMMIT,
                 "contract_sha256": CONTRACT_SHA256,
-                "contract_path": "scripts/check/oneiron_check.sh",
-                "entry": "scripts/check/oneiron_check.sh",
-                "args": ["--crate", "oneiron"],
+                "contract_path": "scripts/execution-node/check/oneiron_check.sh",
+                "entry": "scripts/execution-node/check/oneiron_check.sh",
+                "args": ["packages=oneiron", "features=all"],
                 "request": {
                     "cpu_threads": 6,
                     "memory_mib": 28_672,

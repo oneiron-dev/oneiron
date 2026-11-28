@@ -116,7 +116,8 @@ fn run(
         Err(error) => return refused(err, &error.to_string()),
     };
     let repo = args.repo.clone().unwrap_or_else(|| PathBuf::from("."));
-    let contract_sha256 = match request::contract_sha256(&repo, &args.commit, &args.contract) {
+    let contract_at = args.contract_commit.as_deref().unwrap_or(&args.commit);
+    let contract_sha256 = match request::contract_sha256(&repo, contract_at, &args.contract) {
         Ok(digest) => digest,
         Err(error) => return refused(err, &error.to_string()),
     };

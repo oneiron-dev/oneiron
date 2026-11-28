@@ -59,9 +59,9 @@ fn run_args(extra: &[&str]) -> JobsRunArgs {
         "--commit",
         COMMIT,
         "--entry",
-        "scripts/check/oneiron_check.sh",
+        "scripts/execution-node/check/oneiron_check.sh",
         "--contract",
-        "scripts/check/oneiron_check.sh",
+        "scripts/execution-node/check/oneiron_check.sh",
         "--offer",
         "nelly-cpu",
         "--mem",
@@ -218,9 +218,9 @@ fn expected_pin() -> WorkloadPin {
         template_digest: NELLY_DIGEST.to_owned(),
         commit: COMMIT.to_owned(),
         contract_sha256: CONTRACT_SHA256.to_owned(),
-        contract_path: "scripts/check/oneiron_check.sh".to_owned(),
-        entry: "scripts/check/oneiron_check.sh".to_owned(),
-        args: vec!["--crate".to_owned(), "oneiron".to_owned()],
+        contract_path: "scripts/execution-node/check/oneiron_check.sh".to_owned(),
+        entry: "scripts/execution-node/check/oneiron_check.sh".to_owned(),
+        args: vec!["packages=oneiron".to_owned(), "features=all".to_owned()],
         request: ResourceRequest {
             cpu_threads: 6,
             memory_mib: 28 * 1_024,
@@ -327,7 +327,14 @@ fn book(script: &mut Script, args: &JobsRunArgs, stop: Option<OwnStop>) -> Booke
 #[test]
 fn the_pin_names_the_node_template_digest_and_the_contract_sha256() {
     let mut script = Script::booking();
-    let args = run_args(&["--host", "nelly", "--detach", "--", "--crate", "oneiron"]);
+    let args = run_args(&[
+        "--host",
+        "nelly",
+        "--detach",
+        "--",
+        "packages=oneiron",
+        "features=all",
+    ]);
     assert_eq!(book(&mut script, &args, None).code, 0);
     let pins = script.inputs("vault.jobs.workloads.pin");
     let request: WorkloadPinRequest =

@@ -76,9 +76,16 @@ pub struct JobsRunArgs {
     #[arg(long, value_name = "PATH")]
     pub entry: String,
 
-    /// The contract file, a path in the commit; its sha256 is read from the commit in `--repo`.
+    /// The contract file, a path in the commit; its sha256 is read from `--contract-commit` in
+    /// `--repo`.
     #[arg(long, value_name = "PATH")]
     pub contract: String,
+
+    /// The revision the contract is hashed at, 40 lower hex. Default: `--commit`. For the
+    /// `oneiron-check` template it is main's, so a head that edits the check script is refused
+    /// at staging and never checked by its own script.
+    #[arg(long, value_name = "SHA")]
+    pub contract_commit: Option<String>,
 
     /// The git checkout that holds the commit. Default: the working directory.
     #[arg(long, value_name = "DIR")]
