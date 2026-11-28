@@ -140,6 +140,7 @@ impl Follow<'_> {
             };
             self.say_state(&view.order, &mut seen);
             if let Some(receipt) = &view.receipt
+                && logs.is_empty()
                 && !logs.iter().any(|log| log.key == receipt.key)
             {
                 logs.push(AttemptLog::new(receipt.key.clone()));
