@@ -392,8 +392,14 @@ impl DecisionWireLabels for CallLabelMap {
 
 /// What a call showed of one source its labels name.
 pub(super) struct SourceShown<'t> {
-    /// The text the call showed: the text a quote binds against.
+    /// The text the call showed, as stored: a quote binds against it (through
+    /// its fenced view when `one_line_fenced`), and a bound range indexes it.
     pub(super) text: Option<&'t str>,
+    /// Whether the call showed `text` through the one-line fence
+    /// ([`crate::context_board::one_line_token`]: each control character and
+    /// U+2028/U+2029 as one space). A quote is then found in that fenced view
+    /// and its range mapped back to `text`'s own bytes.
+    pub(super) one_line_fenced: bool,
     /// The project the source is admitted under, when it has exactly one.
     pub(super) project: Option<EntityId>,
 }

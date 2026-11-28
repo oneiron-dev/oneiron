@@ -40,6 +40,7 @@ impl CallSources for NoteSources<'_> {
     fn shown(&self, id: EntityId) -> Option<SourceShown<'_>> {
         (id == self.note.id).then(|| SourceShown {
             text: Some(self.note.markdown.as_str()),
+            one_line_fenced: false,
             project: Some(self.note.project),
         })
     }

@@ -311,6 +311,7 @@ impl crate::dreamer_consolidation::call_labels::CallSources for TestCallSources 
         self.texts.get(&id).map(
             |text| crate::dreamer_consolidation::call_labels::SourceShown {
                 text: Some(text.as_str()),
+                one_line_fenced: false,
                 project: None,
             },
         )

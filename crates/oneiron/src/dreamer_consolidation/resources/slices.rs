@@ -1,5 +1,6 @@
 //! Read-only extraction children attenuated from one prepared branch.
 use super::*;
+use crate::context_board::one_line_token;
 use crate::dreamer_consolidation::branch::QueuedBranch;
 use crate::dreamer_consolidation::call_labels::{CallLabelMap, LabelKind};
 use crate::dreamer_consolidation::extraction_step::render_host_material;
@@ -268,16 +269,21 @@ impl BranchResources<'_> {
                         // (FIX 15412), or the writers of a native person turn:
                         // every such turn in a shared vault, each one its owner
                         // did not write alone in a personal vault (FIX
-                        // DREAMER-NATIVE-PERSON-TURN-UNATTRIBUTED). The role,
-                        // the words and their offsets stay as they are.
+                        // DREAMER-NATIVE-PERSON-TURN-UNATTRIBUTED).
+                        // Fence the role and words to one physical line, as the
+                        // context board fences its rows (FIX
+                        // DREAMER-TRANSCRIPT-TURN-TEXT-UNFENCED): each control
+                        // character and U+2028/U+2029 shows as a space. A quote
+                        // binds against these fenced words and maps back to the
+                        // stored bytes (`SourceShown::one_line_fenced`).
                         let speaker = speaker_labels(
                             &mut labels,
                             speakers.get(id).map_or(&[][..], Vec::as_slice),
                         );
                         transcript.push_str(&format!(
                             "[{turn} {}{speaker}] {}\n",
-                            facts.speaker.as_deref().unwrap_or("unknown"),
-                            facts.text.as_deref().unwrap_or_default(),
+                            one_line_token(facts.speaker.as_deref().unwrap_or("unknown")),
+                            one_line_token(facts.text.as_deref().unwrap_or_default()),
                         ));
                     }
                     // A slice is low-trust by what it reads: its own TURNs,
@@ -373,6 +379,7 @@ impl BranchResources<'_> {
 const TURN_LINE_FRAME_BYTES: usize = 48;
 
 /// The bytes a turn's line may add to a call's transcript.
+/// Raw lengths are an upper bound because the one-line fence never lengthens text.
 fn turn_line_bytes(facts: &TurnBodyFacts) -> usize {
     facts.text.as_deref().map_or(0, str::len)
         + facts.speaker.as_deref().unwrap_or("unknown").len()
