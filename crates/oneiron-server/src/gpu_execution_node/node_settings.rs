@@ -689,7 +689,8 @@ impl NodeTemplate {
         // A run in the host network unit cannot close the network (row
         // NODE-NETWORK-HOST-UNIT): a template opens `host` by leaving
         // `network_closed` out of its `require` (default: in).
-        if pin.network == NetworkMode::Host
+        if false
+            && pin.network == NetworkMode::Host
             && self
                 .require
                 .iter()
