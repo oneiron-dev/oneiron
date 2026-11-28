@@ -240,7 +240,7 @@ pub(super) fn order_request(
         },
         retry_on,
         result: None,
-        intent_key: args.key.clone(),
+        intent_key: None,
         after: None,
         group: None,
     })
