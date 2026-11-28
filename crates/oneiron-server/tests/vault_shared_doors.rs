@@ -75,6 +75,9 @@ const DELETE_WAIT_SECS: u64 = 604800;
 const NINETY_DAYS: u64 = 90 * 24 * 60 * 60;
 
 const PROPOSE_DELETE: &str = "vault.shared.propose_delete";
+/// The shared preview a one-way call's confirm comes from (DEC-0006
+/// #undo-class; L8-49): `vault.shared.propose_delete` takes it.
+const OWNER_CONFIRM_PREVIEW: &str = "vault.owner_confirm.preview";
 const PROPOSE_ADD_OWNER: &str = "vault.shared.propose_add_owner";
 const PROPOSE_REMOVE_OWNER: &str = "vault.shared.propose_remove_owner";
 const PROPOSE_TRANSFER: &str = "vault.shared.propose_transfer";
@@ -373,12 +376,32 @@ impl Served {
         body
     }
 
-    /// The act `id` A proposed to delete the vault: started, waiting its
-    /// seven-day window.
-    async fn proposed_delete(&self) -> Value {
-        let act = self
-            .ok(Caller::Owner, PROPOSE_DELETE, json!({"vault_id": VAULT_ID}))
+    /// `input` for the one-way `verb` with `caller`'s own confirm: the
+    /// caller previews the call and passes the preview's confirm back, so
+    /// what the call answers is the engine's, not the confirm gate's.
+    async fn confirmed(&self, caller: Caller, verb: &str, mut input: Value) -> Value {
+        let preview = self
+            .ok(
+                caller,
+                OWNER_CONFIRM_PREVIEW,
+                json!({"verb": verb, "input": input.clone()}),
+            )
             .await;
+        let confirm = preview["confirm"]
+            .as_str()
+            .expect("the preview names its confirm")
+            .to_owned();
+        input["confirm"] = Value::String(confirm);
+        input
+    }
+
+    /// The act `id` A proposed to delete the vault, on A's confirm of it:
+    /// started, waiting its seven-day window.
+    async fn proposed_delete(&self) -> Value {
+        let input = self
+            .confirmed(Caller::Owner, PROPOSE_DELETE, json!({"vault_id": VAULT_ID}))
+            .await;
+        let act = self.ok(Caller::Owner, PROPOSE_DELETE, input).await;
         assert_eq!(act["act"], "delete_vault", "{act}");
         assert_eq!(act["completed"], false, "{act}");
         assert_eq!(act["starter"], self.a.to_hex(), "{act}");
@@ -599,13 +622,14 @@ fn a_deleted_vault_serves_only_its_marker_and_notices() {
             .expect("receipt id")
             .to_owned();
 
-        let (status, body) = served
-            .post(Caller::Owner, PROPOSE_DELETE, json!({"vault_id": VAULT_ID}))
+        let input = served
+            .confirmed(Caller::Owner, PROPOSE_DELETE, json!({"vault_id": VAULT_ID}))
             .await;
+        let (status, body) = served.post(Caller::Owner, PROPOSE_DELETE, input).await;
         assert_eq!(
             status,
             StatusCode::NOT_FOUND,
-            "proposing after delete: {body}"
+            "proposing after delete, on a live confirm of it: {body}"
         );
         assert_eq!(error_code(&body), Some("NOT_FOUND"), "{body}");
 
@@ -853,7 +877,9 @@ fn the_last_owner_cannot_be_removed_and_recovery_is_refused_while_an_owner_stand
 /// withdrawing, executing and setting the wait are refused, the owner's
 /// wait read is forbidden, the Member's own notices are empty, and A's
 /// reads are unchanged. (The `person()` door plus the engine's role
-/// checks: only Owners start, object, execute and set.)
+/// checks: only Owners start, object, execute and set. The Member proposes
+/// on its own confirm of the proposal, so the role check refuses it, not
+/// the confirm gate.)
 #[test]
 fn a_member_reaches_no_act_door_and_writes_nothing() {
     run_on_engine_stack("shared-member-refused", || async {
@@ -867,8 +893,15 @@ fn a_member_reaches_no_act_door_and_writes_nothing() {
             .ok(Caller::Owner, OUTCOMES, json!({"vault_id": VAULT_ID}))
             .await;
 
+        let member_propose = served
+            .confirmed(
+                Caller::Member,
+                PROPOSE_DELETE,
+                json!({"vault_id": VAULT_ID}),
+            )
+            .await;
         for (verb, input) in [
-            (PROPOSE_DELETE, json!({"vault_id": VAULT_ID})),
+            (PROPOSE_DELETE, member_propose),
             (OBJECT, json!({"act_id": id.clone()})),
             (WITHDRAW_OBJECTION, json!({"act_id": id.clone()})),
             (EXECUTE, json!({"act_id": id.clone()})),
