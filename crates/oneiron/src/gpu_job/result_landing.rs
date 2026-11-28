@@ -48,6 +48,43 @@ const RESULT_LANDING_WRITES: usize = 3;
 pub struct GpuJobResultBinding {
     pub artifact: EntityId,
     pub task: EntityId,
+    /// The `application/json` artifact whose next version is the job's handoff manifest (row
+    /// RSI-ARTIFACT-HANDOFF, [`super::GpuJobHandoff`]); `None` lands none. Left out of the
+    /// encoding when `None`, so a binding without it encodes as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manifest: Option<EntityId>,
+}
+
+impl GpuJobResultBinding {
+    /// Every row the binding names: the artifact, the task, and the manifest when it names one.
+    fn rows(&self) -> Vec<EntityId> {
+        let mut rows = vec![self.artifact, self.task];
+        rows.extend(self.manifest);
+        rows
+    }
+}
+
+/// One proposal a returned job lands: an output file, or the job's handoff manifest.
+pub(super) struct ResultLanding<'a> {
+    pub(super) artifact: EntityId,
+    pub(super) task: EntityId,
+    pub(super) run_ref: String,
+    pub(super) params_hash: String,
+    pub(super) name: &'a str,
+    pub(super) bytes: Vec<u8>,
+    pub(super) report: String,
+    /// made_by's process identity.
+    pub(super) process: &'static str,
+}
+
+/// The consume-once ref of output `name` of `job`'s key `key`, and its digest: BLAKE3 over the
+/// JSON array `[job hex, key, name]`, so the ref stays bounded and a retry is independent of
+/// order and file bytes.
+pub(super) fn gpu_job_output_run_ref(job: EntityId, key: &str, name: &str) -> (String, String) {
+    let job_hex = job.to_hex();
+    let identity = json!([job_hex, key, name]).to_string();
+    let params_hash = ContentHash::of(identity.as_bytes()).to_hex();
+    (format!("gpu-job-{job_hex}-{params_hash}"), params_hash)
 }
 
 /// One returnable output fetched from the machine, already checked against
@@ -110,6 +147,41 @@ impl Vault {
         issuer: EntityId,
         retained_at: u64,
     ) -> Result<Option<PendingProposalView>> {
+        let (run_ref, params_hash) = gpu_job_output_run_ref(job, &file.key, &file.name);
+        let mut report = json!({
+            "job": job.to_hex(),
+            "key": file.key,
+            "name": file.name,
+            "sha256": file.sha256,
+            "bytes": file.bytes.len(),
+        });
+        if let Some(unit) = self.gpu_job_result_unit(job)? {
+            report["unit"] = unit;
+        }
+        let landing = ResultLanding {
+            artifact: binding.artifact,
+            task: binding.task,
+            run_ref,
+            params_hash,
+            name: &file.name,
+            bytes: file.bytes.clone(),
+            report: report.to_string(),
+            process: "gpu_job.result_landing",
+        };
+        self.propose_gpu_job_landing(job, starter, issuer, retained_at, &landing)
+    }
+
+    /// Lands `landing` for job `job` through the writer [`Self::propose_gpu_job_result`]
+    /// resolves: the starter while it stands, else the issuer under the owner's lane, resolved
+    /// again after a write the envelope refused. `Ok(None)`: no lane can hold it yet.
+    pub(super) fn propose_gpu_job_landing(
+        &self,
+        job: EntityId,
+        starter: Option<WorkloadStarter>,
+        issuer: EntityId,
+        retained_at: u64,
+        landing: &ResultLanding<'_>,
+    ) -> Result<Option<PendingProposalView>> {
         let mut writer = self.gpu_job_result_writer(job, starter, issuer)?;
         let mut writes = 0;
         loop {
@@ -117,11 +189,10 @@ impl Vault {
                 return Ok(None);
             };
             writes += 1;
-            let error =
-                match self.propose_gpu_job_result_as(current, job, binding, file, retained_at) {
-                    Ok(view) => return Ok(Some(view)),
-                    Err(error) => error,
-                };
+            let error = match self.propose_gpu_job_result_as(current, landing, retained_at) {
+                Ok(view) => return Ok(Some(view)),
+                Err(error) => error,
+            };
             let again = self.gpu_job_result_writer(job, starter, issuer)?;
             if writes >= RESULT_LANDING_WRITES || again == writer {
                 return Err(error);
@@ -147,8 +218,8 @@ impl Vault {
         Ok(self.gpu_job_result_writer(job, starter, issuer)?.is_some())
     }
 
-    /// Whether `principal`'s own read lane reads both rows `binding` names.
-    /// The issuer asks it before each chunk's first dispatch and refuses a
+    /// Whether `principal`'s own read lane reads every row `binding` names (its manifest
+    /// included). The issuer asks it before each chunk's first dispatch and refuses a
     /// binding its starter cannot read, since a result whose starter lapsed
     /// lands through the owner's lane, which reads every row.
     ///
@@ -160,14 +231,14 @@ impl Vault {
         principal: EntityId,
         binding: &GpuJobResultBinding,
     ) -> Result<bool> {
-        principal_lane(self, principal)?.all_refs_readable(&[binding.artifact, binding.task])
+        principal_lane(self, principal)?.all_refs_readable(&binding.rows())
     }
 
     /// The unit a line unit's job ran (row RSI-ARM-RESULT), for its landed result's report:
     /// the arm, the rung, the unit key, the attempt and the contract the arm pinned (the
     /// referee digest of pass 32, 3.6), from the claim the job row names (the job's id is the
     /// claim's). `None` for a job no unit claim names.
-    fn gpu_job_result_unit(&self, job: EntityId) -> Result<Option<serde_json::Value>> {
+    pub(super) fn gpu_job_result_unit(&self, job: EntityId) -> Result<Option<serde_json::Value>> {
         let Some(key) = self.gpu_job(&job)?.and_then(|row| row.claim) else {
             return Ok(None);
         };
@@ -185,41 +256,26 @@ impl Vault {
             }))
     }
 
-    /// One write of `file` by `writer`, the envelope built from it.
+    /// One write of `landing` by `writer`, the envelope built from it.
     fn propose_gpu_job_result_as(
         &self,
         writer: ResultWriter,
-        job: EntityId,
-        binding: &GpuJobResultBinding,
-        file: &GpuJobResultFile,
+        landing: &ResultLanding<'_>,
         retained_at: u64,
     ) -> Result<PendingProposalView> {
         let actor = WriteActor::new(writer.actor, writer.class);
         let reader = self.organ_landing_reader(Some(writer.lane))?;
-        let job_hex = job.to_hex();
-        let identity = json!([job_hex, file.key, file.name]).to_string();
-        let params_hash = ContentHash::of(identity.as_bytes()).to_hex();
         // Every version keeps the artifact's own media type, whatever the file is called.
         let media_type = self
-            .get_blob_artifact(&binding.artifact)?
+            .get_blob_artifact(&landing.artifact)?
             .ok_or(Error::EntityNotFound)?
             .media_type;
-        let mut report = json!({
-            "job": job_hex,
-            "key": file.key,
-            "name": file.name,
-            "sha256": file.sha256,
-            "bytes": file.bytes.len(),
-        });
-        if let Some(unit) = self.gpu_job_result_unit(job)? {
-            report["unit"] = unit;
-        }
         let output = NativeOutput {
-            run_ref: format!("gpu-job-{job_hex}-{params_hash}"),
-            name: file.name.clone(),
+            run_ref: landing.run_ref.clone(),
+            name: landing.name.to_owned(),
             media_type,
-            bytes: file.bytes.clone(),
-            report: report.to_string(),
+            bytes: landing.bytes.clone(),
+            report: landing.report.clone(),
             made_by: Some(MadeBy {
                 inputs: writer
                     .starter_input
@@ -232,16 +288,16 @@ impl Vault {
                 process: MadeByProcess {
                     actor: actor.entity_ref(),
                     class: MadeByClass::Concluded,
-                    identity: "gpu_job.result_landing".into(),
+                    identity: landing.process.into(),
                     version: "1".into(),
-                    params_hash,
+                    params_hash: landing.params_hash.clone(),
                 },
                 at: retained_at,
-                trigger: Some(MadeByTrigger::Task(binding.task)),
+                trigger: Some(MadeByTrigger::Task(landing.task)),
             }),
         };
         self.propose_native_output_with_reads(
-            &binding.artifact,
+            &landing.artifact,
             &output,
             Some(reader),
             (actor, retained_at),
@@ -338,9 +394,9 @@ impl Vault {
 
 impl Memory<'_> {
     /// Whether this caller's own read lane, under the credential it
-    /// presented (a slip's records list included), reads both rows `binding`
-    /// names. The start door asks it of an agent's chunk whose quote binds a
-    /// result, before the chunk is written: a result whose starter lapsed
+    /// presented (a slip's records list included), reads every row `binding`
+    /// names (its manifest included). The start door asks it of an agent's chunk whose quote
+    /// binds a result, before the chunk is written: a result whose starter lapsed
     /// lands through the owner's lane, which reads every row.
     ///
     /// # Errors
@@ -351,7 +407,7 @@ impl Memory<'_> {
         binding: &GpuJobResultBinding,
     ) -> MemoryResult<bool> {
         self.read_lane(ClaimReadStatus::Recorded)?
-            .all_refs_readable(&[binding.artifact, binding.task])
+            .all_refs_readable(&binding.rows())
             .map_err(MemoryError::from)
     }
 }

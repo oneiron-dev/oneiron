@@ -206,6 +206,7 @@ pub(crate) async fn vault_gpu_jobs_start(
         if let DoorCaller::Agent(_) = caller {
             result_binding_admits(memory, &quote)?;
         }
+        result_manifest_is_json(memory, &quote)?;
         let resume = if input.resume {
             let job = server
                 .vault
@@ -242,12 +243,7 @@ pub(crate) async fn vault_gpu_jobs_start(
 /// written, so every chunk carries a binding its own start call admitted. A binding that does
 /// not parse is left to the backend's own refusal.
 fn result_binding_admits(memory: &Memory<'_>, quote: &GpuJobQuote) -> MemoryResult<()> {
-    let Some(binding) = quote
-        .inputs
-        .get("result")
-        .filter(|binding| !binding.is_null())
-        .and_then(|binding| serde_json::from_value::<GpuJobResultBinding>(binding.clone()).ok())
-    else {
+    let Some(binding) = quote_result_binding(quote) else {
         return Ok(());
     };
     if memory.gpu_job_result_binding_admits(&binding)? {
@@ -258,6 +254,32 @@ fn result_binding_admits(memory: &Memory<'_>, quote: &GpuJobQuote) -> MemoryResu
         "result_binding_unreadable: the job's result binds a row this credential does not read",
         &["Bind an artifact and a task this credential reads."],
     ))
+}
+
+/// A chunk's result manifest (row RSI-ARTIFACT-HANDOFF), whoever starts it, is an
+/// `application/json` artifact, so its landing never fails late. An agent's binding is judged
+/// after [`result_binding_admits`], so the refusal tells it nothing of a row it does not read.
+fn result_manifest_is_json(memory: &Memory<'_>, quote: &GpuJobQuote) -> MemoryResult<()> {
+    let Some(binding) = quote_result_binding(quote) else {
+        return Ok(());
+    };
+    if memory.vault().gpu_job_result_manifest_is_json(&binding)? {
+        return Ok(());
+    }
+    Err(MemoryError::new(
+        MEMORY_CODE_INVALID_STATE,
+        "result_manifest_not_json: the job's result manifest is not an application/json artifact",
+        &["Bind an application/json artifact as the manifest."],
+    ))
+}
+
+/// The result binding `quote`'s inputs carry; `None` when there is none or it does not parse.
+fn quote_result_binding(quote: &GpuJobQuote) -> Option<GpuJobResultBinding> {
+    quote
+        .inputs
+        .get("result")
+        .filter(|binding| !binding.is_null())
+        .and_then(|binding| serde_json::from_value::<GpuJobResultBinding>(binding.clone()).ok())
 }
 
 /// `vault.gpu.jobs.status`: where one job stands, with its spend against its

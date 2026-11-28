@@ -3114,7 +3114,11 @@ fn owner_result_binding(fixture: &Fixture) -> GpuJobResultBinding {
         .expect("the owner uploads the artifact")
         .expect("the artifact's view")
         .artifact_id;
-    GpuJobResultBinding { artifact, task }
+    GpuJobResultBinding {
+        artifact,
+        task,
+        manifest: None,
+    }
 }
 
 /// `binding` as a quote's `inputs.result`.
@@ -3192,6 +3196,7 @@ fn a_unit_result_on_a_row_the_agent_cannot_read_is_refused_and_writes_nothing() 
     ask.result = Some(GpuJobResultBinding {
         artifact: EntityId::now(),
         task: readable.task,
+        manifest: None,
     });
     let reserved = fixture
         .reserve(Some(lead), &ask, NOW_MS)
@@ -3227,6 +3232,71 @@ fn a_unit_result_on_a_row_the_agent_cannot_read_is_refused_and_writes_nothing() 
     fixture
         .reserve(Some(lead), &ask, NOW_MS)
         .expect("a binding the agent reads reserves");
+}
+
+/// RSI-ARTIFACT-HANDOFF: a unit's result manifest is an `application/json` artifact. The reserve
+/// and the waiting door refuse a manifest that is not `result_manifest_not_json` and write
+/// nothing: no claim, no order. A JSON manifest the agent reads reserves.
+#[test]
+fn a_unit_result_manifest_that_is_not_json_is_refused_and_writes_nothing() {
+    let fixture = fixture();
+    let lead = fixture.agent("lead");
+    let arm = fixture.lead_arm(lead, 0);
+    let binding = owner_result_binding(&fixture);
+    let human = fixture.vault.memory(fixture.owner, EdgeActorClass::Human);
+    let manifest = |media_type: &str| {
+        human
+            .artifacts_create(&ArtifactCreateRequest {
+                name: "handoff".to_owned(),
+                media_type: media_type.to_owned(),
+                content_base64: base64::Engine::encode(
+                    &base64::engine::general_purpose::STANDARD,
+                    b"{}",
+                ),
+                run_ref: None,
+                made_by: None,
+            })
+            .expect("the owner uploads the manifest artifact")
+            .expect("the artifact's view")
+            .artifact_id
+    };
+    let mut ask = fixture.ask(&arm, "manifest-unit", 60, Some(lead));
+    ask.result = Some(GpuJobResultBinding {
+        manifest: Some(manifest("text/plain")),
+        ..binding
+    });
+    let reserved = fixture
+        .reserve(Some(lead), &ask, NOW_MS)
+        .expect_err("the reserve refuses a text manifest");
+    assert!(fixture.claims(&arm, 1).is_empty());
+
+    ask.wait = WaitRule::Open;
+    let (memory, owner) = fixture.caller(Some(lead));
+    let ordered = unit_order_as(&memory, owner, &ask, NOW_MS)
+        .expect_err("the waiting door refuses a text manifest");
+    for error in [&reserved, &ordered] {
+        assert_eq!(error.code, MEMORY_CODE_INVALID_STATE, "{error:?}");
+        assert!(
+            error.message.starts_with("result_manifest_not_json"),
+            "{error:?}"
+        );
+    }
+    assert!(
+        fixture
+            .vault
+            .work_orders()
+            .expect("read the work orders")
+            .is_empty()
+    );
+
+    ask.wait = WaitRule::No;
+    ask.result = Some(GpuJobResultBinding {
+        manifest: Some(manifest("application/json")),
+        ..binding
+    });
+    fixture
+        .reserve(Some(lead), &ask, NOW_MS)
+        .expect("a JSON manifest the agent reads reserves");
 }
 
 /// RSI-ARM-RESULT: a unit asked with no result keeps the ask digest a claim had before units
@@ -3321,6 +3391,7 @@ fn a_waiting_unit_carries_its_result_into_its_claim_and_job() {
         Some(ResultBinding {
             artifact: binding.artifact,
             task: binding.task,
+            manifest: None,
         })
     );
     let jobs = UnitJobs::new(None);

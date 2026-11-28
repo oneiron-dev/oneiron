@@ -26,7 +26,7 @@ pub use clear_drain_door::{
     CLEAR_DRAIN_VERB, MachineDrainClearRequest, MachineDrainCleared, clear_drain_as,
     clear_drain_embedded,
 };
-pub use job_return::{JobReturn, ReturnRefusal};
+pub use job_return::{HandoffReturn, JobReturn, ReturnRefusal};
 pub use setting_keys::MachineJobSettings;
 
 use crate::side_table::{self, Named, SideTable};

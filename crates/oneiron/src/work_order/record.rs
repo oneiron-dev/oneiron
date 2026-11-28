@@ -75,6 +75,11 @@ pub struct WorkOrder {
 pub struct ResultBinding {
     pub artifact: EntityId,
     pub task: EntityId,
+    /// The `application/json` artifact that takes the attempt's handoff manifest (row
+    /// RSI-ARTIFACT-HANDOFF); `None` lands none. Left out of the encoding when `None`, so a
+    /// binding without it encodes as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manifest: Option<EntityId>,
 }
 
 /// Who ordered, as the loop checks it again at each attempt.

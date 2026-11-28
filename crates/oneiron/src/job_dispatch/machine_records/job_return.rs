@@ -1,7 +1,9 @@
 //! `JOB_RETURN` (pass 33 row R4; EM-12 = A): what the issuer did with one ended key's outputs.
 //! The row opens when the key's end is confirmed. It names each returnable output that landed
 //! as a proposal and each that never will, and it is done once the node answered the
-//! acknowledgement that lets it clean the payload.
+//! acknowledgement that lets it clean the payload. A result that binds a handoff manifest (row
+//! RSI-ARTIFACT-HANDOFF) keeps the row owed after the acknowledgement until the manifest lands
+//! or is refused.
 
 use serde::{Deserialize, Serialize};
 
@@ -16,6 +18,19 @@ const JOB_RETURNS: SideTable<String, JobReturn, Named> = SideTable::new(&side_ta
 pub struct ReturnRefusal {
     pub name: String,
     pub why: String,
+}
+
+/// What became of one ended key's handoff manifest (row RSI-ARTIFACT-HANDOFF).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HandoffReturn {
+    /// Every output is decided and the manifest has not landed yet: asked again at each
+    /// housekeeping pass, also after the acknowledgement.
+    Owed,
+    /// Landed as a proposal on the manifest artifact.
+    Landed,
+    /// It never lands, and why.
+    Refused { why: String },
 }
 
 /// What the issuer did with one ended key's outputs. Key: the dispatch key.
@@ -33,6 +48,11 @@ pub struct JobReturn {
     /// When the node answered the acknowledgement; `None` while the issuer still owes it.
     #[serde(default)]
     pub acknowledged_at_ms: Option<u64>,
+    /// The handoff manifest, when the key's result binds one; `None` when it binds none, and
+    /// on every row written before it. Left out of the encoding when `None`, so such a row
+    /// encodes as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handoff: Option<HandoffReturn>,
     pub opened_at_ms: u64,
     pub updated_at_ms: u64,
 }
@@ -57,7 +77,8 @@ impl Vault {
         JOB_RETURNS.get(&self.store, &txn, &key.to_owned())
     }
 
-    /// Every return the issuer still owes an acknowledgement for, in key order.
+    /// Every return the issuer still owes an acknowledgement or a handoff manifest for, in key
+    /// order.
     ///
     /// # Errors
     ///
@@ -68,7 +89,9 @@ impl Vault {
         Ok(rows
             .into_iter()
             .map(|(_, row)| row)
-            .filter(|row| row.acknowledged_at_ms.is_none())
+            .filter(|row| {
+                row.acknowledged_at_ms.is_none() || row.handoff == Some(HandoffReturn::Owed)
+            })
             .collect())
     }
 
@@ -98,6 +121,7 @@ impl Vault {
                     landed: Vec::new(),
                     refused: Vec::new(),
                     acknowledged_at_ms: None,
+                    handoff: None,
                     opened_at_ms: now_ms,
                     updated_at_ms: now_ms,
                 });

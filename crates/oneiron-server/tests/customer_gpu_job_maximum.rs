@@ -1357,3 +1357,206 @@ fn a_write_off_reaches_a_live_job_whose_offer_is_withdrawn() {
         );
     });
 }
+
+/// T6 (row RSI-ARTIFACT-HANDOFF; Engine ACCEPT 28 Nov 12:58, condition 3): a start's result
+/// manifest is judged as its artifact and task are, then by its media type. An agent whose slip
+/// reads the artifact and the task but not the manifest is refused `result_binding_unreadable`,
+/// and the refusal names no field of the manifest row (its name, media type or content). A
+/// manifest that is not `application/json` is refused `result_manifest_not_json`, the owner's
+/// start too. Nothing is created either way. The agent's unnarrowed slip with a JSON manifest
+/// goes ahead.
+#[test]
+fn a_start_binds_a_manifest_only_when_its_credential_reads_it_and_it_is_json() {
+    run_on_engine_stack("gpu-job-result-manifest", || async {
+        let fixture = setup(SECTION);
+        let agent = pair_agent(&fixture, "gpu-job-manifest-agent", [0x64; 32]).await;
+        let (status, minted) = as_owner(
+            &fixture,
+            "vault.agents.grants.mint",
+            json!({
+                "agent": agent.principal.to_hex(),
+                "authority_scope": {
+                    "worlds": {"kind": "all"},
+                    "facets": {"kind": "all"},
+                    "bands": {"kind": "all"},
+                    "audience": {"kind": "all"},
+                    "verbs": {"kind": "some", "values": [
+                        "read",
+                        "vault.gpu.jobs.quote",
+                        "vault.gpu.jobs.status",
+                        "vault.gpu.jobs.start",
+                    ]},
+                    "sensitivity": {"kind": "at_most", "value": "restricted"},
+                },
+            }),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "owner mints the agent's Grant: {minted}"
+        );
+        let grant = minted["grant"]["grant_ref"]
+            .as_str()
+            .expect("the Grant's id")
+            .to_owned();
+        let (status, allowed) = as_owner(
+            &fixture,
+            "vault.gpu.jobs.allow",
+            json!({"grant": grant, "maximum_secs": 1000}),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "the owner sets the maximum: {allowed}"
+        );
+
+        let owner = oneiron::test_doors::steward::owner(&fixture.vault)
+            .expect("the owner's proof")
+            .revalidate(&fixture.vault)
+            .expect("the owner on this vault");
+        let human = fixture.vault.memory(owner, oneiron::EdgeActorClass::Human);
+        let task = human
+            .tasks_create(&oneiron::task_verb::TaskCreateSpec::new(
+                rmpv::Value::from("Read the GPU verdict"),
+                None,
+                None,
+                None,
+            ))
+            .expect("the owner creates a task")
+            .task_ref
+            .expect("a landed task");
+        let artifact = |name: &str, media_type: &str, content: &[u8]| {
+            human
+                .artifacts_create(&oneiron::blob_artifact::ArtifactCreateRequest {
+                    name: name.to_owned(),
+                    media_type: media_type.to_owned(),
+                    content_base64: base64::Engine::encode(
+                        &base64::engine::general_purpose::STANDARD,
+                        content,
+                    ),
+                    run_ref: None,
+                    made_by: None,
+                })
+                .expect("the owner uploads the artifact")
+                .expect("the artifact's view")
+                .artifact_id
+        };
+        let verdict = artifact("verdict.txt", "text/plain", b"no verdict yet");
+        let manifest = artifact(
+            "private-handoff-title.json",
+            "application/json",
+            br#"{"private":"handoff body"}"#,
+        );
+        let text_manifest = artifact("handoff.txt", "text/plain", b"not json");
+        let bound = |manifest: EntityId| {
+            let mut bound = quote_input("h100-test", 100, None);
+            bound["inputs"]["result"] = json!({
+                "artifact": verdict.to_hex(),
+                "task": task.to_hex(),
+                "manifest": manifest.to_hex(),
+            });
+            bound
+        };
+
+        let mut slip = agent.slip.clone();
+        slip.attenuate(
+            oneiron::authority::SlipCaveat {
+                records: Some(BTreeSet::from([verdict.to_hex(), task.to_hex()])),
+                ..oneiron::authority::SlipCaveat::default()
+            },
+            &agent.holder,
+        )
+        .expect("the agent narrows its slip to the artifact and the task");
+        let narrowed = Agent {
+            principal: agent.principal,
+            holder: agent.holder.clone(),
+            token: slip.to_token().expect("the narrowed slip's token"),
+            slip,
+        };
+        let (status, quote) =
+            as_agent(&fixture, &narrowed, "vault.gpu.jobs.quote", bound(manifest)).await;
+        assert_eq!(status, StatusCode::OK, "the narrowed slip quotes: {quote}");
+        let (status, body) = as_agent(
+            &fixture,
+            &narrowed,
+            "vault.gpu.jobs.start",
+            json!({"quote": quote, "resume": false}),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::FORBIDDEN,
+            "a manifest outside the slip's records is refused: {body}"
+        );
+        assert!(
+            refusal(&body).contains("result_binding_unreadable"),
+            "{body}"
+        );
+        let shown = body.to_string();
+        for field in ["private-handoff-title", "application/json", "handoff body"] {
+            assert!(
+                !shown.contains(field),
+                "the refusal names no field of the manifest row: {body}"
+            );
+        }
+
+        let (status, quote) =
+            as_owner(&fixture, "vault.gpu.jobs.quote", bound(text_manifest)).await;
+        assert_eq!(status, StatusCode::OK, "the owner quotes: {quote}");
+        let (status, body) = as_owner(
+            &fixture,
+            "vault.gpu.jobs.start",
+            json!({"quote": quote, "resume": false}),
+        )
+        .await;
+        assert_ne!(status, StatusCode::OK, "{body}");
+        assert!(
+            refusal(&body).contains("result_manifest_not_json"),
+            "the owner's start with a text manifest is refused: {body}"
+        );
+        let (status, quote) = as_agent(
+            &fixture,
+            &agent,
+            "vault.gpu.jobs.quote",
+            bound(text_manifest),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "the agent quotes: {quote}");
+        let (status, body) = as_agent(
+            &fixture,
+            &agent,
+            "vault.gpu.jobs.start",
+            json!({"quote": quote, "resume": false}),
+        )
+        .await;
+        assert_ne!(status, StatusCode::OK, "{body}");
+        assert!(
+            refusal(&body).contains("result_manifest_not_json"),
+            "the agent's start with a text manifest is refused: {body}"
+        );
+        assert_eq!(fixture.gpu.called("create"), 0, "nothing was created");
+        assert!(
+            fixture.vault.gpu_jobs().expect("list the jobs").is_empty(),
+            "no job was written"
+        );
+
+        let (status, quote) =
+            as_agent(&fixture, &agent, "vault.gpu.jobs.quote", bound(manifest)).await;
+        assert_eq!(status, StatusCode::OK, "the agent quotes: {quote}");
+        let (status, started) = as_agent(
+            &fixture,
+            &agent,
+            "vault.gpu.jobs.start",
+            json!({"quote": quote, "resume": false}),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "the agent's own slip reads every row and the manifest is JSON: {started}"
+        );
+        assert_eq!(fixture.gpu.called("create"), 1);
+    });
+}

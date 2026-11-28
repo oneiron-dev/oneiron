@@ -2,8 +2,8 @@
 //! DESIGN 33 tests T26-T33c, the issuer's halves (row R4): the four status fields of a job on one
 //! of the vault's machines, a stop's confirmation, a sequence that never goes back, a node
 //! reset, the keys the issuer does not know, the issuer's drain guard with door 12, the
-//! write-off of door 10, and the returned result (EM-12 = A). The node's halves are in
-//! `node_job_status.rs`.
+//! write-off of door 10, the returned result (EM-12 = A), and its handoff manifest (row
+//! RSI-ARTIFACT-HANDOFF). The node's halves are in `node_job_status.rs`.
 //!
 //! Run on the fleet, not on a workstation:
 //! ```sh
@@ -25,11 +25,13 @@ use oneiron::authority::ActSurface;
 use oneiron::blob_artifact::ArtifactCreateRequest;
 use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::gpu_job::{
-    GpuConnectorError, GpuEndReason, GpuJobAccounting, GpuJobActor, GpuJobConnector, GpuJobError,
-    GpuJobLifecycle, GpuJobNodeView, GpuJobResultBinding, GpuJobState, GpuJobStatus, MeterVerdict,
+    GPU_JOB_HANDOFF_SCHEMA, GpuConnectorError, GpuEndReason, GpuJobAccounting, GpuJobActor,
+    GpuJobConnector, GpuJobError, GpuJobHandoff, GpuJobHandoffOutcome, GpuJobHandoffOutput,
+    GpuJobHandoffPin, GpuJobHandoffReceipt, GpuJobHandoffWorkload, GpuJobLifecycle, GpuJobNodeView,
+    GpuJobResultBinding, GpuJobState, GpuJobStatus, MeterVerdict,
 };
 use oneiron::job_dispatch::machine_records::{
-    MachineDrainClearRequest, ReturnRefusal, UnattributedSeconds, clear_drain_as,
+    HandoffReturn, MachineDrainClearRequest, ReturnRefusal, UnattributedSeconds, clear_drain_as,
 };
 use oneiron::job_dispatch::{DispatchClose, DispatchPhase};
 use oneiron::job_history::{HistoryViewer, JobHistoryAttempt, JobHistoryRequest, read_job_history};
@@ -1061,7 +1063,11 @@ fn result_binding(rig: &Rig) -> GpuJobResultBinding {
         .expect("the owner uploads the artifact")
         .expect("the artifact's view")
         .artifact_id;
-    GpuJobResultBinding { artifact, task }
+    GpuJobResultBinding {
+        artifact,
+        task,
+        manifest: None,
+    }
 }
 
 fn bound_inputs(rig: &Rig, binding: &GpuJobResultBinding) -> serde_json::Value {
@@ -2094,5 +2100,501 @@ fn a_bound_key_that_never_started_owes_no_return_and_housekeeping_asks_nothing()
                 .is_empty(),
             "nothing landed on the artifact"
         );
+    });
+}
+
+/// [`result_binding`] with an `application/json` artifact of the owner's that takes the job's
+/// handoff manifest (row RSI-ARTIFACT-HANDOFF).
+fn manifest_binding(rig: &Rig) -> GpuJobResultBinding {
+    let vault = rig.vault().as_ref();
+    let owner = rig
+        .owner
+        .revalidate(vault)
+        .expect("the owner on this vault");
+    let manifest = vault
+        .memory(owner, EdgeActorClass::Human)
+        .artifacts_create(&ArtifactCreateRequest {
+            name: "handoff.json".to_owned(),
+            media_type: "application/json".to_owned(),
+            content_base64: STANDARD.encode(b"{}"),
+            run_ref: None,
+            made_by: None,
+        })
+        .expect("the owner uploads the manifest artifact")
+        .expect("the artifact's view")
+        .artifact_id;
+    GpuJobResultBinding {
+        manifest: Some(manifest),
+        ..result_binding(rig)
+    }
+}
+
+/// The signed digest of `bytes` as the node hashed it.
+fn digest_of(bytes: &[u8]) -> (String, u64) {
+    (
+        format!("{:x}", Sha256::digest(bytes)),
+        u64::try_from(bytes.len()).expect("a small output"),
+    )
+}
+
+/// The handoff manifest `run`'s key lands, built here from the rig's own records: the job, the
+/// key, the node, the bound task, the workload pin its stored signed submit names, the exit 0
+/// after 20 measured seconds that [`end_with_outputs`] scripts, the vault's time of the `Ack`,
+/// and `outputs`.
+fn expected_handoff(
+    rig: &Rig,
+    run: &JobRun,
+    binding: &GpuJobResultBinding,
+    acked_at_ms: u64,
+    outputs: Vec<GpuJobHandoffOutput>,
+) -> GpuJobHandoff {
+    let dispatch = rig.dispatch(run);
+    let pin = oneiron_organ_protocol::from_slice::<SignedJobSubmit>(&dispatch.submit)
+        .expect("decode the stored submit")
+        .submit
+        .pin;
+    GpuJobHandoff {
+        schema: GPU_JOB_HANDOFF_SCHEMA.to_owned(),
+        job: run.job.id,
+        key: run.key().to_owned(),
+        machine: rig.node.machine,
+        task: binding.task,
+        workload: GpuJobHandoffWorkload {
+            digest: dispatch.workload,
+            pin: Some(GpuJobHandoffPin {
+                template: pin.template,
+                commit: pin.commit,
+                contract_sha256: pin.contract_sha256,
+            }),
+        },
+        unit: None,
+        end: Some(json!({"exited": {"code": 0}})),
+        measured_secs: Some(20),
+        acked_at_ms,
+        outputs,
+    }
+}
+
+/// BLAKE3 of `handoff`'s JSON, hex: the content hash its pending proposal lists.
+fn handoff_hash(handoff: &GpuJobHandoff) -> (String, usize) {
+    let bytes = serde_json::to_vec(handoff).expect("the manifest as JSON");
+    (blake3::hash(&bytes).to_hex().to_string(), bytes.len())
+}
+
+/// T1 and T2 (row RSI-ARTIFACT-HANDOFF; Engine ACCEPT 28 Nov 12:58, conditions 1 and 4): a
+/// result that binds a manifest gets one, after the node took the `Ack`, pending Keep, made by
+/// the task. It is exactly the engine's own records: the job, the key, the node, the task, the
+/// workload pin, the end, and per output its signed sha256 and size with its outcome. The
+/// returnable verdict is `landed` under its proposal's ref. The weights above the returnable
+/// bound are never fetched and show as `custody` on the node, with the vault's time of the
+/// `Ack` and no guessed keep days. No output's bytes or text are copied into it.
+#[test]
+fn a_bound_manifest_lands_after_the_ack_and_names_each_output_by_its_records() {
+    with_rig(|rig| {
+        let vault = rig.vault();
+        let binding = manifest_binding(rig);
+        let manifest = binding.manifest.expect("the bound manifest");
+        let head = vault
+            .blob_artifact_head(&manifest)
+            .expect("read the manifest's head");
+        let workload = rig.approve("handoff", FAR_EXPIRY_MS);
+        let verdict: &[u8] = br#"{"verdict":"pass","next":["rank one target"]}"#;
+        let weights: &[u8] = b"GGUF trained weights kept on the machine";
+        let run = rig.start_job_with_inputs(&workload, bound_inputs(rig, &binding), &rig.connector);
+        rig.clock.advance_secs(30);
+        end_with_outputs(
+            rig,
+            &run,
+            &[
+                ("verdict.json", verdict, true),
+                ("model.gguf", weights, false),
+            ],
+        );
+        rig.node.put_output(run.key(), "verdict.json", verdict);
+        rig.node.put_output(run.key(), "model.gguf", weights);
+        rig.settle(&run);
+
+        let calls = rig.node.calls();
+        assert_eq!(
+            fetched(&calls, run.key()),
+            vec!["verdict.json".to_owned()],
+            "the weights are never fetched: {calls:?}",
+        );
+        let returned = vault
+            .job_return(run.key())
+            .expect("read JOB_RETURN")
+            .expect("the key's return");
+        assert_eq!(returned.landed, vec!["verdict.json".to_owned()]);
+        assert_eq!(
+            returned.handoff,
+            Some(HandoffReturn::Landed),
+            "{returned:?}"
+        );
+        let acked_at_ms = returned.acknowledged_at_ms.expect("the node took the Ack");
+        let landed = vault
+            .pending_proposals(&binding.artifact)
+            .expect("list the artifact's proposals");
+        assert_eq!(landed.len(), 1, "the verdict waits on its artifact");
+        let waiting = vault
+            .pending_proposals(&manifest)
+            .expect("list the manifest's proposals");
+        assert_eq!(waiting.len(), 1, "one manifest waits");
+
+        let (verdict_sha, verdict_bytes) = digest_of(verdict);
+        let (weights_sha, weights_bytes) = digest_of(weights);
+        let expected = expected_handoff(
+            rig,
+            &run,
+            &binding,
+            acked_at_ms,
+            vec![
+                GpuJobHandoffOutput {
+                    name: "verdict.json".to_owned(),
+                    sha256: verdict_sha,
+                    bytes: verdict_bytes,
+                    outcome: GpuJobHandoffOutcome::Landed {
+                        artifact: binding.artifact,
+                        run_ref: landed[0].proposal_ref.clone(),
+                    },
+                },
+                GpuJobHandoffOutput {
+                    name: "model.gguf".to_owned(),
+                    sha256: weights_sha,
+                    bytes: weights_bytes,
+                    outcome: GpuJobHandoffOutcome::Custody {
+                        machine: rig.node.machine,
+                        key: run.key().to_owned(),
+                        acked_at_ms,
+                        node_keep_days: None,
+                    },
+                },
+            ],
+        );
+        let (hash, len) = handoff_hash(&expected);
+        assert_eq!(
+            (waiting[0].content_hash.as_str(), waiting[0].byte_len),
+            (hash.as_str(), len),
+            "the manifest is exactly the engine's records: {expected:?}",
+        );
+        let text = serde_json::to_string(&expected).expect("the manifest as JSON");
+        for copied in [
+            "rank one target",
+            "verdict\":\"pass",
+            "GGUF trained weights",
+        ] {
+            assert!(!text.contains(copied), "no output text is copied: {text}");
+        }
+        assert!(
+            waiting[0]
+                .proposal_ref
+                .starts_with(&format!("gpu-job-{}-handoff-", run.job.id.to_hex())),
+            "{}",
+            waiting[0].proposal_ref,
+        );
+        let made_by = waiting[0].made_by.as_ref().expect("its made_by");
+        assert_eq!(made_by.trigger, Some(MadeByTrigger::Task(binding.task)));
+        assert_eq!(made_by.process.identity, "gpu_job.handoff_manifest");
+        assert_eq!(
+            vault
+                .blob_artifact_head(&manifest)
+                .expect("read the manifest's head"),
+            head,
+            "pending Keep: nothing is published",
+        );
+        assert!(
+            vault
+                .job_returns_owed()
+                .expect("read the owed returns")
+                .is_empty(),
+            "nothing stays owed"
+        );
+    });
+}
+
+/// T3: a result that binds no manifest lands its outputs as before; its return records no
+/// handoff and nothing more is written.
+#[test]
+fn a_result_with_no_manifest_records_no_handoff() {
+    with_rig(|rig| {
+        let vault = rig.vault();
+        let binding = result_binding(rig);
+        assert!(
+            bound_inputs(rig, &binding)["result"]
+                .get("manifest")
+                .is_none(),
+            "an unbound manifest is left out of the quote"
+        );
+        let workload = rig.approve("handoff-none", FAR_EXPIRY_MS);
+        let verdict: &[u8] = br#"{"verdict":"plain"}"#;
+        let run = rig.start_job_with_inputs(&workload, bound_inputs(rig, &binding), &rig.connector);
+        rig.clock.advance_secs(30);
+        end_with_outputs(rig, &run, &[("verdict.json", verdict, true)]);
+        rig.node.put_output(run.key(), "verdict.json", verdict);
+        rig.settle(&run);
+        let returned = vault
+            .job_return(run.key())
+            .expect("read JOB_RETURN")
+            .expect("the key's return");
+        assert_eq!(returned.landed, vec!["verdict.json".to_owned()]);
+        assert!(returned.acknowledged_at_ms.is_some());
+        assert_eq!(returned.handoff, None, "no manifest, no handoff");
+        assert!(
+            vault
+                .job_returns_owed()
+                .expect("read the owed returns")
+                .is_empty()
+        );
+    });
+}
+
+/// T4 (ARCH-0075): a job the issuer stopped for a revoke lands no manifest. Its return records
+/// the handoff refused `job_revoked`, the node may clean, and nothing stays owed.
+#[test]
+fn a_job_stopped_for_a_revoke_lands_no_manifest() {
+    with_rig(|rig| {
+        let vault = rig.vault();
+        let binding = manifest_binding(rig);
+        let manifest = binding.manifest.expect("the bound manifest");
+        let workload = rig.approve("handoff-revoked", FAR_EXPIRY_MS);
+        let weights: &[u8] = b"GGUF weights of a revoked job";
+        let run = rig.start_job_with_inputs(&workload, bound_inputs(rig, &binding), &rig.connector);
+        rig.clock.advance_secs(10);
+        rig.node
+            .advance(run.key(), JobState::Running, Some(10), None, true);
+        rig.step(&run).expect("poll the running job");
+        vault
+            .revoke_job_workload(
+                WorkloadCaller::Owner(&rig.owner),
+                &WorkloadRef {
+                    workload: workload.clone(),
+                },
+                rig.clock.now_ms(),
+            )
+            .expect("the owner revokes the approval");
+        rig.step(&run).expect("step after the revoke");
+        assert!(
+            matches!(
+                rig.dispatch(&run).closed,
+                Some(DispatchClose::Revoked { .. })
+            ),
+            "the issuer closed the key for the revoke",
+        );
+        rig.clock.advance_secs(2);
+        let at_ms = rig.clock.now_ms();
+        let (sha256, bytes) = digest_of(weights);
+        rig.node.revise(run.key(), |receipt| {
+            receipt.state = JobState::Ended;
+            receipt.started = true;
+            receipt.end = Some(JobEnd::Stopped);
+            receipt.measured_secs = Some(12);
+            receipt.device_id = Some("scripted-gpu".to_owned());
+            receipt.release = DeviceRelease::Confirmed { at_ms };
+            receipt.outputs = OutputsState::Hashed(vec![OutputDigest {
+                name: "model.gguf".to_owned(),
+                sha256,
+                bytes,
+                returnable: false,
+            }]);
+        });
+        rig.settle(&run);
+
+        let returned = vault
+            .job_return(run.key())
+            .expect("read JOB_RETURN")
+            .expect("the key's return");
+        assert_eq!(
+            returned.handoff,
+            Some(HandoffReturn::Refused {
+                why: "job_revoked".to_owned()
+            }),
+        );
+        assert!(returned.acknowledged_at_ms.is_some(), "the node may clean");
+        assert!(
+            vault
+                .pending_proposals(&manifest)
+                .expect("list the manifest's proposals")
+                .is_empty(),
+            "no manifest waits"
+        );
+        assert!(
+            vault
+                .job_returns_owed()
+                .expect("read the owed returns")
+                .is_empty(),
+            "nothing stays owed"
+        );
+    });
+}
+
+/// T5: a manifest owed when the `Ack` did not arrive lands at the next housekeeping pass, once,
+/// with that `Ack`'s time; a pass after that asks nothing, and a second landing of the same
+/// key's manifest is refused by its consume-once ref.
+#[test]
+fn an_owed_manifest_lands_once_at_the_next_housekeeping_pass() {
+    with_rig(|rig| {
+        let vault = rig.vault();
+        let binding = manifest_binding(rig);
+        let manifest = binding.manifest.expect("the bound manifest");
+        let workload = rig.approve("handoff-late", FAR_EXPIRY_MS);
+        let verdict: &[u8] = br#"{"verdict":"late"}"#;
+        let run = rig.start_job_with_inputs(&workload, bound_inputs(rig, &binding), &rig.connector);
+        rig.clock.advance_secs(30);
+        end_with_outputs(rig, &run, &[("verdict.json", verdict, true)]);
+        rig.node.put_output(run.key(), "verdict.json", verdict);
+        rig.node.drop_next("ack");
+        rig.settle(&run);
+        let owed = vault
+            .job_return(run.key())
+            .expect("read JOB_RETURN")
+            .expect("the key's return");
+        assert_eq!(owed.landed, vec!["verdict.json".to_owned()]);
+        assert_eq!(owed.acknowledged_at_ms, None, "the Ack did not arrive");
+        assert_eq!(
+            owed.handoff,
+            Some(HandoffReturn::Owed),
+            "owed before the Ack"
+        );
+        assert!(
+            vault
+                .pending_proposals(&manifest)
+                .expect("list the manifest's proposals")
+                .is_empty(),
+            "no manifest before the Ack"
+        );
+
+        rig.clock.advance_secs(5);
+        rig.connector.housekeeping();
+        let done = vault
+            .job_return(run.key())
+            .expect("read JOB_RETURN")
+            .expect("the key's return");
+        assert_eq!(done.handoff, Some(HandoffReturn::Landed), "{done:?}");
+        let acked_at_ms = done.acknowledged_at_ms.expect("the Ack arrived");
+        let landed = vault
+            .pending_proposals(&binding.artifact)
+            .expect("list the artifact's proposals");
+        let (sha256, bytes) = digest_of(verdict);
+        let expected = expected_handoff(
+            rig,
+            &run,
+            &binding,
+            acked_at_ms,
+            vec![GpuJobHandoffOutput {
+                name: "verdict.json".to_owned(),
+                sha256,
+                bytes,
+                outcome: GpuJobHandoffOutcome::Landed {
+                    artifact: binding.artifact,
+                    run_ref: landed[0].proposal_ref.clone(),
+                },
+            }],
+        );
+        let waiting = vault
+            .pending_proposals(&manifest)
+            .expect("list the manifest's proposals");
+        assert_eq!(waiting.len(), 1, "one manifest waits");
+        assert_eq!(waiting[0].content_hash, handoff_hash(&expected).0);
+
+        let before = rig.node.calls().len();
+        rig.connector.housekeeping();
+        assert_eq!(
+            rig.node.calls().len(),
+            before,
+            "a further pass asks nothing"
+        );
+        let owner = rig
+            .owner
+            .revalidate(vault)
+            .expect("the owner on this vault");
+        let again = vault.propose_gpu_job_handoff(
+            run.job.id,
+            Some(WorkloadStarter::Owner(owner)),
+            &binding,
+            &GpuJobHandoffReceipt {
+                key: run.key().to_owned(),
+                machine: rig.node.machine,
+                workload: expected.workload.clone(),
+                end: expected.end.clone(),
+                measured_secs: expected.measured_secs,
+                outputs: Vec::new(),
+            },
+            rig.issuer,
+            rig.clock.now_ms(),
+        );
+        assert!(again.is_err(), "the key's manifest lands once: {again:?}");
+        assert_eq!(
+            vault
+                .pending_proposals(&manifest)
+                .expect("list the manifest's proposals")
+                .len(),
+            1
+        );
+    });
+}
+
+/// T5, no lane: a shared vault's agent starts a bound job whose only output stays on the node;
+/// the `Ack` does not arrive, and the owner then revokes the agent's Grant. The housekeeping
+/// pass takes the `Ack`, but no owner's lane holds the manifest: it stays owed after the `Ack`,
+/// listed among the owed returns, and nothing is written or fetched.
+#[test]
+fn a_manifest_no_lane_holds_stays_owed_after_the_ack() {
+    with_rig(|rig| {
+        let vault = rig.vault();
+        share_with_co_owner(rig);
+        let binding = manifest_binding(rig);
+        let manifest = binding.manifest.expect("the bound manifest");
+        let (agent_id, grant_ref) =
+            agent_with_grant(rig, "gpu-handoff-no-lane", &["read", START_VERB]);
+        let workload =
+            rig.approve_for_starters("handoff-no-lane", FAR_EXPIRY_MS, vec![grant_ref.to_hex()]);
+        let agent = vault
+            .memory(agent_id, EdgeActorClass::Agent)
+            .gpu_job_agent();
+        let weights: &[u8] = b"GGUF weights of a shared vault";
+        let run = rig.start_job_as(
+            GpuJobActor::Agent(&agent),
+            &workload,
+            bound_inputs(rig, &binding),
+            &rig.connector,
+        );
+        rig.clock.advance_secs(30);
+        end_with_outputs(rig, &run, &[("model.gguf", weights, false)]);
+        rig.node.drop_next("ack");
+        rig.settle(&run);
+        oneiron::verbs::revoke_agent_grant_as(
+            vault,
+            &rig.owner,
+            ActSurface::ThisInstall,
+            oneiron::verbs::AgentGrantRevokeRequest {
+                grant_ref,
+                seen: None,
+            },
+        )
+        .expect("the owner revokes the agent's Grant");
+        rig.connector.housekeeping();
+        rig.connector.housekeeping();
+
+        let owed = vault
+            .job_return(run.key())
+            .expect("read JOB_RETURN")
+            .expect("the key's return");
+        assert!(owed.acknowledged_at_ms.is_some(), "the node took the Ack");
+        assert_eq!(owed.handoff, Some(HandoffReturn::Owed), "{owed:?}");
+        assert!(
+            vault
+                .job_returns_owed()
+                .expect("read the owed returns")
+                .iter()
+                .any(|owed| owed.key == run.key()),
+            "the manifest stays owed",
+        );
+        assert!(
+            vault
+                .pending_proposals(&manifest)
+                .expect("list the manifest's proposals")
+                .is_empty(),
+            "nothing is written"
+        );
+        assert!(fetched(&rig.node.calls(), run.key()).is_empty());
     });
 }

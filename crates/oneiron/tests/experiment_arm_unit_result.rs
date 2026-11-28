@@ -198,6 +198,7 @@ fn a_claim_with_a_result_keeps_it() {
     let bound = claim(Some(GpuJobResultBinding {
         artifact: id(8),
         task: id(9),
+        manifest: None,
     }));
     let bytes = named(&bound);
     assert_ne!(hex(&bytes), hex(&named(&claim(None))));
@@ -251,6 +252,7 @@ fn an_ask_with_no_result_frames_main_s_digest() {
         Some(GpuJobResultBinding {
             artifact: id(8),
             task: id(9),
+            manifest: None,
         }),
         WaitRule::No,
     );

@@ -348,6 +348,9 @@ impl OrderHost for ServerOrderHost<'_> {
                 "artifact": result.artifact.to_hex(),
                 "task": result.task.to_hex(),
             });
+            if let Some(manifest) = result.manifest {
+                inputs["result"]["manifest"] = serde_json::Value::String(manifest.to_hex());
+            }
         }
         let request = GpuJobRequest {
             job_type: attempt.pin.template.clone(),

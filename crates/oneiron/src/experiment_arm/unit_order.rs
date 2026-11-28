@@ -205,6 +205,7 @@ fn order_unit_in_txn(
         result: request.result.map(|binding| ResultBinding {
             artifact: binding.artifact,
             task: binding.task,
+            manifest: binding.manifest,
         }),
         intent_key: Some(request.intent_key.clone()),
         after: None,
@@ -282,6 +283,7 @@ impl Vault {
                 .map(|binding| crate::gpu_job::GpuJobResultBinding {
                     artifact: binding.artifact,
                     task: binding.task,
+                    manifest: binding.manifest,
                 }),
             wait: WaitRule::No,
         };

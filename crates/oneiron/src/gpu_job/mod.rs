@@ -29,6 +29,7 @@ mod allowance;
 mod caller;
 mod claim_gate;
 mod connector;
+mod handoff_manifest;
 mod node_view;
 mod offer;
 mod permits;
@@ -46,6 +47,11 @@ pub use claim_gate::{LineStartRefused, UNIT_JOB_TYPE, UnitJobStart};
 pub use connector::{
     GpuConnectorError, GpuJobConnector, GpuJobEnd, GpuJobOutput, GpuJobSignal, GpuJobSpec,
     GpuJobTerminal, GpuResourceRef, GpuResourceStatus, GpuTermination, MeterVerdict,
+};
+pub use handoff_manifest::{
+    GPU_JOB_HANDOFF_SCHEMA, GpuJobHandoff, GpuJobHandoffDigest, GpuJobHandoffLanding,
+    GpuJobHandoffOutcome, GpuJobHandoffOutput, GpuJobHandoffPin, GpuJobHandoffReceipt,
+    GpuJobHandoffWorkload,
 };
 pub use node_view::{
     GpuJobAccounting, GpuJobLifecycle, GpuJobNodeReport, GpuJobNodeView, GpuJobObserved,

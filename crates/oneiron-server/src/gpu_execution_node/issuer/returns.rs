@@ -12,6 +12,13 @@
 //! A fetch or an acknowledgement that did not arrive is asked again at the next housekeeping
 //! pass. `JOB_RETURN` keeps what landed, what never will, and the acknowledgement.
 //!
+//! A binding that names a `manifest` (row RSI-ARTIFACT-HANDOFF) also gets the key's handoff
+//! manifest ([`Vault::propose_gpu_job_handoff`]): owed on `JOB_RETURN` once every output is
+//! decided, before the `Ack`, and landed after it, so each output the node keeps (not
+//! returnable) is named with the vault's time of the `Ack`. A manifest no lane can hold yet
+//! stays owed, and the housekeeping pass asks again. A job a revoke ended lands none (refused
+//! `job_revoked`).
+//!
 //! Whose lane a landing waits in (RESULT-LANDING-LAPSED-STARTER = A, Engine 25 Nov 23:19):
 //! - A job a revoke ended lands nothing (ARCH-0075: the host drops work after a revoke): one
 //!   the node ended for a revoke it saw itself (its end is `Revoked`), whatever the issuer's
@@ -28,8 +35,11 @@
 
 use std::sync::Arc;
 
-use oneiron::gpu_job::{GpuJob, GpuJobResultBinding, GpuJobResultFile};
-use oneiron::job_dispatch::machine_records::{JobReturn, ReturnRefusal};
+use oneiron::gpu_job::{
+    GpuJob, GpuJobHandoffDigest, GpuJobHandoffLanding, GpuJobHandoffPin, GpuJobHandoffReceipt,
+    GpuJobHandoffWorkload, GpuJobResultBinding, GpuJobResultFile,
+};
+use oneiron::job_dispatch::machine_records::{HandoffReturn, JobReturn, ReturnRefusal};
 use oneiron::job_dispatch::{DispatchClose, JobDispatch};
 use oneiron::job_workload::WorkloadStarter;
 use oneiron::machine_signature::MachineSignatures;
@@ -65,9 +75,30 @@ enum Outputs {
     Owed,
 }
 
+/// What a key's dispatched chunk binds, as one pass reads it.
+enum Bound {
+    /// No result is bound, the job row is gone, or the workload never started.
+    Unbound,
+    /// The job row or the node's outputs did not read: asked again at the next pass.
+    Owed,
+    /// A bound result, with the outputs the terminal receipt hashed.
+    Returned(Box<Returned>),
+}
+
+/// A key whose chunk binds a result.
+struct Returned {
+    job: GpuJob,
+    binding: GpuJobResultBinding,
+    starter: Option<WorkloadStarter>,
+    outputs: Vec<OutputDigest>,
+    /// A revoke ended the key: nothing lands (ARCH-0075).
+    revoked: bool,
+}
+
 impl ResultReturns {
     /// Returns the outputs of `row`'s key after its terminal receipt `ended`, then acknowledges
-    /// them. Best effort: what did not finish stays owed on `JOB_RETURN`.
+    /// them, then lands a bound handoff manifest. Best effort: what did not finish stays owed
+    /// on `JOB_RETURN`.
     pub fn return_outputs(&self, row: &JobDispatch, ended: &JobReceipt) {
         let opened = self.vault.record_job_return(
             &row.key,
@@ -83,13 +114,34 @@ impl ResultReturns {
                 return;
             }
         };
-        if owed.acknowledged_at_ms.is_some() {
+        let handoff_owed = owed.handoff == Some(HandoffReturn::Owed);
+        if owed.acknowledged_at_ms.is_some() && !handoff_owed {
             return;
         }
-        if matches!(self.land(row, ended, &owed), Outputs::Owed) {
-            return;
+        let returned = match self.bound(row, ended) {
+            Bound::Owed => return,
+            Bound::Unbound => None,
+            Bound::Returned(returned) => Some(returned),
+        };
+        if owed.acknowledged_at_ms.is_none() {
+            if let Some(returned) = &returned {
+                if matches!(self.land(row, returned, &owed), Outputs::Owed) {
+                    return;
+                }
+                // The manifest is owed before the `Ack`, so a pass cut off between them
+                // still lands it; a revoked job's is refused at once.
+                if returned.binding.manifest.is_some()
+                    && owed.handoff.is_none()
+                    && !self.owe_handoff(row, returned.revoked)
+                {
+                    return;
+                }
+            }
+            self.acknowledge(row);
         }
-        self.acknowledge(row);
+        if let Some(returned) = &returned {
+            self.hand_off(row, ended, returned);
+        }
     }
 
     /// The keys whose acknowledgement the issuer still owes: the housekeeping pass follows each
@@ -125,15 +177,15 @@ impl ResultReturns {
         }
     }
 
-    /// Lands each returnable output of `ended` that `owed` has not decided, when the job's quote
-    /// binds a result.
-    fn land(&self, row: &JobDispatch, ended: &JobReceipt, owed: &JobReturn) -> Outputs {
+    /// What `row`'s dispatched chunk binds, and the outputs `ended` (or the node's newest
+    /// receipt) hashed.
+    fn bound(&self, row: &JobDispatch, ended: &JobReceipt) -> Bound {
         let job = match self.vault.gpu_job(&row.job) {
             Ok(Some(job)) => job,
-            Ok(None) => return Outputs::Decided,
+            Ok(None) => return Bound::Unbound,
             Err(error) => {
                 tracing::warn!(key = %row.key, %error, "vault_machine: the job row not read; its outputs wait");
-                return Outputs::Owed;
+                return Bound::Owed;
             }
         };
         // The dispatched chunk's own quote (the row's key is its idempotency key), never a
@@ -152,17 +204,17 @@ impl ResultReturns {
             None => None,
         };
         let Some(binding) = binding else {
-            return Outputs::Decided;
+            return Bound::Unbound;
         };
         let outputs = match &ended.outputs {
             OutputsState::Hashed(outputs) => outputs.clone(),
-            OutputsState::Failed { .. } => return Outputs::Decided,
+            OutputsState::Failed { .. } => Vec::new(),
             // A key whose workload never started has no outputs the node will ever hash (it
             // hashes them only after a run's release), and the node takes its Ack at once.
-            OutputsState::Pending if !ended.started => return Outputs::Decided,
+            OutputsState::Pending if !ended.started => return Bound::Unbound,
             OutputsState::Pending => match self.newest_outputs(row) {
                 Some(outputs) => outputs,
-                None => return Outputs::Owed,
+                None => return Bound::Owed,
             },
         };
         // A revoke drops only work it ended: the node's own revoke, or the issuer's stop for
@@ -175,15 +227,33 @@ impl ResultReturns {
             _ => false,
         };
         let starter = submit_starter(row, &job);
+        Bound::Returned(Box::new(Returned {
+            job,
+            binding,
+            starter,
+            outputs,
+            revoked,
+        }))
+    }
+
+    /// Lands each returnable output of `returned` that `owed` has not decided.
+    fn land(&self, row: &JobDispatch, returned: &Returned, owed: &JobReturn) -> Outputs {
         let mut state = Outputs::Decided;
-        for output in outputs
+        for output in returned
+            .outputs
             .iter()
             .filter(|output| output.returnable && !owed.is_decided(&output.name))
         {
-            let landed = if revoked {
+            let landed = if returned.revoked {
                 Some(Err(JOB_REVOKED.to_owned()))
             } else {
-                self.land_one(row, &job, starter, &binding, output)
+                self.land_one(
+                    row,
+                    &returned.job,
+                    returned.starter,
+                    &returned.binding,
+                    output,
+                )
             };
             match landed {
                 Some(Ok(())) => self.decide(row, |owed| owed.landed.push(output.name.clone())),
@@ -271,6 +341,73 @@ impl ResultReturns {
         }
     }
 
+    /// Records `row`'s handoff manifest owed, or refused `job_revoked` for a job a revoke
+    /// ended, before the `Ack`. `false` when the write failed: the `Ack` waits for the next
+    /// pass.
+    fn owe_handoff(&self, row: &JobDispatch, revoked: bool) -> bool {
+        let state = if revoked {
+            HandoffReturn::Refused {
+                why: JOB_REVOKED.to_owned(),
+            }
+        } else {
+            HandoffReturn::Owed
+        };
+        let written = self.vault.record_job_return(
+            &row.key,
+            row.machine,
+            row.job,
+            self.clock.now_ms(),
+            |owed| {
+                owed.handoff.get_or_insert(state);
+            },
+        );
+        match written {
+            Ok(_) => true,
+            Err(error) => {
+                tracing::warn!(key = %row.key, %error, "vault_machine: the handoff manifest not owed; the acknowledgement waits for the next pass");
+                false
+            }
+        }
+    }
+
+    /// Lands `row`'s owed handoff manifest once the node took the `Ack`, and records it.
+    fn hand_off(&self, row: &JobDispatch, ended: &JobReceipt, returned: &Returned) {
+        let owed = match self.vault.job_return(&row.key) {
+            Ok(Some(owed)) => owed,
+            Ok(None) => return,
+            Err(error) => {
+                tracing::warn!(key = %row.key, %error, "vault_machine: the job's return not read; its handoff manifest waits");
+                return;
+            }
+        };
+        if owed.handoff != Some(HandoffReturn::Owed) || owed.acknowledged_at_ms.is_none() {
+            return;
+        }
+        let receipt = handoff_receipt(row, ended, &returned.outputs);
+        let landed = self.vault.propose_gpu_job_handoff(
+            returned.job.id,
+            returned.starter,
+            &returned.binding,
+            &receipt,
+            self.issuer,
+            self.clock.now_ms(),
+        );
+        let state = match landed {
+            Ok(GpuJobHandoffLanding::Landed(_)) => HandoffReturn::Landed,
+            Ok(GpuJobHandoffLanding::Owed) => {
+                tracing::info!(key = %row.key, "vault_machine: no lane holds the handoff manifest yet; it stays owed");
+                return;
+            }
+            Ok(GpuJobHandoffLanding::Refused(why)) => HandoffReturn::Refused {
+                why: why.to_owned(),
+            },
+            Err(error) => HandoffReturn::Refused {
+                why: format!("proposal_refused: {error}"),
+            },
+        };
+        self.decide(row, |owed| owed.handoff = Some(state));
+    }
+
     /// The outputs of the node's newest receipt of `row`'s key, once it hashed them and its
     /// receipt checks: none when its hashing failed, so nothing is fetched and the return ends,
     /// as for a stored `Failed` receipt. `None` while it has not, or did not answer.
@@ -335,6 +472,45 @@ impl ResultReturns {
                 tracing::debug!(key = %row.key, %error, "vault_machine: the acknowledgement did not arrive; asked again at the next pass");
             }
         }
+    }
+}
+
+/// What the handoff manifest of `row`'s key reads from its signed submit and its terminal
+/// receipt `ended`: the workload pin, the end, the measured seconds and `outputs`, the ones the
+/// return judged.
+fn handoff_receipt(
+    row: &JobDispatch,
+    ended: &JobReceipt,
+    outputs: &[OutputDigest],
+) -> GpuJobHandoffReceipt {
+    let pin = oneiron_organ_protocol::from_slice::<SignedJobSubmit>(&row.submit)
+        .ok()
+        .map(|signed| GpuJobHandoffPin {
+            template: signed.submit.pin.template,
+            commit: signed.submit.pin.commit,
+            contract_sha256: signed.submit.pin.contract_sha256,
+        });
+    GpuJobHandoffReceipt {
+        key: row.key.clone(),
+        machine: row.machine,
+        workload: GpuJobHandoffWorkload {
+            digest: row.workload.clone(),
+            pin,
+        },
+        end: ended
+            .end
+            .as_ref()
+            .and_then(|end| serde_json::to_value(end).ok()),
+        measured_secs: ended.measured_secs,
+        outputs: outputs
+            .iter()
+            .map(|output| GpuJobHandoffDigest {
+                name: output.name.clone(),
+                sha256: output.sha256.clone(),
+                bytes: output.bytes,
+                returnable: output.returnable,
+            })
+            .collect(),
     }
 }
 
