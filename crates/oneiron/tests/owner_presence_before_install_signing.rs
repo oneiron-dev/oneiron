@@ -266,7 +266,7 @@ fn a_declined_confirm_at_the_kit_confirm_of_a_root_request_leaves_this_installs_
         .export_signed_authority_history()
         .expect("the recorder's authority history");
     target
-        .import_signed_authority_history(&history)
+        .import_signed_authority_history(&history, &std::collections::BTreeMap::new())
         .expect("the target takes the request and its authority history");
     let owner = owner_proof(&target, person);
     enrol_owner_key(&target, &owner, &recorder.issuer);

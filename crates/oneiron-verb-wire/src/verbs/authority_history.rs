@@ -3,6 +3,8 @@
 
 pub use crate::authority::clock_repair::AuthorityClockRepair;
 pub use crate::authority::clock_repair::AuthorityClockRepairOutcome;
+use std::collections::BTreeMap;
+
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -14,6 +16,11 @@ use serde::Serialize;
 #[serde(deny_unknown_fields)]
 pub struct SignedAuthorityHistory {
     pub entries: Vec<String>,
+    /// The sealed rows' opaque AUTHORITY_OVERLAY rows beside their bodies:
+    /// base64 entry hash (BLAKE3 of the stored body bytes) to base64 row.
+    /// Empty for a history with no sealed row.
+    #[serde(default)]
+    pub overlays: BTreeMap<String, String>,
 }
 
 /// The content-addressed authority entry ids returned by the atomic import.

@@ -98,7 +98,7 @@ fn take_history(vault_a: &Vault, vault_b: &Vault, held: &mut BTreeSet<Vec<u8>>) 
         .into_iter()
         .filter(|row| !held.contains(row))
         .collect();
-    vault_b.import_signed_authority_history(&new)?;
+    vault_b.import_signed_authority_history(&new, &std::collections::BTreeMap::new())?;
     held.extend(new);
     Ok(())
 }

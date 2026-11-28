@@ -216,7 +216,7 @@ pub(crate) fn second_install_at_its_reserve_from(
     vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
     let taken = stored_history(&rooted.vault);
     vault
-        .import_signed_authority_history(&taken)
+        .import_signed_authority_history(&taken, &std::collections::BTreeMap::new())
         .expect("B takes A's history");
     assert_eq!(
         vault.authority_vault_id().expect("B's fold"),

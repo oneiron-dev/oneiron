@@ -429,6 +429,8 @@ struct AuthorityCheckpointRequest {
 #[serde(deny_unknown_fields)]
 struct AuthorityAppendRequest {
     entries: Vec<String>,
+    #[serde(default)]
+    overlays: std::collections::BTreeMap<String, String>,
 }
 
 /// The own-device grants a machine's live slips name, each a 32-hex entity
@@ -477,6 +479,8 @@ struct AuthorityAppendPartRequest {
     total: u64,
     offset: u64,
     part: String,
+    #[serde(default)]
+    overlay: Option<String>,
 }
 
 #[expect(

@@ -432,10 +432,13 @@ impl Fixture {
             encode_authority_log_entry_body(&row).expect("the signed bytes")
         };
         self.vault
-            .import_signed_authority_history(&[
-                handoff(seq, FIRST_HANDOFF_SEED),
-                handoff(seq + 1, SECOND_HANDOFF_SEED),
-            ])
+            .import_signed_authority_history(
+                &[
+                    handoff(seq, FIRST_HANDOFF_SEED),
+                    handoff(seq + 1, SECOND_HANDOFF_SEED),
+                ],
+                &std::collections::BTreeMap::new(),
+            )
             .expect("both handoffs land");
     }
 }

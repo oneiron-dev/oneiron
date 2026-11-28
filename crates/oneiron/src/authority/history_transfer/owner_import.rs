@@ -43,9 +43,11 @@ impl Vault {
     pub(crate) fn import_owner_authority_history(
         &self,
         blobs: &[Vec<u8>],
+        overlays: &CarriedOverlays,
     ) -> Result<Vec<EntityId>> {
         self.import_history_in(
             blobs,
+            overlays,
             |_| Ok(()),
             |_, _| Ok(()),
             ImportStaging::HoldingAtOwnerReserve,
@@ -77,7 +79,10 @@ impl Vault {
             return Ok(());
         }
         let blobs: Vec<Vec<u8>> = held.iter().map(|(_, bytes)| bytes.clone()).collect();
-        match self.import_owner_authority_history(&blobs) {
+        // A kept sealed row's overlay record stays in AUTHORITY_OVERLAY: the
+        // import that kept it staged the record in the writer it committed,
+        // and the vault's own record is read first (census L5-22).
+        match self.import_owner_authority_history(&blobs, &CarriedOverlays::new()) {
             Ok(_) => Ok(()),
             Err(error) if super::super::readonly_fold::is_history_incomplete(&error) => Err(error),
             // Refused for something other than the reserve, which no floor

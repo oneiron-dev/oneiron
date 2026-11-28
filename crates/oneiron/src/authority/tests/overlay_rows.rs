@@ -179,7 +179,9 @@ fn a_sealed_grant_kept_as_evidence_lands_whole_once_its_history_arrives() {
 
     // The missing history arrives; the import stores it and retries the evidence.
     let history = vault_a.export_signed_authority_history().unwrap();
-    vault_b.import_signed_authority_history(&history).unwrap();
+    vault_b
+        .import_signed_authority_history(&history, &std::collections::BTreeMap::new())
+        .unwrap();
 
     // The row lands whole and leaves the evidence.
     let stored = vault_b.get_authority_log_entry(&id).unwrap().unwrap();

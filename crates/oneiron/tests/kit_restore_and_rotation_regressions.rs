@@ -223,7 +223,10 @@ fn a_sealed_restore_of_a_revoked_kit_creates_no_machine_encryption_slot() {
     let keystore = Arc::new(MemoryKeystore::default());
     let target = source.fresh("target", keystore.clone());
     target
-        .import_signed_authority_history(&signed_history(source.manager.vault()))
+        .import_signed_authority_history(
+            &signed_history(source.manager.vault()),
+            &std::collections::BTreeMap::new(),
+        )
         .expect("import Genesis and the old kit's revocation");
     let machine = target
         .prepare_install_signing()
@@ -322,7 +325,7 @@ fn a_revocation_landing_during_a_sealed_restore_leaves_no_pad_or_roster_row() {
 
     let control = source.fresh("live-control", Arc::new(MemoryKeystore::default()));
     control
-        .import_signed_authority_history(&initial)
+        .import_signed_authority_history(&initial, &std::collections::BTreeMap::new())
         .expect("the live control's history");
     let live = old
         .restore(
@@ -353,7 +356,7 @@ fn a_revocation_landing_during_a_sealed_restore_leaves_no_pad_or_roster_row() {
         }),
     );
     target
-        .import_signed_authority_history(&initial)
+        .import_signed_authority_history(&initial, &std::collections::BTreeMap::new())
         .expect("start with R1 live");
     let before = target.authority_fold().expect("the starting fold");
     let generation_key = before
@@ -389,7 +392,7 @@ fn a_revocation_landing_during_a_sealed_restore_leaves_no_pad_or_roster_row() {
         .expect("sealed restore must reach its first DeviceSigning slot creation within 60 s");
     let machine = EntityId::from_bytes(slot.install).expect("the paused install id");
     target
-        .import_signed_authority_history(&revoked)
+        .import_signed_authority_history(&revoked, &std::collections::BTreeMap::new())
         .expect("commit kit A's revocation while restore is paused");
     let imported = target.authority_fold().expect("fold after import");
     assert!(imported.roster.get(&r1).expect("R1 on the roster").revoked);

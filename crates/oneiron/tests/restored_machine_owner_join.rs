@@ -141,7 +141,7 @@ fn sync_authority(from: &Vault, to: &Vault) {
     let history = from
         .export_signed_authority_history()
         .expect("FIXTURE: export authority history");
-    to.import_signed_authority_history(&history)
+    to.import_signed_authority_history(&history, &std::collections::BTreeMap::new())
         .expect("FIXTURE: import authority history");
 }
 

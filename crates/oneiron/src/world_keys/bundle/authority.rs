@@ -37,7 +37,8 @@ use super::{
 };
 use crate::Vault;
 use crate::authority::{
-    AuthorityEntryHash, AuthorityEntryRead, authority_entry_hash, read_authority_log_entry_body,
+    AuthorityEntryHash, AuthorityEntryRead, CarriedOverlays, authority_entry_hash,
+    read_authority_log_entry_body,
 };
 use crate::entity_id::EntityId;
 #[cfg(feature = "sync")]
@@ -371,7 +372,7 @@ impl Vault {
                 continue;
             }
             let blobs: Vec<Vec<u8>> = arriving.into_values().map(|entry| entry.bytes).collect();
-            match self.import_signed_authority_history(&blobs) {
+            match self.import_signed_authority_history(&blobs, &CarriedOverlays::new()) {
                 Ok(_) => import.imported += blobs.len(),
                 Err(_) => import.refused += 1,
             }

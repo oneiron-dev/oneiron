@@ -212,7 +212,7 @@ fn b_lands_the_proven_mark(
     );
     second
         .vault
-        .import_signed_authority_history(rows)
+        .import_signed_authority_history(rows, &std::collections::BTreeMap::new())
         .expect("B lands the import mark A carries with the owner key's proof past its reserve");
     let fold = second.vault.authority_fold().expect("B's fold");
     assert!(
@@ -238,7 +238,9 @@ fn b_holds_the_unproven_mark(
         "A carries the import mark unproven: {} cosigns",
         entry.cosigns.len()
     );
-    let import = second.vault.import_signed_authority_history(rows);
+    let import = second
+        .vault
+        .import_signed_authority_history(rows, &std::collections::BTreeMap::new());
     assert!(
         import
             .as_ref()

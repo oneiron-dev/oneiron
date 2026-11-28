@@ -221,7 +221,7 @@ impl Machine {
             .export_signed_authority_history()
             .expect("FIXTURE: the primary's history exports");
         vault
-            .import_signed_authority_history(&history)
+            .import_signed_authority_history(&history, &std::collections::BTreeMap::new())
             .expect("FIXTURE: the joined vault takes the history");
         let issuer = host_issuer();
         vault

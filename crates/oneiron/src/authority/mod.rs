@@ -290,7 +290,11 @@ pub use recovery_hold::{
     RecoveryHoldState, RecoveryHoldView,
 };
 // Census L5-22: this vault's reads of a sealed authority row.
-pub(crate) use overlay_rows::open_vault_authority_body_in_txn;
+pub(crate) use overlay_rows::{
+    AUTHORITY_OVERLAY_ROW_MAX, CarriedOverlays, carried_overlays_in_txn,
+    open_carried_authority_body_in_txn, open_vault_authority_body_in_txn,
+    stage_carried_overlays_in_txn,
+};
 // The export secret work body and its sealed result (FIX 4624(b)).
 pub use export_secret_work::{
     ExportSecretSupplement, HolderExportRequest, HolderExportState, HolderExportUnassigned,

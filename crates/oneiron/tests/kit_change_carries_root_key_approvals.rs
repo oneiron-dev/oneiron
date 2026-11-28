@@ -1043,7 +1043,7 @@ fn a_standing_the_old_root_key_signed_but_already_removed_is_not_carried() {
     );
     source
         .vault
-        .import_signed_authority_history(&new)
+        .import_signed_authority_history(&new, &std::collections::BTreeMap::new())
         .expect("the source takes the fresh rows");
     let live = source
         .vault

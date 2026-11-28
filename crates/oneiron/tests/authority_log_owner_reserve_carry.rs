@@ -80,7 +80,7 @@ fn the_owners_removal_another_install_proves_lands_past_this_installs_reserve() 
     let (rows, entry, hash) = the_row_a_wrote(&rooted, &second, |op| removes(op, flooder.machine));
     second
         .vault
-        .import_signed_authority_history(&rows)
+        .import_signed_authority_history(&rows, &std::collections::BTreeMap::new())
         .expect("B lands the removal A carries with the owner key's proof past its reserve");
     let fold = second.vault.authority_fold().expect("B's fold");
     assert!(
@@ -135,7 +135,9 @@ fn the_owners_removal_another_install_carries_unproven_waits_past_this_installs_
         entry.cosigns.is_empty(),
         "A holds no owner key, so it carries the removal unproven"
     );
-    let import = second.vault.import_signed_authority_history(&rows);
+    let import = second
+        .vault
+        .import_signed_authority_history(&rows, &std::collections::BTreeMap::new());
     assert!(
         import
             .as_ref()
@@ -195,7 +197,7 @@ fn the_owners_setting_another_install_proves_lands_past_this_installs_reserve() 
     });
     second
         .vault
-        .import_signed_authority_history(&rows)
+        .import_signed_authority_history(&rows, &std::collections::BTreeMap::new())
         .expect("B lands the setting act A carries with the owner key's proof past its reserve");
     let fold = second.vault.authority_fold().expect("B's fold");
     assert!(

@@ -15,7 +15,7 @@ use owner_import::ImportStaging;
 
 mod page;
 
-pub(super) use page::{DecodedRow, PageVerdict, decode_page, page_root};
+pub(super) use page::{DecodedRow, PageVerdict, decode_page_in_txn, page_root};
 
 mod re_root_staging;
 
@@ -208,6 +208,16 @@ impl Vault {
     /// the covered prefix: until every covered row is physically held here,
     /// the export refuses with the history it lacks ([`unheld_prefix`]).
     pub fn export_signed_authority_history(&self) -> Result<Vec<Vec<u8>>> {
+        Ok(self.export_signed_authority_history_with_overlays()?.0)
+    }
+
+    /// [`Self::export_signed_authority_history`] with the opaque
+    /// AUTHORITY_OVERLAY row of each sealed row it serves, read in the same
+    /// read txn as the bodies (census L5-22 1a-ii): the owner route carries
+    /// both, and the import stages the rows with the bodies.
+    pub(crate) fn export_signed_authority_history_with_overlays(
+        &self,
+    ) -> Result<(Vec<Vec<u8>>, CarriedOverlays)> {
         let txn = self.store.env.read_txn()?;
         let mut history = history_in_txn(self, &txn)?;
         if let Some(adopted) =
@@ -235,7 +245,9 @@ impl Vault {
             emitted.insert(hash);
             result.push(bytes);
         }
-        Ok(result)
+        let overlays =
+            carried_overlays_in_txn(&self.store, &txn, result.iter().map(Vec::as_slice))?;
+        Ok((result, overlays))
     }
 
     /// Imports a complete signed history, atomically, before an in-chain ReRoot.
@@ -249,8 +261,12 @@ impl Vault {
     /// hold, is left out with each row standing on it (H72), so the history
     /// of a vault that stored a stranger's row before #1449 imports without
     /// them.
-    pub fn import_signed_authority_history(&self, blobs: &[Vec<u8>]) -> Result<Vec<EntityId>> {
-        self.import_signed_authority_history_judged(blobs, |_| Ok(()), |_, _| Ok(()))
+    pub fn import_signed_authority_history(
+        &self,
+        blobs: &[Vec<u8>],
+        overlays: &CarriedOverlays,
+    ) -> Result<Vec<EntityId>> {
+        self.import_signed_authority_history_judged(blobs, overlays, |_| Ok(()), |_, _| Ok(()))
     }
 
     /// The import with `prelude` first in its write txn and `judge` on the fold it would commit,
@@ -258,31 +274,40 @@ impl Vault {
     pub(crate) fn import_signed_authority_history_judged(
         &self,
         blobs: &[Vec<u8>],
+        overlays: &CarriedOverlays,
         prelude: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
         judge: impl FnOnce(&heed::RoTxn<'_>, &AuthorityFold) -> Result<()>,
     ) -> Result<Vec<EntityId>> {
-        self.import_history_in(blobs, prelude, judge, ImportStaging::Whole)
+        self.import_history_in(blobs, overlays, prelude, judge, ImportStaging::Whole)
     }
 
-    /// The import of `blobs`, its rows staged as `staging` says: the ids of
+    /// The import of `blobs`, with the overlay records `overlays` carries
+    /// beside its sealed rows, its rows staged as `staging` says: the ids of
     /// the rows it holds now, each row it kept at the owner's reserve left
     /// out ([`ImportStaging::HoldingAtOwnerReserve`]).
     fn import_history_in(
         &self,
         blobs: &[Vec<u8>],
+        overlays: &CarriedOverlays,
         prelude: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<()>,
         judge: impl FnOnce(&heed::RoTxn<'_>, &AuthorityFold) -> Result<()>,
         staging: ImportStaging,
     ) -> Result<Vec<EntityId>> {
-        let mut decoded = Vec::with_capacity(blobs.len());
-        for bytes in blobs {
-            let entry = decode_authority_log_entry_body(bytes)?;
-            decoded.push((authority_entry_hash(&entry)?, bytes.clone(), entry));
-        }
         let watch = crate::federation::StaleSweepWatch::begin(self);
         let mut txn = self.store.env.write_txn()?;
         let was_unjoined = crate::setting::restored::possibly_restored_unjoined_in_txn(self, &txn)?;
         prelude(&mut txn)?;
+        stage_carried_overlays_in_txn(
+            &self.store,
+            &mut txn,
+            blobs.iter().map(Vec::as_slice),
+            overlays,
+        )?;
+        let mut decoded = Vec::with_capacity(blobs.len());
+        for bytes in blobs {
+            let entry = open_carried_authority_body_in_txn(&self.store, &txn, bytes, overlays)?;
+            decoded.push((authority_entry_hash(&entry)?, bytes.clone(), entry));
+        }
         let carried: BTreeMap<_, _> = decoded
             .iter()
             .map(|(hash, _, entry)| (*hash, entry.clone()))

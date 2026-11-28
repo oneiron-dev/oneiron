@@ -218,6 +218,7 @@ impl Home {
                     .vault
                     .export_signed_authority_history()
                     .map_err(at("the home's authority history"))?,
+                &std::collections::BTreeMap::new(),
             )
             .map_err(at("the device takes the home's authority history"))?;
         vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
@@ -312,7 +313,7 @@ impl Home {
         for device in devices {
             device
                 .vault
-                .import_signed_authority_history(&history)
+                .import_signed_authority_history(&history, &std::collections::BTreeMap::new())
                 .map_err(at("a device takes the home's authority history"))?;
         }
         Ok(())
@@ -802,6 +803,7 @@ async fn full_copy_holder_first() -> TestResult {
                 .vault
                 .export_signed_authority_history()
                 .map_err(at("the marked peer's authority history"))?,
+            &std::collections::BTreeMap::new(),
         )
         .map_err(at("the asker folds the full-copy mark"))?;
     assert_eq!(

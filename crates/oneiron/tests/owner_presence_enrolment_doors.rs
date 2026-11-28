@@ -698,10 +698,13 @@ fn fork_rootless(served: &ServedVault, owner_key: &SigningKey) {
     );
     served
         .vault
-        .import_signed_authority_history(&[
-            encode_authority_log_entry_body(&first).expect("the signed bytes"),
-            encode_authority_log_entry_body(&second).expect("the signed bytes"),
-        ])
+        .import_signed_authority_history(
+            &[
+                encode_authority_log_entry_body(&first).expect("the signed bytes"),
+                encode_authority_log_entry_body(&second).expect("the signed bytes"),
+            ],
+            &std::collections::BTreeMap::new(),
+        )
         .expect("both handoffs land");
 }
 

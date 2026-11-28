@@ -118,7 +118,7 @@ fn b_lands_the_proven_act(
     );
     second
         .vault
-        .import_signed_authority_history(rows)
+        .import_signed_authority_history(rows, &std::collections::BTreeMap::new())
         .expect("B lands the act A carries with the owner key's proof past its reserve");
     let fold = second.vault.authority_fold().expect("B's fold");
     assert!(
@@ -164,7 +164,9 @@ fn the_owners_agent_grant_another_install_carries_unproven_waits_past_this_insta
         entry.cosigns.is_empty(),
         "A holds no owner key, so it carries the act unproven"
     );
-    let import = second.vault.import_signed_authority_history(&rows);
+    let import = second
+        .vault
+        .import_signed_authority_history(&rows, &std::collections::BTreeMap::new());
     assert!(
         import
             .as_ref()

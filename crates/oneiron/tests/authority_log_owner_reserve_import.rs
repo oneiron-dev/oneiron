@@ -84,7 +84,7 @@ fn host_root_row_from_a_second_install(rooted: &Rooted) -> Vec<u8> {
     other.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
     let history = stored_history(&rooted.vault);
     other
-        .import_signed_authority_history(&history)
+        .import_signed_authority_history(&history, &std::collections::BTreeMap::new())
         .expect("the second install takes the history");
     let issuer = oneiron::test_support::test_host_issuer();
     oneiron::test_support::bind_host_actor(&other, &issuer, EntityId::now(), "agent")
@@ -105,6 +105,7 @@ fn host_root_row_from_a_second_install(rooted: &Rooted) -> Vec<u8> {
 fn signed(rows: &[Vec<u8>]) -> SignedAuthorityHistory {
     SignedAuthorityHistory {
         entries: rows.iter().map(|row| STANDARD.encode(row)).collect(),
+        overlays: std::collections::BTreeMap::new(),
     }
 }
 
@@ -139,7 +140,7 @@ fn the_owners_import_past_the_reserve_lands_his_row_and_the_held_row_once_the_fl
     ];
     let refused = rooted
         .vault
-        .import_signed_authority_history(&import)
+        .import_signed_authority_history(&import, &std::collections::BTreeMap::new())
         .expect_err("the whole-history door refuses an import past the reserve whole");
     assert_eq!(refused.kind(), ErrorKind::AuthorityLogFull, "{refused}");
     assert!(

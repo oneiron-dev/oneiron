@@ -4811,7 +4811,7 @@ fn signed_owner_project_depth_replays_to_existing_and_new_replicas() -> Result<(
             1,
         )?;
         crate::subject_model::tests::authorization::host_owner_writer(b)?;
-        b.import_signed_authority_history(&history)?;
+        b.import_signed_authority_history(&history, &std::collections::BTreeMap::new())?;
         if existing {
             let (birth_id, birth_bytes) = contributions
                 .iter()
@@ -4988,7 +4988,10 @@ fn project_depth_edit_waits_for_owner_binding_through_retry_drain() -> Result<()
         1,
         b"owner",
     )?;
-    target.import_signed_authority_history(&history[..1])?; // rooted, but no BindActor
+    target.import_signed_authority_history(
+        &history[..1],
+        &crate::authority::CarriedOverlays::new(),
+    )?; // rooted, but no BindActor
     let key = WindowKey::new("2026-03");
     let stamp = key.start_timestamp().expect("window start") + 60;
     let doc = create_window_doc("project-first", &key);
@@ -5008,7 +5011,10 @@ fn project_depth_edit_waits_for_owner_binding_through_retry_drain() -> Result<()
     );
     forward_rematerialize(&target, &doc, &materializer, &key)?;
     assert_eq!(target.project(id)?.unwrap().depth, 0);
-    target.import_signed_authority_history(&history[1..])?;
+    target.import_signed_authority_history(
+        &history[1..],
+        &crate::authority::CarriedOverlays::new(),
+    )?;
     assert_eq!(target.project(id)?.unwrap().depth, 2);
     Ok(())
 }
@@ -5053,7 +5059,7 @@ fn concurrent_signed_project_depth_facts_follow_loro_winner_in_either_exchange_o
             // the birth's frontier verifies on B.
             let authority = a.export_signed_authority_history()?;
             crate::subject_model::tests::authorization::host_owner_writer(&b)?;
-            b.import_signed_authority_history(&authority)?;
+            b.import_signed_authority_history(&authority, &std::collections::BTreeMap::new())?;
             // B takes A's birth instead of birthing: each birth mints its
             // vault's own project slip, so two births would fork the birth
             // frontier into two birth ids (a quarantined pair), while the
@@ -5200,7 +5206,8 @@ fn concurrent_signed_project_depth_facts_follow_loro_winner_in_either_exchange_o
                 1,
             )?;
             crate::subject_model::tests::authorization::host_owner_writer(&fresh)?;
-            fresh.import_signed_authority_history(&authority)?;
+            fresh
+                .import_signed_authority_history(&authority, &std::collections::BTreeMap::new())?;
             for _ in 0..2 {
                 forward_rematerialize(&fresh, &first, &Materializer::new(), &window)?;
             }
@@ -5390,7 +5397,7 @@ fn pre_regrant_depth_edit_stays_refused_through_both_replay_doors() -> Result<()
             1,
             b"person",
         )?;
-        b.import_signed_authority_history(&history)?;
+        b.import_signed_authority_history(&history, &crate::authority::CarriedOverlays::new())?;
         assert_eq!(b.project(root_a)?.unwrap().depth, 10);
         let live = create_window_doc("regrant-live", &key);
         let materializer = Arc::new(Materializer::new());
@@ -5470,7 +5477,10 @@ fn signed_project_edit_before_predecessor_survives_forward_retry_drain() -> Resu
         1,
     )?;
     crate::subject_model::tests::authorization::host_owner_writer(&target)?;
-    target.import_signed_authority_history(&source.export_signed_authority_history()?)?;
+    target.import_signed_authority_history(
+        &source.export_signed_authority_history()?,
+        &std::collections::BTreeMap::new(),
+    )?;
     let window = WindowKey::new("2026-03");
     let stamp = window.start_timestamp().expect("window start") + 60;
     let doc = create_window_doc("out-of-order-project-policy", &window);
