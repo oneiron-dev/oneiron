@@ -381,7 +381,7 @@ pub(super) fn run_lane_reads(
         .map_err(|error| mcp_engine_error("run board row admission failed", error))
 }
 
-/// [`mcp_board_sections`] for a pumped run's agent: VERBS, WORLDS, the
+/// [`mcp_board_sections`] for a pumped run's agent: WORLDS, the
 /// MEMORIES the policy manifest and its hook `pins` reach, TASKS with its
 /// people and children, the SCRATCHPAD of the run's bound `session` (the
 /// pad durable code run `run` writes there, when the board names one), PACKS
