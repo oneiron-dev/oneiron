@@ -53,6 +53,11 @@ crate::side_table::side_tables! {
     /// the card id.
     PROJECT_MINT_TAP: VaultMeta b"project.mint.tap.v1/" Named
         [restore: content] [family: unclassified] [tier: canonical];
+    /// The owner's mint of one project through `vault.projects.mint` (FIX
+    /// [OWNER-PROJECT-MINT-DOOR]): the name, the parent and the wall time. It leaves with the
+    /// project. Key: id16 (project).
+    PROJECT_OWNER_MINT: VaultMeta b"project.owner_mint.v1/" Named
+        [restore: content] [family: unclassified] [tier: canonical];
     /// A host-held project card (OF-501): the card, its conversation, the agent that drafted it
     /// and its state. Key: blake3 hash32 of the card id.
     PROJECT_PROPOSAL_CARD: VaultMeta b"project.proposal.card.v1/" Named

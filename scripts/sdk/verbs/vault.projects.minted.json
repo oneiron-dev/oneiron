@@ -1,0 +1,19 @@
+{
+  "name": "vault.projects.minted",
+  "description": "The owner reads one page of the projects vault.projects.mint minted and the vault still serves, in mint order: name, parent, parents now and mint time.",
+  "input": "crate::workspace_roster::OwnerMintedProjectsRequest",
+  "output": "crate::workspace_roster::OwnerMintedProjectsPage",
+  "call": "memory.vault().owner_minted_projects(&memory.embedded_owner(\"vault.projects.minted\")?, &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "act_class": "read",
+  "mcp_fields": {
+    "spec": "$"
+  },
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "owner"
+}
