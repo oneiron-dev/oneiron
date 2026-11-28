@@ -556,11 +556,6 @@ pub(super) fn promote_one_answering(
                 )
             }
             None => {
-                vault.record_note_dependencies_in_txn(
-                    wtxn,
-                    &candidate.claim_id,
-                    &unverified_cited_notes,
-                )?;
                 // The signed birth copy of the belief depends on the same NOTEs.
                 if envelope.machine_signature().is_some() {
                     vault.record_signed_birth_note_dependencies_in_txn(
