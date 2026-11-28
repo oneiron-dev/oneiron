@@ -342,7 +342,6 @@ fn pre_move_fixture_coverage_is_explicit() {
         "AUTHORITY_HOST_ROOT_SLIP_CACHE",
         "AUTHORITY_MESH_MACHINE",
         "AUTHORITY_PAIRING_WRITE_FACET",
-        "AUTHORITY_PAIRING_SEAT",
         "AUTHORITY_RECOVERY_HOLD_SLOT_PENDING",
         "AUTHORITY_SLIP_PROOF_CLOCK",
         "AUTHORITY_SLIP_PROOF_NOT_BEFORE",
@@ -717,6 +716,9 @@ fn pre_move_fixture_coverage_is_explicit() {
         "WEAVE_WRONG_LINK_LABEL",
         "WIRE_LIMIT_QUESTION",
         "WORK_TALK_REGISTRATION",
+        // FIX MARKET-SEAT-MODEL-STAMP, out of order: open PRs fill the
+        // AUTHORITY_ gaps above.
+        "AUTHORITY_PAIRING_SEAT",
     ]
     .into_iter()
     .collect();
