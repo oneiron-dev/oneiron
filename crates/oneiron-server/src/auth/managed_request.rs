@@ -309,6 +309,7 @@ impl CoreAuth {
             peer: oneiron::authority::PeerMachine::Unknown,
             facets_owner_exempt: false,
             off_record_session: None,
+            session_workspace: None,
             managed_owner: Some(holder),
             managed_person: None,
         }

@@ -472,6 +472,7 @@ impl AgentVerbDoor for RunHostDoor {
             return Ok(Err(AgentVerbRefusal {
                 hook_notice: None,
                 code: MEMORY_CODE_INTERNAL.to_owned(),
+                reason_codes: Vec::new(),
             }));
         };
         self.observed(
@@ -489,6 +490,7 @@ impl AgentVerbDoor for RunHostDoor {
                     (None, _) => Ok(Err(AgentVerbRefusal {
                         hook_notice: None,
                         code: error.code,
+                        reason_codes: error.reason_codes,
                     })),
                 },
             },
@@ -519,6 +521,7 @@ impl AgentVerbDoor for RunHostDoor {
             Err(error) => Err(AgentVerbRefusal {
                 hook_notice: None,
                 code: error.code,
+                reason_codes: error.reason_codes,
             }),
         })
     }
@@ -555,6 +558,7 @@ impl AgentVerbDoor for RunHostDoor {
             .map_err(|error| AgentVerbRefusal {
                 hook_notice: None,
                 code: error.code,
+                reason_codes: error.reason_codes,
             })
     }
 
@@ -609,10 +613,12 @@ impl AgentVerbDoor for RunHostDoor {
             Ok(Err(error)) => Err(AgentVerbRefusal {
                 hook_notice: None,
                 code: error.code,
+                reason_codes: error.reason_codes,
             }),
             Err(_) => Err(AgentVerbRefusal {
                 hook_notice: None,
                 code: MEMORY_CODE_INTERNAL.to_owned(),
+                reason_codes: Vec::new(),
             }),
         })
     }

@@ -281,6 +281,7 @@ pub(crate) fn put_held_connector_call(vault: &Vault, held_at_ms: u64) -> crate::
         sweep_dry_run_forced: false,
         live_use: false,
         code_consent_wait: None,
+        run_served_person_rows: false,
         source_rows: Some(Vec::new()),
         approval: None,
         input: None,

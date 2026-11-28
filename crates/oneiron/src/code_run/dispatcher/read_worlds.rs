@@ -405,9 +405,9 @@ impl HostSelfDispatcher<'_> {
 
 /// Whether `outcome` carries no row of the vault (FIX 6130): a speech
 /// receipt, a context descriptor, a blocked report's receipt, an own write's
-/// id, a failure in engine words, or a refusal that carries no reason of its
-/// own. Any other answer marks its run's ledger unknown unless its own
-/// capture noted it: a refusal's reasons may be a hook's own words.
+/// id, a failure in engine words, or a refusal whose reasons, if any, are
+/// all row-free. Any other answer marks its run's ledger unknown unless its
+/// own capture noted it: a refusal's reasons may be a hook's own words.
 fn serves_no_rows(outcome: &SelfDispatchOutcome) -> bool {
     match outcome {
         SelfDispatchOutcome::Speech(_)
@@ -415,7 +415,21 @@ fn serves_no_rows(outcome: &SelfDispatchOutcome) -> bool {
         | SelfDispatchOutcome::ReportBlocked { .. }
         | SelfDispatchOutcome::MemoryWrite(_)
         | SelfDispatchOutcome::Failed(_) => true,
-        SelfDispatchOutcome::Denied(denied) => denied.reason_codes.is_empty(),
+        SelfDispatchOutcome::Denied(denied) => {
+            denied.reason_codes.iter().all(|code| row_free_reason(code))
+        }
         _ => false,
     }
+}
+
+/// The reason-code families a door types from the call alone, never from a
+/// row (FIX CODE-MODE-DENIAL-REASONS): an argument check (`args.*`, the MCP
+/// door's `tool_args_invalid`, whose field codes name schema fields only)
+/// and a refusal of what a caller's own code may not call (`caller_code.*`).
+const ROW_FREE_REASON_PREFIXES: [&str; 2] = ["args.", "caller_code."];
+
+fn row_free_reason(code: &str) -> bool {
+    ROW_FREE_REASON_PREFIXES
+        .iter()
+        .any(|prefix| code.starts_with(prefix))
 }

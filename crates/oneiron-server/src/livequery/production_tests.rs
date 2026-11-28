@@ -583,7 +583,16 @@ async fn rpc_engine_failures_keep_exact_codes_messages_and_suggestions() {
     let memory = server
         .vault()
         .memory(EntityId::from_hex(ACTOR).unwrap(), EdgeActorClass::Human);
-    let missing = "ffffffffffffffffffffffffffffffff".to_owned();
+    let missing = "0123456789abcdef0123456789abcdef".to_owned();
+    let hydrate = rpc(&server, &auth, "vault.hydrate", json!({"refs":[missing]}));
+    assert_eq!(hydrate["result"]["value"], json!([]), "{hydrate}");
+    assert_eq!(
+        hydrate["result"]["missing"],
+        json!([{"ref": missing, "reason": "not_found"}])
+    );
+    assert!(hydrate["result"]["narrowing"].is_object(), "{hydrate}");
+    assert_eq!(memory.hydrate(&[missing]).unwrap_err().code, "NOT_FOUND");
+
     // High recall on a host with no reranker now runs unreranked, so the
     // recall case is a scope the engine refuses on both doors.
     let cases = [
@@ -603,11 +612,6 @@ async fn rpc_engine_failures_keep_exact_codes_messages_and_suggestions() {
                     None,
                 )
                 .unwrap_err(),
-        ),
-        (
-            "vault.hydrate",
-            json!({"refs":[missing]}),
-            memory.hydrate(&[missing]).unwrap_err(),
         ),
         (
             "vault.neighbors",

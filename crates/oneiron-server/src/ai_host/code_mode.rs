@@ -1,9 +1,10 @@
-//! MCP `execute_code` on the served vault: the checked-in QuickJS component,
-//! run by the engine executor on the generative seat.
+//! MCP code runs on the served vault: the checked-in QuickJS component, run by the engine
+//! executor, with the generative seat for task runs (FIX EXECUTE-CALLER-CODE).
 //!
-//! Bound when `[models]` fills that seat and `[models.code_mode]` names the
-//! prompt package the executor's wire prompt resolves from. Otherwise
-//! `execute_code` stays unlisted, as on a server with no model.
+//! Bound when the component verifies: `execute` and `resume` list with caller-source readiness
+//! alone, even with no `[models]`, prompt package or chat seat. The task provider binds only
+//! when `[models]` fills the generative seat and `[models.code_mode]` names the prompt package
+//! the executor's wire prompt resolves from.
 //!
 //! A browser subgoal's step after a batch or library run of it ended
 //! `NEEDS_AGENT` runs on `[models.roles.browser_planner]` instead, as its
@@ -30,6 +31,7 @@ use oneiron::{
     BudgetGuard, BudgetLease, EntityId, LlmBackend, LlmCapability, LlmError, LlmGenerateFuture,
     LlmRequest, LlmStreamResult, ModelId, ModelLocality, ModelTierRef, Vault,
 };
+use oneiron_agent_runtime::code_sandbox::quickjs::QuickJsRuntimeFactory;
 use oneiron_code_check::{
     BackendKind, CheckFailure, CheckMode, CodeCheck, Fallback, FeedbackCheck, MicrosoftTsc,
     TscRsBudget, TscRsWasm, TsrsWasm,
@@ -48,11 +50,11 @@ use crate::mcp::{
 use crate::models::{AnsweringRung, ModelRuntime, RoleCall, RoleRefusal};
 use crate::server::{SharedModelSlots, SyncServer};
 
-/// Binds `execute_code` on `server` when `models` asks for it and the
-/// checked-in component passes its pin and readiness probe. Any failure
-/// leaves the server as it was, with `execute_code` unlisted. `shared` is
-/// the compaction writer factory the host settled and the code-mode meter
-/// it spends on (FIX 4465 D).
+/// Binds code runs on `server` when the checked-in component passes its pin and readiness
+/// probe (FIX EXECUTE-CALLER-CODE): caller-source runs always, task runs only when `models`
+/// asks for them with a prompt package and a generative seat. Any component failure leaves the
+/// server as it was, with `execute` and `resume` unlisted. `shared` is the compaction writer
+/// factory the host settled and the code-mode meter it spends on (FIX 4465 D).
 pub(super) async fn bind(
     server: SyncServer,
     runtime: &Arc<ModelRuntime>,
@@ -60,31 +62,15 @@ pub(super) async fn bind(
     status: &StatusCell,
     shared: Option<(CodeModeCompaction, BudgetGuard)>,
 ) -> SyncServer {
-    let (Some(models), Some((compaction, guard))) = (models, shared) else {
-        return server;
-    };
-    let Some(prompt_package) = models.code_mode.prompt_package.clone() else {
-        return server;
-    };
-    let Some(seat) = runtime.seat(CHAT_ROLE) else {
-        tracing::warn!("models.code_mode is set, but no rung serves the generative seat");
-        return server;
-    };
-    if let Err(error) = oneiron::prompt::resolve_engine_executor_wire_prompt(&prompt_package) {
-        tracing::error!(
-            %error,
-            prompt_package = %prompt_package.display(),
-            "models.code_mode.prompt_package holds no executor wire prompt"
-        );
-        return server;
-    }
-    let step_wall = models.code_mode.step_wall;
+    // The component first: caller-source readiness needs only it (FIX EXECUTE-CALLER-CODE).
+    // Without `[models]` the step wall is the factory default.
+    let step_wall = models.and_then(|models| models.code_mode.step_wall);
     let component = match tokio::task::spawn_blocking(move || {
         crate::mcp::checked_in_quickjs_runtime_with_wall(step_wall)
     })
     .await
     {
-        Ok(Ok(component)) => component,
+        Ok(Ok(component)) => Arc::new(component),
         Ok(Err(error)) => {
             tracing::error!(%error, "the checked-in QuickJS component did not load");
             return server;
@@ -97,6 +83,26 @@ pub(super) async fn bind(
             return server;
         }
     };
+    // Task readiness needs models, compaction, a prompt package and a generative seat; without
+    // any of them the verified component still binds caller-source runs.
+    let (Some(models), Some((compaction, guard))) = (models, shared) else {
+        return bind_caller_source_only(server, component);
+    };
+    let Some(prompt_package) = models.code_mode.prompt_package.clone() else {
+        return bind_caller_source_only(server, component);
+    };
+    let Some(seat) = runtime.seat(CHAT_ROLE) else {
+        tracing::warn!("models.code_mode is set, but no rung serves the generative seat");
+        return bind_caller_source_only(server, component);
+    };
+    if let Err(error) = oneiron::prompt::resolve_engine_executor_wire_prompt(&prompt_package) {
+        tracing::error!(
+            %error,
+            prompt_package = %prompt_package.display(),
+            "models.code_mode.prompt_package holds no executor wire prompt"
+        );
+        return bind_caller_source_only(server, component);
+    }
     // The executor hands this lease to every call; the backend below admits
     // and settles each call on the meter instead, so the lease carries no
     // spend and its reservation is released at once.
@@ -105,9 +111,11 @@ pub(super) async fn bind(
         .and_then(|admission| guard.abort(&admission.lease).map(|_| admission.lease))
     {
         Ok(lease) => lease,
+        // A task budget failure still binds caller-source runs: they spend no model budget
+        // (FIX EXECUTE-CALLER-CODE).
         Err(denied) => {
             tracing::error!(?denied, "code mode's meter admits nothing");
-            return server;
+            return bind_caller_source_only(server, component);
         }
     };
     // Each run's browser planner state (CUA E5): its guest door finds it
@@ -237,6 +245,7 @@ pub(super) async fn bind(
         // Each run's id and task replace these.
         run_id: EntityId::now(),
         task: ENGINE_EXECUTOR_PURPOSE_NAME.to_owned(),
+        caller_source_digest: None,
         prompt_package_root: prompt_package,
         model: seat.model.clone(),
         model_locality: seat.locality,
@@ -246,7 +255,7 @@ pub(super) async fn bind(
         limits: EngineExecutorLimits::default(),
         wake: None,
     };
-    let provider = match McpQuickJsProvider::gated(Arc::new(component), backend, lease, config) {
+    let provider = match McpQuickJsProvider::gated(Arc::clone(&component), backend, lease, config) {
         Ok(provider) => provider
             .with_model_call_backend(model_call_backend)
             .with_model_list_backend(model_list_backend)
@@ -261,9 +270,10 @@ pub(super) async fn bind(
                     .copied()
                     .unwrap_or(0),
             ),
+        // An invalid task template still binds caller-source runs (FIX EXECUTE-CALLER-CODE).
         Err(error) => {
             tracing::error!(%error, "code mode's executor config is invalid");
-            return server;
+            return bind_caller_source_only(server, component);
         }
     };
     let provider = provider.with_code_check(type_feedback(
@@ -315,6 +325,29 @@ pub(super) async fn bind(
         compaction.attach(provider, status, slots, live_admission),
         runs,
     )
+}
+
+/// Binds caller-source readiness only (FIX EXECUTE-CALLER-CODE): the verified component with
+/// no generative seat, prompt package or model. Lists `execute` and `resume`; task entries
+/// refuse with the model-unavailable kind. Limits are the machine's non-model defaults.
+fn bind_caller_source_only(
+    server: SyncServer,
+    component: Arc<QuickJsRuntimeFactory>,
+) -> SyncServer {
+    let provider = match McpQuickJsProvider::for_caller_source(component) {
+        Ok(provider) => provider
+            .with_clock_from_first_start()
+            .with_code_check(TypeFeedback::off()),
+        Err(error) => {
+            tracing::error!(%error, "caller-source code host did not bind");
+            return server;
+        }
+    };
+    let runs = crate::mcp::CodeRunLimits {
+        total: crate::mcp::CodeRunLimits::runs_for_this_machine(),
+        wait: server.config.limits.queue_wait(),
+    };
+    server.with_mcp_quickjs_provider(provider, runs)
 }
 
 /// Each pinned child's compaction seat (FIX 2310, Engine C5), as
@@ -375,7 +408,7 @@ fn exact_route(models: &ModelRuntime, vault: &Vault, pick: &ModelId) -> Option<M
 /// The type-feedback service, per `[models.code_mode.check]` (FIX 8277):
 /// with the mode `off`, each step's feedback answers unavailable. In
 /// feedback mode the checker loads off every execution door and is never
-/// awaited here, so `execute_code` binds and runs at once; a check admitted
+/// awaited here, so `execute` binds and runs at once; a check admitted
 /// before the load ends waits for it on its own thread. A check never gates
 /// code mode: when no checker loads, each step's feedback says so and its
 /// run goes on. Landed checks write their results on `vault`.

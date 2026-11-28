@@ -93,7 +93,11 @@ pub(super) async fn serve_anchored(
         open_served_vault_anchored(&mut host, &config, anchor)?;
 
     let server_config = config.sync_server_config();
-    if let Err(error) = sign_root_project(&vault, server_config.auth_secret.as_deref()) {
+    if let Err(error) = sign_root_project(
+        &vault,
+        server_config.auth_secret.as_deref(),
+        &config.keystore,
+    ) {
         tracing::warn!(%error, "the root project was not signed; it stays unsigned until the next start");
     }
     warn_genesis_fragile(&vault);
@@ -403,7 +407,7 @@ pub(crate) async fn build_server(
     };
     // Reloads persisted CRDT state (d:root + d:w:* in sync_state) — a fresh
     // boot must not silently discard previously relayed updates/tombstones.
-    let sync_server = SyncServer::new(vault, server_config)
+    let sync_server = construct_sync_server(vault, config, server_config)
         .map_err(|e| anyhow::anyhow!("sync server init failed: {e}"))?
         .with_embedder(embedder)
         .with_tagger(tagger)
@@ -612,20 +616,73 @@ fn refuse_unauthenticated_public_bind(
     Ok(())
 }
 
+/// Whether `vault` is a store this install enrolled with its home that has
+/// not synced yet. Its authority log is still empty, and this install holds
+/// a device enrolment record for it under `keystore`'s key directory. Such a
+/// store takes its root from its home by sync. A start would otherwise mint
+/// a Genesis of its own, through the root project's signature
+/// ([`sign_root_project`]) or the server's host issuer bootstrap
+/// ([`construct_sync_server`]) (R6 1.5, 26 Nov 01:22). A record that cannot
+/// be located counts as none.
+pub(crate) fn joined_store_awaits_home(
+    keystore: &crate::config::KeystoreConfig,
+    vault: &oneiron::Vault,
+) -> bool {
+    vault
+        .authority_fold()
+        .is_ok_and(|fold| fold.vault_id.is_none())
+        && crate::device_sync::EnrolmentFiles::for_vault(keystore, vault)
+            .is_ok_and(|files| files.record.exists())
+}
+
+/// The server a serve start builds over `vault` ([`build_server`]). A store
+/// that awaits its home's authority ([`joined_store_awaits_home`]) boots
+/// with no host issuer bootstrap, in any posture
+/// ([`SyncServer::new_joined_before_first_sync`]), so it roots nothing. Its
+/// secret and authentication stay as `server_config` has them
+/// (REVIEW-10532 round 2). Any other store boots as [`SyncServer::new`].
+pub(crate) fn construct_sync_server(
+    vault: Arc<oneiron::Vault>,
+    config: &ServeConfig,
+    server_config: crate::config::SyncServerConfig,
+) -> Result<SyncServer, oneiron::Error> {
+    if joined_store_awaits_home(&config.keystore, &vault) {
+        SyncServer::new_joined_before_first_sync(vault, server_config)
+    } else {
+        SyncServer::new(vault, server_config)
+    }
+}
+
 /// The root project the vault seeds at its first open takes the owner's first
 /// signature here, through the host's project.write slip (OF-497). A host
 /// with no secret has no issuer, and a relay signs nothing; either leaves the
 /// root unsigned. A root that is already signed is left alone. The root
 /// signs with this install's own issuer seed for the vault (FIX-LIST 3018),
 /// drawn here only for a vault no root has reached yet.
+///
+/// A store this install holds a device enrolment for, under `keystore`'s key
+/// directory, is a copy of its home's vault. Its authority arrives from the
+/// home by sync, and the pin waits in the enrolment record until the first
+/// sync adopts it. Until then its log is empty, and a root minted here would
+/// be a Genesis of the device's own, which its home never signed and which
+/// cuts it off from that home (R6 1.5, 26 Nov 01:22). So such a store is never
+/// rooted at a start.
 pub(crate) fn sign_root_project(
     vault: &oneiron::Vault,
     secret: Option<&str>,
+    keystore: &crate::config::KeystoreConfig,
 ) -> anyhow::Result<()> {
     if secret.is_none_or(str::is_empty) {
         return Ok(());
     }
     if vault.privacy_posture() == oneiron::HostingPrivacyPosture::Relay {
+        return Ok(());
+    }
+    if joined_store_awaits_home(keystore, vault) {
+        tracing::info!(
+            "this store joined its home and has not synced yet; its home's authority arrives by \
+             sync, so nothing is rooted here"
+        );
         return Ok(());
     }
     let root = vault.root_project()?;

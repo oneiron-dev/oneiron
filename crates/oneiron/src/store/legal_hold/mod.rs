@@ -24,6 +24,7 @@ pub(crate) mod archive;
 pub(crate) mod events;
 mod notice;
 mod person_content;
+pub(crate) mod sealed_records;
 mod use_limit;
 
 pub(crate) use person_content::person_content_subjects;
@@ -351,6 +352,7 @@ pub(crate) fn set_partition_hold_in_txn(
             }
             hold.lifted_at = None;
             hold.placed_at = now;
+            sealed_records::drop_hold_in_txn(dbs, txn, hold_id.as_bytes())?;
             hold.clone_captures = captures;
             put_hold_in_txn(dbs, txn, &hold)?;
             let row = LegalHoldEvent {
@@ -418,6 +420,7 @@ pub(crate) fn finish_partition_release_in_txn(
         return Ok(());
     }
     destroy()?;
+    sealed_records::drop_hold_in_txn(dbs, txn, hold_id.as_bytes())?;
     log_in_txn(
         dbs,
         txn,
@@ -458,7 +461,11 @@ pub(crate) fn expire_in_txn(dbs: &impl SideTableDbs, txn: &mut RwTxn<'_>, now: u
             }
             let dropped = events::drop_events_in_txn(dbs, txn, &id)?;
             rows.delete(dbs, txn, &id)?;
-            removed = removed.saturating_add(dropped).saturating_add(1);
+            let sealed = sealed_records::drop_hold_in_txn(dbs, txn, id.as_bytes())?;
+            removed = removed
+                .saturating_add(dropped)
+                .saturating_add(1)
+                .saturating_add(sealed as u64);
         }
     }
     Ok(removed)

@@ -266,6 +266,7 @@ fn owner_context_at(
         drain: None,
         forwarded: None,
         client_surface: None,
+        session_workspace: None,
         signing_request_transport: None,
     })
 }

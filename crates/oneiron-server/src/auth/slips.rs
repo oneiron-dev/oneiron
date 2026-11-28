@@ -304,6 +304,7 @@ impl CoreAuth {
             peer: oneiron::authority::PeerMachine::Unknown,
             facets_owner_exempt: false,
             off_record_session: None,
+            session_workspace: None,
             managed_owner: None,
             managed_person: None,
         })
@@ -454,6 +455,31 @@ impl CoreAuth {
         vault
             .scoped_read(key.for_destination(destination))
             .is_entity_readable(id)
+    }
+    /// Whether `id` is the own held claim of this credential's holder that
+    /// an own held list serves it toward `destination`
+    /// ([`oneiron::Vault::own_held_claim_readable`]): the same credential
+    /// lane as [`Self::can_read_entity_at`], read through its record lane.
+    /// A caller with no verified slip reads every row no world keeps from
+    /// `destination` there already, so it gets `false` here.
+    pub(crate) fn reads_own_held_claim_at(
+        &self,
+        vault: &oneiron::Vault,
+        id: &oneiron::EntityId,
+        destination: &oneiron::settings::ReadDestination,
+    ) -> oneiron::Result<bool> {
+        if self.is_local_dev_hatch() {
+            let action = vault.dev_action_authority()?;
+            return vault
+                .own_held_claim_readable(action.read_key().for_destination(destination), id);
+        }
+        let Some(proof) = self.verified_slip() else {
+            return Ok(false);
+        };
+        let Some(key) = vault.credential_read_key(proof)? else {
+            return Ok(false);
+        };
+        vault.own_held_claim_readable(key.for_destination(destination), id)
     }
     /// Whether this credential is still live, read inside the write
     /// transaction `txn` instead of its own snapshot. A managed vault's

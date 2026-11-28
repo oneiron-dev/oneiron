@@ -89,6 +89,7 @@ use oneiron::llm::{
 use oneiron::registry::ENTITY_TYPE_AGENT_DEF;
 use oneiron::self_heal::audit::AttemptConfession;
 use oneiron::task_type::TaskTypeRef;
+use oneiron::work_order::decider::{DeciderReply, SlotAsk};
 use oneiron::{
     DreamerRunnerStore, EntityId, LlmError, ModelId, RetryableLlmError, Vault, WriteActor,
 };
@@ -294,8 +295,8 @@ impl SyncServer {
         }
     }
 
-    /// Starts the pump, or returns `None` when no engine-native code host
-    /// serves this vault.
+    /// Starts the pump, or returns `None` when no task-ready engine-native code host
+    /// serves this vault (a source-only host leaves agent attempts waiting).
     pub(crate) fn spawn_resident_pump(self: &Arc<Self>) -> Option<tokio::task::JoinHandle<()>> {
         self.spawn_resident_pump_admitted(admit_every_pass(), admit_every_pass())
     }
@@ -311,7 +312,13 @@ impl SyncServer {
         admit: HousekeepingAdmission,
         admit_run: HousekeepingAdmission,
     ) -> Option<tokio::task::JoinHandle<()>> {
-        self.code_execution_host()?.engine_native()?;
+        let host = self.code_execution_host()?;
+        // FIX EXECUTE-CALLER-CODE P1-7: agent attempts are task runs, so a source-only host
+        // leaves them waiting instead of claiming them to fail on task config.
+        if !host.task_runtime_available() {
+            return None;
+        }
+        host.engine_native()?;
         let server = Arc::clone(self);
         Some(tokio::spawn(async move {
             server.pump_residents_forever(admit, admit_run).await
@@ -554,9 +561,11 @@ impl SyncServer {
         let permit = loop {
             let wait = match self
                 .code_execution_host()
+                .filter(|host| host.task_runtime_available())
                 .and_then(|host| host.engine_native())
             {
                 Some(host) => host.runs().admit_in_line(key.clone()),
+                // No task-ready host: the run waits for a later pass (P1-7).
                 None => return false,
             };
             // A wait that reached its deadline refuses nothing: the run
@@ -601,12 +610,23 @@ impl SyncServer {
     ) -> bool {
         let Some(host) = self
             .code_execution_host()
+            .filter(|host| host.task_runtime_available())
             .and_then(|host| host.engine_native())
         else {
+            // No task-ready host: leave the attempt waiting (P1-7).
             return false;
         };
         let vault = self.vault();
-        let claimed = match claim(vault, id, of, self.ai.confession_instruction()) {
+        // A root run's first claim is placed first (row P4); the PLACE slot's named decider is
+        // asked through this host's decision ladder, on this blocking thread.
+        let decide = |ask: &SlotAsk| {
+            crate::work_order_host::decide_slot_ask(
+                self,
+                ask,
+                unix_seconds_now().saturating_mul(1_000),
+            )
+        };
+        let claimed = match claim(vault, id, of, self.ai.confession_instruction(), &decide) {
             Ok(Some(claimed)) => claimed,
             Ok(None) => return false,
             Err(error) => {
@@ -660,12 +680,15 @@ impl SyncServer {
 }
 
 /// Claims the run by id through its pump's door, with the task it runs,
-/// asked for its confession in the host's `confession` wording.
+/// asked for its confession in the host's `confession` wording. An agent
+/// run's first claim is placed first, with `decide` asking the PLACE slot's
+/// named decider (row P4).
 fn claim(
     vault: &Vault,
     id: AttemptId,
     of: RunOf,
     confession: &str,
+    decide: &dyn Fn(&SlotAsk) -> DeciderReply,
 ) -> oneiron::Result<Option<Claimed>> {
     let dispatcher = AgentDispatcher::new(vault);
     let claimed = match of {
@@ -685,7 +708,7 @@ fn claim(
                 (claimed, briefing)
             }),
         RunOf::Agent(agent) => dispatcher
-            .claim_agent_run(id, LEASE_OWNER, unix_seconds_now())?
+            .claim_agent_run_placed(id, LEASE_OWNER, unix_seconds_now(), decide)?
             .map(
                 |AgentRun {
                      status,
@@ -825,14 +848,13 @@ fn task_text(status: &AgentDispatchStatus, parts: impl Iterator<Item = String>) 
 /// tick beside the send reaper: an agent run whose lease expired is taken
 /// here, in the ruled order, when it can run here
 /// ([`Vault::reap_agent_run_leases`]). The host's part of that check is this
-/// pump's own: an engine-native code host to run the run on, which every
-/// claim of the pump needs first.
+/// pump's own: a task-ready engine-native code host to run the run on, which every
+/// claim of the pump needs first (a source-only host leaves expired runs waiting).
 pub(super) fn reap_agent_run_leases(server: &SyncServer) {
     let runs_here = |_: &AgentDefinition| {
         server
             .code_execution_host()
-            .and_then(|host| host.engine_native())
-            .is_some()
+            .is_some_and(|host| host.task_runtime_available() && host.engine_native().is_some())
     };
     match server.vault().reap_agent_run_leases(&runs_here) {
         Ok(AgentRunLeaseReap {

@@ -108,6 +108,87 @@ pub fn encode_chunk_request(request: &ChunkSyncRequest) -> Result<Vec<u8>> {
     encode(request)
 }
 
+/// The distinct chunk hashes of the stored manifest of the object `oid`
+/// names, read and authenticated in its row where it lies
+/// ([`manifest_distinct_chunks_in_place`]): what
+/// [`read_chunk_request_stream`] checks a request's HAVE and WANT against as
+/// they arrive. The row is never copied and its ordered chunk list never
+/// built (REVIEW-10608 P1 2). An object with no manifest here refuses the
+/// request, as its answer would.
+pub fn manifest_chunk_hashes(
+    vault: &Vault,
+    oid: &[u8; 32],
+) -> Result<std::collections::BTreeSet<[u8; 32]>> {
+    use crate::ports::EntityStoreRead as _;
+    let object = vault
+        .lfs_object(LfsOid::from_bytes(*oid))?
+        .ok_or_else(invalid)?;
+    let txn = vault.store.env.read_txn()?;
+    vault
+        .store
+        .port_entity_with_raw(&txn, &object.asset_id, |raw| {
+            let header = crate::batch::EntityMetadataHeader::parse(raw)
+                .ok_or(Error::CorruptedIndex("lfs asset header"))?;
+            if header.entity_type != crate::registry::ENTITY_TYPE_ASSET {
+                return Err(Error::CorruptedIndex("lfs asset type"));
+            }
+            manifest_distinct_chunks_in_place(
+                &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+                &object.asset_id,
+                object.size_bytes,
+            )
+        })?
+        .ok_or(Error::CorruptedIndex("missing lfs asset"))
+}
+
+/// The distinct chunk hashes of the LFS manifest stored as `bytes`, checked
+/// where they lie as [`crate::origin::lfs::LfsManifest::decode`] and
+/// [`crate::origin::lfs::LfsManifest::asset_id`] check them: the header, the
+/// length, the bytes' BLAKE3 against the ASSET id `asset_id`, the size against
+/// `size_bytes` (the object's), and each chunk's size and their sum. Only the
+/// distinct hashes are held: a manifest naming one chunk a million times
+/// holds one here.
+pub fn manifest_distinct_chunks_in_place(
+    bytes: &[u8],
+    asset_id: &EntityId,
+    size_bytes: u64,
+) -> Result<std::collections::BTreeSet<[u8; 32]>> {
+    use oneiron_store::origin::lfs::chunks::MANIFEST_MAGIC;
+    let corrupt = || Error::CorruptedIndex("lfs manifest");
+    if bytes.len() < 20 || &bytes[..8] != MANIFEST_MAGIC {
+        return Err(corrupt());
+    }
+    let declared = u64::from_le_bytes(bytes[8..16].try_into().map_err(|_| corrupt())?);
+    let count = u32::from_le_bytes(bytes[16..20].try_into().map_err(|_| corrupt())?) as usize;
+    if count.checked_mul(36).and_then(|n| n.checked_add(20)) != Some(bytes.len()) {
+        return Err(corrupt());
+    }
+    // Strict decoding makes the stored bytes the canonical encoding, so their
+    // BLAKE3 is the manifest's hash.
+    let id = crate::store::code_snapshot::entity_id_from_hash_material(
+        crate::origin::lfs::VAULT_LFS_ASSET_ID_DOMAIN,
+        &[ContentHash::of(bytes).as_bytes()],
+    )?;
+    if id != *asset_id || declared != size_bytes {
+        return Err(Error::CorruptedIndex("lfs manifest digest"));
+    }
+    let mut sum = 0u64;
+    let mut hashes = std::collections::BTreeSet::new();
+    for entry in bytes[20..].chunks_exact(36) {
+        let (hash, size) = entry.split_at(32);
+        let size = u32::from_le_bytes(size.try_into().map_err(|_| corrupt())?);
+        if size == 0 || size as usize > crate::origin::lfs::LFS_CHUNK_MAX {
+            return Err(corrupt());
+        }
+        sum = sum.checked_add(u64::from(size)).ok_or_else(corrupt)?;
+        hashes.insert(<[u8; 32]>::try_from(hash).map_err(|_| corrupt())?);
+    }
+    if sum != declared {
+        return Err(corrupt());
+    }
+    Ok(hashes)
+}
+
 /// Handles a request after transport authentication. The selector must name that
 /// exact principal. Grant revocation/expiry and the effective scope are checked
 /// for every request, including every subsequent want frame.
@@ -522,8 +603,9 @@ pub use download::ChunkDownload;
 pub use read::{ChunkMark, ChunkRead, LfsMarkedReader, LfsReadAuthority};
 pub(crate) use release::LfsReleaseVerdicts;
 pub use stream::{
-    CHUNK_STREAM_FRAME_BYTES, read_chunk_request_stream, read_chunk_response_stream,
-    write_chunk_request_stream, write_chunk_response_stream,
+    CHUNK_STREAM_FRAME_BYTES, MAX_CHUNK_REQUEST_READ_BYTES, MAX_CHUNK_REQUEST_SELECTOR_BYTES,
+    read_chunk_request_stream, read_chunk_response_stream, write_chunk_request_stream,
+    write_chunk_response_stream,
 };
 
 #[cfg(test)]

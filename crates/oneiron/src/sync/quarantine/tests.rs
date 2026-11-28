@@ -30,7 +30,18 @@ fn test_vault_with_dir() -> (tempfile::TempDir, Arc<Vault>) {
     let mut cfg = VaultConfig::device();
     cfg.map_size = 16 * 1024 * 1024;
     let vault = Arc::new(Vault::open(dir.path(), cfg).unwrap());
+    // A receiver loads its install signer at boot (serve's keystore
+    // install); every hard purge signs its deletion receipt with it.
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
+    vault.prepare_install_signing().expect("install signing");
     (dir, vault)
+}
+
+/// One entity row as it rests, past the deletion fence that `get` and
+/// `get_raw` honor: a failed purge leaves the row stored but fenced.
+fn stored_entity_row(vault: &Vault, id: &EntityId) -> Option<Vec<u8>> {
+    let rtxn = vault.store.env.read_txn().unwrap();
+    crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &rtxn, id).unwrap()
 }
 
 /// 33-byte envelope: type u8 + occurred_start/end + learned_at + row_version u64 BE.
@@ -172,7 +183,7 @@ fn rm_marker_round_trip_purge_failure_then_drain() {
     // The failed purge left the body stored, but the accepted delete fences
     // it from every read until the retry lands.
     assert!(
-        vault.get_raw(&id).unwrap().is_some(),
+        stored_entity_row(&vault, &id).is_some(),
         "precondition: failed purge left the hard-deleted body stored"
     );
     assert!(
@@ -208,7 +219,7 @@ fn rm_marker_round_trip_purge_failure_then_drain() {
     assert_eq!(report.still_pending, vec![WINDOW.to_string()]);
     assert!(report.drained.is_empty());
     assert!(
-        vault.get_raw(&id).unwrap().is_some(),
+        stored_entity_row(&vault, &id).is_some(),
         "failed purge retains its row"
     );
     assert!(
@@ -225,7 +236,7 @@ fn rm_marker_round_trip_purge_failure_then_drain() {
         "drain must complete the purge"
     );
     assert!(
-        vault.get_raw(&id).unwrap().is_none(),
+        stored_entity_row(&vault, &id).is_none(),
         "healthy drain removes the retained row"
     );
     let rtxn = vault.store.env.read_txn().unwrap();
@@ -263,7 +274,16 @@ fn forward_remat_tombstone_purge_failure_flags_rm_then_clears_on_success() {
 
     INJECT_PURGE_FAILURES.with(|cell| cell.set(1));
     forward_rematerialize(&vault, &doc, &materializer, &window_key).unwrap();
-    assert!(vault.get_raw(&id).unwrap().is_some());
+    // The row as it rests: the accepted delete's fence hides it from
+    // `get_raw` too, so survival is read past the fence.
+    let stored = {
+        let rtxn = vault.store.env.read_txn().unwrap();
+        crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &rtxn, &id).unwrap()
+    };
+    assert!(
+        stored.is_some(),
+        "the failed purge leaves the stored row behind"
+    );
     assert!(
         vault.get(&id).unwrap().is_none(),
         "the accepted delete is fenced while its purge is pending"
@@ -275,7 +295,10 @@ fn forward_remat_tombstone_purge_failure_flags_rm_then_clears_on_success() {
     );
 
     forward_rematerialize(&vault, &doc, &materializer, &window_key).unwrap();
-    assert!(vault.get_raw(&id).unwrap().is_none());
+    assert!(
+        stored_entity_row(&vault, &id).is_none(),
+        "the clean retry purges the stored row"
+    );
     assert!(
         pending_remat_windows(&vault).unwrap().is_empty(),
         "marker cleared after the purge pass fully succeeds"
@@ -336,7 +359,10 @@ fn rm_drain_rebuilds_doc_from_pending_updates_when_snapshot_missing() {
     INJECT_PURGE_FAILURES.with(|cell| cell.set(1));
     map_insert_bytes(&window.doc.get_map("tombstones"), &id.to_hex(), b"1").unwrap();
     window.doc.commit();
-    assert!(vault.get_raw(&id).unwrap().is_some());
+    assert!(
+        stored_entity_row(&vault, &id).is_some(),
+        "precondition: the failed purge left the row stored"
+    );
     assert!(vault.get(&id).unwrap().is_none(), "fenced until the drain");
     assert_eq!(
         pending_remat_windows(&vault).unwrap(),
@@ -366,7 +392,7 @@ fn rm_drain_rebuilds_doc_from_pending_updates_when_snapshot_missing() {
     assert_eq!(report.drained, vec![WINDOW.to_string()]);
     assert!(report.still_pending.is_empty());
     assert!(
-        vault.get_raw(&id).unwrap().is_none(),
+        stored_entity_row(&vault, &id).is_none(),
         "hard-deleted entity purged via the rebuilt doc"
     );
     assert!(pending_remat_windows(&vault).unwrap().is_empty());
@@ -1307,7 +1333,10 @@ fn unrelated_tombstone_success_does_not_clear_entity_scoped_rm_marker() {
     map_insert_bytes(&doc_y.get_map("tombstones"), &y.to_hex(), b"1").unwrap();
     doc_y.commit();
     forward_rematerialize(&vault, &doc_y, &materializer, &window_key).unwrap();
-    assert!(vault.get(&y).unwrap().is_none(), "Y's tombstone purges Y");
+    assert!(
+        stored_entity_row(&vault, &y).is_none(),
+        "Y's tombstone purges Y"
+    );
     let rtxn = vault.store.env.read_txn().unwrap();
     assert_eq!(
         vault
@@ -1336,7 +1365,7 @@ fn unrelated_tombstone_success_does_not_clear_entity_scoped_rm_marker() {
     doc_x2.commit();
     forward_rematerialize(&vault, &doc_x2, &materializer, &window_key).unwrap();
     assert!(
-        vault.get(&x).unwrap().is_none(),
+        stored_entity_row(&vault, &x).is_none(),
         "string-valued tombstone is HARD delete input"
     );
     let rtxn = vault.store.env.read_txn().unwrap();
@@ -1402,7 +1431,7 @@ fn malformed_rm_marker_rows_are_never_dropped_and_window_still_drains() {
     let report = drain_remat_markers(&vault, "test-user", &materializer).unwrap();
     // The real retry drained despite the malformed siblings…
     assert!(
-        vault.get(&id).unwrap().is_none(),
+        stored_entity_row(&vault, &id).is_none(),
         "the flagged entity's purge must still drain"
     );
     let rtxn = vault.store.env.read_txn().unwrap();

@@ -674,8 +674,8 @@ pub(crate) fn guard_record_put(
 
 /// Destructive deletion hook; archive never calls it. Removes every content
 /// carrier for the entity, including pending updates, retained forks, quotes
-/// and the citation floors that held its history, and the pins it made as a
-/// citing record.
+/// and the citation floors that held its history, the pins it made as a
+/// citing record, and its fork settlement and history purge receipts.
 pub(crate) fn erase_in_txn(store: &Store, txn: &mut RwTxn<'_>, entity: &EntityId) -> Result<()> {
     if let Some(h) = ENTITY_DOC_HEAD.get(store, txn, &HexId(*entity))? {
         for doc in [entity.to_hex(), h.document] {
@@ -683,11 +683,11 @@ pub(crate) fn erase_in_txn(store: &Store, txn: &mut RwTxn<'_>, entity: &EntityId
         }
     }
     super::forks::erase_forks(store, txn, entity)?;
-    super::pins::ENTITY_DOC_PIN.delete_from(
-        store,
-        txn,
-        format!("{}:", entity.to_hex()).as_bytes(),
-    )?;
+    let entity_prefix = format!("{}:", entity.to_hex());
+    super::pins::ENTITY_DOC_PIN.delete_from(store, txn, entity_prefix.as_bytes())?;
+    // The receipts are keyed by the entity, as a recovery rebuild drops them.
+    super::forks::ENTITY_DOC_RECEIPT.delete_from(store, txn, entity_prefix.as_bytes())?;
+    super::pins::ENTITY_DOC_PURGE_RECEIPT.delete_from(store, txn, entity_prefix.as_bytes())?;
     // An erased reply no longer floors the history of what it quoted (FIX 3463).
     for key in super::pins::ENTITY_DOC_PIN.scan_keys(store, txn, &[])? {
         if key.1.0 == *entity {

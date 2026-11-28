@@ -4,7 +4,10 @@
 
 use super::*;
 use crate::attempt_queue::AttemptId;
-use crate::dreamer_runner::{DreamerAdmittedAttempt, FailDreamerAttempt};
+use crate::dreamer_consolidation::answer_schema::overrun::{
+    AnswerSchemaOverrun, latch_for_settled_in_txn,
+};
+use crate::dreamer_runner::{DreamerAdmittedAttempt, DreamerParkWait, FailDreamerAttempt};
 use crate::error::ErrorKind;
 
 /// What one executed attempt settles from: the pass, the admitted attempt,
@@ -38,6 +41,44 @@ impl DreamerWakeDriver<'_> {
             stage,
             hard_cut_error,
         } = state;
+        // HOUSE-SCHEMA-CHECK: the budget stop this settlement carries, if any. A hard cut
+        // parks as one, with its spend or without; a step-layer trap park already on the
+        // row names its Budget or PassBudget wait; a failed try names its budget refusal.
+        let overrun = match &execution {
+            DreamerAttemptExecution::Failed {
+                budget_refusal: Some(_),
+                ..
+            } => Some(AnswerSchemaOverrun::BudgetRefusal),
+            DreamerAttemptExecution::Park { reason, .. }
+            | DreamerAttemptExecution::ParkWithSpend { reason, .. }
+                if reason == DREAMER_HARD_CUT_PARK_REASON || self.deadline.expired() =>
+            {
+                Some(AnswerSchemaOverrun::DeadlineHardCut)
+            }
+            DreamerAttemptExecution::Park { .. }
+            | DreamerAttemptExecution::ParkWithSpend { .. } => match self
+                .store
+                .parked_attempt(attempt_id)?
+                .as_ref()
+                .and_then(|row| row.wait.as_ref().map(|wait| &wait.wait))
+            {
+                Some(DreamerParkWait::Budget { .. }) => Some(AnswerSchemaOverrun::Budget),
+                Some(DreamerParkWait::PassBudget { .. }) => Some(AnswerSchemaOverrun::PassBudget),
+                _ => None,
+            },
+            _ => None,
+        };
+        if let Some(stop) = overrun {
+            // An extraction child settling with a budget stop latches its night over budget,
+            // so the answer-schema check skips it with its reason. The latch commits before
+            // the transition below (REVIEW-10538 round 2): a stop that commits always finds
+            // its latch, and a crash between the two leaves a latched night whose child runs
+            // again, which the check only skips, never scores cut short. The latch is
+            // idempotent, the first stop wins.
+            self.vault.with_write_txn_grouped(|txn| {
+                latch_for_settled_in_txn(self.vault, txn, &admitted.status, stop)
+            })?;
+        }
         match execution {
             DreamerAttemptExecution::Completed {
                 completed_units,

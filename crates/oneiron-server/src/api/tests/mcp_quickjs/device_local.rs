@@ -4,15 +4,6 @@
 
 use super::*;
 
-/// One `execute_code` call on `/mcp` under `credential`, as `run_ref`.
-fn run_request(actor: oneiron::EntityId, credential: &str, run_ref: &str) -> Request<Body> {
-    let args = mcp_merge_args(
-        mcp_endpoint_envelope(actor, "write_memory"),
-        json!({"run_ref": run_ref, "task": "state a favorite drink in a world"}),
-    );
-    mcp_endpoint_call_request("/mcp", credential, run_ref, "execute_code", args)
-}
-
 /// A run whose guest states `claim` about `subject` in `world`, citing the
 /// `evidence` TURN a concluded (generated) claim names.
 fn state_in(
@@ -77,9 +68,13 @@ async fn a_code_run_off_this_device_releases_no_row_its_world_made_device_local(
     // run's upsert fails INVENTED_REFERENCE and the step reports facade_error.
     put_actor_read_grant(&mode.vault, actor, None);
 
-    let (_, body) = route_json(
-        mode.server.clone(),
-        run_request(actor, credential, "quickjs-portable"),
+    // No MCP tool starts a task run anymore: the kept task handler enters it, rendering
+    // the old task shape (FIX EXECUTE-CALLER-CODE).
+    let body = execute_task_run_for_test(
+        &mode.server,
+        credential,
+        "quickjs-portable",
+        "state a favorite drink in a world",
     )
     .await;
     assert!(body.get("error").is_none(), "{body}");
@@ -92,9 +87,11 @@ async fn a_code_run_off_this_device_releases_no_row_its_world_made_device_local(
     );
 
     crate::api::mcp_gateway::release_hook::arm(world);
-    let (_, body) = route_json(
-        mode.server.clone(),
-        run_request(actor, credential, "quickjs-kept"),
+    let body = execute_task_run_for_test(
+        &mode.server,
+        credential,
+        "quickjs-kept",
+        "state a favorite drink in a world",
     )
     .await;
     assert!(mode.vault.get_claim(&kept).unwrap().is_some(), "{body}");
@@ -193,9 +190,11 @@ async fn a_code_runs_search_off_this_device_finds_no_device_local_claim() {
         )
         .unwrap();
 
-    let (_, body) = route_json(
-        mode.server.clone(),
-        run_request(actor, credential, "quickjs-search"),
+    let body = execute_task_run_for_test(
+        &mode.server,
+        credential,
+        "quickjs-search",
+        "state a favorite drink in a world",
     )
     .await;
     assert!(body.get("error").is_none(), "{body}");
@@ -283,9 +282,11 @@ async fn a_failed_code_run_off_this_device_names_no_device_local_row() {
         .unwrap()
         .extend([script.clone(), script]);
 
-    let (_, body) = route_json(
-        mode.server.clone(),
-        run_request(actor, credential, "quickjs-failed-portable"),
+    let body = execute_task_run_for_test(
+        &mode.server,
+        credential,
+        "quickjs-failed-portable",
+        "state a favorite drink in a world",
     )
     .await;
     assert_mcp_structured_error(&body, "code_run_failed");
@@ -298,9 +299,11 @@ async fn a_failed_code_run_off_this_device_names_no_device_local_row() {
             true,
         )
         .unwrap();
-    let (_, body) = route_json(
-        mode.server.clone(),
-        run_request(actor, credential, "quickjs-failed-kept"),
+    let body = execute_task_run_for_test(
+        &mode.server,
+        credential,
+        "quickjs-failed-kept",
+        "state a favorite drink in a world",
     )
     .await;
     assert!(body.get("result").is_none(), "{body}");
@@ -389,9 +392,11 @@ async fn a_replayed_code_run_off_this_device_releases_no_answer_a_device_local_r
         handle.group_ref.to_hex()
     ));
 
-    let (_, body) = route_json(
-        mode.server.clone(),
-        run_request(owner, credential, "quickjs-outcomes"),
+    let body = execute_task_run_for_test(
+        &mode.server,
+        credential,
+        "quickjs-outcomes",
+        "state a favorite drink in a world",
     )
     .await;
     assert!(body.get("error").is_none(), "{body}");
@@ -408,9 +413,11 @@ async fn a_replayed_code_run_off_this_device_releases_no_answer_a_device_local_r
             true,
         )
         .unwrap();
-    let (_, body) = route_json(
-        mode.server.clone(),
-        run_request(owner, credential, "quickjs-outcomes"),
+    let body = execute_task_run_for_test(
+        &mode.server,
+        credential,
+        "quickjs-outcomes",
+        "state a favorite drink in a world",
     )
     .await;
     assert!(body.get("result").is_none(), "{body}");

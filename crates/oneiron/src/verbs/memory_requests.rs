@@ -1,5 +1,6 @@
 //! Typed inputs for the public memory verbs in the SDK inventory.
 use crate::claim::{ScopedReadReceipt, ScopedReadResult};
+use crate::memory::ClaimView;
 use crate::memory::{LexicalHit, Memory, MemoryError, MemoryResult, RecallResidence};
 use serde::{Deserialize, Serialize};
 
@@ -25,6 +26,9 @@ pub use crate::memory::{EntityRequest, HydrateRequest, QueryBm25Request};
 pub struct Bm25Search {
     /// Hits, in engine score order.
     pub value: Vec<LexicalHit>,
+    /// The caller's matching claims held for consent, separate from ranked hits.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub held: Vec<ClaimView>,
     /// The read's receipt.
     #[serde(rename = "narrowing")]
     pub receipt: ScopedReadReceipt,
@@ -51,6 +55,7 @@ impl Bm25Search {
         };
         Self {
             value: page.value,
+            held: Vec::new(),
             receipt: page.receipt,
             residence: opened.then(RecallResidence::local_only),
         }
@@ -60,10 +65,13 @@ impl Bm25Search {
 /// `vault.search.bm25` on a handle: its own BM25 page, as the device
 /// answers it alone ([`Bm25Search::local`]).
 pub fn search_bm25(memory: &Memory<'_>, input: QueryBm25Request) -> MemoryResult<Bm25Search> {
-    let page = memory
-        .with_read_filter(input.filter.as_ref())
-        .query_bm25(&input.query, input.limit)?;
-    Ok(Bm25Search::local(memory.vault(), page))
+    let memory = memory.with_read_filter(input.filter.as_ref());
+    let page = memory.query_bm25(&input.query, input.limit)?;
+    // The stale selector the search applied, under the actor ceiling.
+    let include_stale = page.receipt.applied.include_stale;
+    let mut answer = Bm25Search::local(memory.vault(), page);
+    answer.held = memory.own_held_for_search(&input.query, include_stale)?;
+    Ok(answer)
 }
 
 pub use crate::memory::CreateNoteRequest;

@@ -505,7 +505,7 @@ fn vault_id(text: &str) -> anyhow::Result<String> {
 
 /// The vault the paired slip in `file` names, in hex. The value read is
 /// never shown.
-fn slip_vault_id(file: &Path) -> anyhow::Result<String> {
+pub(super) fn slip_vault_id(file: &Path) -> anyhow::Result<String> {
     let held = PairedCredentialFile::read(file)?;
     let slip = oneiron::authority::CapabilitySlip::from_token(&held.token).map_err(|_| {
         anyhow::anyhow!(

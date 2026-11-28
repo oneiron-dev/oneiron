@@ -4,15 +4,24 @@
 //! that order, before any guest acts.
 //!
 //! A credential that binds an unrelated name answers `mcp_verb_not_bound` on
-//! every row; a bound read-only credential answers `mcp_grant_missing` on the
-//! Write rows, and its Read rows reach the pack gate; a bound write-scoped
-//! credential with no guest answers `browser_pack_not_installed` on a fresh
-//! vault, and with the pack seed marker removed answers `browser_unbound` on
-//! desktop rows and `browser_connection_unchecked` on browser rows. A bound
-//! write-scoped credential on a run with a desktop guest configured passes
-//! every gate. The composed answer keeps the refusal code only; the two
+//! every row. Every bound credential is refused every desktop row with
+//! `mcp_desktop_refused`: no direct door serves the host's desktop guest (FIX
+//! CODE-MODE-LENDING-W2). A bound read-only credential answers
+//! `mcp_grant_missing` on every browser row, its Read rows too: the browser
+//! guest is reached directly only through an attached live run, which needs
+//! Write (the same FIX), while a Read row's own gate still passes it. A bound
+//! write-scoped credential with no guest answers `browser_pack_not_installed`
+//! on browser rows of a fresh vault, and with the pack seed marker removed
+//! answers `browser_connection_unchecked` on them. A bound write-scoped
+//! credential on a run with a desktop guest configured passes the binding,
+//! the row's gate and the guest admission, the pieces a direct desktop door
+//! would meet. The composed answer keeps the refusal code only; the two
 //! gateway messages are pinned through the gates, which also prove the
-//! control stops before any guest starts. No QuickJS host, model, or guest
+//! control stops before any guest starts.
+//!
+//! Red on main (e31a7175): a read-only credential's Read browser rows reach
+//! the pack gate (`browser_pack_not_installed`), and every desktop row
+//! answers as a browser row of its scope does, never `mcp_desktop_refused`. No QuickJS host, model, or guest
 //! starts: the door resolves the credential and drives the production door,
 //! and the guest is only ever checked for, never started.
 //!
@@ -50,6 +59,9 @@ use oneiron_server::server::SyncServer;
 use oneiron_server::test_doors::mcp_code_mode_verbs::{
     TestCredential, admit_host_verb, admits_guest, call_verb, gate_host_verb, register_credential,
 };
+
+/// The refusal code of a run's desktop row (FIX CODE-MODE-LENDING-W2).
+const DESKTOP_REFUSED: &str = "mcp_desktop_refused";
 
 /// The twenty desktop rows (`scripts/sdk/verbs/self.desktop.*.json`).
 const DESKTOP_ROWS: [&str; 20] = [
@@ -104,7 +116,8 @@ const BROWSER_ROWS: [&str; 24] = [
 ];
 
 /// The Write rows among both families (`"scope": "Write"` at each json `:7`):
-/// 9 desktop + 13 browser. Only these meet the Write grant check.
+/// 9 desktop + 13 browser. Only these meet the Write grant check of the row's
+/// own gate.
 const WRITE_ROWS: [&str; 22] = [
     "self.desktop.batch",
     "self.desktop.click",
@@ -131,8 +144,7 @@ const WRITE_ROWS: [&str; 22] = [
 ];
 
 /// The Read rows among both families: 11 desktop + 11 browser. A read-only
-/// credential passes the gate on these, so the composed call reaches the
-/// guest admission with them.
+/// credential passes the row's own gate on these.
 const READ_ROWS: [&str; 22] = [
     "self.desktop.crop",
     "self.desktop.expect",
@@ -245,24 +257,36 @@ async fn unbound_credential_is_refused_before_any_gate() {
 }
 
 /// A bound read-only credential answers `mcp_grant_missing` on the composed
-/// call, on every Write row: its credential lacks the Write grant, and
-/// nothing about its proof is wrong. Its Read rows pass both gates and reach
-/// the pack gate. The gateway's message is pinned through the gate: the
-/// composed answer drops it.
+/// call, on every browser row, its Read rows too: the row drives the host's
+/// browser guest, which a direct call reaches only through an attached live
+/// run, and attaching needs Write (FIX CODE-MODE-LENDING-W2). Every desktop
+/// row is refused `mcp_desktop_refused`. The rows' own gate still passes the
+/// Read rows and refuses the Write rows; the gateway's message is pinned
+/// through it, as the composed answer drops it.
 #[tokio::test]
-async fn read_only_credential_is_refused_on_write_rows() {
+async fn read_only_credential_is_refused_on_every_browser_row() {
     let fixture = door_fixture("code-mode-read-only").await;
     let reader = register_credential(&fixture.server, 0xB2, &["read"], None)
         .await
         .expect("the read-only credential registers");
     let run = EntityId::now();
-    for verb in WRITE_ROWS {
+    for verb in BROWSER_ROWS {
         let refused = call_verb(&fixture.server, &reader, run, verb)
             .await
             .expect("the composed call runs")
-            .expect_err("a Write row needs Write");
+            .expect_err("a browser row needs Write");
         assert_eq!(refused.code, "mcp_grant_missing", "{verb}");
         assert_eq!(refused.hook_notice, None, "{verb}");
+    }
+    for verb in DESKTOP_ROWS {
+        let refused = call_verb(&fixture.server, &reader, run, verb)
+            .await
+            .expect("the composed call runs")
+            .expect_err("no direct door serves the desktop");
+        assert_eq!(refused.code, DESKTOP_REFUSED, "{verb}");
+        assert_eq!(refused.hook_notice, None, "{verb}");
+    }
+    for verb in WRITE_ROWS {
         let dropped = gate_host_verb(&fixture.server, &reader, verb)
             .await
             .expect("the gate runs")
@@ -275,24 +299,24 @@ async fn read_only_credential_is_refused_on_write_rows() {
         );
     }
     for verb in READ_ROWS {
-        let refused = call_verb(&fixture.server, &reader, run, verb)
+        gate_host_verb(&fixture.server, &reader, verb)
             .await
-            .expect("the composed call runs")
-            .expect_err("a Read row passes the gates");
-        assert_eq!(refused.code, "browser_pack_not_installed", "{verb}");
-        assert_eq!(refused.hook_notice, None, "{verb}");
+            .expect("the gate runs")
+            .expect("a Read row's own gate passes a read-only credential");
     }
 }
 
 /// A bound write-scoped credential with no guest answers
-/// `browser_pack_not_installed` on the composed call, on every row of a fresh
-/// vault. Reaching the guest code proves both gates passed, in order.
+/// `browser_pack_not_installed` on the composed call, on every browser row of
+/// a fresh vault: reaching the guest code proves both gates passed, in
+/// order. Every desktop row is refused `mcp_desktop_refused` before the
+/// guest code.
 #[tokio::test]
 async fn bound_write_credential_without_guest_hits_pack_gate_on_fresh_vault() {
     let fixture = door_fixture("code-mode-pack").await;
     let writer = bound_write_credential(&fixture, 0xC3).await;
     let run = EntityId::now();
-    for verb in DESKTOP_ROWS.into_iter().chain(BROWSER_ROWS) {
+    for verb in BROWSER_ROWS {
         let refused = call_verb(&fixture.server, &writer, run, verb)
             .await
             .expect("the composed call runs")
@@ -300,14 +324,22 @@ async fn bound_write_credential_without_guest_hits_pack_gate_on_fresh_vault() {
         assert_eq!(refused.code, "browser_pack_not_installed", "{verb}");
         assert_eq!(refused.hook_notice, None, "{verb}");
     }
+    for verb in DESKTOP_ROWS {
+        let refused = call_verb(&fixture.server, &writer, run, verb)
+            .await
+            .expect("the composed call runs")
+            .expect_err("no direct door serves the desktop");
+        assert_eq!(refused.code, DESKTOP_REFUSED, "{verb}");
+        assert_eq!(refused.hook_notice, None, "{verb}");
+    }
 }
 
 /// With the pack seed marker removed and still no guest, the composed call
-/// answers `browser_unbound` on desktop rows and
-/// `browser_connection_unchecked` on browser rows. Reaching the guest codes
-/// proves both gates passed, in order.
+/// answers `browser_connection_unchecked` on browser rows: reaching the guest
+/// code proves both gates passed, in order. Desktop rows are refused
+/// `mcp_desktop_refused` before it.
 #[tokio::test]
-async fn without_pack_seed_desktop_is_unbound_and_browser_needs_its_connection() {
+async fn without_pack_seed_desktop_is_refused_and_browser_needs_its_connection() {
     let fixture = door_fixture("code-mode-unbound").await;
     oneiron::test_doors::builtin_pack_seed::remove_builtin_pack_seed_marker(&fixture.vault)
         .expect("the seed marker is removed");
@@ -317,8 +349,8 @@ async fn without_pack_seed_desktop_is_unbound_and_browser_needs_its_connection()
         let refused = call_verb(&fixture.server, &writer, run, verb)
             .await
             .expect("the composed call runs")
-            .expect_err("no desktop guest is configured");
-        assert_eq!(refused.code, "browser_unbound", "{verb}");
+            .expect_err("no direct door serves the desktop");
+        assert_eq!(refused.code, DESKTOP_REFUSED, "{verb}");
         assert_eq!(refused.hook_notice, None, "{verb}");
     }
     for verb in BROWSER_ROWS {
@@ -332,9 +364,10 @@ async fn without_pack_seed_desktop_is_unbound_and_browser_needs_its_connection()
 }
 
 /// A bound write-scoped credential on a run with a desktop guest configured
-/// passes the binding admission, the credential gate, and the guest admission
-/// on every desktop row. The guest is never started: the test stops at the
-/// admission, before any guest call. Browser rows have no such control: their
+/// passes the binding admission, the row's credential gate, and the guest
+/// admission on every desktop row: the pieces a direct desktop door would
+/// meet (the composed call refuses the row, `mcp_desktop_refused`). The guest
+/// is never started: the test stops at the admission, before any guest call. Browser rows have no such control: their
 /// admission also needs a verified pack connection, which no test seam marks.
 #[tokio::test]
 async fn bound_write_credential_with_desktop_guest_passes_every_gate() {

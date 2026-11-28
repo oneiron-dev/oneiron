@@ -1,6 +1,7 @@
 {
   "name": "vault.writes.pending",
   "description": "Gated writes parked for consent, newest first.",
+  "example": "await vault.writes.pending({});",
   "uniffi": {
     "args": {
       "limit": "u32"

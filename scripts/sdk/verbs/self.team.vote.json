@@ -1,5 +1,6 @@
 {
   "name": "self.team.vote",
+  "description": "Records one vote from the calling team participant for the current attempt's tally.",
   "input": "crate::team::TeamVoteInput",
   "output": "crate::team::TeamRunAnswer",
   "scope": "Write",

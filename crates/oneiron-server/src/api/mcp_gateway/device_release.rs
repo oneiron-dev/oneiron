@@ -11,6 +11,13 @@ use oneiron::settings::{ReadDestination, ReleaseHold};
 use serde_json::Value;
 use std::sync::Arc;
 
+tokio::task_local! {
+    /// A code run's answer with its hydrate steps' miss echoes cleared
+    /// ([`with_run_hydrate_scan`]): the copy its own release's byte scan
+    /// reads, set only while that synchronous release runs.
+    static RUN_HYDRATE_SCAN: Arc<Value>;
+}
+
 /// Whether a page its producer retained may leave again: none of the rows
 /// it was derived from, nor any row its output or keyframe names, is one a
 /// device-local world keeps from the caller now. One whose rows are unknown
@@ -110,7 +117,9 @@ pub(crate) fn carrier_releases_for_test(
 /// derived from a row a device-local world keeps now, or naming one, or
 /// naming a short ref that resolves to no row, is refused: a continuation's
 /// caller starts over from page one, and a fresh call is told its result
-/// changed and to call again. The owner's own agent-pack export reads its
+/// changed and to call again. A hydrate answer reads its miss echoes, its
+/// caller's own strings, as no ref and no id (`hydrate_tool_scan`,
+/// REVIEW-10571 P1 1). The owner's own agent-pack export reads its
 /// prose as no ref (`owner_export_scan`, FIX 5522). The owner's own
 /// whole-vault export (`owner_whole_vault_export`, as its route or recorded
 /// call and his fresh proof name it, never its answer) reads its notices'
@@ -154,8 +163,11 @@ fn release_result(
     owner_whole_vault_export: bool,
 ) -> Result<Value, McpGatewayError> {
     // A claimed call keeps the result it is about to judge, for the calls
-    // waiting on it (FIX 7914).
-    super::claimed_release::record(&result, rows);
+    // waiting on it (FIX 7914). The new execute/resume endpoint releases
+    // unrecorded (P1-2): its wire shape is recorded explicitly instead.
+    if super::claimed_release::recording_enabled() {
+        super::claimed_release::record(&result, rows);
+    }
     let refused = |hold: ReleaseHold| {
         if continued {
             mcp_page_cursor_error(crate::mcp::McpPageCursorError::SnapshotMismatch)
@@ -167,14 +179,32 @@ fn release_result(
     if !destination.is_off_device() {
         return Ok(result);
     }
-    let scan = owner_export_scan(server, actor, &result, owner_whole_vault_export);
-    let Some(mut named) =
-        crate::device_local::short_refs_named(&server.vault, scan.as_ref().unwrap_or(&result))
-    else {
+    // A hydrate answer's miss echoes are its caller's own strings, so they
+    // read as no ref and no id, for the short-ref scan and the byte scan
+    // alike, its text mirror included (REVIEW-10571 P1 1); the found views
+    // scan exactly as before. Every other result scans whole, save the
+    // owner's own export prose (FIX 5522).
+    let hydrate = hydrate_tool_scan(&result);
+    let export = if hydrate.is_none() {
+        owner_export_scan(server, actor, &result, owner_whole_vault_export)
+    } else {
+        None
+    };
+    let scanned = hydrate.as_ref().or(export.as_ref()).unwrap_or(&result);
+    let Some(mut named) = crate::device_local::short_refs_named(&server.vault, scanned) else {
         return Err(refused(ReleaseHold::Placement));
     };
     named.extend_from_slice(rows.unwrap_or(&[]));
-    let bytes = serde_json::to_vec(&result).map_err(|_| refused(ReleaseHold::Placement))?;
+    // A code run's hydrate steps, as its record names them, had their miss
+    // echoes read as no ref for the run's short-ref rows already
+    // (`mcp_run_named_rows`); its byte scan reads the same steps cleared
+    // (REVIEW-10571 P1 3). The scan serves only the answer it was made from.
+    let run_scan = RUN_HYDRATE_SCAN
+        .try_with(Arc::clone)
+        .ok()
+        .filter(|scan| run_scan_matches(scan, &result));
+    let byte_scan = run_scan.as_deref().or(hydrate.as_ref()).unwrap_or(&result);
+    let bytes = serde_json::to_vec(byte_scan).map_err(|_| refused(ReleaseHold::Placement))?;
     let hold = if owner_whole_vault_export {
         crate::device_local::owner_export_retained_hold(&server.vault, &destination, &named, &bytes)
     } else {
@@ -346,8 +376,9 @@ pub(super) fn mcp_rerelease_refusal(
 /// The rows a code run's verb answers name by short ref inside the JSON
 /// each was recorded as, fresh or replayed; `None` when one names no row.
 /// A step `record` keeps, under its seq, as the owner's own agent-pack
-/// export call reads its prose as no ref (FIX 5522). The rest of its result
-/// is read at [`mcp_release_result`].
+/// export call reads its prose as no ref (FIX 5522), and a hydrate step
+/// reads its miss echoes as no ref (REVIEW-10571 P1 1). The rest of its
+/// result is read at [`mcp_release_result`].
 pub(super) fn mcp_run_named_rows(
     server: &SyncServer,
     actor: &McpCallContext,
@@ -363,12 +394,17 @@ pub(super) fn mcp_run_named_rows(
         let Ok(mut output) = serde_json::from_str::<Value>(output) else {
             continue;
         };
-        let export = step["seq"]
-            .as_u64()
-            .and_then(|seq| record.bridge_calls.iter().find(|call| call.seq == seq))
-            .is_some_and(recorded_export_call);
+        let recorded = recorded_step(step, record);
+        let export = recorded.is_some_and(recorded_export_call);
         if export && *owner.get_or_insert_with(|| reads_as_owner(server, actor)) {
             clear_export_text(&mut output);
+        }
+        // A hydrate step's miss echoes are its caller's own strings, as a
+        // hydrate answer's are (REVIEW-10571 P1 1): they read as no ref.
+        if recorded.is_some_and(recorded_hydrate_call)
+            && let Some(cleared) = crate::device_local::hydrate_misses_cleared(&output)
+        {
+            output = cleared;
         }
         rows.extend(crate::device_local::short_refs_named(
             &server.vault,
@@ -418,6 +454,90 @@ fn owner_export_scan(
     Some(scan)
 }
 
+/// The copy of `result` a hydrate answer's release scans read instead
+/// (REVIEW-10571 P1 1): on a `vault.hydrate` call, as the host's envelope
+/// names its tool, the answer with each miss echo cleared
+/// ([`crate::device_local::hydrate_misses_cleared`]), for the short-ref
+/// scan and the byte scan alike. `None` for every other result, scanned
+/// whole as before. The result that leaves stays as it is.
+fn hydrate_tool_scan(result: &Value) -> Option<Value> {
+    let structured = result.get("structuredContent")?;
+    if structured.get("tool").and_then(Value::as_str) != Some(crate::device_local::HYDRATE_VERB) {
+        return None;
+    }
+    let cleared = crate::device_local::hydrate_misses_cleared(structured.get("output")?)?;
+    let mut scan = result.clone();
+    scan["structuredContent"]["output"] = cleared;
+    super::type_feedback_release::sync_content(&mut scan);
+    Some(scan)
+}
+
+/// Lends the final release a scan copy from the same record that rendered
+/// the answer. No scan-only fields are added to the answer or its claim.
+pub(super) fn with_run_hydrate_scan<T>(
+    actor: &McpCallContext,
+    record: &oneiron::code_run::CodeRunReplayRecord,
+    result: Value,
+    release: impl FnOnce(Value) -> T,
+) -> T {
+    if actor.destination().is_off_device()
+        && let Some(scan) = run_hydrate_scan(&result, record)
+    {
+        return RUN_HYDRATE_SCAN.sync_scope(Arc::new(scan), || release(result));
+    }
+    release(result)
+}
+
+/// Clear only the displayed steps the record names as hydrates, then mirror
+/// the cleared structured content for the byte scan.
+fn run_hydrate_scan(
+    result: &Value,
+    record: &oneiron::code_run::CodeRunReplayRecord,
+) -> Option<Value> {
+    let steps = result.pointer("/structuredContent/steps")?.as_array()?;
+    let mut scan = None;
+    for (index, step) in steps.iter().enumerate() {
+        if !recorded_step(step, record).is_some_and(recorded_hydrate_call) {
+            continue;
+        }
+        let Some(cleared) = step["outcome"]["output"]
+            .as_str()
+            .and_then(|text| serde_json::from_str::<Value>(text).ok())
+            .and_then(|output| crate::device_local::hydrate_misses_cleared(&output))
+        else {
+            continue;
+        };
+        let scan = scan.get_or_insert_with(|| result.clone());
+        scan["structuredContent"]["steps"][index]["outcome"]["output"] =
+            Value::String(cleared.to_string());
+    }
+    let mut scan = scan?;
+    super::type_feedback_release::sync_content(&mut scan);
+    Some(scan)
+}
+
+/// Whether `scan`, the copy [`with_run_hydrate_scan`] lent, was made from
+/// `result`: the same run ref and the same recorded step sequence. An
+/// `execute` or `resume` answer names no tool (EXECUTE-CALLER-CODE PR D), so
+/// its steps, not a tool name, tie the scan to its answer; a task run's
+/// `execute_code` answer matches the same way.
+fn run_scan_matches(scan: &Value, result: &Value) -> bool {
+    fn step_seqs(answer: &Value) -> Option<Vec<Option<&Value>>> {
+        let steps = answer.pointer("/structuredContent/steps")?.as_array()?;
+        Some(steps.iter().map(|step| step.get("seq")).collect())
+    }
+    scan.pointer("/structuredContent/run_ref") == result.pointer("/structuredContent/run_ref")
+        && step_seqs(scan).is_some_and(|seqs| step_seqs(result) == Some(seqs))
+}
+
+fn recorded_step<'a>(
+    step: &Value,
+    record: &'a oneiron::code_run::CodeRunReplayRecord,
+) -> Option<&'a oneiron::code_run::CodeRunBridgeCall> {
+    let seq = step["seq"].as_u64()?;
+    record.bridge_calls.iter().find(|call| call.seq == seq)
+}
+
 /// Whether a code run's recorded call is an agent-pack export: its own
 /// request names the verb, never its output's shape.
 fn recorded_export_call(call: &oneiron::code_run::CodeRunBridgeCall) -> bool {
@@ -426,6 +546,17 @@ fn recorded_export_call(call: &oneiron::code_run::CodeRunBridgeCall) -> bool {
     };
     call.effect == oneiron::code_run::SelfEffect::AgentVerb
         && matches!(&call.request, rmpv::Value::Map(entries) if entries.iter().any(names_export))
+}
+
+/// Whether a code run's recorded call is a hydrate: its own request
+/// names the verb, never its output's shape, as [`recorded_export_call`]
+/// does.
+fn recorded_hydrate_call(call: &oneiron::code_run::CodeRunBridgeCall) -> bool {
+    let names_hydrate = |(key, verb): &(rmpv::Value, rmpv::Value)| {
+        key.as_str() == Some("verb") && verb.as_str() == Some(crate::device_local::HYDRATE_VERB)
+    };
+    call.effect == oneiron::code_run::SelfEffect::AgentVerb
+        && matches!(&call.request, rmpv::Value::Map(entries) if entries.iter().any(names_hydrate))
 }
 
 /// Whether `actor` reads as the vault's owner on the credential its request
@@ -486,7 +617,7 @@ pub(super) fn mcp_release_listed(
     result: Value,
     owner_whole_vault_export: bool,
 ) -> Result<Value, McpGatewayError> {
-    if rows.is_none() {
+    if rows.is_none() && super::claimed_release::recording_enabled() {
         super::claimed_release::record(&result, None);
     }
     match rows {

@@ -267,6 +267,8 @@ fn order_fixture(vault: &Vault) -> (EntityId, WorkOrder, TestHost<'_>) {
             retry_on: Vec::new(),
             result: None,
             intent_key: None,
+            after: None,
+            group: None,
         },
         NOW,
     )
@@ -443,6 +445,7 @@ fn a_code_mode_run_parks_on_an_order_and_resumes_with_its_receipt() {
     let config = EngineExecutorConfig {
         run_id,
         task: "Wait for the order and return its receipt".to_owned(),
+        caller_source_digest: None,
         prompt_package_root: oneiron::prompt::workspace_test_prompt_package_root()
             .expect("test prompt package"),
         model: ModelId::new("test/executor@v1").expect("fixture model id"),

@@ -4,7 +4,7 @@
 //!
 //! No rustfmt pass: every `.rs` output is a build-time output, which the tree modes neither write nor check.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -18,7 +18,7 @@ use super::row_access::context_is;
 use super::{Generator, RowId};
 use crate::error::GenerateError;
 use crate::py::read_text;
-use crate::py::value::Dict;
+use crate::py::value::{Dict, Value};
 use crate::verb_table::{VERBS_DIR, verb_files};
 
 /// The outputs crates/oneiron-sdk-build produces at build time
@@ -36,6 +36,7 @@ pub(crate) const BUILD_TIME_OUTPUTS: &[&str] = &[
     "crates/oneiron-verb-wire/src/generated/verb_input_checks.rs",
     "crates/oneiron/src/verbs/generated/catalog_fragment.d.ts",
     "crates/oneiron/src/verbs/generated/catalog_fragment_revision.rs",
+    "crates/oneiron/src/verbs/generated/verb_tree_index.json",
     "crates/oneiron/src/verbs/generated/code-mode.d.ts",
     "crates/oneiron/src/verbs/generated/run_verb_catalog.rs",
     "crates/oneiron/src/verbs/generated/sdk_generated.rs",
@@ -525,12 +526,24 @@ impl Generator {
             .map(|&id| row_of(self, id))
             .collect();
         let code_mode: Vec<&Dict> = code_mode.iter().collect();
+        // The manifest rows' authored examples by verb path: a projected row carries none of its
+        // own.
+        let mut examples = BTreeMap::new();
+        for &id in &self.manifest {
+            let row = &self.rows[id];
+            if let (Some(Value::Str(name)), Some(Value::Str(example))) =
+                (row.get("name"), row.get("example"))
+            {
+                examples.insert(name.clone(), example.clone());
+            }
+        }
         for (path, text) in crate::catalog_fragment::catalog_fragment(
             &self.root,
             &code_mode,
             super::HEADER,
             &self.type_names,
             &mut self.fragment_dependencies,
+            Some(&examples),
         )? {
             files.insert(path, text);
         }
@@ -666,7 +679,9 @@ pub(crate) fn local_facade_rows(generator: &Generator) -> Vec<RowId> {
         .callable_rows
         .iter()
         .copied()
-        .filter(|&id| context_is(&generator.rows[id], "memory"))
+        .filter(|&id| {
+            context_is(&generator.rows[id], "memory") && !super::code_only_row(&generator.rows[id])
+        })
         .chain(generator.board_host_rows.iter().copied())
         .collect()
 }
@@ -734,7 +749,7 @@ mod tests {
             Some(2)
         );
         assert_eq!(package_outputs("nope"), None);
-        assert_eq!(BUILD_TIME_OUTPUTS.len(), 17);
+        assert_eq!(BUILD_TIME_OUTPUTS.len(), 18);
         assert!(BUILD_TIME_OUTPUTS.contains(&super::super::wire_inputs::WIRE_INPUTS_PATH));
     }
 

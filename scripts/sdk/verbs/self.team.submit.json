@@ -1,5 +1,6 @@
 {
   "name": "self.team.submit",
+  "description": "Submits one team output at its exact revision for the owner's acceptance review under the caller's read scope.",
   "input": "crate::code_run::TeamSubmitInput",
   "output": "crate::code_run::TeamSubmitAnswer",
   "scope": "Write",

@@ -1,5 +1,6 @@
 {
   "name": "vault.questions.read",
+  "description": "Reads one of the caller's standing questions at its current or requested version under the caller's read scope.",
   "input": "crate::receipt::QuestionReadRequest",
   "output": "Option<crate::llm::decision::questions::QuestionRecord>",
   "call": "crate::task_verb::sdk::host_only(memory, \"vault.questions.read\", &input)?",

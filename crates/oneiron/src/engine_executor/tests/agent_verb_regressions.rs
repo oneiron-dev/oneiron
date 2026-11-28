@@ -14,8 +14,9 @@ use crate::task_verb::sdk::{AgentVerb, TaskCreateRequest};
 /// Its answer is the task receipt, with `extra` fields beside it. Once
 /// `closed`, it refuses every call as the MCP door refuses a revoked slip's;
 /// one that `refuses_kept` refuses reading a kept answer back, and only that,
-/// in a gate's own word once `refuses_kept_as_a_gate`. `on_kept_read` runs
-/// once, as the door rules on the next kept read.
+/// in a gate's own word once `refuses_kept_as_a_gate`, with
+/// `kept_refusal_reasons` as its reason codes. `on_kept_read` runs once, as
+/// the door rules on the next kept read.
 struct TaskCreateDoor {
     vault: Arc<Vault>,
     actor: WriteActor,
@@ -23,6 +24,7 @@ struct TaskCreateDoor {
     closed: std::sync::atomic::AtomicBool,
     refuses_kept: std::sync::atomic::AtomicBool,
     refuses_kept_as_a_gate: std::sync::atomic::AtomicBool,
+    kept_refusal_reasons: std::sync::Mutex<Vec<String>>,
     on_kept_read: std::sync::Mutex<Option<Box<dyn FnOnce() + Send>>>,
 }
 
@@ -39,6 +41,7 @@ impl TaskCreateDoor {
             closed: std::sync::atomic::AtomicBool::new(false),
             refuses_kept: std::sync::atomic::AtomicBool::new(false),
             refuses_kept_as_a_gate: std::sync::atomic::AtomicBool::new(false),
+            kept_refusal_reasons: std::sync::Mutex::new(Vec::new()),
             on_kept_read: std::sync::Mutex::new(None),
         })
     }
@@ -48,6 +51,7 @@ impl TaskCreateDoor {
             return Err(AgentVerbRefusal {
                 code: "mcp_auth_required".to_owned(),
                 hook_notice: None,
+                reason_codes: Vec::new(),
             });
         }
         Ok(())
@@ -64,6 +68,7 @@ impl TaskCreateDoor {
         let refused = || AgentVerbRefusal {
             code: "engine_error".to_owned(),
             hook_notice: None,
+            reason_codes: Vec::new(),
         };
         let input: TaskCreateRequest =
             serde_json::from_value(call.input.clone()).map_err(|_| refused())?;
@@ -116,6 +121,11 @@ impl AgentVerbDoor for TaskCreateDoor {
             return Err(AgentVerbRefusal {
                 code: if as_a_gate { "deny" } else { "read_refused" }.to_owned(),
                 hook_notice: None,
+                reason_codes: self
+                    .kept_refusal_reasons
+                    .lock()
+                    .expect("kept refusal reasons")
+                    .clone(),
             });
         }
         self.admits().map(|()| None)
@@ -192,6 +202,12 @@ impl<'a> VerbWriteRun<'a> {
             )
             .expect("seed actor");
         let actor = WriteActor::new(actor_id, EdgeActorClass::Agent);
+        // Scoped reads are default-deny (OF-063). The actor reads under a
+        // `core:read` grant, as the other executor tests' actor does, so a
+        // speech that asserts the task it created reads that task; without
+        // it the witness refuses the speech and its refusal receipt mints
+        // the actor's stamp token.
+        crate::conversation_dag::fixtures::grant_reads(vault, actor);
         Self::through(vault, TaskCreateDoor::new(vault, actor, extra))
     }
 
@@ -603,10 +619,16 @@ fn a_bubble_past_a_refused_kept_answer_speaks_nothing() {
 
 /// The guest's answer to a call the door refused with `code`.
 fn refused_as(effect: SelfEffect, code: &str) -> SelfDispatchOutcome {
+    refused_with(effect, code, &[])
+}
+
+/// The guest's answer to a call the door refused with `code` and
+/// `reason_codes`.
+fn refused_with(effect: SelfEffect, code: &str, reason_codes: &[&str]) -> SelfDispatchOutcome {
     SelfDispatchOutcome::Denied(crate::code_run::SelfDeniedResult {
         effect,
         outcome: code.to_owned(),
-        reason_codes: Vec::new(),
+        reason_codes: reason_codes.iter().map(|code| (*code).to_owned()).collect(),
         hook_notice: None,
     })
 }
@@ -616,7 +638,9 @@ fn refused_as(effect: SelfEffect, code: &str) -> SelfDispatchOutcome {
 /// the same step started with an empty history, and its bubble committed
 /// before the unmet receipt stopped the checkpoint. The refusal now stands on
 /// the receipt: every attempt of the step gets it until an admitted read
-/// reconciles the receipt, and the step then closes with its one task.
+/// reconciles the receipt, and the step then closes with its one task. Each
+/// attempt gets the door's reason codes too, as the refusing one did (review
+/// round 1 of #10553: the next attempt got none).
 #[test]
 fn a_refused_kept_answer_holds_in_the_steps_next_attempt() {
     let (_dir, vault) = open_test_vault();
@@ -644,11 +668,19 @@ fn a_refused_kept_answer_holds_in_the_steps_next_attempt() {
     run.door
         .refuses_kept
         .store(true, std::sync::atomic::Ordering::SeqCst);
+    *run.door
+        .kept_refusal_reasons
+        .lock()
+        .expect("kept refusal reasons") = vec!["read.revoked".to_owned()];
     let mut refused = resumed_step(vec![create_task()]);
     not_closed(run.resume(&run.config, &mut refused));
     assert_eq!(
         refused.answers,
-        vec![refused_as(SelfEffect::AgentVerb, "read_refused")]
+        vec![refused_with(
+            SelfEffect::AgentVerb,
+            "read_refused",
+            &["read.revoked"]
+        )]
     );
 
     let mut next = resumed_step(vec![speak(), create_task()]);
@@ -657,9 +689,10 @@ fn a_refused_kept_answer_holds_in_the_steps_next_attempt() {
     assert_eq!(
         next.answers,
         vec![
-            refused_as(SelfEffect::Speak, "read_refused"),
-            refused_as(SelfEffect::AgentVerb, "read_refused"),
-        ]
+            refused_with(SelfEffect::Speak, "read_refused", &["read.revoked"]),
+            refused_with(SelfEffect::AgentVerb, "read_refused", &["read.revoked"]),
+        ],
+        "the standing refusal answers with the door's reason codes"
     );
 
     run.door
@@ -682,7 +715,8 @@ fn a_refused_kept_answer_holds_in_the_steps_next_attempt() {
 /// A kept answer's refusal spelled as a gate's own word stands on its receipt
 /// as that gate's rejection: the step's next attempt halts its bridge at its
 /// first call, as after any gate's, and so cannot close on a later admitted
-/// read. The attempt after it reconciles the receipt and closes.
+/// read. The attempt after it reconciles the receipt and closes. The gate's
+/// own reason code rides the halt to the guest, on both attempts.
 #[test]
 fn a_kept_answer_refused_in_a_gate_word_halts_the_next_attempt() {
     let (_dir, vault) = open_test_vault();
@@ -697,11 +731,19 @@ fn a_kept_answer_refused_in_a_gate_word_halts_the_next_attempt() {
     run.door
         .refuses_kept
         .store(true, std::sync::atomic::Ordering::SeqCst);
+    *run.door
+        .kept_refusal_reasons
+        .lock()
+        .expect("kept refusal reasons") = vec!["gate.deny.missing_actor_class".to_owned()];
     let mut refused = resumed_step(vec![create_task()]);
     assert!(run.resume(&run.config, &mut refused).is_err());
     assert_eq!(
         refused.answers,
-        vec![refused_as(SelfEffect::AgentVerb, "deny")]
+        vec![refused_with(
+            SelfEffect::AgentVerb,
+            "deny",
+            &["gate.deny.missing_actor_class"]
+        )]
     );
 
     run.door
@@ -712,7 +754,11 @@ fn a_kept_answer_refused_in_a_gate_word_halts_the_next_attempt() {
     assert_eq!(
         next.answers,
         vec![
-            refused_as(SelfEffect::Speak, "deny"),
+            refused_with(
+                SelfEffect::Speak,
+                "deny",
+                &["gate.deny.missing_actor_class"]
+            ),
             SelfDispatchOutcome::Failed(crate::code_run::SelfFailedResult {
                 effect: SelfEffect::AgentVerb,
                 error: "host_bridge_halted".to_owned(),
@@ -760,6 +806,7 @@ impl AgentVerbDoor for ClosingDoor {
         Ok(Err(AgentVerbRefusal {
             code: crate::code_run::AGENT_VERB_DOOR_UNBOUND.to_owned(),
             hook_notice: None,
+            reason_codes: Vec::new(),
         }))
     }
 
@@ -771,6 +818,7 @@ impl AgentVerbDoor for ClosingDoor {
             return Err(AgentVerbRefusal {
                 code: "door_closed".to_owned(),
                 hook_notice: None,
+                reason_codes: Vec::new(),
             });
         }
         Ok(None)
@@ -935,10 +983,11 @@ fn a_bad_recorded_output_reference_is_refused_without_loading_the_source() {
 /// Review repro (Sol, burn engine-prs-03 R1): a run whose door stopped
 /// admitting its calls still spoke its answer, through the executor's
 /// trailing implicit speech. That bubble is the run's own `self.speak`: a
-/// closed door refuses it, typed, and the checkpointed intent is delivered by
-/// a later run the door admits.
+/// closed door refuses it. Own-run output is optional, so the run completes
+/// with its answer in its result only, and a later run the door admits says
+/// nothing either (FIX CODE-MODE-LENDING-W7, review of #10597).
 #[test]
-fn a_closed_door_speaks_no_trailing_bubble_until_it_opens() {
+fn a_closed_door_speaks_no_trailing_bubble_and_keeps_the_answer_in_the_result() {
     let (_dir, vault) = open_test_vault();
     let door = ClosingDoor::new(true);
     let gated =
@@ -957,25 +1006,27 @@ fn a_closed_door_speaks_no_trailing_bubble_until_it_opens() {
 
     let mut runtime = FixtureRuntime::new([JsCodeModeStepOutcome::complete("runtime done")]);
     let mut executor = EngineNativeExecutor::new(&vault, &backend, &lease, &mut runtime, &gated);
-    let refused = block_on_ready(executor.run(&config)).expect_err("the bubble is refused");
+    let outcome = block_on_ready(executor.run(&config)).expect("the run keeps its result");
     drop(executor);
-    assert!(
-        matches!(&refused, EngineExecutorError::HostRefused { code } if code == "door_closed"),
-        "{refused}"
-    );
+    assert_eq!(outcome.status, EngineExecutorStatus::Complete);
     assert_eq!(messages(), before, "a closed door speaks nothing");
 
     door.set_closed(false);
     let mut runtime = FixtureRuntime::new(Vec::new());
     let mut executor = EngineNativeExecutor::new(&vault, &backend, &lease, &mut runtime, &gated);
-    let outcome = block_on_ready(executor.run(&config)).expect("the admitted retry");
+    let outcome = block_on_ready(executor.run(&config)).expect("the admitted rerun");
     drop(executor);
     assert_eq!(outcome.status, EngineExecutorStatus::Complete);
-    assert_eq!(messages(), before + 1, "the retry delivers the kept intent");
+    assert_eq!(
+        messages(),
+        before,
+        "the result-only choice was committed with the result"
+    );
 }
 
 /// A custom host door that refuses a run's search with a gate's own outcome
-/// word, `deny`, and admits the run's other calls.
+/// word, `deny`, with a gate's reason code and one of its own, and admits the
+/// run's other calls.
 struct GateWordDoor;
 
 impl AgentVerbDoor for GateWordDoor {
@@ -988,6 +1039,7 @@ impl AgentVerbDoor for GateWordDoor {
         Ok(Err(AgentVerbRefusal {
             code: crate::code_run::AGENT_VERB_DOOR_UNBOUND.to_owned(),
             hook_notice: None,
+            reason_codes: Vec::new(),
         }))
     }
 
@@ -999,6 +1051,10 @@ impl AgentVerbDoor for GateWordDoor {
             return Err(AgentVerbRefusal {
                 code: "deny".to_owned(),
                 hook_notice: None,
+                reason_codes: vec![
+                    "gate.deny.missing_actor_class".to_owned(),
+                    "door.private_reason".to_owned(),
+                ],
             });
         }
         Ok(None)
@@ -1029,7 +1085,9 @@ impl JsCodeModeRuntime for CatchingStep {
 /// recording it, the guest caught the failure and spoke, and the bubble
 /// committed one bridge position past a gap, so its step could not keep its
 /// checkpoint. A door's `deny` is now the gate's refusal: recorded where it
-/// fell, and the bridge halts after it as after any gate's.
+/// fell, and the bridge halts after it as after any gate's. The halt keeps
+/// the door's codes that are a gate's own (review round 1 of #10553: it kept
+/// none), and only those.
 #[test]
 fn a_door_refusal_spelled_as_a_gate_word_halts_the_bridge_as_a_gate_does() {
     let (_dir, vault) = open_test_vault();
@@ -1060,10 +1118,10 @@ fn a_door_refusal_spelled_as_a_gate_word_halts_the_bridge_as_a_gate_does() {
             &failed,
             EngineExecutorError::Engine(Error::Gate(GateError::GateWriteRejected {
                 outcome: "deny",
-                ..
-            }))
+                reason_codes,
+            })) if reason_codes == &["gate.deny.missing_actor_class"]
         ),
-        "{failed}"
+        "the halt keeps the gate's own reason code: {failed}"
     );
     assert_eq!(messages(), before, "nothing is spoken past the refusal");
     let record = vault

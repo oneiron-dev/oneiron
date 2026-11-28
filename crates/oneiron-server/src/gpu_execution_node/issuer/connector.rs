@@ -284,6 +284,17 @@ impl VaultMachineConnector {
             None => None,
         }
         .ok_or_else(|| refused(DispatchRefusal::StarterLapsed.code()))?;
+        // A result binds only rows its starter may read: once the starter lapses, the result
+        // lands through the owner's lane, which reads every row (RESULT-LANDING-LAPSED-STARTER
+        // = A). Nothing is written or sent.
+        if let (Some(binding), Some(by)) = (&inputs.result, started_by)
+            && !self
+                .vault()
+                .gpu_job_result_binding_readable(by, binding)
+                .map_err(store)?
+        {
+            return Err(refused("result_binding_unreadable"));
+        }
         let now = self.now_ms();
         let ask = DispatchAsk {
             starter,
@@ -311,6 +322,7 @@ impl VaultMachineConnector {
             starter: wire_starter(starter),
             hold: hold_of(key),
             authority_heads: self.vault().authority_main_log_heads().map_err(store)?,
+            continues: None,
         };
         let signed = SignedJobSubmit::sign(submit, self.parts.signer.as_ref())
             .map_err(|error| refused(format!("issuer_cannot_sign: {error}")))?;
@@ -396,6 +408,12 @@ impl VaultMachineConnector {
         }
         let signed = decode::<SignedJobSubmit>(&row.submit)?;
         if let Some(refusal) = self.revoked(&row, &signed.submit)? {
+            // A key the node had already ended when the issuer saw the revoke keeps its end and
+            // its result: the revoke stops only work the node has not ended (a stop at the box
+            // ends a job `Stopped` too, which is not the revoke's).
+            if let Some(ended) = self.ended_at_node(&row) {
+                return self.status_known(&row, &signed, &ended);
+            }
             let closed = self.close(
                 &row.key,
                 DispatchClose::Revoked {
@@ -619,6 +637,10 @@ fn receipt_status(receipt: &JobReceipt) -> GpuResourceStatus {
         JobState::Ended => match receipt.end {
             Some(JobEnd::Lost { .. }) => GpuResourceStatus::Gone,
             _ if !receipt.started => GpuResourceStatus::Exited { used_secs: 0 },
+            // The node ended the run at the job's maximum (pass 33, 8.6).
+            Some(JobEnd::TimeLimit) => GpuResourceStatus::TimeLimit {
+                used_secs: receipt.measured_secs.unwrap_or(0),
+            },
             _ => GpuResourceStatus::Exited {
                 used_secs: receipt.measured_secs.unwrap_or(0),
             },

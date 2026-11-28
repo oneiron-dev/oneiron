@@ -28,6 +28,7 @@ impl CallSources for OneTurnCall {
     fn shown(&self, id: EntityId) -> Option<SourceShown<'_>> {
         (id == self.turn).then(|| SourceShown {
             text: self.text.as_deref(),
+            one_line_fenced: false,
             project: None,
         })
     }

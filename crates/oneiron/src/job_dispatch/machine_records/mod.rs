@@ -4,8 +4,10 @@
 //!   found by the reconcile before the first dispatch to that node, stopped while it lives, and
 //!   kept with its terminal receipt and the seconds it occupied, which no family is charged for;
 //! - `MACHINE_JOB_GUARD`: the issuer's half of the drain guard. It counts the machine's own
-//!   failures in a row from what the issuer observes, unreachable dispatches included, and once
-//!   drained the issuer starts no job there until door 12 clears it. A caller's stop neither
+//!   failures in a row from what the issuer observes, unreachable dispatches included. Once the
+//!   machine is drained, the issuer starts no job there until door 12 clears it, or until a
+//!   passed readiness check clears it under `machines.drain.clear_by = after_readiness_check`
+//!   (the default; [`Vault::clear_machine_job_drain_after_check`]). A caller's stop neither
 //!   counts nor resets; a run past the fast-exit window resets;
 //! - `JOB_RETURN`: what the issuer did with an ended key's outputs, and the acknowledgement
 //!   that lets the node clean them ([`job_return`]).
@@ -227,7 +229,9 @@ impl Vault {
     /// Counts `outcome` for `machine` in one durable write: a machine failure adds one and,
     /// at `jobs.drain.after_failures` in a row, drains the machine; a run past the fast-exit
     /// window resets the count; anything else changes nothing. A drained machine stays drained
-    /// until door 12 clears it. Answers the guard as written.
+    /// until door 12 clears it or, under `machines.drain.clear_by = after_readiness_check`, a
+    /// passed readiness check that the node ran after the issuer read this row
+    /// ([`Self::clear_machine_job_drain_after_check`]). Answers the guard as written.
     ///
     /// # Errors
     ///
@@ -296,6 +300,54 @@ impl Vault {
             guard.updated_at_ms = now_ms;
             MACHINE_JOB_GUARDS.put(&self.store, txn, &row_key, &guard)?;
             Ok(Ok(guard))
+        })
+    }
+
+    /// The readiness check's clear of the issuer's drain (pass 34 row Q4, CG-2 row 9: "a drained
+    /// machine clears itself once its readiness check passes"), in one durable write.
+    /// `read_before` is `machine`'s guard row as the issuer read it before asking the node for
+    /// the passed check; the caller orders the check after that read on the node's own clock.
+    /// The drain and its count clear when both hold:
+    /// - `machines.drain.clear_by` for `machine`, read in the same write, is
+    ///   `after_readiness_check`;
+    /// - the row is still `read_before`.
+    ///
+    /// A row that changed since that read is the newer word, and nothing changes: a failure
+    /// counted after the read (a late terminal receipt, a reserve's cutoff) or door 12's clear.
+    /// Nothing changes either under any other `clear_by`, or for a machine the issuer has not
+    /// drained. Answers the drain it cleared.
+    ///
+    /// # Errors
+    ///
+    /// A store failure.
+    pub fn clear_machine_job_drain_after_check(
+        &self,
+        machine: EntityId,
+        read_before: &MachineJobGuard,
+        now_ms: u64,
+    ) -> crate::Result<Option<MachineDrain>> {
+        let row_key = machine.to_hex();
+        self.with_write_txn(|txn| {
+            let clear_by = crate::machine_policy::setting_keys::DRAIN_CLEAR_BY
+                .read_in_txn(self, txn, &[], Some(&row_key))?
+                .value;
+            if clear_by != crate::machine_policy::DrainClearBy::AfterReadinessCheck {
+                return Ok(None);
+            }
+            let Some(mut guard) = MACHINE_JOB_GUARDS.get(&self.store, txn, &row_key)? else {
+                return Ok(None);
+            };
+            if guard != *read_before {
+                return Ok(None);
+            }
+            let Some(drain) = guard.drained.take() else {
+                return Ok(None);
+            };
+            guard.failures_in_a_row = 0;
+            guard.last_failure = None;
+            guard.updated_at_ms = now_ms;
+            MACHINE_JOB_GUARDS.put(&self.store, txn, &row_key, &guard)?;
+            Ok(Some(drain))
         })
     }
 }

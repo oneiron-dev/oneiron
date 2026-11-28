@@ -1,5 +1,6 @@
 {
   "name": "vault.questions.backfill",
+  "description": "Schedules a backfill for a standing question at its expected version so the host can answer uncovered units.",
   "input": "crate::receipt::QuestionBackfillRequest",
   "output": "crate::llm::decision::questions::ScheduledBackfill",
   "call": "crate::task_verb::sdk::host_only(memory, \"vault.questions.backfill\", &input)?",

@@ -1,5 +1,6 @@
 {
   "name": "self.folds",
+  "description": "Lists the run's landed folds, pending marks with notes and failures, and any outstanding compact request.",
   "input": "crate::compaction::FoldsInput",
   "output": "crate::compaction::FoldReply<crate::compaction::FoldList>",
   "scope": "Read",

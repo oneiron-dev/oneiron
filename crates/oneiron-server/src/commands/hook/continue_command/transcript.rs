@@ -3,7 +3,9 @@
 //! `vault.imports.hook_transcript` takes them. The hooks' hand-over to a
 //! selected hosted vault sends the log its event names the same way
 //! ([`read_hook_log`]), and another host's one log by its source
-//! ([`read_one_below`]).
+//! ([`read_one_below`]). Each request names the session's folder by its
+//! digests, as the local import names it ([`session_folder::log_folder_digests`]),
+//! so the hosted vault lands the session in that folder's project.
 //!
 //! The log is the one `--transcript` names, as the hook's `transcript_path`
 //! does, or else the newest session log of the project folder Claude Code
@@ -45,11 +47,12 @@ use std::time::{Instant, SystemTime};
 use base64::Engine as _;
 use oneiron::ingest::history::{
     HOOK_TRANSCRIPT_MAX_BYTES, HOOK_TRANSCRIPT_MAX_SUBAGENTS, HOOK_TRANSCRIPT_STAGED_MAX_BYTES,
-    HookSubagentTranscript, HookTranscriptImportRequest, HookTranscriptPartRequest,
-    HookTranscriptSource,
+    HistoryFile, HistorySource, HookSubagentTranscript, HookTranscriptImportRequest,
+    HookTranscriptPartRequest, HookTranscriptSource,
 };
 use rustix::fs::{CWD, Dir, Mode, OFlags, openat};
 
+use crate::commands::history_import::session_folder;
 use crate::commands::hook::hosted_selection::HostedAuthMode;
 use crate::commands::mcp_bridge;
 use crate::files_intake::confined;
@@ -133,6 +136,14 @@ pub(super) fn read_one_below(
         source.history_source().source_id(),
         path.display()
     );
+    let folder_digests = session_folder::log_folder_digests(
+        source.history_source(),
+        &HistoryFile {
+            stem: session.clone(),
+            parent: None,
+        },
+        &String::from_utf8_lossy(&bytes),
+    );
     Ok(SessionLogs {
         path: path.to_path_buf(),
         request: HookTranscriptImportRequest {
@@ -140,6 +151,7 @@ pub(super) fn read_one_below(
             transcript_gzip_base64: encode(path, &bytes)?,
             subagents: Vec::new(),
             source: Some(source),
+            folder_digests,
         },
         log_bytes: bytes.len(),
         subagent_bytes: Vec::new(),
@@ -223,6 +235,7 @@ fn requests_within(
         transcript_gzip_base64: logs.request.transcript_gzip_base64.clone(),
         subagents: Vec::new(),
         source: logs.request.source,
+        folder_digests: logs.request.folder_digests.clone(),
     };
     let base = serde_json::to_vec(&alone)?.len();
     let fits =
@@ -375,8 +388,21 @@ fn read_below(root: &Path, path: &Path) -> anyhow::Result<SessionLogs> {
             root.display()
         )
     })?;
-    let (folder, session_log) = confined::open_below(root, relative)?;
-    let (transcript_gzip_base64, log_bytes) = encoded(session_log, path)?;
+    let (folder, mut session_log) = confined::open_below(root, relative)?;
+    let mut bytes = Vec::new();
+    session_log
+        .read_to_end(&mut bytes)
+        .map_err(|error| anyhow::anyhow!("read {}: {error}", path.display()))?;
+    let transcript_gzip_base64 = encode(path, &bytes)?;
+    let log_bytes = bytes.len();
+    let folder_digests = session_folder::log_folder_digests(
+        HistorySource::ClaudeCode,
+        &HistoryFile {
+            stem: session.clone(),
+            parent: None,
+        },
+        &String::from_utf8_lossy(&bytes),
+    );
     let (subagents, subagent_bytes) = match confined::open_dir_in(&folder, OsStr::new(&session))? {
         Some(own) => subagent_logs(&own, &path.with_extension(""))?,
         None => (Vec::new(), Vec::new()),
@@ -388,6 +414,7 @@ fn read_below(root: &Path, path: &Path) -> anyhow::Result<SessionLogs> {
             transcript_gzip_base64,
             subagents,
             source: None,
+            folder_digests,
         },
         log_bytes,
         subagent_bytes,
@@ -636,3 +663,6 @@ fn whole_records(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

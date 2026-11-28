@@ -126,6 +126,17 @@ impl Vault {
             } else {
                 None
             };
+            // So does the answer-schema line (HOUSE-SCHEMA-SWITCH): each event makes a
+            // digest of its own.
+            let answer_schema = if due {
+                crate::dreamer_consolidation::answer_schema::unseen_answer_schema_line_in_txn(
+                    &self.store,
+                    &*txn,
+                    state.answer_schema_seen,
+                )?
+            } else {
+                None
+            };
             // So do the health cards: each one opened, updated or settled in
             // the period `[from, now)`, read in this write's own snapshot by
             // the test the public period reader keeps (FIX 1979).
@@ -149,6 +160,9 @@ impl Vault {
                 && !drafter
                     .as_ref()
                     .is_some_and(crate::drafter::DigestDrafter::arms)
+                && !answer_schema.as_ref().is_some_and(
+                    crate::dreamer_consolidation::answer_schema::DigestAnswerSchema::arms,
+                )
                 && health_cards.is_empty()
             {
                 return Ok(None);
@@ -178,6 +192,7 @@ impl Vault {
                     note_tombstones,
                     applied,
                     drafter,
+                    answer_schema,
                     health_cards,
                     presentation,
                     recipient,
@@ -209,6 +224,7 @@ impl Vault {
             note_tombstones,
             applied,
             drafter,
+            answer_schema,
             health_cards,
             presentation,
             recipient,
@@ -250,6 +266,9 @@ impl Vault {
         if let Some(line) = &drafter {
             state.drafter_seen = Some(line.through);
         }
+        if let Some(line) = &answer_schema {
+            state.answer_schema_seen = Some(line.through);
+        }
         let mut digest = ProactivityDigest {
             id: [0; 32],
             content_hash: [0; 32],
@@ -264,6 +283,7 @@ impl Vault {
             note_tombstones,
             applied,
             drafter,
+            answer_schema,
             health_cards,
             rendered: String::new(),
             voice_style: presentation.voice_style.clone(),
@@ -282,6 +302,8 @@ impl Vault {
         DIGEST.admit(self, txn, &locator, &mut digest)?;
         digest.content_hash = view::content_hash(&digest)?;
         DIGEST.put(&self.store, txn, &locator, &digest)?;
+        // Index the admitted proposals so their erases can find the stored digest.
+        super::erase::index_digest_claims_in_txn(&self.store, txn, &digest)?;
         // Delivery is the reader's inbox, in this same write: one
         // NOTIFICATION per reader, keyed by digest, whose seen and acked
         // marks are the reader's own and never this digest's `seen`. The
@@ -346,6 +368,7 @@ impl Vault {
             || digest.note_tombstones.is_some()
             || digest.applied.is_some()
             || digest.drafter.is_some()
+            || digest.answer_schema.is_some()
             || !digest.health_cards.is_empty()
         {
             if due {
@@ -373,6 +396,7 @@ struct DigestParts {
     note_tombstones: Option<DigestNoteTombstones>,
     applied: Option<DigestApplied>,
     drafter: Option<crate::drafter::DigestDrafter>,
+    answer_schema: Option<crate::dreamer_consolidation::answer_schema::DigestAnswerSchema>,
     health_cards: Vec<agent_health::ConcernCardSummary>,
     presentation: ProactivityPresentation,
     recipient: Option<EntityId>,

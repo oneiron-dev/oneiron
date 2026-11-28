@@ -125,6 +125,7 @@ fn executor_config(run_id: EntityId) -> EngineExecutorConfig {
     EngineExecutorConfig {
         run_id,
         task: "name the serving model".to_owned(),
+        caller_source_digest: None,
         prompt_package_root: workspace_test_prompt_package_root()
             .expect("workspace test prompt package"),
         model: ModelId::new(CONFIGURED_MODEL_ID).expect("seat model id"),

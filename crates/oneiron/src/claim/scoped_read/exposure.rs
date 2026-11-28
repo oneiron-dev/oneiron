@@ -131,6 +131,26 @@ impl ScopedRead<'_> {
             .pending_read_exposure
             .park(reader, records, at);
     }
+
+    /// [`Self::read`] that charges no row to the reader's read exposure, for a
+    /// door that serves only some of the rows it admits: it names those it
+    /// serves itself, through [`Self::charge_served`].
+    pub(crate) fn read_uncharged(
+        &self,
+        reads: &[crate::ports::PointRead<'_>],
+    ) -> Result<crate::ports::ScopedReadResult<Vec<Option<crate::ports::ReadRow>>>> {
+        let _bodies = self.prepare_point_read::<crate::error::Error>()?;
+        let txn = self.vault.store.env.read_txn()?;
+        self.read_kept_projected_opaque_in_txn(
+            &txn,
+            reads,
+            None,
+            |_| true,
+            false,
+            |_, _| Ok(false),
+            |_, _, rows| Ok::<_, crate::error::Error>(rows),
+        )
+    }
 }
 
 impl Vault {

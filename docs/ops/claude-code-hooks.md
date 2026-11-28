@@ -1,12 +1,14 @@
 # Claude Code hooks: your vault in every session
 
-Four Claude Code hooks connect a session to your vault, and a fifth is there
+Six Claude Code hooks connect a session to your vault, and another is there
 if you want it. You make no calls by hand:
 
 | Claude Code event | Hook | What happens |
 |---|---|---|
-| `SessionStart` (start, resume, `/clear`, after a compaction) | `session-start` | The session binds a vault and is told which in one line; then a short recall for the project. Claude Code adds both to the session's context. |
-| `UserPromptSubmit` (only if you add it) | `prompt` | A short recall for what you just asked, from the bound vault. |
+| `SessionStart` (start, resume, `/clear`, after a compaction) | `session-start` | The session binds a vault and is told which in one line. Claude Code adds it to the session's context. Given the task's words (`--query "<words>"`), it is also given the lines that clear your relevance bar, at most 3; keyed on nothing but the folder, it recalls nothing. The plugin and the snippet below pass `--query " "` ([How it works](#how-it-works)). |
+| `UserPromptSubmit` (only if you add it) | `prompt` | The lines for what you just asked that clear your relevance bar, at most 3, from the bound vault. |
+| `PostToolUse` | `tool-result` | After a non-Oneiron tool result, Claude Code gets at most one new line from the vault. To a vault that is not on this machine, the recall's query holds only the tool's name and, for Claude Code's own file tools (`Read`, `Write`, `Edit`, `MultiEdit`, `NotebookEdit`), the file's base name: never the command, another tool's path, other input text or the tool's output. The request also carries the session id and digests of the session folder's path (no raw path or label), as every hook recall does. On this machine the full query goes only after the vault answers the credential's own vault id. |
+| `SessionStart` (after a compaction) | `focus-refresh` | If this session already had a board, Claude Code gets it back. It asks only the origin a running Oneiron MCP server recorded for the same credential file after the vault first admitted it, with that credential, and only when that vault answers the credential's own vault id; with no such record, running servers that recorded different origins, or a `--url` naming another origin, it asks nothing. A board longer than Claude Code lets a hook add is not cut: the hook says to call `self.focus.refresh` instead. |
 | `PreCompact` | `hand-over` | The session's log is queued for import before compaction drops it from context. |
 | `Stop` (each time Claude finishes a reply) | `hand-over` | The log is queued again; the import lands only what is new. |
 | `SessionEnd` | `hand-over` | A last queue, for a session that ended mid-reply. |
@@ -21,7 +23,7 @@ holds `settings.json` (the snippet to merge) and `check.sh` (the end-to-end
 check).
 
 The Oneiron plugin for Claude Code
-([`plugins/claude-code/`](../../plugins/claude-code/)) carries these four
+([`plugins/claude-code/`](../../plugins/claude-code/)) carries these six
 hooks, the MCP server entry and a skill that tells Claude when to recall and
 save. Install it in Claude Code with `/plugin marketplace add
 oneiron-dev/oneiron`, then `/plugin install oneiron@oneiron`. The plugin mints
@@ -32,10 +34,17 @@ oneiron@oneiron` in place of step 1 of [Remove it](#remove-it).
 
 ## How it works
 
+The plugin's `--carrier-in-content` bridge flag lets board updates ride
+Oneiron's own tool results. For every other tool result, `PostToolUse` can
+add one line from your vault, up to 12 per session. It only gives lines
+above your carrier bar and never gives the same line twice. After compaction,
+the board comes back only if that session already had one.
+
 ```
 Claude Code ──SessionStart──▶ oneiron hook session-start ──▶ bind a vault (below)
                                                        ──▶ oneiron mcp ──▶ serve: vault.recall
-            ◀── stdout: the vault's line and the recalled lines, added to context
+                                                           (only with --query "<words>")
+            ◀── stdout: the vault's line and any recalled lines, added to context
 
 Claude Code ──Stop/PreCompact/SessionEnd──▶ oneiron hook hand-over
             ──▶ oneiron import claude-code <log> --queue   (writes one small file)
@@ -44,18 +53,50 @@ Claude Code ──Stop/PreCompact/SessionEnd──▶ oneiron hook hand-over
             ──▶ oneiron mcp ──▶ the hosted vault: vault.imports.hook_transcript
 ```
 
+As with a local import, a session handed over to a hosted vault lands in the project its
+folder is bound to there; an agent needs a credential that covers that project or the
+hand-over is refused.
+
 - **Recall** goes through `oneiron mcp` with the hooks' own read-only
-  credential. By default it calls `vault.recall` at the `light` effort: no model
-  call and no embedding, so it is fast and costs nothing. `--effort medium`
-  embeds the query on the server's embedder, so a session finds what it
-  worked on in other words; `high`, `xhigh` and `max` also rerank on the
-  reranker the server's `[models]` routes, under the server's own budget
-  (see [run-with-models.md](run-with-models.md#8-the-reranker)). A server that
-  does not list `vault.recall` gets `memory.query` instead (on the one-space
-  preset it embeds the query through the text slot's declared space when it
-  can, and otherwise answers lexically). The query is
-  the project's name: the git repository's folder name, or the working
-  directory's.
+  credential. It calls `vault.recall` at the `light` effort (no model call)
+  unless you set `--effort`; `medium` also searches by the query's vector, so
+  a session finds what it worked on in other words; `high`, `xhigh` and `max`
+  also rerank on the reranker the server's `[models]` routes, under the
+  server's own budget (see [run-with-models.md](run-with-models.md#8-the-reranker)).
+  A server that does not list `vault.recall` is asked nothing.
+- **Only lines above your relevance bar.** Lines that miss the session's work
+  are worse than none, so every hook line is judged by your bar before the
+  result is cut: a line under it takes no slot, at most 3 lines are given, only
+  from the session's project, and nothing when none clears it. The score is the
+  raw cosine of the line's vector and the query's in your vault's embedding
+  space (the server embeds the query once for it, at any effort), never a rank.
+  Set the bar per hook with the settings `recall.bar.start` (session start) and
+  `recall.bar.carrier` (each prompt or tool result), per harness (the item, `claude-code`) and
+  per project (a project's row overrides the vault's). The default, `measured`,
+  is a cosine of 0.52 in pplx-embed-v1-0.6b's space, where it was measured;
+  in any other space it gives nothing until you set a floor
+  (`{"cosine": {"floor": 0.6, "model": "<org/name@revision>"}}`), and on a
+  vault with no embedder it gives a line holding a rare word of the query, or
+  every word of it. `open` skips the relevance cut, `quiet` gives no lines.
+  When the bar compares cosines, the recall reports each line's `similarity`.
+  To be told in one line when nothing cleared the bar, set
+  `recall.bar.empty_receipt` to true for the harness; by default the hook says
+  nothing.
+- **Read the whole record.** Each pushed line ends with its record id (and
+  revision if pinned), source, claim standing when present, readable source
+  conversation when known, and the learned time in UTC. Pass the id to
+  `vault.hydrate` to read the whole record. The session's own imported
+  conversation is never pushed. As owner, use `vault.settings.set` with
+  `{"key":"recall.bar.excluded_predicates","scope":{"kind":"vault"},"value":[]}`
+  to push all predicates that otherwise pass. The default list is
+  `skill.hub_provenance`, `skill.scan_verdict` and `machine.capacity`; each
+  entry also excludes predicates below it. A project can set its own list.
+- **No recall at start, unless you give the task's words.** A start keyed on
+  nothing but the folder's name recalls nothing: on a folder's name no bar
+  separates the lines you need from the ones that mislead. The plugin and the
+  snippet below pass `--query " "`: a blank query binds the vault, records the
+  session and calls no tool. Claude recalls through the MCP tools when the work
+  needs it. To be given lines at start, give `--query "<words>"`.
 - **Write-back** needs no credential. `--queue` leaves one file that names the
   session's log in the vault's import queue. A running `serve` imports it
   within seconds. It is the same import as `oneiron import claude-code` with the
@@ -353,6 +394,72 @@ still be starting.
 
 A `serve` from before runtime files registers nothing; restart it once.
 
+## Which project a session reads
+
+You bind a folder to one of your projects, once, in that folder:
+
+```bash
+oneiron project bind <project-ref>   # the PROJECT's id, 32 hex
+oneiron project unbind               # remove this folder's binding
+oneiron project bindings             # list every folder's binding
+```
+
+These send your credential as `oneiron api` does (`ONEIRON_SECRET`), and
+binding is your act alone: an agent may tell you the command, and its own
+attempt waits for your answer. The command sends a BLAKE3 digest of the
+checkout's real path (`blake3:` and hex) and the folder's name, never the path;
+the vault keys the digest with its own id before it stores it, so one folder's
+ids differ from vault to vault. Someone who reads the vault and knows its id can still test a
+guessed path against a stored id: the digest hides the path, it is not a
+secret. A binding belongs to the machine that holds the vault you bound it
+on: another machine of the vault never receives it, and a restore drops it,
+so on a replica, and after a restore, the folder reads as unbound until you
+bind it again. The folder is the git checkout it sits in, so every subfolder
+of a repository shares one binding; a linked worktree with no binding of its
+own reads its main checkout's (a bare repository, or one with a separate git
+directory, has none). The filesystem root and your home folder are never a
+workspace.
+
+The plugin starts `oneiron mcp --workspace .`, so every tool call names the
+folder Claude Code runs in. Then:
+
+- A read that names no project (`vault.claims.list`, `vault.recall`, the
+  searches, `vault.hydrate` and the rest) reads only claims of the folder's
+  project and the projects below it. Its read receipt names the axis
+  `session_project`.
+- In a folder with no project bound, such a read reads no claim, and its
+  receipt names `no_project_bound`: bind one to read the folder's memory. The
+  session-start hook says so in its vault line, with the bind command (which
+  names that vault by `--base-url`), and recalls nothing for it: it asks the vault once, through a bridge started for
+  the session's folder, whether a project is bound there (`initialize` answers
+  `project_bound` under `_meta["oneiron/workspace"]`, naming no project).
+- The hook's own recalls (at start when it has a query, and on each prompt)
+  pass `--workspace` with the session's folder, so they read its project too,
+  and your bar is read at that project. In a folder with no project bound
+  they give nothing.
+- A read that names its projects (`project_refs` on `vault.recall`,
+  `vault.claims.list_filtered`, `vault.claims.read_filtered`) reads those,
+  within what the credential reads anyway.
+- Claims, notes, messages and turns carry a project. The notes and turns a
+  session writes, including turns imported from its session log, carry the
+  folder's bound project. Rows written with no folder, or before session
+  placement, carry the root project, which a bound session does not read.
+  Room speech is the exception: a room's history shows its members' messages
+  and turns whatever project they carry, since they were posted to every
+  member; claims in a room still follow the folder. Conversations and other
+  rows read as before.
+
+The binding selects; it grants nothing. The folder a tool call names comes from
+the client, so a client that names another folder only changes which of the
+rows its credential reads anyway come first by default.
+
+A claim the session writes (`vault.claims.upsert`, `vault.remember`) that names
+no project lands in the folder's project, so the session reads it back. One
+that names its project (`scope_project_id`) lands there, within what the
+credential may write. In a folder with no project bound, writes keep the root's
+default project, as before. Notes and turns the session writes land in the
+folder's project the same way.
+
 ## 1. Turn on the import queue
 
 In the config `serve` reads, then restart `serve`:
@@ -408,7 +515,7 @@ Start `serve` again.
 
 ## 3. Merge the settings
 
-Add the four entries in `examples/claude-code-hooks/settings.json` to the
+Add the hook entries in `examples/claude-code-hooks/settings.json` to the
 `"hooks"` object of `~/.claude/settings.json` (every project) or of one
 project's `.claude/settings.json`. Keep your existing entries. Then replace the
 placeholders with full paths. Claude Code does not expand `~` there.
@@ -416,6 +523,8 @@ placeholders with full paths. Claude Code does not expand `~` there.
 - `/path/to/oneiron`: the `oneiron` binary. Hooks run with Claude Code's
   `PATH`, which may not include it.
 - `/path/to/claude-code-hooks.cred`: the file from step 2.
+- `/path/to/claude-code.cred`: the same agent credential you use for your
+  MCP server. Add `--carrier-in-content` to that server's `oneiron mcp` args.
 
 The hooks find the vault themselves ([above](#which-vault-a-session-uses)).
 Add `--url <origin>` to `session-start` to pin one there instead, and
@@ -427,7 +536,13 @@ other than the default and may be stopped when a session ends.
   "hooks": {
     "SessionStart": [
       { "hooks": [ { "type": "command", "timeout": 15,
-        "command": "/path/to/oneiron hook --host claude-code session-start --credential-file /path/to/claude-code-hooks.cred" } ] }
+        "command": "/path/to/oneiron hook --host claude-code session-start --credential-file /path/to/claude-code-hooks.cred --query \" \"" } ] },
+      { "matcher": "compact", "hooks": [ { "type": "command", "timeout": 15,
+        "command": "/path/to/oneiron hook --host claude-code focus-refresh --credential-file /path/to/claude-code.cred" } ] }
+    ],
+    "PostToolUse": [
+      { "matcher": "*", "hooks": [ { "type": "command", "timeout": 10,
+        "command": "/path/to/oneiron hook --host claude-code tool-result --credential-file /path/to/claude-code-hooks.cred" } ] }
     ],
     "PreCompact": [
       { "hooks": [ { "type": "command", "timeout": 10,
@@ -445,27 +560,27 @@ other than the default and may be stopped when a session ends.
 }
 ```
 
-Start a new Claude Code session in a project the vault knows. Its context
-opens with the line naming the vault, then the recalled lines under "From
-your Oneiron vault".
+Start a new Claude Code session. Its context opens with the line naming the
+vault, and no recalled lines ([No recall at start](#how-it-works)).
 
 To recall for each prompt as well, add a `UserPromptSubmit` entry running
 `/path/to/oneiron hook --host claude-code prompt --credential-file
 /path/to/claude-code-hooks.cred`. It recalls at the `light` effort unless
-you set `--effort`, and prints nothing when it finds nothing.
+you set `--effort`, gives only the lines that clear `recall.bar.carrier`, and
+prints nothing when none does.
 
 ### Next to your other hooks
 
-These entries use four events: `SessionStart`, `PreCompact`, `Stop` and
-`SessionEnd`. Claude Code merges hook entries across the user, project and
+These entries use five events: `SessionStart`, `PostToolUse`, `PreCompact`,
+`Stop` and `SessionEnd`. Claude Code merges hook entries across the user, project and
 local settings files and runs every matching hook in parallel. So a hook you
 already have on another event, for example a `PreToolUse` hook on `Agent` or
-`Workflow`, runs exactly as before. If you already have a hook on one of these
-four events, add ours as one more entry in that event's list.
+`Workflow`, runs exactly as before. If you already have a hook for any of
+these events, add ours to that event's list.
 
 ## Remove it
 
-1. Delete the four entries from the settings file.
+1. Delete these hook entries from the settings file.
 2. Revoke the credential, with `serve` stopped:
    `oneiron token revoke --jti <slip_id>`. Then delete the `.cred` file.
 3. Set `queue = false` under `[import]` and restart `serve`. Queued files
@@ -481,8 +596,8 @@ What the hooks already imported stays in your vault, like any import.
   injected context are counted, not landed. The write door's secret scan
   applies: a turn holding a secret-shaped value is refused, and the next queue
   of that session tries it again.
-- Messages are searchable at once, so the next `SessionStart` in that project
-  can recall them.
+- Messages are searchable at once, so the next session in that project can
+  recall them.
 - Claims drawn from imported material never approve themselves (ARCH-0027,
   ARCH-0040). Each queue pass that lands something is one import: `serve`
   queues the Dreamer over it and logs its review id
@@ -498,6 +613,11 @@ What the hooks already imported stays in your vault, like any import.
   6,000 characters in all, after its one line. Each probe of a vault waits
   at most 2 seconds. `prompt` has the same limits. Claude Code caps a hook's
   added context at 10,000 characters.
+- `tool-result` has 1.5 seconds for binding, recall and picking a line.
+  A smaller `--timeout` takes precedence.
+- `focus-refresh` adds the whole board, its two header lines included, only
+  when that fits in Claude Code's 10,000 characters; otherwise one line says
+  to call `self.focus.refresh` for it.
 - `hand-over` takes well under a second: it writes one small file. To a
   hosted vault it sends the whole log, gzip-compressed, in as few calls as
   the sign-in's carrier takes (above), all ending by the same `--timeout`,
@@ -511,8 +631,10 @@ What the hooks already imported stays in your vault, like any import.
   A larger one, the session's or a subagent's, is left out with a
   `log_too_large` warning in `serve`'s log, and the rest of the session
   lands.
-- `--query "<words>"` on `session-start` recalls those words instead of the
-  project's name (on `prompt`, instead of the prompt).
+- `--query "<words>"` on `session-start` gives the lines for those words that
+  clear your start bar (on `prompt`, the words instead of the prompt). With no
+  `--query`, or a blank one (`--query " "`, as the plugin passes), the start
+  recalls nothing.
 - `--effort <light|medium|high|xhigh|max>` on `session-start` picks recall's
   effort; it stays `light` unless you set it. Above light the server embeds
   the query first, and a model that is still loading leaves recall on its
