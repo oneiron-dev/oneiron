@@ -50,23 +50,52 @@ const UNIT_NAME_MAX: usize = 255;
 /// the CPU weight of every unit in it.
 const SYSTEMD_SLICES: [&str; 3] = ["system.slice", "user.slice", "machine.slice"];
 
-/// The `[execution_node.job_cgroup]` table.
+/// The `[execution_node.job_cgroup]` table, checked as it reads
+/// ([`JobCgroupSettings::validate`]), so a node file with a bad table does
+/// not read at all.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(try_from = "JobCgroupTable")]
 pub struct JobCgroupSettings {
     /// The top-level system slice of every job unit; `None`: systemd's own
     /// slice for the template.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub slice: Option<String>,
     /// The slice's own CPU weight, set at each launch; only with `slice`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub slice_cpu_weight: Option<u64>,
     /// The CPU weight of a job that leases a device.
-    #[serde(default = "device_job_cpu_weight_default")]
     pub device_job_cpu_weight: u64,
     /// The CPU weight of a job that leases no device.
-    #[serde(default = "cpu_job_cpu_weight_default")]
     pub cpu_job_cpu_weight: u64,
+}
+
+/// The table as the file holds it, before its check.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct JobCgroupTable {
+    #[serde(default)]
+    slice: Option<String>,
+    #[serde(default)]
+    slice_cpu_weight: Option<u64>,
+    #[serde(default = "device_job_cpu_weight_default")]
+    device_job_cpu_weight: u64,
+    #[serde(default = "cpu_job_cpu_weight_default")]
+    cpu_job_cpu_weight: u64,
+}
+
+impl TryFrom<JobCgroupTable> for JobCgroupSettings {
+    type Error = String;
+
+    fn try_from(table: JobCgroupTable) -> Result<Self, String> {
+        let settings = Self {
+            slice: table.slice,
+            slice_cpu_weight: table.slice_cpu_weight,
+            device_job_cpu_weight: table.device_job_cpu_weight,
+            cpu_job_cpu_weight: table.cpu_job_cpu_weight,
+        };
+        settings.validate()?;
+        Ok(settings)
+    }
 }
 
 fn device_job_cpu_weight_default() -> u64 {

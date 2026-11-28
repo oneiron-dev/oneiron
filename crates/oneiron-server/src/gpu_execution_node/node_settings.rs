@@ -22,7 +22,6 @@ use oneiron::job_workload::{BoundRequirement, DevicePlacement, ScopeBound};
 use oneiron_contracts::fingerprint::ContentHash;
 use serde::{Deserialize, Serialize};
 
-use super::job_cgroup::JobCgroupSettings;
 use super::wire::{NetworkMode, ScopeClass, TemplateOffer, WorkloadPin};
 
 /// Where the node's file is when neither the server's configuration nor
@@ -155,10 +154,6 @@ pub struct ExecutionNodeSettings {
     /// The OS account the job unit runs as.
     #[serde(default = "job_account_default")]
     pub job_account: String,
-    /// The job units' slice and CPU weights (`[execution_node.job_cgroup]`,
-    /// [`super::job_cgroup`]).
-    #[serde(default)]
-    pub job_cgroup: JobCgroupSettings,
     /// `jobs.readiness.every_secs`: how often the node checks itself while
     /// no attempt runs (pass 34, 7.3). The owner's row may shorten it (row
     /// P0).
@@ -177,6 +172,10 @@ pub struct ExecutionNodeSettings {
     pub unit_start_timeout_secs: u64,
     #[serde(default = "disk_check_secs_default")]
     pub disk_check_secs: u64,
+    /// The job units' slice and CPU weights (`[execution_node.job_cgroup]`),
+    /// checked as the table reads ([`super::job_cgroup`]).
+    #[serde(default)]
+    pub job_cgroup: super::job_cgroup::JobCgroupSettings,
     /// The files of each device a job may lease, by the device's id: the
     /// job unit's device policy opens these and no others. A card the NVIDIA
     /// driver lists needs no entry (its node and the driver's control nodes
@@ -425,7 +424,6 @@ impl ExecutionNodeSettings {
         if self.job_account.trim().is_empty() {
             return Err("execution_node.job_account must name an OS account".to_owned());
         }
-        self.job_cgroup.validate()?;
         for (name, template) in &self.templates {
             template
                 .validate()
