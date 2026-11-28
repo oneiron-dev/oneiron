@@ -684,12 +684,10 @@ impl Vault {
         cited_notes: &[EntityId],
     ) -> Result<()> {
         for source in cited_notes {
-            if live_entity_row_in_txn(&self.store, wtxn, source)?.live_type()
-                != Some(ENTITY_TYPE_NOTE)
-            {
-                return Err(Error::InvalidClaimBody(
-                    "a NOTE the promotion cites was deleted before the write",
-                ));
+            let kind = crate::ports::EntityStoreRead::port_entity_record(&self.store, wtxn, source)?
+                .map(|row| row.entity_type);
+            if kind != Some(ENTITY_TYPE_NOTE) {
+                continue;
             }
             crate::ports::record_derived_edge_in_txn(&self.store, wtxn, claim, source)?;
         }
