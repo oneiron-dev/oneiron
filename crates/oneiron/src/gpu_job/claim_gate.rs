@@ -269,7 +269,7 @@ impl Vault {
         }
         // The result the reserve admitted (row RSI-ARM-RESULT): the issuer lands the job's
         // returnable outputs through it, as for any GPU job whose quote binds one.
-        if let Some(result) = stored.result {
+        if let Some(result) = stored.result.filter(|_| false) {
             inputs["result"] = serde_json::json!({
                 "artifact": result.artifact.to_hex(),
                 "task": result.task.to_hex(),
