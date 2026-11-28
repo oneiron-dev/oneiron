@@ -34,6 +34,7 @@ pub struct EngineNativeExecutor<'a> {
     pub(super) request_fold_words: Vec<FoldWordRef>,
     /// The host's compaction seat for this run, when it keeps one.
     pub(super) compaction: Option<&'a mut super::compaction::RunCompaction>,
+    pub(super) window_outgrown_ends_run: bool,
     /// Feedback mode: each program is type-checked beside its run, and its
     /// check comes back with the step, never waited on or acted on.
     pub(super) code_check: Option<&'a super::code_check::TypeFeedback>,
@@ -142,6 +143,7 @@ impl<'a> EngineNativeExecutor<'a> {
                 stub_after_turns: 5,
             },
             compaction: None,
+            window_outgrown_ends_run: false,
             code_check: None,
             step_checks: std::sync::Mutex::default(),
             self_brief: None,
@@ -223,6 +225,15 @@ impl<'a> EngineNativeExecutor<'a> {
             self.output_decay = decay;
         }
         self.compaction = Some(seat);
+        self
+    }
+
+    /// A host whose runs take no compaction seat ends a run whose window outgrew its model:
+    /// the turn records a terminal window_outgrown marker, and every later entry answers that
+    /// refusal without asking the model again (FIX CODE-MODE-LENDING-W6).
+    #[must_use]
+    pub fn with_window_outgrown_terminal(mut self) -> Self {
+        self.window_outgrown_ends_run = true;
         self
     }
 

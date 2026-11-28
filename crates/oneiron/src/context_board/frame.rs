@@ -1074,7 +1074,7 @@ fn xml_attr_token(value: &str) -> String {
     xml_leaf_token(value, XmlLeaf::Attribute)
 }
 
-pub(super) fn xml_text_token(value: &str) -> String {
+pub(crate) fn xml_text_token(value: &str) -> String {
     xml_leaf_token(value, XmlLeaf::Text)
 }
 

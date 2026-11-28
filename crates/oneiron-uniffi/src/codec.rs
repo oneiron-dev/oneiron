@@ -20,6 +20,7 @@ use oneiron::memory as engine;
 use oneiron::retrieval_quality as quality;
 use oneiron::task_verb::sdk;
 
+use crate::dto::RemainingNotice;
 use crate::dto::{
     AdmitImportedClaimInput, BlobArtifactInput, BlobVersionAppendOutcome, BlobVersionView,
     CheckInDecision, CitedMessage, ClaimInput, ClaimListFilter, ClaimView, ClaimViews,
@@ -803,6 +804,14 @@ impl Lift<engine::DeleteReceipt> for DeleteReceipt {
                 }
             },
             check_in: Lift::lift(value.check_in)?,
+            remaining: value
+                .remaining
+                .into_iter()
+                .map(|entry| RemainingNotice {
+                    code: entry.code,
+                    text: entry.text,
+                })
+                .collect(),
         })
     }
 }

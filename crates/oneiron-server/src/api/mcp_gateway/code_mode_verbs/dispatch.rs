@@ -2,18 +2,22 @@
 //! `McpCodeModeVerbs` (its `AgentVerbDoor` impl) and `run_code_mode_verb` are its call surface.
 //! The code_mode_verbs root defines `McpCodeModeVerbs`; `oneiron::code_run` owns the verb records.
 
+use super::super::static_admission::{StaticCaller, StaticCheck, StaticRefusal, static_admission};
 use super::*;
 
 mod caller_code;
-#[cfg(oneiron_test_support)]
+#[cfg(any(test, oneiron_test_support))]
 mod test_door;
 mod verb_call;
 
-use self::caller_code::{
-    caller_code_refused, caller_code_run_refusal, caller_code_verb_refusal, caller_speech_binding,
-};
+use self::caller_code::{caller_code_refused, caller_speech_binding};
 #[cfg(oneiron_test_support)]
 pub(crate) use self::test_door::admit_run_call_for_test;
+#[cfg(test)]
+pub(crate) use self::test_door::{
+    admit_outer_skill_call_for_test, admit_recorded_verb_for_test, admit_run_call_on_door_for_test,
+    admit_run_row_for_test, admit_session_read_for_test,
+};
 pub(crate) use self::verb_call::code_mode_line;
 pub(super) use self::verb_call::{execute_code_mode_verb, execute_step_verdict};
 
@@ -243,9 +247,10 @@ impl AgentVerbDoor for McpCodeModeVerbs {
         // next call (FIX 10633): release what that answer kept now, so a
         // read's renderer turn cannot survive into this call.
         self.answer_recorded();
-        if self.author == RunAuthor::Caller
-            && let Some(reason) = caller_code_verb_refusal(call.verb)
-        {
+        if let Err(StaticRefusal::CallerCode(reason)) = static_admission(
+            StaticCaller::connector(&self.actor).authored(self.author),
+            StaticCheck::CallerCodeAgentRow(call.verb),
+        ) {
             return Ok(Err(caller_code_refused(reason)));
         }
         // A read of one of the caller's own runs' results: this door holds
@@ -393,16 +398,16 @@ impl AgentVerbDoor for McpCodeModeVerbs {
     }
 
     /// A call a caller's own code makes is refused what no direct call
-    /// reaches first (`caller_code_run_refusal`); then it meets the checks
+    /// reaches first (`StaticCheck::CallerCodeRunCall`); then it meets the checks
     /// every call the run serves itself meets ([`Self::admit_bound_run_call`]).
     fn admit_run_call(
         &self,
         call: RunCall,
     ) -> Result<Option<ScopedReadActorKey>, AgentVerbRefusal> {
-        if self.author == RunAuthor::Caller
-            && let RunCall::Bridge(effect) = call
-            && let Some(reason) = caller_code_run_refusal(effect)
-        {
+        if let Err(StaticRefusal::CallerCode(reason)) = static_admission(
+            StaticCaller::connector(&self.actor).authored(self.author),
+            StaticCheck::CallerCodeRunCall(call),
+        ) {
             return Err(caller_code_refused(reason));
         }
         self.admit_bound_run_call(call)
@@ -417,9 +422,9 @@ impl AgentVerbDoor for McpCodeModeVerbs {
         self.admit_bound_run_call(RunCall::Bridge(SelfEffect::SkillsCall))
     }
 
-    /// A run's speech is its own record only where its storage lands it in
-    /// the run's own derived conversation; anywhere else it is a room write
-    /// and needs Write (`mcp_run_speech_gate`). A caller's own speech is a
+    /// A run's speech writes a MESSAGE wherever its storage lands it, so the
+    /// engine's program needs Write in its own run's conversation as in a room
+    /// (`mcp_run_speech_gate`, FIX CODE-MODE-LENDING-W7). A caller's own speech is a
     /// call it chose to make: the row it is made through needs its binding,
     /// as a direct call's does, and it needs Write wherever it lands (FIX
     /// EXECUTE-CALLER-CODE). It reads nothing.
@@ -461,6 +466,52 @@ impl AgentVerbDoor for McpCodeModeVerbs {
                 reason_codes: error.reason_codes,
             })?;
         self.credential_lane()
+    }
+
+    /// Rechecks a recorded verb's caller-code policy and binding (FIX
+    /// CODE-MODE-LENDING-W11). Host-served result, browser and desktop rows
+    /// also meet the gates their live call meets; session-bound rows meet the room's existing
+    /// admission methods. The input-dependent scope and grade of a generated
+    /// row's recorded answer stay at the generic Read check: the original
+    /// arguments are not available here.
+    fn admit_recorded_verb(&self, verb: AgentVerb) -> Result<(), AgentVerbRefusal> {
+        if let Err(StaticRefusal::CallerCode(reason)) = static_admission(
+            StaticCaller::connector(&self.actor).authored(self.author),
+            StaticCheck::CallerCodeAgentRow(verb),
+        ) {
+            return Err(caller_code_refused(reason));
+        }
+        let refused = |error: McpGatewayError| AgentVerbRefusal {
+            hook_notice: None,
+            code: error.kind.to_owned(),
+            reason_codes: error.reason_codes,
+        };
+        if matches!(verb, AgentVerb::VaultRunsReadResult) {
+            return mcp_admit_host_verb(&self.actor, verb)
+                .and_then(|()| mcp_host_verb_gate(&self.server, &self.actor, verb))
+                .map_err(refused);
+        }
+        // As `call_browser` admits the live row (FIX CODE-MODE-LENDING-W2).
+        if verb.is_browser() {
+            return mcp_admit_host_verb(&self.actor, verb)
+                .and_then(|()| desktop_row_refusal(verb))
+                .and_then(|()| mcp_browser_guest_gate(&self.server, &self.actor))
+                .map_err(refused);
+        }
+        let surface = try_registered_surface(McpSurfaceMode::ToolFirst)
+            .map_err(|error| refused(admission::mcp_surface_unavailable(error)))?;
+        let name = verb.as_str();
+        let Some(McpEndpointTool::Verb(tool)) = surface.resolve(name) else {
+            if let Some(refusal) = oneiron::task_verb::sdk::wrong_root(name) {
+                return Err(refused(mcp_facade_error(refusal)));
+            }
+            return Err(refused(McpGatewayError::new(
+                -32601,
+                "unknown_tool",
+                format!("{name} is not a verb in the SDK verb table"),
+            )));
+        };
+        admission::mcp_admit_bound_tool(&self.actor, tool.name).map_err(refused)
     }
 
     /// A room write a session-bound run stages (WILL L11-01, S01-2a) meets
@@ -516,7 +567,7 @@ impl AgentVerbDoor for McpCodeModeVerbs {
 /// A run's desktop row is refused: no direct door serves the host's desktop
 /// guest (FIX CODE-MODE-LENDING-W2).
 fn desktop_row_refusal(verb: AgentVerb) -> Result<(), McpGatewayError> {
-    if !verb.as_str().starts_with("self.desktop.") {
+    if static_admission(StaticCaller::row_only(), StaticCheck::DesktopRow(verb)).is_ok() {
         return Ok(());
     }
     Err(McpGatewayError::new(

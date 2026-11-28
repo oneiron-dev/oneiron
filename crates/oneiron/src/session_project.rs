@@ -72,17 +72,17 @@ pub const DIGEST_TEXT_LEN: usize = DIGEST_TEXT_PREFIX.len() + 64;
 /// The longest label a binding keeps, in bytes.
 pub const WORKSPACE_LABEL_MAX: usize = 128;
 
-/// The receipt axis a read names when an attached session's project narrowed it: CLAIM rows
-/// stamped outside the session's project were not read.
+/// The receipt axis a read names when an attached session's project narrowed it: CLAIM, NOTE,
+/// MESSAGE and TURN rows placed outside the session's project were not read.
 pub const SESSION_PROJECT_AXIS: &str = "session_project";
 
-/// The receipt axis a read names when its attached session's folder has no project bound: it
-/// read no CLAIM row. The owner binds one with `oneiron project bind <project-ref>` in the
-/// folder; a call that names its projects (`project_refs`) reads those.
+/// The receipt axis when an attached session's folder has no project bound: it read no CLAIM,
+/// NOTE, MESSAGE or TURN row. The owner binds one with `oneiron project bind <project-ref>`
+/// in the folder; a call that names its projects (`project_refs`) reads those.
 pub const NO_PROJECT_BOUND_AXIS: &str = "no_project_bound";
 
-/// What an attached session's folder selects for the reads that name no project: a request,
-/// never authority. Only CLAIM rows carry a project stamp, so only they are narrowed.
+/// A session folder's default when a read names no project: a request, never authority.
+/// Only CLAIM (body project) and NOTE, MESSAGE or TURN (birth stamp) rows are narrowed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionProjects {
     /// The folder's project and every PROJECT below it.
@@ -344,6 +344,46 @@ impl Vault {
     pub fn workspace_project(&self, folder_digests: &[String]) -> Result<Option<EntityId>> {
         let txn = self.store.env.read_txn()?;
         workspace_project_in_txn(self, &txn, folder_digests)
+    }
+
+    /// Whether `proof`, the credential `actor` presented (`None`: none), admits placing
+    /// `actor`'s records under `project` (PR A Q2, SESSION-PROJECT-NOTE-MESSAGE-PLACEMENT): with
+    /// no credential, only in process (`transport` false); else the slip must be live, held by
+    /// `actor`, bounded by no record or channel, grant a write, and have an audience that covers
+    /// `project`. Both a session-folder write's writer and a hook transcript's hand-over judge
+    /// placement by it.
+    pub(crate) fn credential_admits_project_placement_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        actor: EntityId,
+        proof: Option<&crate::authority::VerifiedSlip>,
+        transport: bool,
+        project: EntityId,
+    ) -> MemoryResult<bool> {
+        let Some(proof) = proof else {
+            return if transport { Ok(false) } else { Ok(true) };
+        };
+        if proof.claims().holder_ref != actor.to_hex()
+            || !proof.claims().records.is_empty()
+            || !proof.claims().channels.is_empty()
+            || !self.capability_slip_is_live_in_txn(txn, proof)?
+        {
+            return Ok(false);
+        }
+        if !["core:write", "write", "core:propose"]
+            .into_iter()
+            .any(|verb| proof.allows_verb(verb))
+        {
+            return Ok(false);
+        }
+        if !proof
+            .scope()
+            .audience
+            .contains(&crate::federation::ScopeId(project))
+        {
+            return Ok(false);
+        }
+        Ok(true)
     }
 
     /// The owner binds the folder `request.folder_digest` names to `request.project`: the

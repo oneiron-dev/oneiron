@@ -5,7 +5,11 @@
 
 use super::*;
 use crate::code_run::ExecutorWireRepairs;
+use crate::engine_executor::record::record_window_outgrown_output;
 use crate::engine_executor::run_signals::{TakenSignals, TurnRace};
+use crate::prompt::ResolvedPrompt;
+use crate::runtime_hooks::VerbHookStop;
+use crate::{FatalLlmError, LlmError};
 
 /// The program one step runs, with what its commit keeps of the model turn
 /// that wrote it.
@@ -46,11 +50,13 @@ impl EngineNativeExecutor<'_> {
         &mut self,
         config: &'c EngineExecutorConfig,
         record: &mut CodeRunReplayRecord,
-        wire_prompt: &str,
-        prompt_fingerprint: &str,
+        wire_prompt: &ResolvedPrompt,
         continuation: Option<&ContinuationNote>,
         completed_steps: u64,
+        expected_generation: Option<CodeRunReplayGeneration>,
     ) -> EngineExecutorResult<TurnProgram<'c>> {
+        let prompt_fingerprint = &wire_prompt.stamp.resolved_fingerprint;
+        let wire_prompt = &wire_prompt.text;
         let (backend, lease) = self.task_model.ok_or_else(|| {
             Error::InvalidConfig("the task executor has no model backend".to_owned())
         })?;
@@ -156,7 +162,24 @@ impl EngineNativeExecutor<'_> {
                     .await
             };
             match raced {
-                TurnRace::Answered(response) => break (request_hash, response?),
+                TurnRace::Answered(response) => match response {
+                    Ok(answered) => break (request_hash, answered),
+                    Err(error)
+                        if self.window_outgrown_ends_run
+                            && matches!(
+                                error,
+                                LlmError::Fatal(FatalLlmError::ContextWindowExceeded { .. })
+                            ) =>
+                    {
+                        record_window_outgrown_output(&self.storage, record, completed_steps)?;
+                        self.storage.put_code_run_replay_record_if_generation(
+                            record,
+                            expected_generation,
+                        )?;
+                        return Err(error.into());
+                    }
+                    Err(error) => return Err(error.into()),
+                },
                 // The cut call's permit settled as it dropped: dispatched,
                 // usage unknown, its reservation kept as spend.
                 TurnRace::Cut(taken) => interrupts.join(taken),
@@ -233,4 +256,20 @@ impl EngineNativeExecutor<'_> {
         let status = self.pause_at_wait(record, &status)?.unwrap_or(status);
         Ok(TurnProgram::Ended(status))
     }
+}
+
+/// The wait a turn hook's ask parks the run on, as a call's ask parks the
+/// call (`code_run::dispatcher::verb_hooks`): the ask's group, its prompt
+/// naming the turn's invocation, whose next try takes the answer. `None` for
+/// a skip, a hidden result, or an ask with no group: the turn ends there.
+fn turn_hook_wait(stop: &VerbHookStop) -> Option<SelfDurableWait> {
+    let VerbHookStop::Pending { invocation, ask } = stop else {
+        return None;
+    };
+    Some(SelfDurableWait {
+        wait_id: EntityId::from_hex(ask).ok()?,
+        effect: SelfEffect::TasksWait,
+        reason: SelfDurableWaitReason::PeerResult,
+        prompt: Some(format!("verb_hook:{invocation}")),
+    })
 }

@@ -6,5 +6,6 @@ fn main() {
         "crates/oneiron/src/verbs/generated/catalog_fragment.d.ts",
         "crates/oneiron/src/verbs/generated/code-mode.d.ts",
         "crates/oneiron/src/verbs/generated/catalog_fragment_revision.rs",
+        "crates/oneiron/src/verbs/generated/verb_tree_index.json",
     ]);
 }

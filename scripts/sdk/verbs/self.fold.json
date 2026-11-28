@@ -3,6 +3,7 @@
   "description": "Marks a span of the run log for folding, optionally limited to one content kind, and keeps the raw steps until the fold lands.",
   "input": "crate::compaction::FoldMarkInput",
   "output": "crate::compaction::FoldReply<crate::compaction::FoldMarked>",
+  "example": "await self.fold([3, 9], { note: \"keep the failing test names\" });",
   "scope": "Write",
   "act_class": "unstated",
   "context": "run",

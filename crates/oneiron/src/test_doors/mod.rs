@@ -93,6 +93,7 @@ pub mod compaction_request;
 pub mod compaction_step_read;
 pub mod companion_grant_index;
 pub mod composed_lens_world;
+pub mod connector_call_read_rows;
 pub mod connector_key_suspend;
 pub mod connector_thread_session;
 pub mod consent_graduation_demotion;
@@ -280,8 +281,10 @@ pub mod native_person_mint;
 pub mod nightly;
 pub mod nightly_arc_summary;
 pub mod note_bm25f_repair;
+pub mod note_claim_dependency_backfill;
 #[cfg(feature = "sync")]
 pub mod note_fork_upload;
+pub mod note_review_pass;
 pub mod off_record_reply_body;
 pub mod off_record_shell;
 pub mod off_record_side_row;
@@ -315,9 +318,11 @@ pub mod pending_write_tray;
 pub mod policy_doors_between;
 #[cfg(feature = "sync")]
 pub mod predicted_residence;
+pub mod proactivity_digest_index;
 pub mod profiles_other_machine;
 #[cfg(feature = "sync")]
 pub mod project_replicated_revision;
+pub mod project_run;
 pub mod provenance_body_checkpoint;
 pub mod psych_profile;
 pub mod question_saved_lane;
@@ -348,6 +353,7 @@ pub mod restored_enrolment;
 pub mod resume_preflight;
 pub mod retrieval_policy_default_floor;
 pub mod reveal_ask_window;
+pub mod revision_offers_listed_rows;
 pub mod room_claim_erase;
 pub mod room_facet_limit;
 pub mod room_facet_set;
@@ -441,6 +447,7 @@ pub mod work_order;
 #[cfg(feature = "sync")]
 pub mod work_talk_replay;
 pub mod workaround_skills;
+pub mod workflow_context_rows;
 pub mod workspace_onboarding_halt;
 pub mod workspace_token;
 pub mod world_access;

@@ -4,6 +4,7 @@
 //! `mcp_host_verb_gate` are its call surface.
 //! The actor_dispatch root defines `McpCallEffect` and `McpRecordBounds`.
 
+use super::super::static_admission::{GrantBounds, StaticCaller, StaticCheck, static_admission};
 use super::*;
 
 /// Whether `auth`, the exact instrument a connector call verified, may act
@@ -213,6 +214,14 @@ pub(in crate::api::mcp_gateway) fn mcp_execute_code_gate(
     )
 }
 
+/// The refusal a connector's run meets when it sets a world's privacy
+/// (CODE-MODE-LENDING-WORLD-PRIVACY = A): a world's privacy is set by its
+/// holder directly, not by a connector's run, for both run authors (caller
+/// code and engine model), until a direct row exists. Native agent runs keep
+/// the act: the engine's own dispatcher
+/// (`crates/oneiron/src/code_run/dispatcher/world_privacy_set.rs`) is unchanged.
+pub(crate) const MCP_WORLD_PRIVACY_REFUSED: &str = "mcp_world_privacy_refused";
+
 /// One call a run serves itself (`RunCall`): the live session, then what
 /// the call does (`McpCallEffect::of_run_call`). A read needs the session's
 /// Read alone; every write takes effect at once, so it needs Write.
@@ -221,12 +230,35 @@ pub(in crate::api::mcp_gateway) fn mcp_run_call_gate(
     actor: &McpCallContext,
     call: oneiron::code_run::RunCall,
 ) -> Result<(), McpGatewayError> {
+    if static_admission(
+        StaticCaller::connector(actor),
+        StaticCheck::ConnectorRunCall(call),
+    )
+    .is_err()
+    {
+        let mut refused = McpGatewayError::new(
+            -32020,
+            MCP_WORLD_PRIVACY_REFUSED,
+            "a world's privacy is set by its holder directly, not by a connector's run",
+        );
+        refused.reason_codes = vec!["world_privacy.set_by_holder_directly".to_owned()];
+        return Err(refused);
+    }
     mcp_session_operation_gate(server, actor, McpCallEffect::of_run_call(call))
 }
 
+#[cfg(test)]
+pub(crate) fn mcp_run_call_gate_for_test(
+    server: &Arc<SyncServer>,
+    actor: &McpCallContext,
+    call: oneiron::code_run::RunCall,
+) -> Result<(), McpGatewayError> {
+    mcp_run_call_gate(server, actor, call)
+}
+
 /// One speech call of a run, at `destination`, where its storage lands it:
-/// the live session, then Read in the run's own derived conversation and
-/// Write anywhere else (`McpCallEffect::of_run_speech`).
+/// the live session, then Write in the run's own derived conversation as
+/// anywhere else (`McpCallEffect::of_run_speech`, FIX CODE-MODE-LENDING-W7).
 pub(in crate::api::mcp_gateway) fn mcp_run_speech_gate(
     server: &Arc<SyncServer>,
     actor: &McpCallContext,
@@ -270,6 +302,14 @@ pub(in crate::api::mcp_gateway) fn mcp_browser_guest_gate(
     mcp_session_operation_gate(server, actor, McpCallEffect::Commits)
 }
 
+#[cfg(test)]
+pub(crate) fn mcp_browser_guest_gate_for_test(
+    server: &Arc<SyncServer>,
+    actor: &McpCallContext,
+) -> Result<(), McpGatewayError> {
+    mcp_browser_guest_gate(server, actor)
+}
+
 /// The live session, then one operation's own effect: a read needs only the
 /// session's Read; a write needs the grant `mcp_call_scope` names for it,
 /// over the whole record scope.
@@ -286,7 +326,14 @@ fn mcp_session_operation_gate(
             // The session gate above held the credential live and its record
             // scope unrestricted, so only the grant is left to miss.
             let scope = mcp_call_scope(server, actor, auth, effect);
-            auth.require(scope).map_err(|_| mcp_grant_refusal(scope))
+            static_admission(
+                StaticCaller::connector(actor),
+                StaticCheck::Grant {
+                    scope,
+                    bounds: GrantBounds::Checked,
+                },
+            )
+            .map_err(|_| mcp_grant_refusal(scope))
         }
     }
 }
@@ -325,14 +372,16 @@ pub(crate) fn mcp_verb_gate(
     // (`self.actor`, review of #9533; every other such door, FIX
     // MCP-FILTERED-HOST-DOOR-CHANNEL-CAVEAT-PARITY).
     if tool.lane_record_scope_host_door() {
-        let auth = actor.auth.as_ref().ok_or_else(mcp_proof_error)?;
-        auth.require_lane_record_scope().map_err(|_| {
-            McpGatewayError::new(
-                -32020,
-                "mcp_scope_unprojectable",
-                "this facade cannot project the credential's record bounds",
-            )
-        })?;
+        actor.auth.as_ref().ok_or_else(mcp_proof_error)?;
+        static_admission(StaticCaller::connector(actor), StaticCheck::LaneRecordScope).map_err(
+            |_| {
+                McpGatewayError::new(
+                    -32020,
+                    "mcp_scope_unprojectable",
+                    "this facade cannot project the credential's record bounds",
+                )
+            },
+        )?;
     }
     mcp_credential_gate(server, actor, bounds, McpCallEffect::of(tool, arguments))
 }
@@ -359,8 +408,13 @@ pub(super) fn mcp_credential_gate(
         McpRecordBounds::Born => {
             let landing = actor.landing.map_err(mcp_landing_refusal)?;
             auth.require_record_scope_carried(axis(actor.scope.world_ref), axis(landing))
+                .map_err(drop)
         }
-        McpRecordBounds::Unrestricted => auth.require_unrestricted_record_scope(),
+        McpRecordBounds::Unrestricted => static_admission(
+            StaticCaller::connector(actor),
+            StaticCheck::UnrestrictedRecordScope,
+        )
+        .map_err(drop),
     };
     carried.map_err(|_| {
         McpGatewayError::new(
@@ -382,10 +436,14 @@ pub(super) fn mcp_credential_gate(
             mcp_call_scope(server, actor, auth, effect)
         }
     };
-    match bounds {
-        McpRecordBounds::Born | McpRecordBounds::Filtered => auth.require_granted(scope),
-        McpRecordBounds::Unrestricted => auth.require(scope),
-    }
+    let bounds = match bounds {
+        McpRecordBounds::Born | McpRecordBounds::Filtered => GrantBounds::Carried,
+        McpRecordBounds::Unrestricted => GrantBounds::Checked,
+    };
+    static_admission(
+        StaticCaller::connector(actor),
+        StaticCheck::Grant { scope, bounds },
+    )
     .map_err(|_| match scope {
         crate::auth::CoreScope::Read => mcp_proof_error(),
         _ => mcp_grant_refusal(scope),

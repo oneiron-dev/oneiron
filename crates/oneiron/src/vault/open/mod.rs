@@ -743,6 +743,7 @@ impl Vault {
         // The MACHINE rows by endpoint key, for a vault older than the index.
         vault.backfill_mesh_machine_endpoint_index(false)?;
         vault.backfill_row_deletion_fences_on_open()?;
+        vault.backfill_note_claim_dependencies_on_open()?;
         vault.backfill_origin_cas_intents_on_open()?;
         // The campaign.member claims by campaign and query, for a vault older
         // than their index (ARCH-0044 H202).

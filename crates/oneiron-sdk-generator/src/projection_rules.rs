@@ -52,7 +52,8 @@ impl Drop for Tree {
 }
 
 impl Tree {
-    /// The verb files and `type_names.json` copied, every other input linked to the repository's.
+    /// The verb files, `type_names.json` and the verb-tree base copied, every other input linked to
+    /// the repository's.
     fn new(label: &str) -> Self {
         let repository = repository();
         let root = std::env::temp_dir().join(format!(
@@ -79,10 +80,16 @@ impl Tree {
             tree.link(&repository, dir);
         }
         for path in INPUTS {
-            if !matches!(*path, "scripts/sdk/verbs" | "scripts/sdk/type_names.json") {
+            if !matches!(
+                *path,
+                "scripts/sdk/verbs" | "scripts/sdk/type_names.json" | "scripts/sdk/verb-tree/base"
+            ) {
                 tree.link(&repository, path);
             }
         }
+        // The base is copied, not linked: a test that removes a row removes its base text with it (the
+        // verb-tree gate refuses a base text for no verb), and a link would write into the repository.
+        tree.copy_dir(&repository, "scripts/sdk/verb-tree/base");
         tree
     }
 
@@ -99,6 +106,18 @@ impl Tree {
         let target = self.root.join(path);
         fs::create_dir_all(target.parent().expect("a parent")).expect("a directory");
         std::os::unix::fs::symlink(repository.join(path), &target).expect("a link");
+    }
+
+    /// `path` (a directory) in the copy as copies of the repository's files, so a test may change
+    /// them.
+    fn copy_dir(&self, repository: &Path, path: &str) {
+        let target = self.root.join(path);
+        fs::create_dir_all(&target).expect("a directory");
+        let entries = fs::read_dir(repository.join(path)).expect("a copied directory");
+        for entry in entries {
+            let entry = entry.expect("a copied entry");
+            fs::copy(entry.path(), target.join(entry.file_name())).expect("a file copied");
+        }
     }
 
     fn verb_file(&self, name: &str) -> PathBuf {
@@ -134,6 +153,24 @@ impl Tree {
 
     fn remove(&self, name: &str) {
         fs::remove_file(self.verb_file(name)).expect("a verb file removed");
+    }
+
+    /// Removes the base text of `name`.
+    fn remove_base(&self, name: &str) {
+        assert!(
+            !name.is_empty()
+                && name != "."
+                && name != ".."
+                && !Path::new(name).is_absolute()
+                && !name.contains(['/', '\\']),
+            "a base name must be one safe file-name stem: {name:?}"
+        );
+        fs::remove_file(
+            self.root
+                .join("scripts/sdk/verb-tree/base")
+                .join(format!("{name}.txt")),
+        )
+        .expect("a base file removed");
     }
 
     /// The generator's outputs for the copy, or its refusal as the line it prints.
@@ -183,6 +220,8 @@ fn edited() -> &'static Outputs {
         // A memory row and a board row leave the table.
         tree.remove("vault.rooms.claim");
         tree.remove("self.focus.refresh");
+        // Its base text leaves with it (the verb-tree gate refuses a base text for no verb).
+        tree.remove_base("self.focus.refresh");
         // A row is renamed (file and name).
         let mut offers = tree.row("vault.rooms.offers");
         offers.insert("name".into(), Value::Str("vault.rooms.bids".into()));

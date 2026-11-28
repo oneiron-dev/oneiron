@@ -29,7 +29,7 @@ use super::types::{
 use crate::code_run::{
     CodeRunBridgeCall, CodeRunRawOutput, CodeRunReplayRecord, CodeRunResultBinding,
     CodeRunStepCheckpoint, ExecutorStorage, PendingCodeStep, ProgramResumeCall, ProgramResumeKind,
-    ReaderFoldReceipt, SelfDurableWait, StepContextCapture, program_resume_call,
+    ReaderFoldReceipt, RecordedProducer, SelfDurableWait, StepContextCapture, program_resume_call,
 };
 use crate::code_sandbox::source::{PreparedSource, TranspiledSource, prepare_source};
 use crate::store::result_manifest::invalid_code_run_replay;
@@ -126,13 +126,14 @@ impl EngineNativeExecutor<'_> {
             let Some(resume) = resume else {
                 return Ok(self.caller_source_outcome(status, 0, record));
             };
+            let producer = RecordedProducer::of_row(&row, false);
             settled.push_back(SettledCall {
                 listed: program_resume_call(&row, Some(wait.wait_id))?,
                 row,
                 // The host replaces the parked answer only after consuming its reply.
                 reply: None,
             });
-            delivery = Some((wait_row, wait, resume));
+            delivery = Some((wait_row, wait, resume, producer));
         } else if let Some(wait_row) = head.as_ref().and_then(|head| head.wait_row) {
             // A prior entry consumed its wait after matching the prefix, but
             // stopped before it could commit another checkpoint.
@@ -177,16 +178,16 @@ impl EngineNativeExecutor<'_> {
                     });
                     return Ok(None);
                 };
-                let Some((row, _, _)) = delivery.as_ref() else {
+                let Some((row, _, _, _)) = delivery.as_ref() else {
                     return Ok(None);
                 };
                 if *row != at {
                     return Ok(None);
                 }
-                let (_, wait, resume): (_, _, WaitResume) = delivery.take().ok_or(
+                let (_, wait, resume, producer): (_, _, WaitResume, _) = delivery.take().ok_or(
                     Error::InvariantViolation("caller source lost its wait reply"),
                 )?;
-                if !gated.releases_recorded_answer(resume.source_rows()) {
+                if !gated.releases_recorded_answer(resume.source_rows(), producer) {
                     return Err(Error::InvalidConfig(
                         "the bound door no longer releases the caller source wait reply".to_owned(),
                     ));

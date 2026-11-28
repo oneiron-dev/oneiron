@@ -489,4 +489,52 @@ impl Vault {
         };
         Ok(!named || keyed != entry.instance)
     }
+
+    /// How many of `digests` still have a body file on disk that no
+    /// descriptor holds: a released file still on disk after the collect pass
+    /// (pinned by a reader, past the pass's bound, or waiting on an older
+    /// read snapshot) is one "still in use and removed later" (H5, F13). A
+    /// digest another record still holds, or a raw output holds on its own
+    /// (FIX 5399b), is not this delete's file. No directory: none left.
+    ///
+    /// # Errors
+    ///
+    /// Storage and filesystem errors as they occur.
+    pub(crate) fn body_files_left(&self, digests: &[[u8; 32]]) -> Result<usize> {
+        let kept = {
+            let txn = self.store.env.read_txn()?;
+            let mut kept = BTreeSet::new();
+            for digest in digests {
+                if !digest_is_held_in_txn(&self.store, &txn, digest)?
+                    && !code_run_body_held_in_txn(&self.store, &txn, digest)?
+                {
+                    kept.insert(*digest);
+                }
+            }
+            kept
+        };
+        if kept.is_empty() {
+            return Ok(0);
+        }
+        let dir = match self.store.body_dir() {
+            Ok(dir) => dir,
+            // No directory is no file of ours left: the explicit missing-dir
+            // signal, or the directory gone between its mkdir and open.
+            Err(crate::Error::InvariantViolation("result body directory missing")) => {
+                return Ok(0);
+            }
+            Err(crate::Error::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(0);
+            }
+            Err(error) => return Err(error),
+        };
+        let mut left = BTreeSet::new();
+        for entry in body_entries(&dir)? {
+            let entry = entry?;
+            if !entry.index && kept.contains(&entry.digest) {
+                left.insert(entry.digest);
+            }
+        }
+        Ok(left.len())
+    }
 }

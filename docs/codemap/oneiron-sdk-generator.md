@@ -13,7 +13,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 |---|---|---|---|---|---|
 | `build.rs` | src | s | — | — | Sets `GENERATOR_SOURCE_DIGEST` (exposed as `oneiron_sdk_generator::GENERATOR_SOURCE_DIGEST`): a digest of… |
 | `src/argument_parser.rs` | src | m | 1 crate-vis | — | The generator's argument parser: Python's `argparse` for the binary's four options, with the refusals it… |
-| `src/catalog_fragment.rs` | src | L | 9 crate-vis | — | The code-mode catalog fragment and its revision (ONE-2510 S2) |
+| `src/catalog_fragment.rs` | src | L | 12 crate-vis | — | The code-mode catalog fragment and its revision (ONE-2510 S2) |
 | `src/error.rs` | src | s | 1 enum · 10 crate-vis | GenerateError | `GenerateError`: the line the generator prints last on stderr when it refuses its inputs, as the Python… |
 | `src/facade_types/index.rs` | src | m | 16 crate-vis | — | Every struct, enum and alias of the engine crates, with each file's imports, and the heuristic resolver that… |
 | `src/facade_types/index/resolution.rs` | src | m | 8 crate-vis | — | The resolver of `Index`: a file's imports, a path's crate and module, the item a path or a bare name names… |
@@ -61,6 +61,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/uniffi_types.rs` | src | XL | 1 struct · 15 crate-vis | — | The UniFFI records and enums for the facade rows' wire types (OF-237), projected from the one facade type… |
 | `src/verb_table.rs` | src | m | 6 crate-vis | — | The verb table, one JSON file per verb under `scripts/sdk/verbs/`, named by its verb, read in file-name order |
 | `src/verb_table/example_call.rs` | src | m | 1 crate-vis | — | Whether an example calls its verb: a token-level parse of the example's JavaScript |
+| `src/verb_tree_index.rs` | src | m | 2 crate-vis | — | The verb-tree index (`verb_tree_index.json`): the code-mode verbs, their types, the family lines, the vault… |
 | `tests/sdk_generated_header_text.rs` | test | s | — | — | FIX-LIST 22920 [SDK-GENERATED-HEADER-TEXT]: every generated SDK output names `crates/oneiron-sdk-generator`… |
 | `tests/sdk_python_keyword_identifiers.rs` | test | s | — | — | FIX-LIST [PY-SDK-GENERATED-KEYWORD-METHOD]: the generated Python facade names no method, property or… |
 | `tests/sdk_typescript_reserved_word_bindings.rs` | test | m | — | — | FIX-LIST [SDK-TS-RESERVED-WORD-IDENTIFIERS]: the generated TypeScript binds no name that is a JavaScript… |

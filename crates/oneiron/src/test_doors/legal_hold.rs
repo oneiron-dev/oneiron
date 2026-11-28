@@ -22,6 +22,7 @@ use crate::Vault;
 use crate::deletion::LegalHoldProduction;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
+use crate::side_table::{self, Raw, SideTable};
 
 /// One opened component of a hold's sealed captures.
 pub struct OpenedHoldComponent {
@@ -55,6 +56,33 @@ pub fn hold_dir(vault: &Vault, hold_id: EntityId) -> Result<PathBuf> {
 pub fn prospective_standing(vault: &Vault, hold_id: EntityId) -> Result<bool> {
     let txn = vault.store.env.read_txn()?;
     Ok(crate::deletion::outbox_in_txn(&vault.store, &txn, (*hold_id.as_bytes(), 0))?.is_some())
+}
+
+/// The sealed-record rows of `hold_id`: how many records its sealed captures hold.
+///
+/// # Errors
+/// A storage error.
+pub fn sealed_record_rows(vault: &Vault, hold_id: EntityId) -> Result<usize> {
+    const SEALED: SideTable<([u8; 16], [u8; 16], [u8; 16]), Vec<u8>, Raw> =
+        SideTable::new(&side_table::LEGAL_HOLD_SEALED_RECORD);
+    let txn = vault.store.env.read_txn()?;
+    Ok(SEALED
+        .scan_keys(&vault.store, &txn, hold_id.as_bytes())?
+        .len())
+}
+
+/// Spoils `hold_id`'s future-messages standing recipient, so every later seal is Missed.
+///
+/// # Errors
+/// A storage error.
+pub fn spoil_prospective_recipient(vault: &Vault, hold_id: EntityId) -> Result<()> {
+    vault.with_write_txn(|txn| {
+        crate::deletion::legal_hold::prospective::spoil_owner_recipient_in_txn(
+            &vault.store,
+            txn,
+            hold_id.as_bytes(),
+        )
+    })
 }
 
 /// Opens every sealed capture of `hold_id`: `hold.key` under this install's

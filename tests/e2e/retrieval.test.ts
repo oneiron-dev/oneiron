@@ -1007,7 +1007,7 @@ suite.test(test, "RETRIEVAL-04", "A world-limited reader stays clamped across re
     expect(claimsAfterRefusal.map(row => row.claim_ref)).toContain(hidden.id);
     expect(claimsAfterRefusal.some(row => row.predicate === "profile.retrieval_forbidden")).toBe(false);
     await engine.artifacts.json("retrieval-world-clamp.json", { before, after, visibleHydrate,
-      withheld: withheld.body, query: query.body, batch: batch.body, ownerPack: ownerPack.body,
+      mixed: mixed.body, query: query.body, batch: batch.body, ownerPack: ownerPack.body,
       pack: pack.body, afterPacks: { ownerPack: afterPacks.ownerPack.body, pack: afterPacks.pack.body },
       graphAnchor, ownerAnchor, refused: refused.body, refusedReceipt, durable, durableEdges, claimsAfterRefusal });
   } catch (error) {

@@ -43,6 +43,9 @@ use oneiron::verbs::{AgentGrantMintRequest, mint_agent_grant_as};
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
 use serde_json::Value;
 
+/// The host's clock at every read: no line is set, so no read depends on it.
+const NOW_MS: u64 = 1_000_000;
+
 struct Fixture {
     vault: Vault,
     _dir: tempfile::TempDir,
@@ -75,11 +78,12 @@ fn card_request(vault: &Vault, project: EntityId) -> PlannerCardRequest {
         project_ref: project.to_hex(),
         type_ref: tree.root(),
         models: vec!["muse-spark-1.3".to_owned()],
+        cursor: None,
     }
 }
 
 fn owner_card(fixture: &Fixture, input: &PlannerCardRequest) -> PlannerCardView {
-    planner_card_as_owner(&fixture.vault, &fixture.owner_proof, input)
+    planner_card_as_owner(&fixture.vault, &fixture.owner_proof, input, NOW_MS)
         .unwrap_or_else(|error| panic!("the owner reads the card of {input:?}: {error:?}"))
 }
 
@@ -155,6 +159,7 @@ fn the_planner_card_door_reads_and_writes_nothing() {
         &fixture.vault.memory(agent, EdgeActorClass::Agent),
         None,
         &input,
+        NOW_MS,
     )
     .unwrap_or_else(|error| panic!("the granted agent reads the card: {error:?}"));
     let after = last_committed_write(&fixture.vault);
@@ -287,10 +292,11 @@ fn the_card_lists_the_rows_it_was_read_from() {
             .listing_producers(&producers),
         None,
         &input,
+        NOW_MS,
     )
     .unwrap_or_else(|error| panic!("the granted agent reads the card: {error:?}"));
     assert_eq!(
-        card.rows.iter().map(|row| row.wins).sum::<u64>(),
+        card.payoff_rows.iter().map(|row| row.wins).sum::<u64>(),
         1,
         "expected the card to fold the project's one settled run; seen {card:?}"
     );

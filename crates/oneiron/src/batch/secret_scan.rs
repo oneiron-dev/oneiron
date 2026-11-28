@@ -91,7 +91,7 @@ use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_SECRET_CUSTODY};
 use crate::side_table::{self, Named, SideTable, SideTableDbs};
 use crate::store::Store;
 
-const REASON_DETECTED: &str = "gate.secret_scan.detected";
+pub(crate) const REASON_DETECTED: &str = "gate.secret_scan.detected";
 
 const REASON_AWS_ACCESS_KEY_ID: &str = "gate.secret_scan.aws_access_key_id";
 const REASON_GITHUB_TOKEN: &str = "gate.secret_scan.github_token";

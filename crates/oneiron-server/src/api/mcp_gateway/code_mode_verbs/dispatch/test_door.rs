@@ -70,3 +70,42 @@ pub(crate) fn admit_run_call_for_test(
         .map(|key| key.is_some())
         .map_err(|refusal| refusal.code)
 }
+
+#[cfg(test)]
+pub(crate) fn admit_run_row_for_test(
+    door: &McpCodeModeVerbs,
+    row: &'static str,
+) -> Result<(), AgentVerbRefusal> {
+    door.admit_run_row(row)
+}
+
+#[cfg(test)]
+pub(crate) fn admit_run_call_on_door_for_test(
+    door: &McpCodeModeVerbs,
+    call: RunCall,
+) -> Result<Option<ScopedReadActorKey>, AgentVerbRefusal> {
+    door.admit_run_call(call)
+}
+
+#[cfg(test)]
+pub(crate) fn admit_outer_skill_call_for_test(
+    door: &McpCodeModeVerbs,
+) -> Result<Option<ScopedReadActorKey>, AgentVerbRefusal> {
+    door.admit_outer_skill_call()
+}
+
+#[cfg(test)]
+pub(crate) fn admit_recorded_verb_for_test(
+    door: &McpCodeModeVerbs,
+    verb: AgentVerb,
+) -> Result<(), AgentVerbRefusal> {
+    door.admit_recorded_verb(verb)
+}
+
+#[cfg(test)]
+pub(crate) fn admit_session_read_for_test(
+    door: &McpCodeModeVerbs,
+    verb: AgentVerb,
+) -> Result<ScopedReadActorKey, AgentVerbRefusal> {
+    door.admit_session_read(verb)
+}

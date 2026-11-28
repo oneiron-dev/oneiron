@@ -221,9 +221,16 @@ pub(crate) use self::facade::{
     ai_video_as_owner, ai_video_cancel_as_owner, ai_video_cancel_for_run, ai_video_for_agent_run,
     ai_video_for_run, ai_video_poll_as_owner, ai_video_poll_for_run, vault_hooks_replay_as_owner,
 };
+// The integration tests' door to the media doors on a code-mode run's line
+// (FIX CODE-MODE-LENDING-W1).
+#[cfg(oneiron_test_support)]
+pub(crate) use self::facade::media_door_on_run_line_for_test;
 // STEP-PARK-BOOT-RESUME: the owner's model steps parked before a restart
 // resume when serve starts.
 pub(crate) use self::facade::resume_parked_model_steps;
+// [RSI-PROJECT-WORKFLOW]: the lane-economy rows a turn program's run door
+// serves its own agent.
+pub(crate) use self::facade::{gpu_job_status_for_agent, reserve_and_start_unit};
 pub(crate) use owner_routes::managed_owner_proof;
 mod packs;
 mod params;

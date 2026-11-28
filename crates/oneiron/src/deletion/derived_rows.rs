@@ -30,9 +30,7 @@ const ERASERS: &[EntitySideRowEraser] = &[
     |write, txn, id| crate::task_verb::erase_report_journal_in_txn(write.store, txn, id),
     |write, txn, id| crate::task_verb::erase_lifecycle_receipts_in_txn(write.store, txn, id),
     |write, txn, id| crate::vault_cleanup::erase_in_txn(write.store, txn, id),
-    |write, txn, id| {
-        crate::dreamer_runner::maintenance::erase_source_copies_in_txn(write.store, txn, id)
-    },
+    |write, txn, id| crate::dreamer_runner::maintenance::erase_source_copies_in_txn(write, txn, id),
     // FIX 10460: the queue copy of a public model step's failure text.
     // First: it reads the step's terminal claim out of the live submission
     // row, which the submission scrub below replaces with Erased.
@@ -65,6 +63,8 @@ const ERASERS: &[EntitySideRowEraser] = &[
             id,
         )
     },
+    // PROMOTED-CLAIM-SOURCE-DEPENDENCY-GAPS (Q2 = a): the NOTE review's row for an erased NOTE.
+    |write, txn, id| crate::dreamer_consolidation::forget_note_review_in_txn(write.store, txn, id),
     // FIX 12569: every drafter version whose training ancestry reaches it.
     |write, txn, id| crate::drafter::erase_drafters_for_source_in_txn(write.store, txn, id),
     // FIX 10260: a MESSAGE's kept reply assertions.
@@ -138,6 +138,10 @@ const ERASERS: &[EntitySideRowEraser] = &[
     },
     // FIX 11965: the stamp tokens the record's document names.
     |write, txn, id| crate::provenance::erase_actor_stamp_uses_in_txn(write.store, txn, id),
+    // HARD-DELETE-RETAINED-ARCHIVE-ROW-OUTLIVES-RECORD: inert archive copies of rows about it.
+    |write, txn, id| {
+        crate::batch::export::archive_retained_record_erase::erase_retained_side_rows_of_record_in_txn(write.store, txn, id).map(|_| ())
+    },
     #[cfg(feature = "sync")]
     |write, txn, id| erase_carried_born_with_in_txn(write.store, txn, id),
     // FIX 12113: which machine wrote a MESSAGE row: a digest of its bytes.

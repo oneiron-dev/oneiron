@@ -241,7 +241,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | ARCH-0027 | `crates/oneiron-mail-pack/src/mail_pack/mod.rs` | s |
 | ARCH-0027 | `crates/oneiron-mesh-transport/src/files_search.rs` | s |
 | ARCH-0027 | `crates/oneiron-server/src/api/facade/files_doors/ask.rs` | s |
-| ARCH-0027 | `crates/oneiron-server/src/api/facade/hosted_import_doors.rs` | s |
+| ARCH-0027 | `crates/oneiron-server/src/api/facade/hosted_import_doors.rs` | m |
 | ARCH-0027 | `crates/oneiron-server/src/api/owner_routes/hosted_import_routes.rs` | m |
 | ARCH-0027 | `crates/oneiron-server/src/commands/history_import.rs` | L |
 | ARCH-0027 | `crates/oneiron-server/src/commands/history_import/hosted_import.rs` | L |
@@ -461,6 +461,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | ARCH-0043 | `crates/oneiron/src/deletion/coop_delivery/leave.rs` | s |
 | ARCH-0043 | `crates/oneiron/src/deletion/coop_delivery/reply_setting.rs` | s |
 | ARCH-0043 | `crates/oneiron/src/deletion/coop_delivery/setting_answer.rs` | m |
+| ARCH-0043 | `crates/oneiron/src/dreamer_consolidation/turn_text/writers.rs` | s |
 | ARCH-0043 | `crates/oneiron/src/federation/connect_grant.rs` | m |
 | ARCH-0043 | `crates/oneiron/src/federation/delete_authority.rs` | L |
 | ARCH-0043 | `crates/oneiron/src/federation/foreign_world.rs` | s |
@@ -1269,7 +1270,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | ARCH-0079 | `crates/oneiron/src/team/owner_outcome.rs` | s |
 | ARCH-0079 | `crates/oneiron/src/team/pattern.rs` | m |
 | ARCH-0079 | `crates/oneiron/src/team/payoff.rs` | m |
-| ARCH-0079 | `crates/oneiron/src/team/planner_card_door.rs` | s |
+| ARCH-0079 | `crates/oneiron/src/team/planner_card_door.rs` | m |
 | ARCH-0079 | `crates/oneiron/src/team/receipt.rs` | m |
 | ARCH-0079 | `crates/oneiron/src/team/stack.rs` | s |
 | ARCH-0079 | `crates/oneiron/src/verbs/self_verbs.rs` | s |
@@ -2789,7 +2790,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | OF-579 | `crates/oneiron-server/src/api/context_pack/audience.rs` | s |
 | OF-580 | `crates/oneiron-remote/src/invocation.rs` | s |
 | OF-580 | `crates/oneiron-sdk-generator/src/generate/emit_http.rs` | s |
-| OF-580 | `crates/oneiron-server/src/api/facade/invocations.rs` | m |
+| OF-580 | `crates/oneiron-server/src/api/facade/invocations.rs` | L |
 | OF-580 | `crates/oneiron-server/src/api/owner_routes/handoff_alarm_routes.rs` | s |
 | OF-580 | `crates/oneiron-server/src/api/owner_routes/root_routes.rs` | m |
 | OF-580 | `crates/oneiron-server/src/commands/mcp_bridge.rs` | L |

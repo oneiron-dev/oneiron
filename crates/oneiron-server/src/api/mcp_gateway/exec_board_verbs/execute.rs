@@ -3,11 +3,14 @@
 mod result;
 mod resume;
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use oneiron::engine_executor::{CallerRunInput, caller_run_input};
 use rand_core::{OsRng, RngCore as _};
 
 use super::super::code_run_resume::McpCodeRunEntry;
 use super::*;
+use crate::mcp::McpCodeRunEnd;
 use crate::mcp::{
     McpCodeExecutionError, McpCodeRunInput, McpCodeRunResumeCondition, McpCodeRunResumed,
     McpExecuteToolArgs,
@@ -160,7 +163,23 @@ async fn enter_mcp_code_run(
         .ok_or_else(|| mcp_code_execution_error(&crate::mcp::McpCodeExecutionError::HostUnbound))?;
     let run_id = entry.run_id();
     let verbs = mcp_code_run_verbs(server, actor, run_id, input);
-    let request = mcp_code_run_request(server, actor, run_ref, input, run_id, &verbs);
+    let cleanup = Arc::new(McpCodeRunTerminalCleanup {
+        desktop_seats: Arc::clone(&server.desktop_seats),
+        browser_seats: Arc::clone(&server.browser_seats),
+        lens_frames: Arc::clone(&server.lens_frames),
+        vault: Arc::clone(&server.vault),
+        run_id,
+        ended: AtomicBool::new(false),
+    });
+    let request = mcp_code_run_request(
+        server,
+        actor,
+        run_ref,
+        input,
+        run_id,
+        &verbs,
+        Arc::clone(&cleanup) as Arc<dyn McpCodeRunEnd>,
+    );
     let outcome = if let Some(condition) = condition {
         match host.execute_resumed(request, condition).await {
             Ok(McpCodeRunResumed::Superseded) => {
@@ -174,7 +193,12 @@ async fn enter_mcp_code_run(
         host.execute(request).await
     };
     Ok(Some(mcp_code_run_ended(
-        server, actor, run_ref, entry, verbs, outcome,
+        cleanup.as_ref(),
+        actor,
+        run_ref,
+        entry,
+        verbs,
+        outcome,
     )))
 }
 
@@ -217,6 +241,7 @@ fn mcp_code_run_request<'a>(
     input: McpCodeRunInput<'a>,
     run_id: oneiron::EntityId,
     verbs: &Arc<super::code_mode_verbs::McpCodeModeVerbs>,
+    run_end: Arc<dyn McpCodeRunEnd>,
 ) -> crate::mcp::McpCodeExecutionRequest<'a> {
     // FIX 17594 D5: a task run's self brief, keyed by its trusted run
     // id, for a connection that has one; the host installs it under the
@@ -242,16 +267,41 @@ fn mcp_code_run_request<'a>(
             server, actor, run_ref,
         ),
         brief,
+        run_end: Some(run_end),
     }
 }
 
-/// Ends one entry of `entry`'s run with what its host answered. A run that
-/// ended ends its desktop and closes the live lens cards it created, named
-/// by its run id's hex (OF-181, FIX 2612); any other entry leaves them
-/// parked for the run's next entry (CUA-001). The outcome then settles
-/// `entry`.
+struct McpCodeRunTerminalCleanup {
+    desktop_seats: Arc<crate::server::DesktopSeats>,
+    browser_seats: Arc<crate::server::BrowserSeats>,
+    lens_frames: Arc<crate::lens_frames::LensFrameStore>,
+    vault: Arc<oneiron::Vault>,
+    run_id: oneiron::EntityId,
+    ended: AtomicBool,
+}
+
+impl McpCodeRunEnd for McpCodeRunTerminalCleanup {
+    fn end(&self) {
+        if self.ended.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let run_id = self.run_id;
+        self.desktop_seats.end_run(run_id);
+        self.browser_seats.end_run(run_id);
+        self.lens_frames.close_run(&run_id.to_hex());
+        if let Err(error) = self.vault.seal_code_run_scratchpads(run_id) {
+            tracing::warn!(%error, run_id = %run_id.to_hex(), "code-run scratchpad seal failed");
+        }
+    }
+}
+
+/// Settles `entry` with what its host answered. Completion and an outgrown
+/// window end the run (FIX CODE-MODE-LENDING-W6). The native worker cleans up
+/// its resources under single flight even if the caller disconnects; this
+/// calls the same cleanup for hosts that did not. Other outcomes keep the
+/// run's resources parked for its next entry (OF-181, FIX 2612, CUA-001).
 fn mcp_code_run_ended(
-    server: &Arc<SyncServer>,
+    cleanup: &dyn McpCodeRunEnd,
     actor: &McpCallContext,
     run_ref: &str,
     entry: McpCodeRunEntry,
@@ -262,18 +312,15 @@ fn mcp_code_run_ended(
     >,
 ) -> McpCodeRunEntered {
     let run_id = entry.run_id();
-    if outcome.as_ref().is_ok_and(|outcome| {
-        matches!(
+    let ended = match &outcome {
+        Ok(outcome) => matches!(
             outcome.status,
             oneiron::engine_executor::EngineExecutorStatus::Complete
-        )
-    }) {
-        server.desktop_seats.end_run(run_id);
-        server.browser_seats.end_run(run_id);
-        server.lens_frames.close_run(&run_id.to_hex());
-        if let Err(error) = server.vault.seal_code_run_scratchpads(run_id) {
-            tracing::warn!(%error, run_id = %run_id.to_hex(), "code-run scratchpad seal failed");
-        }
+        ),
+        Err(error) => error.ends_run(),
+    };
+    if ended {
+        cleanup.end();
     }
     entry.settle(actor, run_ref, &outcome);
     McpCodeRunEntered {
@@ -294,7 +341,8 @@ fn mcp_code_execution_error(error: &crate::mcp::McpCodeExecutionError) -> McpGat
     let code = match error {
         crate::mcp::McpCodeExecutionError::HostUnbound
         | crate::mcp::McpCodeExecutionError::RunWaitedOut
-        | crate::mcp::McpCodeExecutionError::Refused(_) => -32020,
+        | crate::mcp::McpCodeExecutionError::Refused(_)
+        | crate::mcp::McpCodeExecutionError::WindowOutgrown => -32020,
         crate::mcp::McpCodeExecutionError::RunBinding(_)
         | crate::mcp::McpCodeExecutionError::Run(_)
         | crate::mcp::McpCodeExecutionError::ResumeDivergence(_)

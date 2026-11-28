@@ -15,8 +15,9 @@ pub(in super::super) async fn execute_code_mode_verb(
 }
 
 /// A browser batch's routine decision: the connector's `ai.verdict`, admitted
-/// by its scope only, since the batch it is bound for carries it. Its
-/// credential gate and hooks run as on any verb call.
+/// as a direct `tools/call` of it is, needing the connector's own binding of
+/// `ai.verdict` plus its scope (FIX CODE-MODE-LENDING-W3). Its credential
+/// gate and hooks run as on any verb call.
 pub(in super::super) async fn execute_step_verdict(
     server: &Arc<SyncServer>,
     actor: &McpCallContext,
@@ -24,9 +25,16 @@ pub(in super::super) async fn execute_step_verdict(
     run: McpCodeRun,
 ) -> Result<(Value, Vec<oneiron::EntityId>), McpGatewayError> {
     // Only the verdict is read; its rows are not.
-    run_code_mode_verb(server, actor, "ai.verdict", input, run, mcp_admit_step_verb)
-        .await
-        .map(|answer| (answer.output, answer.rows.unwrap_or_default()))
+    run_code_mode_verb(
+        server,
+        actor,
+        "ai.verdict",
+        input,
+        run,
+        mcp_admit_scoped_verb,
+    )
+    .await
+    .map(|answer| (answer.output, answer.rows.unwrap_or_default()))
 }
 
 /// How one verb call's tool binding and scope are admitted.

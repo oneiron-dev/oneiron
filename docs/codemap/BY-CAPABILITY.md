@@ -99,7 +99,7 @@ The capabilities in `scripts/codemap/capability_aliases.md`, one row each: its s
 | List the tools Oneiron exposes over MCP | MCP tool surface; tools list; tool-first mode; primary MCP mode | `crates/oneiron-server/src/mcp/surface.rs` (m) | — | Registers the primary and tool-first catalogues and their bindings; listing a tool does not grant the caller permission to use it. |
 | Add a verb to the SDK table | SDK verb definition; verb table; generated verb bindings; typed verb schema | `crates/oneiron-sdk-generator/src/verb_table.rs` (m); `crates/oneiron-sdk-generator/src/lib.rs` (s); `scripts/sdk/README.md` (outside the map) | ARCH-0082 | Reads the JSON verb definitions and generates their projections; editing one generated SDK client does not change the source of truth. |
 | Call a typed engine verb over HTTP | public memory API; facade endpoint; invoke a typed verb; HTTP SDK door | `crates/oneiron-server/src/api/routes.rs` (m); `crates/oneiron-server/src/api/facade/invoke.rs` (m) | — | Routes a typed facade row on a scoped caller, optionally inside a room turn; it is not a generic write endpoint. |
-| Retry the same verb call safely | idempotent invocation; duplicate request; invocation ID; request deduplication | `crates/oneiron-server/src/api/facade/invocations.rs` (m) | OF-580; FIX 11889 | Claims the client-named invocation and returns the same call's reply on retry; an ID reused for a different call is refused. |
+| Retry the same verb call safely | idempotent invocation; duplicate request; invocation ID; request deduplication | `crates/oneiron-server/src/api/facade/invocations.rs` (L) | OF-580; FIX 11889 | Claims the client-named invocation and returns the same call's reply on retry; an ID reused for a different call is refused. |
 | Open a vault in an SDK or connect to a server | embedded vault client; remote SDK; local versus remote SDK; in-process transport | `crates/oneiron-remote/src/lib.rs` (m) | OF-237; FIX 647; FIX 4730 | Selects an embedded or remote backend behind the same client and dispatcher; the language bindings do not implement separate engine semantics. |
 | Erase a record including its checkpoint copies | owner record erase; privacy erase; retire checkpoint payloads; hard erase a record | `crates/oneiron/src/deletion/delete/facade.rs` (m); `crates/oneiron/src/deletion/tombstone.rs` (m); `crates/oneiron/src/deletion/checkpoint_payload.rs` (s) | ARCH-0038; CROSS-ARCH-0002a; FIX 5688 | Uses the owner-erase reason to retire active bytes and affected checkpoint payloads; ordinary hard delete and reversible archive do not use that checkpoint rule. |
 | Delete a record with an impact preview | delete versus purge; soft delete; hard delete; unshare before delete | `crates/oneiron/src/memory/entity_delete.rs` (m); `crates/oneiron/src/deletion/delete/facade.rs` (m); `crates/oneiron/src/deletion/delete/preview.rs` (s) | ARCH-0043 | Previews known recipients and confirms delete, or purges the active body when requested; it cannot recall copies already delivered to peers. |
@@ -781,7 +781,7 @@ Every top-level module of every mapped crate: its purpose, its entry file (its d
 | Moved from `crates/oneiron/src/linkedin_connector/mod.rs` (lib split R1: record types below the lib) | `crates/oneiron-records/src/linkedin_connector/mod.rs` | s | — |
 | Moved from `crates/oneiron/src/linkedin_lead_preload.rs` (lib split R1: record types below the lib) | `crates/oneiron-records/src/linkedin_lead_preload.rs` | s | — |
 | — | `crates/oneiron-records/src/llm/mod.rs` | s | — |
-| — | `crates/oneiron-records/src/memory/mod.rs` | s | — |
+| — | `crates/oneiron-records/src/memory/mod.rs` | m | — |
 | — | `crates/oneiron-records/src/merge_queue/mod.rs` | s | — |
 | — | `crates/oneiron-records/src/note/mod.rs` | s | — |
 | — | `crates/oneiron-records/src/off_record/mod.rs` | s | — |
@@ -874,6 +874,7 @@ Every top-level module of every mapped crate: its purpose, its entry file (its d
 | The Python-behaviour helpers: Python's values, `json`, `str` methods, builtins and the regular expressions… | `crates/oneiron-sdk-generator/src/py/mod.rs` | m | — |
 | The UniFFI records and enums for the facade rows' wire types (OF-237), projected from the one facade type… | `crates/oneiron-sdk-generator/src/uniffi_types.rs` | XL | OF-237 |
 | The verb table, one JSON file per verb under `scripts/sdk/verbs/`, named by its verb, read in file-name order | `crates/oneiron-sdk-generator/src/verb_table.rs` | m | — |
+| The verb-tree index (`verb_tree_index.json`): the code-mode verbs, their types, the family lines, the vault… | `crates/oneiron-sdk-generator/src/verb_tree_index.rs` | m | — |
 | Frozen orchestration-facing contract for the seal engine (ONE-1837 §4/§5) | `crates/oneiron-seal/src/api.rs` | m | — |
 | Shared output buffers; native accounting constructors are feature-gated | `crates/oneiron-seal/src/buffers.rs` | m | — |
 | Stable seal error classes and codes (ONE-1837 §6) | `crates/oneiron-seal/src/error.rs` | s | — |
@@ -975,7 +976,7 @@ Every top-level module of every mapped crate: its purpose, its entry file (its d
 | The health check past a threshold (OF-520, ARCH-0044 C5) | `crates/oneiron-server/src/wire_health.rs` | m | ARCH-0044, ARCH-0064a, ARCH-0076, OF-520 |
 | RC42 observation-only wire counters | `crates/oneiron-server/src/wire_telemetry.rs` | L | — |
 | The issuer's side of the work-order loop (pass 34, section 0; Engine ruling EM-22 = A): what the engine's… | `crates/oneiron-server/src/work_order_host.rs` | m | — |
-| A folder's workspace identity (RECALL-SESSION-PROJECT; Engine ANSWER RECALL-SESSION-PROJECT-INTENT, 26 Nov… | `crates/oneiron-server/src/workspace_identity.rs` | s | — |
+| A folder's workspace identity (RECALL-SESSION-PROJECT; Engine ANSWER RECALL-SESSION-PROJECT-INTENT, 26 Nov… | `crates/oneiron-server/src/workspace_identity.rs` | m | — |
 | The host's precision recalculator (ARCH-0075 xlsx row; FIX 2462, OF-505 = A): LibreOffice Calc headless… | `crates/oneiron-server/src/xlsx_recalc.rs` | m | ARCH-0075, OF-505 |
 | Which stored row a read takes its value from: one order for every key | `crates/oneiron-setting-contract/src/decide.rs` | m | — |
 | The stored key of one setting row: `name 0x00 item 0x00 mode scope` | `crates/oneiron-setting-contract/src/key.rs` | s | — |

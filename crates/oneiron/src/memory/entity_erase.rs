@@ -7,6 +7,7 @@
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 
+use super::remaining_after_delete;
 use super::{
     DeleteReceipt, DeleteRequestState, MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN,
     MEMORY_CODE_INVALID_STATE, MEMORY_CODE_NOT_FOUND, Memory, MemoryError, MemoryResult,
@@ -261,6 +262,7 @@ impl Memory<'_> {
                 receipt_ref: None,
                 state: DeleteRequestState::CompletionPending,
                 check_in: None,
+                remaining: Vec::new(),
             }
         } else {
             let actor = WriteActor::new(self.actor, self.actor_class);
@@ -279,6 +281,15 @@ impl Memory<'_> {
                 preview
                     .check_after_unshare(self.vault, txn)
                     .map_err(Into::into)
+            })
+            .map_err(|error| match options.veto_starter {
+                // The owner, on their own proof, learns `restricted` for a
+                // record they chose to restrict (Q1 = A); any other absence,
+                // and an erase without that proof, passes through.
+                Some(starter) => {
+                    self.owner_absence_as_restricted(starter, &preview.entity(), error)
+                }
+                None => error,
             })?
         };
         let same_bytes = plan
@@ -377,6 +388,7 @@ impl Memory<'_> {
             return self.erase_completed_marker(owner, act_id);
         }
         self.unshare_and_erase_match(&planned, EraseReason::OwnerErase, Some(owner))
+            .map_err(|error| self.owner_absence_as_restricted(owner, &planned.holder, error))
     }
 
     /// Fulfils a completed owner erase whose record an earlier hard delete
@@ -421,9 +433,19 @@ impl Memory<'_> {
             {
                 return Err(Error::ConcurrentWrite("erase target changed").into());
             }
+            // This check is the restriction probe, so its absence refusal is the
+            // owner's `restricted` refusal on this owner path (Q1 = A); it is
+            // mapped here, not in the check, which keeps refusing with absence.
             self.vault
                 .store
-                .reject_restricted_records_in_txn(txn, &[held.holder])?;
+                .reject_restricted_records_in_txn(txn, &[held.holder])
+                .map_err(|error| {
+                    if matches!(error, Error::EntityNotFound) {
+                        Error::RecordRestricted
+                    } else {
+                        error
+                    }
+                })?;
             crate::world_keys::reject_held_pad_world_in_txn(
                 &self.vault.store,
                 txn,
@@ -437,7 +459,7 @@ impl Memory<'_> {
                 &held.holder,
                 Some(DeleteReason::OwnerErase.into()),
             )?;
-            let receipt = self.vault.record_completed_owner_payload_erase_in_txn(
+            let (receipt, sweep_key) = self.vault.record_completed_owner_payload_erase_in_txn(
                 txn,
                 &held.holder,
                 self.actor,
@@ -456,6 +478,7 @@ impl Memory<'_> {
                 receipt_ref: Some(format!("redaction:{}", receipt.to_hex())),
                 state: DeleteRequestState::Applied,
                 check_in: None,
+                remaining: remaining_after_delete(Some(&sweep_key), false, 0),
             })
         });
         if erased.is_ok() {
@@ -569,6 +592,9 @@ impl Memory<'_> {
                 receipt_ref: receipt.map(|receipt| format!("redaction:{receipt}")),
                 state: DeleteRequestState::Applied,
                 check_in: None,
+                // An idempotent re-read carries no sweep key: the sweep, if
+                // the first erase queued one, is owed by that erase already.
+                remaining: Vec::new(),
             });
         }
         Err(MemoryError::new(

@@ -58,7 +58,7 @@ pub(crate) use self::program_entry::{PinnedProgramEntry, PinnedProgramRun};
 #[cfg(test)]
 use self::record::step_state_hash;
 pub use self::record::{EnteredRun, caller_run_input, entered_run};
-pub(crate) use self::record::{caller_run_input_in_txn, code_run_complete_in_txn, parked_wait_now};
+pub(crate) use self::record::{caller_run_input_in_txn, code_run_terminal_in_txn, parked_wait_now};
 #[cfg(oneiron_test_support)]
 pub(crate) use self::record::{executor_config_hash_for_test, step_state_hash_for_test};
 // FIX 4606: a canonical run's generation and parked wait, read outside its

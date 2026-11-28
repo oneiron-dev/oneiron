@@ -79,6 +79,7 @@ pub mod parked_step_resume;
 pub mod pre_idle_reuse;
 pub mod question_heads;
 pub mod raw_stream;
+pub mod recorded_answer_recheck;
 #[cfg(unix)]
 pub mod recovery_box_hold;
 pub mod refusal_wire;
@@ -89,6 +90,7 @@ pub mod residence_connection;
 pub mod resident_pump;
 pub mod root_project_signing;
 pub mod run_brief_people;
+pub mod run_program_caller_rows;
 pub mod run_self_brief_port;
 #[cfg(target_os = "linux")]
 pub mod sandbox_vendor;

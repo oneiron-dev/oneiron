@@ -3,7 +3,7 @@
 //! `RecordingJsHost` state is defined by `engine_executor::host`.
 
 use super::*;
-use crate::code_run::TextAnswerPost;
+use crate::code_run::{RecordedProducer, TextAnswerPost};
 use crate::engine_executor::{AdmittedSkillAnswer, AdmittedSkillText};
 
 /// What a pre-record spill stands for: the run's own result, or the view a
@@ -859,7 +859,10 @@ impl RecordingJsHost<'_, '_> {
                     served_rows,
                 } => {
                     if injection.is_caller_source()
-                        && !gated_write.releases_recorded_answer(served_rows.as_deref())
+                        && !gated_write.releases_recorded_answer(
+                            served_rows.as_deref(),
+                            RecordedProducer::of_call(&call, self.admitted_skill_seq == Some(seq)),
+                        )
                     {
                         let why = "the bound door no longer releases the caller source reply";
                         injection.hold_caller_source_output(why);

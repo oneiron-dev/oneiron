@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 mod after_notice;
 mod assembly;
+mod erase;
 mod pending;
 mod policy;
 pub(super) mod policy_author;
@@ -25,6 +26,9 @@ mod private_sources;
 mod urgent;
 mod view;
 pub use after_notice::{APPLIED_GROUP, APPLIED_VIEW, DigestApplied, DigestAppliedItem};
+pub(crate) use erase::erase_sources_in_txn;
+#[cfg(oneiron_test_support)]
+pub(crate) use erase::{claim_digests_indexed_for_test, forget_claim_digest_index_for_test};
 use pending::{pending_proposals, unseen_cleanup, unseen_note_tombstones, unseen_offers};
 pub use policy::{ProactivityPolicyBasis, ProactivityPolicyFiling};
 pub(super) use policy::{ProactivityPolicyInverse, revert_policy_in_txn};

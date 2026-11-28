@@ -110,6 +110,23 @@ fn code_consent_hold_is_consent_only(reasons: &[String]) -> bool {
             .all(|reason| CONSENT_ONLY_HOLD_REASONS.contains(&reason.as_str()))
 }
 
+/// Whether a fresh code call must freeze at least Personal. The dispatcher
+/// attaches code consent sites only on its canonical path: session runs
+/// refuse connector calls before forwarding a verb to a vault door.
+pub(super) fn run_served_person_rows(memory: &Memory<'_>) -> bool {
+    let Some(site) = memory.code_consent_site() else {
+        return false;
+    };
+    let vault = memory.vault();
+    vault
+        .store
+        .env
+        .read_txn()
+        .map_err(Error::from)
+        .and_then(|txn| vault.run_was_served_person_rows_in_txn(&txn, site.run_id))
+        .unwrap_or(true)
+}
+
 /// `pending` with the code consent context of the call `memory` makes, when
 /// the dispatcher put the call's place in its run on the bound origin.
 pub(super) fn with_code_pass(
@@ -117,6 +134,7 @@ pub(super) fn with_code_pass(
     mut pending: PendingConnectorCall,
 ) -> PendingConnectorCall {
     if let Some(site) = memory.code_consent_site() {
+        pending.run_served_person_rows |= run_served_person_rows(memory);
         pending.code = Some(Box::new(CodePass::Mint {
             site: site.clone(),
             principal: memory.code_consent_principal(),

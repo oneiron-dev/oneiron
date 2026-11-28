@@ -28,7 +28,7 @@ use crate::memory::read_capture::ReadCapture;
 use crate::runtime_hooks::VerbHookStop;
 use crate::task_verb::sdk::AgentVerb;
 
-use super::{ExecutorCallSite, ExecutorReply, HostSelfDispatcher};
+use super::{ExecutorCallSite, ExecutorReply, HostSelfDispatcher, RecordedProducer};
 
 use self::receipts::{
     KEPT_ANSWER_REFUSED, KeptWrite, MEDIA_STEP_TRAPPED, PROVIDER_UNAVAILABLE, VERB_HOOK_HIDDEN,
@@ -210,6 +210,7 @@ impl HostSelfDispatcher<'_> {
                     &**door,
                 ),
             );
+            self.end_program_run_on_authority_refusal(&outcome);
             if let (Some(site), SelfDispatchOutcome::AgentVerb(answer)) = (read_site, &outcome) {
                 self.note_verb_read_worlds(site, answer, captured);
             }
@@ -386,10 +387,10 @@ impl HostSelfDispatcher<'_> {
     /// flight, or one that needs reconciliation.
     ///
     /// The kept answer is a result the run recorded: `door` rules on reading
-    /// it back, as on the run's other recorded outputs, and a run whose
-    /// host binds no door reads its own. Its refusal stands on the receipt
-    /// until an admitted read of the answer reconciles it, so no later
-    /// attempt of the step goes on past it either.
+    /// it back, as on the run's other recorded outputs, and also rules on
+    /// the verb that produced it. A run whose host binds no door reads its
+    /// own. A refusal stands on the receipt until an admitted read of the
+    /// answer reconciles it, so no later attempt of the step goes past it.
     fn kept_write_answer(
         &self,
         door: Option<&dyn AgentVerbDoor>,
@@ -402,7 +403,11 @@ impl HostSelfDispatcher<'_> {
                 "agent verb write is in flight or needs reconciliation",
             ));
         };
-        if let Err(refusal) = super::admit_recorded_answer(door) {
+        let admitted = match super::admit_recorded_answer(door) {
+            Ok(()) => self.admit_recorded_producer(door, RecordedProducer::of_row(row, false))?,
+            Err(refusal) => Err(refusal),
+        };
+        if let Err(refusal) = admitted {
             let rejected = super::gate_rejection(&refusal.code, &refusal.reason_codes);
             // The receipt's marker first, then the door's own codes, so every
             // later attempt the refusal stands for answers as this one does

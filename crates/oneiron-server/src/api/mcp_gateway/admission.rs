@@ -1,6 +1,7 @@
 //! Scoped-call admission and actor resolution.
 
 use super::board_setup::{bare_child_served_rows, mcp_scope_admits_row};
+use super::static_admission::{StaticCaller, StaticCheck, StaticRefusal, static_admission};
 use super::{
     McpCallContext, McpGatewayError, McpToolCallParams, mcp_actor_result, mcp_api_error,
     mcp_engine_error, mcp_scoped_read, mcp_tool_validation_error,
@@ -102,18 +103,6 @@ pub(crate) fn mcp_admit_scoped_verb(
     mcp_admit_verb_scope(server, tool, arguments, actor)
 }
 
-/// A verb a bound host operation runs on its own behalf: a browser batch's
-/// routine decisions are `ai.verdict` calls. The batch's own binding carries
-/// it, so only the verb's scope is admitted here, never a tool binding.
-pub(crate) fn mcp_admit_step_verb(
-    server: &Arc<SyncServer>,
-    tool: crate::mcp::McpGeneratedVerbTool,
-    arguments: &crate::mcp::McpVerbArguments,
-    actor: &McpCallContext,
-) -> Result<(), McpGatewayError> {
-    mcp_admit_verb_scope(server, tool, arguments, actor)
-}
-
 /// One verb-table row a code run serves itself (`vault.search`,
 /// `vault.claims.put`, …). No tool carries it, so the bound-verb ceiling names it by
 /// its row name. Its world/facet axis is the run's: `execute` admits no
@@ -137,8 +126,16 @@ pub(crate) fn mcp_admit_host_verb(
     mcp_admit_unscoped_execution(actor, verb.as_str(), "name")
 }
 
-fn mcp_admit_bound_tool(actor: &McpCallContext, tool_name: &str) -> Result<(), McpGatewayError> {
-    if actor.admits_tool(tool_name) {
+pub(crate) fn mcp_admit_bound_tool(
+    actor: &McpCallContext,
+    tool_name: &str,
+) -> Result<(), McpGatewayError> {
+    if static_admission(
+        StaticCaller::connector(actor),
+        StaticCheck::BoundName(tool_name),
+    )
+    .is_ok()
+    {
         return Ok(());
     }
     Err(McpGatewayError::new(
@@ -224,14 +221,13 @@ fn mcp_admit_unscoped_execution(
     tool_name: &str,
     field: &'static str,
 ) -> Result<(), McpGatewayError> {
-    let scope = &actor.scope;
-    let facets = !matches!(scope.facets, oneiron::federation::ScopeAxis::All);
-    let axis = match (scope.world_ref.is_some(), facets) {
-        (false, false) => return Ok(()),
-        (true, false) => "world",
-        (false, true) => "facet",
-        (true, true) => "world and facet",
+    let Err(StaticRefusal::NarrowRegistration(axis)) = static_admission(
+        StaticCaller::connector(actor),
+        StaticCheck::UnscopedExecution,
+    ) else {
+        return Ok(());
     };
+    let axis = axis.as_str();
     Err(McpGatewayError::new(
         -32020,
         "mcp_scope_refused",
@@ -241,6 +237,15 @@ fn mcp_admit_unscoped_execution(
         ),
     )
     .with_field(field))
+}
+
+#[cfg(test)]
+pub(crate) fn mcp_admit_unscoped_execution_for_test(
+    actor: &McpCallContext,
+    tool_name: &str,
+    field: &'static str,
+) -> Result<(), McpGatewayError> {
+    mcp_admit_unscoped_execution(actor, tool_name, field)
 }
 
 /// The registered tool name one validated call resolved to.

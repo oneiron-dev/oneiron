@@ -88,18 +88,36 @@ impl WorkspaceIdentity {
     }
 
     /// [`Self::of_folder`] for a folder an agent session runs in: `None` as well when the
-    /// checkout root is the filesystem root or the home directory, which hold no one project.
+    /// folder is not a directory, and when the folder itself or its checkout root is the
+    /// filesystem root or the home directory, which hold no one project. The folder itself is
+    /// judged before git places it, so a home directory inside a checkout never takes that
+    /// checkout's project.
     #[must_use]
     pub fn of_session_folder(folder: &Path) -> Option<Self> {
-        let identity = Self::of_folder(folder)?;
-        let not_workspaces = [Some(PathBuf::from("/")), home_directory()];
-        let roots = not_workspaces.iter().flatten().map(|path| {
-            folder_digest(&std::fs::canonicalize(path).unwrap_or_else(|_| path.clone()))
-        });
-        let own = identity.own_digest().to_owned();
-        roots
+        Self::of_session_folder_with_home(folder, home_directory())
+    }
+
+    /// [`Self::of_session_folder`] with `home` as the home directory.
+    fn of_session_folder_with_home(folder: &Path, home: Option<PathBuf>) -> Option<Self> {
+        let folder = std::fs::canonicalize(folder).ok()?;
+        // FIX SESSION-PROJECT-NOTE-MESSAGE-PLACEMENT PR D review: no directory, no session folder.
+        if !folder.is_dir() {
+            return None;
+        }
+        let not_workspaces: Vec<PathBuf> = [Some(PathBuf::from("/")), home]
             .into_iter()
-            .all(|root| root != own)
+            .flatten()
+            .map(|path| std::fs::canonicalize(&path).unwrap_or(path))
+            .collect();
+        // FIX SESSION-PROJECT-NOTE-MESSAGE-PLACEMENT PR D review: the folder itself goes first.
+        if not_workspaces.contains(&folder) {
+            return None;
+        }
+        let identity = Self::of_folder(&folder)?;
+        let own = identity.own_digest();
+        not_workspaces
+            .iter()
+            .all(|root| folder_digest(root) != own)
             .then_some(identity)
     }
 
@@ -279,5 +297,49 @@ fn wait_until(child: &mut Child, deadline: Instant) -> Option<ExitStatus> {
             Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
             _ => return None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Runs git in `dir` with no user or system config, so the host's own (hooks, a template)
+    /// never reaches the test repository.
+    fn git(dir: &Path, args: &[&str]) {
+        let status = oneiron_spawn::command("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .expect("git runs");
+        assert!(status.success(), "git {args:?} in {}", dir.display());
+    }
+
+    #[test]
+    fn a_home_directory_inside_a_checkout_is_no_session_folder() {
+        let parent = tempfile::tempdir().expect("temp folder");
+        let repo = parent.path().join("repo");
+        std::fs::create_dir(&repo).expect("repository folder");
+        git(&repo, &["init", "--quiet"]);
+        let home = repo.join("home").join("alice");
+        std::fs::create_dir_all(&home).expect("home folder inside the checkout");
+
+        let elsewhere = WorkspaceIdentity::of_session_folder_with_home(&home, None)
+            .expect("with no home named, the folder is placed in its checkout");
+        assert_eq!(
+            elsewhere.own_digest(),
+            folder_digest(&std::fs::canonicalize(&repo).expect("canonical checkout")),
+            "git places the folder at its checkout root"
+        );
+        assert!(
+            WorkspaceIdentity::of_session_folder_with_home(&home, Some(home.clone())).is_none(),
+            "the home directory holds no one project, even inside a checkout"
+        );
     }
 }

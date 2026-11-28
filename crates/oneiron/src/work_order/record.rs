@@ -4,7 +4,7 @@
 use oneiron_contracts::fingerprint::{Fingerprint, purposes};
 use serde::{Deserialize, Serialize};
 
-use crate::gpu_line::ClaimKey;
+use crate::gpu_line::{ClaimKey, UnitPurpose};
 use crate::job_workload::{ResourceRequest, WorkloadStarter};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EdgeActorClass, EntityId};
@@ -120,8 +120,18 @@ pub enum OrderCharge {
     /// A `[gpu_jobs]` offer by name, with the requester's allowance: the built quote and start.
     Offer { name: String },
     /// A unit of a line's arm: the claim's logical key is (arm, rung, the order id in hex,
-    /// attempt n) (pass 32, 5.2; EM-18). Its attempts are made through the line's reserve.
-    Line { arm: EntityId, rung: u8 },
+    /// attempt n) (pass 32, 5.2; EM-18). Its attempts are made through the line's reserve
+    /// (`vault.arms.units.reserve` with a wait, row H3), which holds nothing until then: the
+    /// reserve's terms the order carries are the line's project, the offer and the purpose.
+    Line {
+        arm: EntityId,
+        rung: u8,
+        /// The lane project the line is set on (the arm's line).
+        line: EntityId,
+        /// The line's offer the unit runs on.
+        offer: String,
+        purpose: UnitPurpose,
+    },
 }
 
 /// Where the order may run: hard limits the loop never relaxes.
@@ -515,7 +525,7 @@ impl WorkOrder {
     #[must_use]
     pub fn claim_key(&self, n: u16) -> Option<ClaimKey> {
         match &self.charge {
-            OrderCharge::Line { arm, rung } => {
+            OrderCharge::Line { arm, rung, .. } => {
                 Some(ClaimKey::of(*arm, *rung, &self.id.to_hex(), n))
             }
             OrderCharge::Offer { .. } => None,

@@ -51,6 +51,8 @@ mod dispatch;
 mod field_writer;
 mod guests;
 mod held_press;
+#[cfg(test)]
+mod lending_w3_tests;
 mod library;
 mod program_admission;
 mod reader;
@@ -78,6 +80,11 @@ pub(crate) use self::solved_runs::draft_checked_span;
 // The integration tests' door to a run call's admitted lane (FIX-LIST 25102).
 #[cfg(oneiron_test_support)]
 pub(crate) use self::dispatch::admit_run_call_for_test;
+#[cfg(test)]
+pub(crate) use self::dispatch::{
+    admit_outer_skill_call_for_test, admit_recorded_verb_for_test, admit_run_call_on_door_for_test,
+    admit_run_row_for_test, admit_session_read_for_test,
+};
 
 use self::dispatch::*;
 use self::field_writer::RunFieldWriter;
@@ -90,9 +97,7 @@ use super::actor_dispatch::{
     mcp_browser_guest_gate, mcp_caller_code_speech_gate, mcp_host_verb_gate, mcp_run_call_gate,
     mcp_run_speech_gate, mcp_tool_validation_error, mcp_verb_gate,
 };
-use super::admission::{
-    mcp_admit_host_verb, mcp_admit_run_verb, mcp_admit_scoped_verb, mcp_admit_step_verb,
-};
+use super::admission::{mcp_admit_host_verb, mcp_admit_run_verb, mcp_admit_scoped_verb};
 use super::tasks_response::{
     McpCodeRun, RunAuthor, execute_agent_verb_input, mcp_agent_verb_arguments,
 };
@@ -331,8 +336,9 @@ struct LadderDecider {
 #[derive(Clone)]
 pub(crate) enum VerdictAsker {
     /// The `execute` connector: each decision is an `ai.verdict` call by
-    /// that credential, under a fresh invocation. The browser batch it is
-    /// bound for carries it, so `ai.verdict` need not be bound itself.
+    /// that credential, under a fresh invocation. Each decision needs the
+    /// connector's own binding of `ai.verdict` (FIX CODE-MODE-LENDING-W3),
+    /// as a direct call does.
     Connector(McpCallContext),
     /// A public browser call keeps the request's own credential for both
     /// routine verdicts and screenshot writes, with no agent-only fallback.

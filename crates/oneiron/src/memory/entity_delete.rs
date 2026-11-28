@@ -2,6 +2,7 @@
 //! the delete a non-owner's role or Grant admits (ARCH-0043 DEL-2), judged
 //! by check-in first (ROLES-CHECKIN 2k5).
 
+use super::MEMORY_CODE_NOT_FOUND;
 use super::support::{verify_actor_binding_in_txn, verify_own_person_deletion_authority_in_txn};
 use super::{
     DELETE_RECEIPT_VERSION_RELEASE, DeleteReceipt, DeleteRequestState, MEMORY_CODE_FORBIDDEN,
@@ -127,16 +128,71 @@ impl Memory<'_> {
         if check_in_ref.is_some() {
             return Err(spends_no_check_in());
         }
-        let mut receipt = self.safe_delete_owner_gated(
+        let mut receipt = match self.safe_delete_owner_gated(
             gate,
             entity_ref,
             reason.delete_reason(),
             |_| Ok(()),
             false,
             None,
-        )?;
+        ) {
+            Ok(receipt) => receipt,
+            // The owner, on their own proof, learns `restricted` for a
+            // record they chose to restrict (Q1 = A); any other absence
+            // passes through, as every absence does on the role arm below.
+            Err(error) if error.code == MEMORY_CODE_NOT_FOUND => {
+                return Err(self
+                    .resolve_ref(entity_ref)
+                    .ok()
+                    .and_then(|id| self.restricted_owner_delete_refusal_gated(&id))
+                    .map_or(error, MemoryError::from));
+            }
+            Err(error) => return Err(error),
+        };
         receipt.check_in = Some(check_in::owner_own_proof_decision(ActClass::Delete));
         Ok(receipt)
+    }
+
+    /// Owner-gated delete only (Q1 = A): as
+    /// [`Vault::restricted_owner_delete_refusal`], but this owner arm holds
+    /// no `AuthenticatedOwner` (its gate is the owner predicate's decision
+    /// record from [`Self::evaluate_deletion_gate`]), so re-prove in the
+    /// probe's txn the same authority its writers re-prove.
+    fn restricted_owner_delete_refusal_gated(&self, id: &EntityId) -> Option<Error> {
+        let txn = self.vault.store.env.read_txn().ok()?;
+        if *id == self.actor {
+            verify_own_person_deletion_authority_in_txn(
+                self.vault,
+                &txn,
+                self.actor,
+                self.actor_class,
+            )
+            .ok()?;
+            self.refuse_handed_on_owner_deletion().ok()?;
+        } else {
+            self.verify_own_deletion_authority_in(&txn).ok()?;
+        }
+        crate::store::legal_hold::cooperative_restriction_active_in_txn(&self.vault.store, &txn, id)
+            .ok()?
+            .then_some(Error::RecordRestricted)
+    }
+
+    /// An owner erase's `NOT_FOUND` for `id` as the owner's `restricted`
+    /// refusal (Q1 = A), at its confirm and at a held erase's completion:
+    /// the probe re-proves `owner` in its own txn; any other error, and an
+    /// absence the probe does not turn, passes through.
+    pub(crate) fn owner_absence_as_restricted(
+        &self,
+        owner: &AuthenticatedOwner,
+        id: &EntityId,
+        error: MemoryError,
+    ) -> MemoryError {
+        if error.code != MEMORY_CODE_NOT_FOUND {
+            return error;
+        }
+        self.vault
+            .restricted_owner_delete_refusal(owner, id)
+            .map_or(error, MemoryError::from)
     }
 
     /// The delete of `entity_ref` by a caller the owner predicate refused
@@ -515,6 +571,12 @@ impl Memory<'_> {
                 .map(|receipt| format!("redaction:{}", receipt.to_hex())),
             state: DeleteRequestState::Applied,
             check_in: None,
+            remaining: crate::deletion::delete::remaining::delete_remaining(
+                self.vault,
+                reason,
+                outcome.sweep_key.as_deref(),
+                &outcome.released_file_digests,
+            ),
         })
     }
 

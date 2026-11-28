@@ -8,7 +8,9 @@
 //! `self.spawn` with the standard refusal and a receipt; the owner switching
 //! it back on works; a parent cannot switch a power on above its own grant.
 //! Beside them: an agent whose `save_agent` is off authors no definition, on
-//! the guest's `vault.agents.put` and on the host's direct put.
+//! the guest's `vault.agents.put` and on the host's direct put; and a child
+//! with `spawn` off is refused at `summarize` too, whose summary a reader job
+//! of the run makes (FIX CODE-MODE-LENDING-W5).
 //!
 //! Every call goes through the public leased host dispatcher and the real
 //! dispatch, queue and lease rows.
@@ -26,7 +28,7 @@ use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, ClaimAttemp
 use oneiron::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
 use oneiron::code_run::{
     HostSelfDispatcher, SelfAgentSpawnCall, SelfAgentSpawnResult, SelfCall, SelfDispatchOutcome,
-    SelfDispatcher, SelfEffect, SelfReaderSpawnCall, parse_agent_put_request,
+    SelfDispatcher, SelfEffect, SelfReaderSpawnCall, SelfSummarizeCall, parse_agent_put_request,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::store::GateDecisionId;
@@ -215,6 +217,20 @@ fn reader_spawn(key: &str) -> SelfCall {
     }))
 }
 
+/// The guest's literal `summarize(reference)`, as the bridge parses it: no
+/// member bound, no recipe frozen.
+fn summarize(reference: &str) -> SelfCall {
+    SelfCall::Summarize(Box::new(SelfSummarizeCall {
+        reference: Some(reference.to_owned()),
+        effort: None,
+        group: None,
+        note_refs: None,
+        defer: true,
+        bound: None,
+        recipe: None,
+    }))
+}
+
 fn queued_attempt(outcome: SelfDispatchOutcome) -> AttemptId {
     match outcome {
         SelfDispatchOutcome::AgentSpawn(SelfAgentSpawnResult::Queued { attempt_ref, .. }) => {
@@ -315,6 +331,45 @@ fn a_child_spawned_with_spawn_off_is_refused_at_self_spawn_with_a_receipt() -> T
     assert_denied(&outcome, SelfEffect::AgentsSpawn, SPAWN_OFF);
     let (last, _) = power_receipts(&f, f.worker, SPAWN_OFF, held)?;
     assert_eq!(last, after + 1);
+    Ok(())
+}
+
+/// FIX CODE-MODE-LENDING-W5: `summarize` makes its summary with a reader job
+/// of the run, on the seat a spawn takes, so a child whose `spawn` is off is
+/// refused there too, with the standard refusal and a receipt, before any
+/// seat or member is read. Red on main: the call went on and answered
+/// `summarize_unbound`. Once the owner switches the power back on, the call
+/// goes on to that seat check again.
+#[test]
+fn a_child_with_spawn_off_is_refused_at_summarize_with_a_receipt() -> TestResult {
+    let f = fixture()?;
+    let child = spawned_child(
+        &f,
+        "child-summarize-off",
+        ChildPowerRequest {
+            spawn: Some(false),
+            save_agent: None,
+        },
+    )?;
+    let held = AgentPowerTarget::Attempt(child.id);
+    let child_host = host(&f, f.worker, &child)?;
+    let (before, _) = power_receipts(&f, f.worker, SPAWN_OFF, held)?;
+    let outcome = child_host.dispatch(summarize("result-a"))?;
+    assert_denied(&outcome, SelfEffect::Summarize, SPAWN_OFF);
+    let (after, found) = power_receipts(&f, f.worker, SPAWN_OFF, held)?;
+    assert_eq!(after, before + 1, "the refusal commits one receipt");
+    assert!(found, "the receipt names the child's grant and the reason");
+
+    f.vault
+        .set_agent_powers_as(&f.owner, held, SPAWN_ONLY_OFF, AgentPowers::ALL)?;
+    let outcome = child_host.dispatch(summarize("result-a"))?;
+    assert!(
+        matches!(
+            &outcome,
+            SelfDispatchOutcome::Failed(failed) if failed.error == "summarize_unbound"
+        ),
+        "with `spawn` on, the call meets the unbound seat, as before: {outcome:?}"
+    );
     Ok(())
 }
 

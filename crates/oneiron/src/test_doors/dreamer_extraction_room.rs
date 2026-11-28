@@ -378,3 +378,207 @@ fn ready<F: Future>(future: F) -> F::Output {
     }
     panic!("the extraction room wake pass did not end within its poll limit");
 }
+
+/// Who wrote one MESSAGE of [`writer_label_slice_calls`].
+pub enum TurnWriter {
+    /// The vault's embedded owner.
+    Owner,
+    /// The second PERSON ("mira").
+    Member,
+}
+
+/// The native extraction calls (each call's transcript, in call order) over one witnessed conversation of a fresh
+/// personal vault (`shared` false) or a fresh shared vault (`shared` true, the owner its Owner and the second PERSON
+/// a Member), whose user MESSAGEs `said` gives in order as (writer, turn slot, words): entries with the same slot are
+/// MESSAGEs of one TURN, in order. The second PERSON is a live named PERSON ("mira").
+///
+/// Each TURN's PERSON byline (the writer of its first MESSAGE) is listed in its call, so TURNs that different PERSONs
+/// opened fall into different calls, each with its own labels. In a shared vault the owner's conferring Owner grant
+/// and the member's Member grant stand as `own_device_grant::stand_shared_owner_census` stands the owner's, without
+/// renaming the owner.
+///
+/// # Errors
+///
+/// Vault setup, witnessing, or the slicing.
+pub fn writer_label_slice_calls(
+    shared: bool,
+    said: &[(TurnWriter, usize, &str)],
+) -> MemoryResult<Vec<String>> {
+    Ok(writer_label_slices(shared, said, false)?
+        .into_iter()
+        .map(|(transcript, _)| transcript)
+        .collect())
+}
+
+/// [`writer_label_slice_calls`] with the member PERSON deleted after the conversation is queued for extraction (a
+/// shell-keeping user delete, which keeps its MESSAGEs and their writer edges): each call's transcript and whether
+/// every row the call was read from still stands, as the model run's source fence asks before it sends.
+///
+/// # Errors
+///
+/// As [`writer_label_slice_calls`], or the delete.
+pub fn writer_label_slice_calls_after_member_delete(
+    shared: bool,
+    said: &[(TurnWriter, usize, &str)],
+) -> MemoryResult<Vec<(String, bool)>> {
+    writer_label_slices(shared, said, true)
+}
+
+/// The calls of [`writer_label_slice_calls`], each with whether its source rows stand; `delete_member` deletes the
+/// member PERSON between the queueing and the slicing.
+fn writer_label_slices(
+    shared: bool,
+    said: &[(TurnWriter, usize, &str)],
+    delete_member: bool,
+) -> MemoryResult<Vec<(String, bool)>> {
+    let directory = tempfile::tempdir().map_err(Error::from)?;
+    drop(super::consolidation::open_dreamer_vault(
+        directory.path(),
+        "owen",
+    )?);
+    let vault = Vault::open_owned(directory.path(), crate::VaultConfig::device())?;
+    crate::test_fixtures::provision_engine_machines(&vault);
+    let owner = vault.ensure_embedded_owner_actor()?;
+    let member = EntityId::now();
+    super::untangle_regressions::seed_named_person(&vault, &member, "mira", 1)?;
+    if shared {
+        stand_writer_label_shared_census(&vault, owner, member)?;
+    }
+    let dreamer = super::steward::dreamer(&vault)?;
+    super::steward::stand_steward_grant(&vault, dreamer, &super::steward::STEWARD_VERBS)?;
+    let conversation = EntityId::now();
+    let owner_actor = crate::WriteActor::new(owner, crate::edge::EdgeActorClass::Human);
+    vault.create_conversation(
+        conversation,
+        &crate::conversation::ConversationBody::default(),
+        owner_actor,
+        1,
+    )?;
+    vault.join_member(
+        conversation,
+        member,
+        owner_actor,
+        2,
+        crate::conversation::HistoryChoice::Share,
+    )?;
+    let mut slots = std::collections::BTreeMap::<usize, (EntityId, u32)>::new();
+    let mut turns = Vec::new();
+    for (index, (writer, slot, words)) in said.iter().enumerate() {
+        let (turn, order) = slots.entry(*slot).or_insert_with(|| {
+            let turn = EntityId::now();
+            turns.push(turn);
+            (turn, 0)
+        });
+        let writer_id = match writer {
+            TurnWriter::Owner => owner,
+            TurnWriter::Member => member,
+        };
+        let occurred = 10u64.saturating_add(index as u64);
+        vault
+            .memory(writer_id, crate::edge::EdgeActorClass::Human)
+            .witness(&crate::memory::WitnessTurn {
+                conversation_ref: conversation.to_hex(),
+                turn_ref: Some(turn.to_hex()),
+                thread_audience: None,
+                project: None,
+                messages: vec![crate::memory::WitnessMessage {
+                    id: Some(EntityId::now().to_hex()),
+                    author: crate::memory::WitnessAuthor::User,
+                    message_type: "dialogue".to_owned(),
+                    content: (*words).to_owned(),
+                    parts: None,
+                    metadata: None,
+                    is_visible: true,
+                    order: *order,
+                    quote: None,
+                }],
+                occurred_at: occurred,
+                assertions: crate::memory::WitnessAssertions::default(),
+            })?;
+        *order = order.saturating_add(1);
+    }
+    let (attempt, _) =
+        super::extraction_inputs::enqueue_admitted_extraction_attempt(&vault, &turns, 1_000)?;
+    if delete_member && !vault.delete_entity(&member)? {
+        return Err(Error::InvalidConfig("the member PERSON to delete exists".to_owned()).into());
+    }
+    crate::dreamer_consolidation::resources::native_slice_sources_standing_for_test(
+        &vault, attempt, &turns,
+    )
+}
+
+/// Stands shared vault membership for [`writer_label_slice_calls`]: the owner's conferring Owner grant and the
+/// member's Member grant over one vault, with the vault's creation record naming both, as
+/// `own_device_grant::stand_shared_owner_census` stands the owner's half.
+///
+/// # Errors
+///
+/// The vault's, or a live-owner census that does not name the owner.
+fn stand_writer_label_shared_census(
+    vault: &Vault,
+    owner: EntityId,
+    member: EntityId,
+) -> Result<()> {
+    use crate::federation::{
+        FederationGrant, FederationGrantPreset, FederationGrantRole, FederationGrantScope,
+        SharedTrainingSetup, SharedVaultCreation, encode_federation_grant_body,
+    };
+    const VAULT_ID: u64 = 42;
+    let mut batch = vault.batch();
+    let mut grant_refs = Vec::new();
+    {
+        let txn = vault.store.env.read_txn()?;
+        for (person, role, preset) in [
+            (
+                owner,
+                FederationGrantRole::Owner,
+                FederationGrantPreset::Owner,
+            ),
+            (
+                member,
+                FederationGrantRole::Member,
+                FederationGrantPreset::Member,
+            ),
+        ] {
+            let mut grant =
+                FederationGrant::new(FederationGrantScope::vault(VAULT_ID), person, role, preset);
+            grant.authority_scope =
+                vault.grant_default_scope_in_txn(&txn, role, VAULT_ID, person)?;
+            let id = EntityId::now();
+            batch = batch.put_replicated(
+                &id,
+                crate::registry::ENTITY_TYPE_FEDERATION_GRANT,
+                occurred(1),
+                1,
+                None,
+                &encode_federation_grant_body(&grant)?,
+            );
+            grant_refs.push(id.to_hex());
+        }
+    }
+    batch.commit()?;
+    const CREATION: crate::side_table::SideTable<
+        (),
+        SharedVaultCreation,
+        crate::side_table::LegacyJson,
+    > = crate::side_table::SideTable::new(&crate::side_table::SHARED_VAULT_CREATION);
+    let creation = SharedVaultCreation {
+        vault_id: VAULT_ID,
+        preset: None,
+        owner_ref: owner.to_hex(),
+        grant_refs,
+        policy_ref: None,
+        training_setup: SharedTrainingSetup::Pending {
+            question_ref: [0; 32],
+            created_at: 0,
+        },
+    };
+    vault.with_write_txn(|wtxn| CREATION.put(&vault.store, wtxn, &(), &creation))?;
+    let txn = vault.store.env.read_txn()?;
+    if !crate::policy_model::holds_live_ownership_in_txn(vault, &txn, &owner)? {
+        return Err(Error::InvalidConfig(
+            "the vault's live-owner census does not name the owner".to_owned(),
+        ));
+    }
+    Ok(())
+}

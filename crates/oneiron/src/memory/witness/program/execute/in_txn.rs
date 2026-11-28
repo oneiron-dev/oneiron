@@ -3,6 +3,8 @@
 
 use super::*;
 
+use crate::memory::witness::ProjectPlacementSource;
+
 /// What the witness write reads, prepared before its transaction opens.
 pub(super) struct WitnessWrite<'w, 't, 'a, 'v, 'l> {
     pub(super) plan: &'w WitnessPlan<'t>,
@@ -367,11 +369,14 @@ impl Memory<'_> {
     /// own. A caller project on an existing TURN is a no-op for the TURN
     /// only where its stored position already names that project; any
     /// other stored position, including the default project and no stored
-    /// stamp, is refused as a restamp. With no caller project, an existing
-    /// TURN settled under a non-default project places this write's new
-    /// messages under that project, under the same admission; a TURN at
-    /// the default project, or with no stored stamp, keeps the landing
-    /// every witness has today. An exact retry stamps nothing.
+    /// stamp, is refused as a restamp. With no caller project, a TURN this
+    /// write mints takes the handle's session placement when one is bound,
+    /// under the same admission, and a caller project still wins; an
+    /// existing TURN settled under a non-default project places this
+    /// write's new messages under that project instead, and is never
+    /// refused for the session's project. A TURN at the default project, or
+    /// with no stored stamp, keeps the landing every witness has today. An
+    /// exact retry stamps nothing.
     fn settle_witness_project_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -382,7 +387,11 @@ impl Memory<'_> {
         let minted = matches!(admission.turn, AdmittedTurn::Mint { .. });
         let (project, stamp_turn) = match (caller_project, minted) {
             (Some(project), true) => {
-                self.admit_witness_project_in_txn(wtxn, project)?;
+                self.admit_project_placement_in_txn(
+                    wtxn,
+                    project,
+                    ProjectPlacementSource::CallerNamed,
+                )?;
                 (project, true)
             }
             (Some(project), false) => {
@@ -394,10 +403,30 @@ impl Memory<'_> {
                 if stored != Some(project) {
                     return Err(Error::InvalidClaimBody("record scope restamp refused").into());
                 }
-                self.admit_witness_project_in_txn(wtxn, project)?;
+                self.admit_project_placement_in_txn(
+                    wtxn,
+                    project,
+                    ProjectPlacementSource::CallerNamed,
+                )?;
                 (project, false)
             }
-            (None, true) => return Ok(()),
+            (None, true) => {
+                // A turn this write mints with no caller project takes the
+                // session's, when the handle was bound for a write in a
+                // session workspace; the default project needs no settle.
+                let placement = self
+                    .session_placement
+                    .filter(|placement| *placement != crate::claim::default_project_id());
+                let Some(project) = placement else {
+                    return Ok(());
+                };
+                self.admit_project_placement_in_txn(
+                    wtxn,
+                    project,
+                    ProjectPlacementSource::SessionFolder,
+                )?;
+                (project, true)
+            }
             (None, false) => {
                 if !admission.has_new_messages() {
                     return Ok(());
@@ -413,7 +442,11 @@ impl Memory<'_> {
                 if project == crate::claim::default_project_id() {
                     return Ok(());
                 }
-                self.admit_witness_project_in_txn(wtxn, project)?;
+                self.admit_project_placement_in_txn(
+                    wtxn,
+                    project,
+                    ProjectPlacementSource::CallerNamed,
+                )?;
                 (project, false)
             }
         };
@@ -439,52 +472,77 @@ impl Memory<'_> {
         Ok(())
     }
 
-    /// Whether the caller's credential admits placing this turn under
-    /// `project`: its slip audience covers the project. Shaped like the
+    /// Whether the caller's credential admits placing this write's records
+    /// under `project`: its slip audience covers the project. Shaped like the
     /// scoped-claim position check: a transport caller with no credential
     /// is refused, while the in-process host's own handle needs none, and
     /// a bound slip must still be live, held by this actor, and grant a
-    /// write.
-    fn admit_witness_project_in_txn(
+    /// write. `source` names where the project came from: a caller-named
+    /// project keeps its refusal, and a session-folder one names the folder's
+    /// project and the credential it is not covered by.
+    pub(in crate::memory) fn admit_project_placement_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         project: EntityId,
+        source: ProjectPlacementSource,
     ) -> MemoryResult<()> {
-        let refused = || {
-            MemoryError::new(
+        let refused = || match source {
+            ProjectPlacementSource::CallerNamed => MemoryError::new(
                 MEMORY_CODE_FORBIDDEN,
                 "the caller credential does not admit this turn's project",
                 &["Witness without a project, or under a credential whose audience covers it."],
-            )
+            ),
+            ProjectPlacementSource::SessionFolder => {
+                session_placement_refused(project, self.read_proof.as_ref())
+            }
         };
-        let Some(proof) = self.read_proof.as_ref() else {
-            return if self.transport_invocation {
-                Err(refused())
+        if self.vault.credential_admits_project_placement_in_txn(
+            txn,
+            self.actor,
+            self.read_proof.as_ref(),
+            self.transport_invocation,
+            project,
+        )? {
+            Ok(())
+        } else {
+            Err(refused())
+        }
+    }
+}
+
+/// The refusal a session-folder placement earns when the caller's credential
+/// does not cover the folder's project: it names the project and the
+/// credential, never a token or a secret.
+fn session_placement_refused(
+    project: EntityId,
+    proof: Option<&crate::authority::VerifiedSlip>,
+) -> MemoryError {
+    let hint = "Bind this folder to a project your credential's audience covers (`oneiron project bind`), or use a credential whose audience covers the folder's project.";
+    match proof {
+        Some(proof) => {
+            let credential = if proof.claims().slip_id != [0; 32] {
+                crate::entity_id::bytes_to_hex_lower(&proof.claims().slip_id)
             } else {
-                Ok(())
+                proof.claims().holder_ref.clone()
             };
-        };
-        if proof.claims().holder_ref != self.actor.to_hex()
-            || !proof.claims().records.is_empty()
-            || !proof.claims().channels.is_empty()
-            || !self.vault.capability_slip_is_live_in_txn(txn, proof)?
-        {
-            return Err(refused());
+            MemoryError::new(
+                MEMORY_CODE_FORBIDDEN,
+                format!(
+                    "the session folder's project {} is not covered by the caller credential {}",
+                    project.to_hex(),
+                    credential,
+                ),
+                &[hint],
+            )
         }
-        if !["core:write", "write", "core:propose"]
-            .into_iter()
-            .any(|verb| proof.allows_verb(verb))
-        {
-            return Err(refused());
-        }
-        if !proof
-            .scope()
-            .audience
-            .contains(&crate::federation::ScopeId(project))
-        {
-            return Err(refused());
-        }
-        Ok(())
+        None => MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            format!(
+                "the session folder's project {} needs a caller credential whose audience covers it",
+                project.to_hex(),
+            ),
+            &[hint],
+        ),
     }
 }
 

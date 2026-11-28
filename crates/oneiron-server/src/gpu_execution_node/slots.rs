@@ -13,11 +13,14 @@
 //!
 //! One booker per GPU: a GPU named in `[gpu_jobs.devices].withheld_file`
 //! belongs to another booker, whatever writes that file, and is never
-//! offered. The file is read at every ask, after the driver. On one
-//! machine, each offered GPU is owned by one Oneiron server at a time: the
-//! table holds a lock file per GPU in `owner_lock_dir` while it runs, and a
-//! GPU whose lock another server (or another vault in this process) holds
-//! reads as withheld.
+//! offered. The file is read at every ask, after the driver, on the
+//! table's one reader thread (`withheld`): an ask waits at most
+//! `WITHHELD_READ_TIMEOUT` for it, and a read that has not returned by then
+//! (a lost network mount) reads as unreadable, so nothing is offered. On
+//! one machine, each offered GPU is owned by one Oneiron server at a time:
+//! the table holds a lock file per GPU in `owner_lock_dir` while it runs,
+//! and a GPU whose lock another server (or another vault in this process)
+//! holds reads as withheld.
 //!
 //! A launched job keeps its GPU past its server's life: each launch
 //! confirmation writes the GPU's kept record (the job's key) beside its
@@ -42,7 +45,6 @@
 //! writes no quarantine file.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::Read;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use oneiron::job_workload::HeldDevice;
@@ -60,9 +62,11 @@ use super::device::{DeviceSample, GpuComputeProcess, GpuDevice, GpuDeviceProbe, 
 mod drain;
 mod lease;
 mod ownership;
+mod withheld;
 
 pub use lease::GpuSlotLease;
 use ownership::kept_for;
+use withheld::WithheldListReader;
 
 /// How far a slot has come.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -155,6 +159,8 @@ struct Shared {
     probe: Arc<dyn GpuDeviceProbe>,
     offer: GpuDeviceOffer,
     disk: Option<Arc<dyn GpuJobDisk>>,
+    /// The withheld list's reader, when a file is named.
+    withheld: Option<WithheldListReader>,
     state: Mutex<State>,
 }
 
@@ -195,11 +201,13 @@ impl GpuSlotTable {
         offer: GpuDeviceOffer,
         disk: Option<Arc<dyn GpuJobDisk>>,
     ) -> Self {
+        let withheld = offer.withheld_file.clone().map(WithheldListReader::new);
         Self {
             shared: Arc::new(Shared {
                 probe,
                 offer,
                 disk,
+                withheld,
                 state: Mutex::default(),
             }),
         }
@@ -683,37 +691,13 @@ impl Shared {
         })
     }
 
-    /// The GPUs another booker holds now.
+    /// The GPUs another booker holds now, from the reader thread within
+    /// `WITHHELD_READ_TIMEOUT`.
     fn withheld(&self) -> Result<BTreeSet<String>, GpuProbeError> {
-        let Some(path) = &self.offer.withheld_file else {
-            return Ok(BTreeSet::new());
-        };
-        let unreadable = |error| GpuProbeError::WithheldUnreadable {
-            reason: format!("{}: {error}", path.display()),
-        };
-        let mut options = std::fs::OpenOptions::new();
-        options.read(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-
-            options.custom_flags(libc::O_NONBLOCK);
+        match &self.withheld {
+            Some(reader) => reader.read(),
+            None => Ok(BTreeSet::new()),
         }
-        let mut file = options.open(path).map_err(unreadable)?;
-        let metadata = file.metadata().map_err(unreadable)?;
-        if !metadata.file_type().is_file() {
-            return Err(GpuProbeError::WithheldUnreadable {
-                reason: format!("{}: not a regular file", path.display()),
-            });
-        }
-        let mut text = String::new();
-        file.read_to_string(&mut text).map_err(unreadable)?;
-        Ok(text
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty() && !line.starts_with('#'))
-            .map(str::to_owned)
-            .collect())
     }
 
     /// Ends the unguarded slot under `key`, if there is one; with none, clears

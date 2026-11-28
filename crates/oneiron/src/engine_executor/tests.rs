@@ -25,6 +25,7 @@ mod code_check;
 mod compaction_host;
 mod memory_rows;
 mod output_decay;
+mod recorded_producer;
 mod speech_identity_regressions;
 
 fn block_on_ready<F: Future>(future: F) -> F::Output {

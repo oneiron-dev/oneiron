@@ -188,6 +188,10 @@ most 241 characters including the period, with no backslash, double quote or `*/
 one capability label. A PR adding a new root family or vault child must add its family line or
 label membership, respectively, or generation fails.
 
+`scripts/sdk/verb-tree/view_head.txt` and `base/<path>.txt` are the authored view; placeholders are render-time values such as `{TOTAL}` or `{note_kinds}`.
+Generation requires `{TOTAL}` in the head and each base filename and first line to name the same code-mode verb or tree call.
+`verb_tree_index.json` is generated into Oneiron's `OUT_DIR` from the code-mode fragment and these view inputs.
+
 ## Task handles
 
 `client.ask(spec)` returns `{handle, count, replayed}` immediately. The

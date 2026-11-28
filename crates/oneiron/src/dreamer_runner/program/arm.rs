@@ -8,7 +8,7 @@ use crate::batch::secret_scan::{Lifted, Part, admit_parts_in_txn};
 use crate::error::{ArtifactError, ClaimError, Error, Result};
 use crate::registry::ENTITY_TYPE_CONVERSATION;
 use crate::side_table::SideKey;
-use crate::skill::{SkillCallContract, SkillLifecycle, SkillRole};
+use crate::skill::{SkillCallContract, SkillRecord, SkillRole, skill_loadable};
 use crate::{EntityId, Vault};
 
 use super::authority::TurnProgramAuthority;
@@ -28,8 +28,11 @@ const fn invalid(reason: &'static str) -> Error {
 
 /// Arms `input` for the future turns of `authority`'s actor, in the caller's
 /// writer: the actor's authority must stand now, the conversation (when one
-/// is named) must be a live CONVERSATION, and the SKILL an active callable
-/// whose call contract the arguments meet. The arguments are admitted
+/// is named) must be a live CONVERSATION, and the SKILL a loadable callable
+/// (active, and approved or auto-approved), at the revision `input` expects
+/// when it names one, whose call contract the arguments meet. A project
+/// `input` names must be one the actor leads, sits on the board of or holds
+/// a seat in, and the SKILL shared or a fork that project lists. The arguments are admitted
 /// through the secret write-wall before anything is pinned (FIX 8718): each
 /// secret goes to custody under the registration and leaves its handle, and
 /// the pin, its revision and every copy and read of it hold only that
@@ -64,6 +67,16 @@ pub(crate) fn arm_turn_program_in_txn(
         return Err(Error::EntityNotFound);
     }
     super::trigger::validate_trigger_in_txn(vault, txn, actor, &trigger, input.conversation)?;
+    if let Some(project) = input.project {
+        super::project_run::admit_project_run_in_txn(
+            vault,
+            txn,
+            actor,
+            project,
+            input.skill,
+            &trigger,
+        )?;
+    }
     // The custody origin of the arguments' secrets: the registration this
     // arming mints, unless it finds the standing one, whose secrets custody
     // already holds and whose handles they keep.
@@ -234,7 +247,8 @@ pub(crate) fn turn_program_erase_details(vault: &Vault, actor: &EntityId) -> Res
 }
 
 /// Whether the SKILL `pin` names still is the program pinned: the same
-/// active callable revision, content and call contract.
+/// loadable callable revision (active, and approved or auto-approved),
+/// content and call contract.
 pub(super) fn pin_stands_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -247,7 +261,7 @@ pub(super) fn pin_stands_in_txn(
         return Ok(false);
     };
     Ok(record.role == SkillRole::Callable
-        && record.lifecycle_status == SkillLifecycle::Active
+        && skill_loadable(&record)
         && record.version == pin.version
         && record
             .content_hash
@@ -271,8 +285,10 @@ fn pin_in_txn(
         .call
         .as_ref()
         .ok_or(invalid("a turn program runs a callable skill"))?;
-    if record.role != SkillRole::Callable || record.lifecycle_status != SkillLifecycle::Active {
-        return Err(invalid("only an active callable skill can be armed"));
+    if record.role != SkillRole::Callable || !skill_loadable(&record) {
+        return Err(invalid(
+            "only an active callable skill whose approval stands can be armed",
+        ));
     }
     if !crate::skill::matches_shape(&input.args, &call.arguments) {
         return Err(invalid(
@@ -284,6 +300,11 @@ fn pin_in_txn(
         .content_hash
         .ok_or(invalid("the skill has no content identity"))?
         .to_hex();
+    if !expected_revision_holds(input, &record, &content_hash) {
+        return Err(invalid(
+            "the skill's current revision is not the one expected",
+        ));
+    }
     let entry = call.reference.clone();
     let contract_digest = contract_digest(call)?;
     let args = admitted_args_in_txn(vault, txn, registration, &input.args)?;
@@ -295,6 +316,19 @@ fn pin_in_txn(
         contract_digest,
         executor: input.executor.clone(),
         args,
+        project: input.project,
+    })
+}
+
+/// Whether `record`, whose content hash is `content_hash`, is the revision
+/// `input` expects; any revision when it expects none.
+fn expected_revision_holds(
+    input: &ArmTurnProgram,
+    record: &SkillRecord,
+    content_hash: &str,
+) -> bool {
+    input.expected.as_ref().is_none_or(|expected| {
+        expected.version == record.version && expected.content_hash == content_hash
     })
 }
 

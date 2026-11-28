@@ -983,10 +983,11 @@ fn a_bad_recorded_output_reference_is_refused_without_loading_the_source() {
 /// Review repro (Sol, burn engine-prs-03 R1): a run whose door stopped
 /// admitting its calls still spoke its answer, through the executor's
 /// trailing implicit speech. That bubble is the run's own `self.speak`: a
-/// closed door refuses it, typed, and the checkpointed intent is delivered by
-/// a later run the door admits.
+/// closed door refuses it. Own-run output is optional, so the run completes
+/// with its answer in its result only, and a later run the door admits says
+/// nothing either (FIX CODE-MODE-LENDING-W7, review of #10597).
 #[test]
-fn a_closed_door_speaks_no_trailing_bubble_until_it_opens() {
+fn a_closed_door_speaks_no_trailing_bubble_and_keeps_the_answer_in_the_result() {
     let (_dir, vault) = open_test_vault();
     let door = ClosingDoor::new(true);
     let gated =
@@ -1005,21 +1006,22 @@ fn a_closed_door_speaks_no_trailing_bubble_until_it_opens() {
 
     let mut runtime = FixtureRuntime::new([JsCodeModeStepOutcome::complete("runtime done")]);
     let mut executor = EngineNativeExecutor::new(&vault, &backend, &lease, &mut runtime, &gated);
-    let refused = block_on_ready(executor.run(&config)).expect_err("the bubble is refused");
+    let outcome = block_on_ready(executor.run(&config)).expect("the run keeps its result");
     drop(executor);
-    assert!(
-        matches!(&refused, EngineExecutorError::HostRefused { code } if code == "door_closed"),
-        "{refused}"
-    );
+    assert_eq!(outcome.status, EngineExecutorStatus::Complete);
     assert_eq!(messages(), before, "a closed door speaks nothing");
 
     door.set_closed(false);
     let mut runtime = FixtureRuntime::new(Vec::new());
     let mut executor = EngineNativeExecutor::new(&vault, &backend, &lease, &mut runtime, &gated);
-    let outcome = block_on_ready(executor.run(&config)).expect("the admitted retry");
+    let outcome = block_on_ready(executor.run(&config)).expect("the admitted rerun");
     drop(executor);
     assert_eq!(outcome.status, EngineExecutorStatus::Complete);
-    assert_eq!(messages(), before + 1, "the retry delivers the kept intent");
+    assert_eq!(
+        messages(),
+        before,
+        "the result-only choice was committed with the result"
+    );
 }
 
 /// A custom host door that refuses a run's search with a gate's own outcome

@@ -2524,6 +2524,7 @@ fn disagreed_child_hash_is_integrity_only() -> Result<()> {
         fn shown(&self, id: EntityId) -> Option<super::call_labels::SourceShown<'_>> {
             (id == self.source).then_some(super::call_labels::SourceShown {
                 text: Some(self.text),
+                one_line_fenced: false,
                 project: None,
             })
         }

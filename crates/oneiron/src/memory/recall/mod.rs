@@ -710,9 +710,9 @@ impl Memory<'_> {
             if let Some(judge) = bar.as_ref().and_then(|bar| bar.judge.clone()) {
                 builder = builder.recall_bar(judge);
             }
-            // A push keeps only CLAIMs, whatever `scope.kinds` asks: the one kind with a
-            // project stamp, so every pushed row holds project membership (REVIEW-10566
-            // round 1). `pull` is unchanged.
+            // Push stays CLAIM-only despite NOTE, TURN and MESSAGE placements (REVIEW-10566 round 1).
+            // Engine Q7 PUSH-KINDS = a: the bar measured CLAIMs; only the owner can reopen other kinds.
+            // This applies whatever `scope.kinds` asks. `pull` is unchanged.
             if bar.as_ref().is_some_and(|bar| bar.outcome.source.pushes()) {
                 builder = builder.recall_bar_claims_only();
             }

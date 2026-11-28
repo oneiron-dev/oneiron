@@ -38,8 +38,8 @@ impl Memory<'_> {
     /// This handle for one read of an attached agent session whose folder names
     /// `folder_digests`, its own digest first (RECALL-SESSION-PROJECT; Engine ANSWER
     /// RECALL-SESSION-PROJECT-INTENT, 26 Nov: Q1 = A, Q2 = A). Every read key it builds then
-    /// reads CLAIM rows stamped inside the folder's bound project, or a project below it, and
-    /// none when no live project is bound; every receipt names the axis. It binds a request,
+    /// reads CLAIM, NOTE, MESSAGE and TURN rows placed in the folder's bound project or a project
+    /// below it, and none if no live project is bound; receipts name the axis. It binds a request,
     /// never authority: the credential still decides what is read. A host binds it only on a
     /// read that names no project; a storage failure binds the unbound default, never a wider
     /// read.
@@ -62,10 +62,12 @@ impl Memory<'_> {
     /// `folder_digests`, its own digest first (RECALL-SESSION-PROJECT, the write default;
     /// START-RECALL-WRITES-ROOT-PROJECT). A claim it writes that names no project is placed in
     /// the folder's bound project, so the session's own reads read it back; a claim that names
-    /// its project lands there. An unbound folder keeps the root's default project (Engine
+    /// its project lands there. A note it writes is placed there too, and so is a turn the
+    /// write mints with its messages. An unbound folder keeps the root's default project (Engine
     /// ANSWER RECALL-SESSION-PROJECT-INTENT, 26 Nov, Q2 = A: writes keep the root default), and
     /// so does a binding that does not read. It places, never grants: the writer still judges
-    /// the claim's position under the caller's credential.
+    /// each placed position under the caller's credential, and a placement the credential does
+    /// not cover refuses the write.
     #[must_use]
     pub fn placing_in_session_workspace(&self, folder_digests: &[String]) -> Self {
         let mut placed = self.clone();
@@ -83,7 +85,8 @@ impl Memory<'_> {
         placed
     }
 
-    /// Sets the default project already resolved for this session's claim writes.
+    /// Sets the default project already resolved for this session's writes: claims that name
+    /// no project, notes, and a turn the write mints with its messages.
     pub(crate) fn with_session_placement(mut self, project: Option<crate::EntityId>) -> Self {
         self.session_placement = project;
         self

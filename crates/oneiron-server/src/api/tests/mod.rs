@@ -55,6 +55,8 @@ mod mcp_code_admission;
 mod mcp_code_check;
 #[cfg(feature = "code-sandbox-wasmtime")]
 mod mcp_execute;
+#[cfg(feature = "code-sandbox-wasmtime")]
+mod mcp_lending_run_spend;
 mod mcp_memory;
 mod mcp_paging_cursors;
 #[cfg(feature = "code-sandbox-wasmtime")]
@@ -62,6 +64,7 @@ mod mcp_quickjs;
 mod mcp_results_carrier;
 mod mcp_scoping;
 mod mcp_tool_endpoints;
+mod mcp_verb_tree_grant;
 // Its code-runs row is the wasmtime host's.
 #[cfg(feature = "code-sandbox-wasmtime")]
 mod rate_law;

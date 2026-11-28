@@ -1,6 +1,6 @@
 {
   "name": "vault.turn_programs.arm",
-  "description": "Arms a pinned callable skill entry for the caller on its own turns, a due time, the host turning idle, or one of its own change feed subscriptions moving; the same definition on the same trigger returns the standing registration.",
+  "description": "Arms a loadable callable skill entry for the caller on its turns, a due time, idle or a feed, at the revision it expects; for a project, one run that stops at its end. The same definition and trigger return the standing registration.",
   "input": "crate::dreamer_runner::ArmTurnProgram",
   "output": "crate::dreamer_runner::TurnProgramRegistration",
   "call": "memory.arm_turn_program(&input)?",

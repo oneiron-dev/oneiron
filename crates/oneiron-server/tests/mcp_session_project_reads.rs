@@ -917,3 +917,139 @@ async fn room_claim() -> TestResult {
     session.close()?;
     Ok(())
 }
+
+#[test]
+fn an_attached_sessions_note_and_turn_reads_default_to_its_folders_project() -> TestResult {
+    on_deep_stack(session_note_and_turn_reads)
+}
+
+/// SESSION-PROJECT-NOTE-MESSAGE-PLACEMENT PR B over MCP: a `tools/call` that names a bound
+/// folder writes its NOTE in that folder's project and reads only that project's NOTEs back;
+/// a TURN witnessed under one folder is read under that folder and not under another bound
+/// folder. BETA_DIGEST is bound to beta in Fixture::new, BOUND_DIGEST to alpha.
+async fn session_note_and_turn_reads() -> TestResult {
+    let fixture = Fixture::new()?;
+    let writer = &fixture.writer;
+    let tools = fixture.tools(writer).await?;
+    let alpha_markdown = "alpha session note about the Vellichor ferry pier nine";
+    let beta_markdown = "beta session note about the Solandra harbor quay seven";
+    let reply = fixture
+        .call(
+            writer,
+            3,
+            &tools,
+            "vault.notes.create",
+            json!({ "kind": "research", "markdown": alpha_markdown }),
+            Some(BOUND_DIGEST),
+        )
+        .await?;
+    let note_alpha = reply["result"]["structuredContent"]["output"]["id_hex"]
+        .as_str()
+        .ok_or_else(|| format!("the bound folder's note create answers its id: {reply}"))?
+        .to_owned();
+    let reply = fixture
+        .call(
+            writer,
+            4,
+            &tools,
+            "vault.notes.create",
+            json!({ "kind": "research", "markdown": beta_markdown }),
+            Some(BETA_DIGEST),
+        )
+        .await?;
+    let note_beta = reply["result"]["structuredContent"]["output"]["id_hex"]
+        .as_str()
+        .ok_or_else(|| format!("beta's folder note create answers its id: {reply}"))?
+        .to_owned();
+    for (id, note, workspace, expected) in [
+        (5, &note_alpha, Some(BOUND_DIGEST), Some(alpha_markdown)),
+        (6, &note_beta, Some(BOUND_DIGEST), None),
+        (7, &note_beta, Some(BETA_DIGEST), Some(beta_markdown)),
+        (8, &note_alpha, Some(BETA_DIGEST), None),
+        (9, &note_alpha, Some(UNBOUND_DIGEST), None),
+        (10, &note_beta, Some(UNBOUND_DIGEST), None),
+        (11, &note_alpha, None, Some(alpha_markdown)),
+        (12, &note_beta, None, Some(beta_markdown)),
+    ] {
+        let reply = fixture
+            .call(
+                writer,
+                id,
+                &tools,
+                "vault.notes.read",
+                json!({ "note_ref": note }),
+                workspace,
+            )
+            .await?;
+        let value = reply
+            .pointer("/result/structuredContent/output/value")
+            .ok_or_else(|| format!("the scoped NOTE read answers a value: {reply}"))?;
+        match expected {
+            Some(markdown) => assert_eq!(
+                value["markdown"].as_str(),
+                Some(markdown),
+                "the note is read under {workspace:?}: {reply}"
+            ),
+            None => assert!(
+                value.is_null(),
+                "the note is withheld under {workspace:?}: {reply}"
+            ),
+        }
+    }
+    let conversation = EntityId::now().to_hex();
+    let reply = fixture
+        .call(
+            writer,
+            13,
+            &tools,
+            "vault.witness",
+            json!({
+                "conversation_ref": conversation,
+                "messages": [{
+                    "author": "user",
+                    "message_type": "dialogue",
+                    "content": "a beta turn about the harbor quay at dusk",
+                    "is_visible": true,
+                    "order": 0,
+                }],
+                "occurred_at": fixture.vault.now_recorded_at(),
+            }),
+            Some(BETA_DIGEST),
+        )
+        .await?;
+    let turn = reply["result"]["structuredContent"]["output"]["turn_id"]
+        .as_str()
+        .ok_or_else(|| format!("the witness answers its turn: {reply}"))?
+        .to_owned();
+    let reply = fixture
+        .call(
+            writer,
+            14,
+            &tools,
+            "vault.get",
+            json!({ "entity_ref": turn.clone() }),
+            Some(BOUND_DIGEST),
+        )
+        .await?;
+    assert_eq!(
+        reply.pointer("/result/structuredContent/output/value"),
+        Some(&Value::Null),
+        "another folder's turn is not read: {reply}"
+    );
+    let reply = fixture
+        .call(
+            writer,
+            15,
+            &tools,
+            "vault.get",
+            json!({ "entity_ref": turn.clone() }),
+            Some(BETA_DIGEST),
+        )
+        .await?;
+    assert_eq!(
+        reply["result"]["structuredContent"]["output"]["value"]["id_hex"].as_str(),
+        Some(turn.as_str()),
+        "the folder's own turn is read: {reply}"
+    );
+    Ok(())
+}

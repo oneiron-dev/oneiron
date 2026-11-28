@@ -298,6 +298,13 @@ pub(crate) use host_doors::{
     ai_video_as_owner, ai_video_cancel_as_owner, ai_video_cancel_for_run, ai_video_for_agent_run,
     ai_video_for_run, ai_video_poll_as_owner, ai_video_poll_for_run, vault_hooks_replay_as_owner,
 };
+// The integration tests' door to the media doors on a code-mode run's line
+// (FIX CODE-MODE-LENDING-W1).
+#[cfg(oneiron_test_support)]
+pub(crate) use host_doors::media_door_on_run_line_for_test;
+// [RSI-PROJECT-WORKFLOW]: the lane-economy rows a turn program's run door
+// serves its own agent.
+pub(crate) use host_doors::{gpu_job_status_for_agent, reserve_and_start_unit};
 pub(crate) use identity::*;
 pub(crate) use invocations::*;
 use invoke::*;

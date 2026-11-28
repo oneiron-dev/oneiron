@@ -153,14 +153,16 @@ impl McpCallEffect {
     }
 
     /// A run's speech (`self.speak`, `self.think`, `self.express`, its
-    /// trailing bubble), where its storage lands it: in the run's own
-    /// derived conversation it is the run's record; in a room it is a room
-    /// write.
+    /// trailing bubble) writes a MESSAGE wherever its storage lands it: in
+    /// the run's own derived conversation as in a room. No direct call writes
+    /// a MESSAGE under a Read grant, so it needs Write at either destination
+    /// (FIX CODE-MODE-LENDING-W7). A new destination is judged here.
     fn of_run_speech(destination: oneiron::code_run::RunSpeechDestination) -> Self {
         use oneiron::code_run::RunSpeechDestination;
         match destination {
-            RunSpeechDestination::OwnRunConversation => Self::Reads,
-            RunSpeechDestination::SessionRoom => Self::Commits,
+            RunSpeechDestination::OwnRunConversation | RunSpeechDestination::SessionRoom => {
+                Self::Commits
+            }
         }
     }
 

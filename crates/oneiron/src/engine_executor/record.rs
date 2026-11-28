@@ -4,6 +4,7 @@ use super::store::{
     CONFIG_OUTPUT_PATH, is_terminal_output_path, load_utf8_output, record_text_output,
     resumed_output_path, resumed_output_wait, terminal_output_path, terminal_output_seq,
 };
+use super::types::EngineExecutorError;
 use super::types::{
     CallerRunInput, EngineExecutorConfig, EngineExecutorResult, EngineExecutorStatus,
 };
@@ -14,6 +15,7 @@ use crate::code_run::{
 };
 use crate::entity_id::EntityId;
 use crate::{Error, Result, Vault};
+use crate::{FatalLlmError, LlmError};
 use serde::{Deserialize, Serialize};
 
 mod caller_source;
@@ -77,6 +79,7 @@ struct ExecutorTerminalMarker {
 enum StoredTerminalStatus {
     Complete,
     Waiting { wait: StoredDurableWait },
+    WindowOutgrown,
 }
 
 impl StoredTerminalStatus {
@@ -98,6 +101,12 @@ impl StoredTerminalStatus {
         match self {
             Self::Complete => Ok(EngineExecutorStatus::Complete),
             Self::Waiting { wait } => Ok(EngineExecutorStatus::Waiting(wait.into_wait()?)),
+            Self::WindowOutgrown => Err(EngineExecutorError::Llm(LlmError::Fatal(
+                FatalLlmError::ContextWindowExceeded {
+                    message: "this run outgrew its model's context window; start a new run"
+                        .to_owned(),
+                },
+            ))),
         }
     }
 }
@@ -365,10 +374,23 @@ pub(super) fn record_terminal_output(
     record_text_output(storage, record, terminal_output_path(seq), &text)
 }
 
-/// Whether this canonical run's latest durable marker is Complete, observed
-/// with its record and body in the caller's transaction. A parked or resumed
-/// Waiting marker never closes the run's scratchpad.
-pub(crate) fn code_run_complete_in_txn(
+pub(super) fn record_window_outgrown_output(
+    storage: &ExecutorStorage<'_>,
+    record: &mut CodeRunReplayRecord,
+    seq: u64,
+) -> EngineExecutorResult<()> {
+    let marker = ExecutorTerminalMarker {
+        schema_version: REPLAY_METADATA_SCHEMA_VERSION,
+        status: StoredTerminalStatus::WindowOutgrown,
+    };
+    let text = serde_json::to_string(&marker)?;
+    record_text_output(storage, record, terminal_output_path(seq), &text)
+}
+
+/// Whether this canonical run's latest durable marker is terminal (Complete or WindowOutgrown),
+/// observed with its record and body in the caller's transaction. A parked or resumed Waiting
+/// marker never closes the run's scratchpad.
+pub(crate) fn code_run_terminal_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     run: EntityId,
@@ -399,7 +421,10 @@ pub(crate) fn code_run_complete_in_txn(
             "executor replay terminal marker schema",
         ));
     }
-    Ok(matches!(marker.status, StoredTerminalStatus::Complete))
+    Ok(matches!(
+        marker.status,
+        StoredTerminalStatus::Complete | StoredTerminalStatus::WindowOutgrown
+    ))
 }
 
 /// The run's latest terminal status. A Waiting marker the run resumed from
@@ -462,7 +487,7 @@ pub(super) fn parked_wait_at(
     }
     match load_terminal_marker(storage, record, &path)? {
         StoredTerminalStatus::Waiting { wait } => wait.into_wait().map(Some),
-        StoredTerminalStatus::Complete => Ok(None),
+        StoredTerminalStatus::Complete | StoredTerminalStatus::WindowOutgrown => Ok(None),
     }
 }
 
@@ -495,10 +520,14 @@ pub(crate) fn parked_wait_now(
     storage: &ExecutorStorage<'_>,
     record: &CodeRunReplayRecord,
 ) -> EngineExecutorResult<Option<(WaitKey, SelfDurableWait)>> {
-    Ok(match load_terminal_status(storage, record)? {
-        Some(EngineExecutorStatus::Waiting(wait)) => Some((wait_key(record, &wait), wait)),
-        _ => None,
-    })
+    match load_terminal_status(storage, record) {
+        Ok(Some(EngineExecutorStatus::Waiting(wait))) => Ok(Some((wait_key(record, &wait), wait))),
+        Ok(_) => Ok(None),
+        Err(EngineExecutorError::Llm(LlmError::Fatal(FatalLlmError::ContextWindowExceeded {
+            ..
+        }))) => Ok(None),
+        Err(error) => Err(error),
+    }
 }
 
 /// The wait a step's commit parks its run on, for the step writer's seal:

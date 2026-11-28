@@ -391,6 +391,9 @@ struct Ran {
     outcome: EngineExecutorResult<PinnedProgramRun>,
     stop: Option<SeamStop>,
     pinned_finished: bool,
+    /// Whether that finished entry answered pending, which keeps a project run waking
+    /// ([RSI-PROJECT-WORKFLOW]).
+    pinned_pending: bool,
     step_bindings: Vec<StepEffectBinding>,
 }
 
@@ -461,10 +464,15 @@ async fn enter(
         &outcome,
         Ok(PinnedProgramRun::Ran(done)) if dispatcher.pinned_entry_finished(&done.replay_record)
     );
+    let pinned_pending = matches!(
+        &outcome,
+        Ok(PinnedProgramRun::Ran(done)) if dispatcher.pinned_entry_pending(&done.replay_record)
+    );
     Ok(Ran {
         outcome,
         stop: seam.stop(),
         pinned_finished,
+        pinned_pending,
         step_bindings: seam.step_bindings(),
     })
 }
@@ -605,6 +613,7 @@ fn settle(
                 binding.code_run,
                 &generation,
                 ctx.now_ms / 1_000,
+                !ran.pinned_pending,
             )?;
             Ok(DreamerAttemptExecution::Completed {
                 completed_units: used,

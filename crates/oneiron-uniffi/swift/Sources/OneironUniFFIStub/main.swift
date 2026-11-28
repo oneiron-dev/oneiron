@@ -177,10 +177,12 @@ func deletionAndConsentCompile(client: Oneiron) throws {
             basis: "own_proof",
             checkIn: nil,
             requester: nil
-        )
+        ),
+        remaining: [RemainingNotice(code: "history_sweep", text: "compile-only")]
     )
     let _: Bool = deletion.existed
     let _: String? = deletion.checkIn?.basis
+    let _: [RemainingNotice] = deletion.remaining
 
     let pending = PendingWrite(
         claimRef: "claim:compile-only",

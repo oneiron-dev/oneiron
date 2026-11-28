@@ -59,7 +59,8 @@ pub(crate) fn calling_line() -> Option<RunAdmission> {
 /// `ai.options`: the rows the credential could call now, where each runs,
 /// what it takes, its price, the rates its native counts settle at, and
 /// what its meter has left (FIX 2942). A code-mode run's rows are the media
-/// rows its line pays for, with what that line has left (FIX 780).
+/// rows its line pays for that its credential may call, with what that line
+/// has left (FIX 780, FIX CODE-MODE-LENDING-W1).
 ///
 /// Its answer is the host runtime's seats, rates and meters, each row
 /// filtered by the vault's inference-policy admission and priced from the
@@ -94,14 +95,23 @@ pub(super) fn ai_options_answer(
 ) -> MemoryResult<AiOptions> {
     let (operation, inputs) = options_filter(input)?;
     let listed = match calling_line() {
-        // An owner-grade credential still reaches the raw text routes.
-        Some(line) => line_options(
-            server,
-            Some(line.read().remaining_units),
-            operation,
-            &inputs,
-            |row_operation| row_operation != AiOperation::Text || auth.is_owner_grade(),
-        ),
+        // An owner-grade credential still reaches the raw text routes. Any
+        // other lists only the media rows its agent's Grant names, as its
+        // call is admitted (FIX CODE-MODE-LENDING-W1): the line only pays.
+        Some(line) => {
+            let owner_grade = auth.is_owner_grade();
+            let granted = granted_operations(server, auth);
+            line_options(
+                server,
+                Some(line.read().remaining_units),
+                operation,
+                &inputs,
+                |row_operation| {
+                    owner_grade
+                        || (row_operation != AiOperation::Text && granted.contains(&row_operation))
+                },
+            )
+        }
         None => caller_options(
             server,
             auth.is_owner_grade(),
@@ -183,23 +193,23 @@ fn options_answer(listed: CallerOptions) -> MemoryResult<AiOptions> {
     })
 }
 
-/// One media call's answer, from its seat's ladder. A code-mode run's call
-/// spends on the run's line its dispatch bound, as its steps do (FIX 780):
-/// the credential's own binding and live gate admitted it there. Any other
-/// call is the owner's, on the media meter, and only an owner-grade
+/// One media call's answer, from its seat's ladder. Only an owner-grade
 /// credential reaches it, or an agent whose live Grant the owner minted
-/// names `operation` ([`owner_or_granted`]). No room pays for it, so it
-/// bills the vault owner (FIX 805).
+/// names `operation` ([`owner_or_granted`]), whoever wrote the program
+/// that calls it (FIX CODE-MODE-LENDING-W1). A code-mode run's call then
+/// spends on the run's line its dispatch bound, as its steps do (FIX 780):
+/// the line only pays. Any other call is the owner's, on the media meter.
+/// No room pays for it, so it bills the vault owner (FIX 805).
 pub(super) async fn answered(
     server: &SyncServer,
     auth: &CoreAuth,
     operation: AiOperation,
     input: AiCallRequest,
 ) -> MemoryResult<AiAnswer> {
+    owner_or_granted(server, auth, operation, MEDIA_OWNERS)?;
     if let Some(line) = calling_line() {
         return ai_media_for_run(server, &line, operation, None, input).await;
     }
-    owner_or_granted(server, auth, operation, MEDIA_OWNERS)?;
     // A caller verified in an off-record session that keeps no model-call
     // record names no rows on the call's run (census L5-25).
     let off_record = server.vault().model_call_keeps_no_record_for(
@@ -462,10 +472,11 @@ pub(super) fn record_free<T>(answer: MemoryResult<T>) -> Listed<T> {
 }
 
 /// `ai.video`: the clip renders as a provider job; the answer is its ticket.
-/// A code-mode run's job spends on its line, as [`answered`]'s call does
-/// (FIX 780); any other is the owner's, so its job bills the vault owner,
-/// and so does each later take-up of it. Beside it, no row: its job lives
-/// at its provider and in the media runtime.
+/// It is admitted as [`answered`]'s call is (FIX CODE-MODE-LENDING-W1). A
+/// code-mode run's job then spends on its line (FIX 780); any other is the
+/// owner's, so its job bills the vault owner, and so does each later
+/// take-up of it. Beside it, no row: its job lives at its provider and in
+/// the media runtime.
 pub(crate) async fn ai_video(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -479,10 +490,10 @@ pub(super) async fn ai_video_answer(
     auth: &CoreAuth,
     input: AiCallRequest,
 ) -> MemoryResult<AiVideoTicket> {
+    owner_or_granted(server, auth, AiOperation::Video, MEDIA_OWNERS)?;
     if let Some(line) = calling_line() {
         return ai_video_for_run(server, &line, None, input, auth.principal_entity()).await;
     }
-    owner_or_granted(server, auth, AiOperation::Video, MEDIA_OWNERS)?;
     ai_video_as_owner(server, input, auth.principal_entity()).await
 }
 
@@ -591,9 +602,10 @@ pub(crate) async fn ai_video_as_owner(
 /// `ai.video.poll`: where a video job stands; a finished one answers with
 /// its clip on every poll until `ai.video.cancel` deletes it. An owner-grade
 /// credential reaches every job; a code-mode run of any other credential
-/// reaches the jobs its own run submitted (FIX 780), and an agent the
-/// owner's `ai.video` Grant admits the jobs it asked for (FIX 3208). Beside
-/// it, no row, as [`ai_video`] lists none.
+/// the owner's `ai.video` Grant names reaches the jobs its own run
+/// submitted (FIX 780, FIX CODE-MODE-LENDING-W1), and an agent that Grant
+/// admits the jobs it asked for (FIX 3208). Beside it, no row, as
+/// [`ai_video`] lists none.
 pub(crate) async fn ai_video_poll(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -610,6 +622,7 @@ pub(super) async fn ai_video_poll_answer(
     if !auth.is_owner_grade()
         && let Some(line) = calling_line()
     {
+        owner_or_granted(server, auth, AiOperation::Video, VIDEO_JOB_OWNERS)?;
         return ai_video_poll_for_run(server, &line, input).await;
     }
     if let Some(agent) = video_granted_agent(server, auth) {
@@ -679,6 +692,7 @@ pub(super) async fn ai_video_cancel_answer(
     if !auth.is_owner_grade()
         && let Some(line) = calling_line()
     {
+        owner_or_granted(server, auth, AiOperation::Video, VIDEO_JOB_OWNERS)?;
         return ai_video_cancel_for_run(server, &line, input).await;
     }
     if let Some(agent) = video_granted_agent(server, auth) {
