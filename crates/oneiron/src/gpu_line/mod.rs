@@ -19,8 +19,10 @@ mod fold;
 mod graduate;
 mod intent;
 mod mint;
+pub(crate) mod notice;
 mod preset;
 mod refusal;
+pub(crate) mod setting_keys;
 mod store;
 pub(crate) mod tables;
 mod tally;
@@ -46,6 +48,7 @@ pub use mint::{
     economic_digest, even_split, line_allocation_id, mint_period, payoff_share, period_balances,
     pools, posterior_sampling,
 };
+pub use notice::{LineNoticeKind, notify_machine_returned_in_txn};
 pub use preset::{LinePresetDocument, LinePresetRef, check_document, lay_over, resolve_policy};
 pub use refusal::{LineRefusal, LineRefusalKey, line_refusals_in_txn};
 pub(crate) use refusal::{erase_refusal_actor_in_txn, record_line_refusal_in_txn};

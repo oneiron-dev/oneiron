@@ -298,6 +298,12 @@ pub struct BudgetPolicy {
     pub window_periods: u32,
     /// The pools each track draws, in order: one entry per track.
     pub draw_orders: Vec<TrackDrawOrder>,
+    /// A promoted rung that has waited this long for its review is told
+    /// overdue to the line's leads and the vault's owners (section 6).
+    pub review_overdue_secs: u64,
+    /// A machine that answers again is told to the leads of the lines with a
+    /// unit lost there within this long (section 6, `machine_returned`).
+    pub machine_returned_window_secs: u64,
 }
 
 /// The engine's neutral defaults. The allowance is 0 and the rung caps are
@@ -329,6 +335,8 @@ impl Default for BudgetPolicy {
             invalid_cost: InvalidCost::default(),
             window_periods: defaults::WINDOW_PERIODS,
             draw_orders: defaults::draw_orders(),
+            review_overdue_secs: defaults::REVIEW_OVERDUE_SECS,
+            machine_returned_window_secs: defaults::MACHINE_RETURNED_WINDOW_SECS,
         }
     }
 }

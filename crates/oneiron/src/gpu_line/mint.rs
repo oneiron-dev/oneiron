@@ -150,6 +150,12 @@ pub enum LineInvalid {
     Machines,
     #[error("each Grant is named once in each role list")]
     Roles,
+    #[error(
+        "the review bound and the returned-machine window last {min} to {max} seconds",
+        min = defaults::NOTICE_SECS_BOUNDS.start(),
+        max = defaults::NOTICE_SECS_BOUNDS.end()
+    )]
+    Notices,
     /// The seats' floors and the reserve do not fit their side.
     #[error("policy_unfunded: the {side:?} side cannot fund its seats' floors and reserve")]
     Unfunded { side: Side },
@@ -330,6 +336,11 @@ impl GpuLine {
         }
         if !draw_orders_valid(budget) {
             return Err(LineInvalid::DrawOrders);
+        }
+        if !defaults::NOTICE_SECS_BOUNDS.contains(&budget.review_overdue_secs)
+            || !defaults::NOTICE_SECS_BOUNDS.contains(&budget.machine_returned_window_secs)
+        {
+            return Err(LineInvalid::Notices);
         }
         if !distinct(&self.offers) || self.offers.iter().any(|offer| offer.trim().is_empty()) {
             return Err(LineInvalid::Offers);

@@ -90,6 +90,15 @@ pub enum NotificationKind {
     /// `source.detail` how much of its maximum it used. The job stops at its
     /// maximum only after this notice and a checkpoint taken after it.
     GpuJobWarning,
+    /// A fact of a lane-economy line, told to the agents its lead Grants
+    /// name, in the same write as the fact (design pass 32 r2, section 6).
+    /// `source.producer` names which: `line.unit_ended`,
+    /// `line.unit_released`, `line.unit_box_lost`, `line.unit_written_off`,
+    /// `line.unit_unconfirmed`, `line.review_overdue` (told to the vault's
+    /// Owners too) or `line.machine_returned`. `source.result` names its
+    /// subject (the unit's job, the arm or the machine) and `source.detail`
+    /// what it carries, as `key=value` words.
+    LineNotice,
 }
 
 impl NotificationKind {

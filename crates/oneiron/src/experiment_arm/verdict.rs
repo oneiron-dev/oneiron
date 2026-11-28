@@ -356,7 +356,6 @@ fn verdict_in_txn(
             cap,
         )?;
     }
-    // Row M2-H writes the notice to the line's leads here, in this write.
     arm.revision += 1;
     EXPERIMENT_ARMS.put(&vault.store, wtxn, &arm.id, &arm)?;
     intent.keep_in_txn(vault, wtxn, arm.id.as_bytes().to_vec(), now_ms)?;

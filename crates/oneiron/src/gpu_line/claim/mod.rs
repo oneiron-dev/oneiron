@@ -460,6 +460,8 @@ pub fn settle_unit_in_txn(
         },
         Ok(Some(ended)) => {
             CLAIMS.put(&vault.store, txn, key, &ended)?;
+            // The end's notice to the line's leads, in this write (section 6).
+            super::notice::notify_unit_end_in_txn(vault, txn, &ended)?;
             UnitSettlement {
                 claim: ended,
                 replayed: false,
