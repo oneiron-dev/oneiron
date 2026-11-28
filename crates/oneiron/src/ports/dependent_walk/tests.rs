@@ -14,6 +14,7 @@ use crate::settings::CarriedWorlds;
 use crate::test_util::entity;
 use crate::{EntityId, TimeRange, Vault};
 use std::collections::BTreeSet;
+mod claim_source;
 
 const NEEDLE: &str = "walkneedle";
 /// Two dependents a transaction, and a question past three.
@@ -64,6 +65,7 @@ fn open_with(config: VaultConfig) -> (tempfile::TempDir, Vault) {
 /// The source each door walks: what it erases, purges or changes.
 fn put_source(vault: &Vault, door: DependentWalkDoor, source: &EntityId) -> Result<()> {
     match door {
+        DependentWalkDoor::ClaimValueRedaction => claim_source::put(vault, source),
         DependentWalkDoor::ChangedDocsSource => vault.put_entity(
             source,
             ENTITY_TYPE_ASSET_TEXT,
@@ -141,6 +143,7 @@ fn walk_through(vault: &Vault, door: DependentWalkDoor, source: &EntityId) -> Re
             3,
             &body(&serde_json::json!({ "text": "no epoch any more" })),
         ),
+        DependentWalkDoor::ClaimValueRedaction => claim_source::redact(vault, source),
     }
 }
 
