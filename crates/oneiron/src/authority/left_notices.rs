@@ -50,12 +50,19 @@ fn root_edge(entry: &AuthorityLogEntry) -> Option<&AuthorityKey> {
 /// refuse: a fork or a cycle is never cut short. Empty when no edge names
 /// `signer`.
 fn root_chain(
-    history: &BTreeMap<AuthorityEntryHash, (Vec<u8>, AuthorityLogEntry)>,
+    history: &BTreeMap<AuthorityEntryHash, (Vec<u8>, FoldRow)>,
     fold: &AuthorityFold,
     signer: &AuthorityKey,
 ) -> Result<Vec<AuthorityEntryHash>> {
     let mut handoffs = BTreeMap::new();
-    for (hash, (_, entry)) in history {
+    for (hash, (_, row)) in history {
+        // Root edges read their op; a sealed row that does not open is never
+        // one here. It is skipped explicitly, not silently: such rows never
+        // fold valid, so the valid-entries filter below would drop them
+        // anyway, and no chain link is missed.
+        let Some(entry) = row.open() else {
+            continue;
+        };
         if let Some(next) = root_edge(entry)
             && fold.valid_entries.contains(hash)
             && handoffs.insert(next, (*hash, entry.signer_key())).is_some()
@@ -81,7 +88,7 @@ fn root_chain(
 /// when the request named no head or this vault does not hold one, and then
 /// all of it rides.
 fn member_folded(
-    history: &BTreeMap<AuthorityEntryHash, (Vec<u8>, AuthorityLogEntry)>,
+    history: &BTreeMap<AuthorityEntryHash, (Vec<u8>, FoldRow)>,
     member_heads: &BTreeSet<AuthorityEntryHash>,
 ) -> BTreeSet<AuthorityEntryHash> {
     let mut folded = BTreeSet::new();
@@ -91,9 +98,9 @@ fn member_folded(
     let mut stack: Vec<_> = member_heads.iter().copied().collect();
     while let Some(hash) = stack.pop() {
         if folded.insert(hash)
-            && let Some((_, entry)) = history.get(&hash)
+            && let Some((_, row)) = history.get(&hash)
         {
-            stack.extend(entry.parent_hashes.iter().copied());
+            stack.extend(row.parent_hashes().iter().copied());
         }
     }
     folded

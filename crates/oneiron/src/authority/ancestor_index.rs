@@ -18,7 +18,7 @@ use std::collections::{BTreeMap, BTreeSet};
 /// costs memory, but a pair counts toward the headroom check only when
 /// neither end is a slip op of the slip issuer, which no bound counts.
 pub(in crate::authority) fn entry_ancestor_index(
-    by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    by_hash: &BTreeMap<AuthorityEntryHash, FoldRow>,
     memory_floor: u64,
 ) -> Option<(AncestorIndex, u64)> {
     if super::log_budget::fold_projected_bytes(by_hash.len(), 0) > memory_floor {
@@ -27,7 +27,7 @@ pub(in crate::authority) fn entry_ancestor_index(
     let uncounted = super::log_budget::uncounted_rows(by_hash);
     let rows: Vec<_> = by_hash
         .iter()
-        .map(|(hash, entry)| (*hash, entry.parent_hashes.as_slice()))
+        .map(|(hash, row)| (*hash, row.parent_hashes()))
         .collect();
     AncestorIndex::build(&rows, &uncounted, |pairs| {
         super::log_budget::fold_projected_bytes(by_hash.len(), pairs) > memory_floor

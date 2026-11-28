@@ -36,7 +36,9 @@ pub(super) fn causal_sequence_floors(
             let Some(signer_floored) = floored_rows.get(tip.signer_key()) else {
                 continue;
             };
-            let rollback_tip = original.get(tip_hash).is_some_and(|floor| tip.seq < *floor);
+            let rollback_tip = original
+                .get(tip_hash)
+                .is_some_and(|floor| tip.seq() < *floor);
             // No floor refuses a roster row (`changes_roster`), so even below
             // its floor it vouches for every row of its signer below it in its
             // ancestry that a floor refuses (`floor_refuses`), whatever their
@@ -45,7 +47,9 @@ pub(super) fn causal_sequence_floors(
             // waits on a parent of its own signer that a floor refused. A
             // restriction keeps its floor and lands restriction only (Astra
             // F2).
-            let roster_tip = super::entry_transition::changes_roster(&tip.op);
+            // A sealed row that passes through is a roster row by its kind
+            // (`row_changes_roster`, census L5-22 1a-iii).
+            let roster_tip = super::entry_transition::row_changes_roster(tip);
             if rollback_tip && !roster_tip {
                 continue;
             }
@@ -53,12 +57,12 @@ pub(super) fn causal_sequence_floors(
             let vouched = |hash: &&AuthorityEntryHash| {
                 by_hash.get(*hash).is_some_and(|entry| {
                     let refused_below_roster_row =
-                        roster_tip && super::entry_transition::floor_refuses(&entry.op);
+                        roster_tip && super::entry_transition::row_floor_refuses(entry);
                     entry.signer_key() == tip.signer_key()
-                        && entry.seq < tip.seq
+                        && entry.seq() < tip.seq()
                         && floors.get(*hash).is_some_and(|floor| {
-                            entry.seq < *floor
-                                && ((!rollback_tip && tip.seq >= *floor)
+                            entry.seq() < *floor
+                                && ((!rollback_tip && tip.seq() >= *floor)
                                     || refused_below_roster_row)
                         })
                 })

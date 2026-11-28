@@ -80,6 +80,12 @@ impl FoldCapture {
         }
     }
 
+    /// Whether this is an image build's capture: it keeps a row that passes
+    /// through as structure, where a resumable capture is spoiled by one.
+    pub(in crate::authority) fn keeps_image(&self) -> bool {
+        self.image.is_some()
+    }
+
     /// A capture for a root appointment's proof fold: it keeps the last
     /// once fold's [`ProofParts`]. No resumed fold reads it.
     pub(in crate::authority) fn for_proof() -> Self {
@@ -143,7 +149,9 @@ impl FoldCapture {
 
 /// A once fold's settlement, as `fold_authority_log_once` reached it.
 pub(in crate::authority) struct OnceParts<'a> {
-    pub(in crate::authority) by_hash: &'a BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    /// Every row here opened, except for an image build's capture: it keeps a
+    /// row that passes through as structure (census L5-22 1a-iii).
+    pub(in crate::authority) by_hash: &'a BTreeMap<AuthorityEntryHash, FoldRow>,
     pub(in crate::authority) states: &'a BTreeMap<AuthorityEntryHash, FoldState>,
     pub(in crate::authority) entry_ancestors: &'a AncestorIndex,
     /// The rows' floors (`rows_floor`), before causal ancestry cleared any.
@@ -237,14 +245,21 @@ impl Once {
             fold,
         } = parts;
         let is_main = |hash: &AuthorityEntryHash| {
-            crate::authority::world_privacy::side_world(&by_hash[hash].op).is_none()
+            by_hash
+                .get(hash)
+                .and_then(FoldRow::open)
+                .is_some_and(|entry| {
+                    crate::authority::world_privacy::side_world(&entry.op).is_none()
+                })
         };
         // No row past its floor, so no floor and no vouch decides a row, and
         // every main row folded.
-        let below_floor = by_hash.iter().any(|(hash, entry)| {
-            original_floors
-                .and_then(|floors| floors.get(hash))
-                .is_some_and(|floor| entry.seq < *floor)
+        let below_floor = by_hash.iter().any(|(hash, row)| {
+            row.open().is_some_and(|entry| {
+                original_floors
+                    .and_then(|floors| floors.get(hash))
+                    .is_some_and(|floor| entry.seq < *floor)
+            })
         });
         if below_floor
             || by_hash
@@ -256,7 +271,8 @@ impl Once {
         let main_parents: BTreeSet<_> = by_hash
             .iter()
             .filter(|(hash, _)| is_main(hash))
-            .flat_map(|(_, entry)| entry.parent_hashes.iter().copied())
+            .filter_map(|(_, row)| row.open())
+            .flat_map(|entry| entry.parent_hashes.iter().copied())
             .collect();
         let mut heads = by_hash
             .keys()
@@ -272,7 +288,7 @@ impl Once {
             crate::authority::log_structure::authority_structure(by_hash.values()).issuers;
         let uncounted = by_hash
             .iter()
-            .filter(|(_, entry)| crate::authority::log_budget::is_uncounted(entry, &issuers))
+            .filter(|(_, row)| crate::authority::log_budget::is_uncounted(row, &issuers))
             .map(|(hash, _)| *hash)
             .collect::<BTreeSet<_>>();
         let frontier =
@@ -285,7 +301,11 @@ impl Once {
             if is_main(hash) {
                 add_bound_keys(&mut bound_keys, state);
             }
-            if let AuthorityOp::FederationConfirm(action) = &by_hash[hash].op {
+            if let Some(AuthorityOp::FederationConfirm(action)) = by_hash
+                .get(hash)
+                .and_then(FoldRow::open)
+                .map(|entry| &entry.op)
+            {
                 confirm_ids.insert(action.confirm_id);
                 confirm_nonces.insert(action.nonce);
             }
@@ -293,8 +313,9 @@ impl Once {
         let marks = valid_entries
             .iter()
             .filter_map(|hash| {
-                let profile =
-                    super::super::stale_roster::filed_machine_profile(&by_hash.get(hash)?.op)?;
+                let profile = super::super::stale_roster::filed_machine_profile(
+                    &by_hash.get(hash)?.open()?.op,
+                )?;
                 let chain = states
                     .get(hash)?
                     .machines
@@ -307,7 +328,7 @@ impl Once {
             .collect();
         let missing_parents = by_hash
             .values()
-            .flat_map(|entry| entry.parent_hashes.iter())
+            .flat_map(|row| row.parent_hashes().iter())
             .filter(|parent| !by_hash.contains_key(*parent))
             .copied()
             .collect();

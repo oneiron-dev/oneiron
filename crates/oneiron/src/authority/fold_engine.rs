@@ -138,8 +138,14 @@ impl FoldLocalInputs<'_> {
     };
 }
 
+/// Each entry as the fold takes a row whose record opened here: a caller
+/// that holds whole entries folds them so.
+pub(super) fn open_rows(entries: &[AuthorityLogEntry]) -> Vec<FoldRow> {
+    entries.iter().cloned().map(FoldRow::Open).collect()
+}
+
 pub(super) fn fold_authority_log_inner(
-    entries: &[AuthorityLogEntry],
+    entries: &[FoldRow],
     first_seen_at_secs: &BTreeMap<AuthorityEntryHash, u64>,
     now_secs: Option<u64>,
     peer_consent_roots: &BTreeMap<AuthorityVaultId, BTreeSet<AuthorityKey>>,
@@ -223,7 +229,7 @@ pub(super) fn fold_authority_log_inner(
 /// parents, so the probe applies no floor inside it. The final strict fold
 /// rechecks these candidates as a set, under the same rule.
 fn verified_handoff_candidates(
-    entries: &[AuthorityLogEntry],
+    entries: &[FoldRow],
     first_seen_at_secs: &BTreeMap<AuthorityEntryHash, u64>,
     now_secs: Option<u64>,
     peer_consent_roots: &BTreeMap<AuthorityVaultId, BTreeSet<AuthorityKey>>,
@@ -232,10 +238,15 @@ fn verified_handoff_candidates(
 ) -> BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>> {
     let by_hash: BTreeMap<_, _> = entries
         .iter()
-        .filter_map(|entry| authority_entry_hash(entry).ok().map(|hash| (hash, entry)))
+        .filter_map(|row| row.hash().ok().map(|hash| (hash, row)))
         .collect();
     let mut candidates = BTreeMap::new();
-    for (candidate, entry) in &by_hash {
+    for (candidate, row) in &by_hash {
+        // Only a handoff whose record opened here settles (census L5-22
+        // 1a-iii): a re-root that passes through hands nothing off.
+        let Some(entry) = row.open() else {
+            continue;
+        };
         if !matches!(entry.op, AuthorityOp::ReRoot { .. })
             || entry.validate_shape().is_err()
             || verify_entry_signatures(entry).is_err()
@@ -253,7 +264,7 @@ fn verified_handoff_candidates(
                 complete = false;
                 break;
             };
-            stack.extend(ancestor.parent_hashes.iter().copied());
+            stack.extend(ancestor.parent_hashes().iter().copied());
         }
         if !complete {
             continue;
@@ -290,19 +301,19 @@ fn verified_handoff_candidates(
 /// ancestry and only before the first handoff on that branch. A later re-root
 /// never revives device-key enrollment after a prior handoff.
 fn verified_handoff_ancestors(
-    entries: &[AuthorityLogEntry],
+    entries: &[FoldRow],
     valid_handoffs: &BTreeSet<AuthorityEntryHash>,
 ) -> BTreeSet<AuthorityEntryHash> {
     let by_hash: BTreeMap<_, _> = entries
         .iter()
-        .filter_map(|entry| authority_entry_hash(entry).ok().map(|hash| (hash, entry)))
+        .filter_map(|row| row.hash().ok().map(|hash| (hash, row)))
         .collect();
     let mut permitted = BTreeSet::new();
-    for (hash, entry) in &by_hash {
-        if !valid_handoffs.contains(hash) || !matches!(entry.op, AuthorityOp::ReRoot { .. }) {
+    for (hash, row) in &by_hash {
+        if !valid_handoffs.contains(hash) || !matches!(row.op(), Some(AuthorityOp::ReRoot { .. })) {
             continue;
         }
-        let mut stack = entry.parent_hashes.clone();
+        let mut stack = row.parent_hashes().to_vec();
         let mut visited = BTreeSet::new();
         while let Some(parent) = stack.pop() {
             if !visited.insert(parent) {
@@ -311,11 +322,13 @@ fn verified_handoff_ancestors(
             let Some(ancestor) = by_hash.get(&parent) else {
                 continue;
             };
-            if matches!(ancestor.op, AuthorityOp::ReRoot { .. }) {
+            // A re-root that passes through still ends the line before it:
+            // the walk never crosses one it cannot read.
+            if row_is_re_root(ancestor) {
                 continue;
             }
-            stack.extend(ancestor.parent_hashes.iter().copied());
-            if op_is_retired_device_op(&ancestor.op) && !has_re_root_ancestor(ancestor, &by_hash) {
+            stack.extend(ancestor.parent_hashes().iter().copied());
+            if row_is_retired_device_op(ancestor) && !has_re_root_ancestor(ancestor, &by_hash) {
                 permitted.insert(parent);
             }
         }
@@ -323,21 +336,18 @@ fn verified_handoff_ancestors(
     permitted
 }
 
-fn has_re_root_ancestor(
-    entry: &AuthorityLogEntry,
-    by_hash: &BTreeMap<AuthorityEntryHash, &AuthorityLogEntry>,
-) -> bool {
-    let mut stack = entry.parent_hashes.clone();
+fn has_re_root_ancestor(row: &FoldRow, by_hash: &BTreeMap<AuthorityEntryHash, &FoldRow>) -> bool {
+    let mut stack = row.parent_hashes().to_vec();
     let mut visited = BTreeSet::new();
     while let Some(hash) = stack.pop() {
         if !visited.insert(hash) {
             continue;
         }
         if let Some(ancestor) = by_hash.get(&hash) {
-            if matches!(ancestor.op, AuthorityOp::ReRoot { .. }) {
+            if row_is_re_root(ancestor) {
                 return true;
             }
-            stack.extend(ancestor.parent_hashes.iter().copied());
+            stack.extend(ancestor.parent_hashes().iter().copied());
         }
     }
     false
@@ -348,11 +358,12 @@ fn has_re_root_ancestor(
 /// branch's side entry. A row's signatures are a function of its bytes
 /// alone, so a pass over these rows reads that verdict and never verifies
 /// again (`entry_transition::fold_judged_entry_state`). Only
-/// [`judged_entries`] builds one; it reads as the map it holds.
-pub(super) struct JudgedRows(BTreeMap<AuthorityEntryHash, AuthorityLogEntry>);
+/// [`judged_entries`] builds one; it reads as the map it holds. A row that
+/// passes through was verified when it was read (census L5-22 1a-iii).
+pub(super) struct JudgedRows(BTreeMap<AuthorityEntryHash, FoldRow>);
 
 impl std::ops::Deref for JudgedRows {
-    type Target = BTreeMap<AuthorityEntryHash, AuthorityLogEntry>;
+    type Target = BTreeMap<AuthorityEntryHash, FoldRow>;
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -360,16 +371,20 @@ impl std::ops::Deref for JudgedRows {
 }
 
 /// The entries a fold of `entries` judges, by hash: each well signed, none
-/// hanging off another branch's side entry. With the issues found.
-pub(super) fn judged_entries(
-    entries: &[AuthorityLogEntry],
-) -> (JudgedRows, Vec<AuthorityFoldIssue>) {
-    let mut by_hash = BTreeMap::<AuthorityEntryHash, AuthorityLogEntry>::new();
+/// hanging off another branch's side entry. With the issues found. A row
+/// that passes through was verified when it was read
+/// ([`verify_authority_public_row`]).
+pub(super) fn judged_entries(entries: &[FoldRow]) -> (JudgedRows, Vec<AuthorityFoldIssue>) {
+    let mut by_hash = BTreeMap::<AuthorityEntryHash, FoldRow>::new();
     let mut issues = Vec::new();
-    for entry in entries {
-        match authority_entry_hash(entry) {
-            Ok(hash) if verify_entry_signatures(entry).is_ok() => {
-                by_hash.entry(hash).or_insert_with(|| entry.clone());
+    for row in entries {
+        match row.hash() {
+            Ok(hash)
+                if row
+                    .open()
+                    .is_none_or(|entry| verify_entry_signatures(entry).is_ok()) =>
+            {
+                by_hash.entry(hash).or_insert_with(|| row.clone());
             }
             Ok(hash) => issues.push(AuthorityFoldIssue::InvalidEntry(hash)),
             Err(_) => issues.push(AuthorityFoldIssue::InvalidEntry([0; 32])),
@@ -389,7 +404,7 @@ pub(super) fn judged_entries(
 /// (`sequence_ancestry`). None when no floor applies or the log is past its
 /// memory floor.
 pub(super) fn causal_floors_of(
-    entries: &[AuthorityLogEntry],
+    entries: &[FoldRow],
     context: FoldContext<'_>,
 ) -> Option<BTreeMap<AuthorityEntryHash, u64>> {
     context.sequence_floors?;
@@ -431,7 +446,7 @@ fn rows_once_floors(
 }
 
 pub(super) fn fold_authority_log_once(
-    entries: &[AuthorityLogEntry],
+    entries: &[FoldRow],
     context: FoldContext<'_>,
     handoffs: Option<&BTreeSet<AuthorityEntryHash>>,
     capture: Option<&super::fold_resume::FoldCapture>,
@@ -563,6 +578,7 @@ pub(super) fn fold_authority_log_once_with(
             slips: SlipAuthorityState::default(),
             vault_id: None,
             valid_entries: ValidEntries::new(),
+            pass_through_entries: BTreeSet::new(),
             roster: BTreeMap::new(),
             retired_keys: BTreeSet::new(),
             handoff_or_appointment_retired_keys: BTreeSet::new(),
@@ -625,13 +641,31 @@ pub(super) fn fold_authority_log_once_with(
     );
     let mut merged: Option<FoldState> = None;
     let mut valid_entries = ValidEntries::new();
+    // A row that folded as structure only places the log and grants
+    // nothing: it is never a valid entry (census L5-22 1a-iii).
+    let mut pass_through_entries = BTreeSet::new();
     for (hash, state) in &states {
-        valid_entries.insert(*hash);
+        if by_hash.get(hash).is_some_and(|row| row.open().is_none()) {
+            pass_through_entries.insert(*hash);
+        } else {
+            valid_entries.insert(*hash);
+        }
         merged = Some(match merged {
             Some(current) => merge_states(&current, state),
             None => state.clone(),
         });
     }
+    // A resumed fold reads only open rows' effects; a log holding a row that
+    // passes through, folded or refused, folds whole again. An image build
+    // keeps such a row as structure: its state, its parents and no effect
+    // (census L5-22 1a-iii).
+    let capture = capture.filter(|capture| {
+        if capture.keeps_image() || by_hash.values().all(|row| row.open().is_some()) {
+            return true;
+        }
+        capture.spoil();
+        false
+    });
 
     let handoff_or_appointment_retired_keys = retirements.handoff_or_appointment_retired_keys();
     let kept = capture.map(|_| {
@@ -643,7 +677,7 @@ pub(super) fn fold_authority_log_once_with(
             issues.clone(),
         )
     });
-    let (fold, final_merged) = super::fold_project::project_once(
+    let (mut fold, final_merged) = super::fold_project::project_once(
         super::fold_project::Settled {
             merged,
             valid_entries,
@@ -663,6 +697,7 @@ pub(super) fn fold_authority_log_once_with(
         },
         context,
     );
+    fold.pass_through_entries = pass_through_entries;
     if let (
         Some(capture),
         Some((

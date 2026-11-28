@@ -12,7 +12,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::ancestor_index::AncestorIndex;
 use super::fold_engine::{FoldContext, JudgedRows, OnceFloors};
-use super::{AuthorityEntryHash, AuthorityFold, AuthorityKey, AuthorityLogEntry, AuthorityVaultId};
+use super::{
+    AuthorityEntryHash, AuthorityFold, AuthorityKey, AuthorityLogEntry, AuthorityVaultId, FoldRow,
+};
 
 static NO_PEERS: BTreeMap<AuthorityVaultId, BTreeSet<AuthorityKey>> = BTreeMap::new();
 static NO_HANDOFFS: BTreeSet<AuthorityEntryHash> = BTreeSet::new();
@@ -62,7 +64,8 @@ pub fn fold_both_ways(entries: &[AuthorityLogEntry], arrival: &[usize]) -> Floor
     let floors = arrival_floors(entries, &hashes, arrival);
     // The rows both folds judge (`fold_engine::judged_entries`): the lift's
     // probe reads their signature verdicts.
-    let (by_hash, _) = super::fold_engine::judged_entries(entries);
+    let rows = super::fold_engine::open_rows(entries);
+    let (by_hash, _) = super::fold_engine::judged_entries(&rows);
     let (ancestors, _) = super::ancestor_index::entry_ancestor_index(&by_hash, u64::MAX)
         .expect("no memory floor refuses");
     let rows_floored = effective(
@@ -73,13 +76,13 @@ pub fn fold_both_ways(entries: &[AuthorityLogEntry], arrival: &[usize]) -> Floor
     let lifted = arrival_lifted_floors(&by_hash, &ancestors, context(Some(&floors)));
     let arrival_floored_after_lift = effective(&by_hash, &lifted.applied);
     let by_rows = super::fold_engine::fold_authority_log_once(
-        entries,
+        &rows,
         context(Some(&super::fold_engine::SEQUENCE_FLOORS_FROM_ROWS)),
         None,
         None,
     );
     let by_arrival = super::fold_engine::fold_authority_log_once_with(
-        entries,
+        &rows,
         context(Some(&floors)),
         None,
         None,
@@ -154,28 +157,28 @@ fn arrival_floors(
 
 /// The rows of `floors` whose own sequence is below their floor.
 fn effective(
-    by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    by_hash: &BTreeMap<AuthorityEntryHash, FoldRow>,
     floors: &BTreeMap<AuthorityEntryHash, u64>,
 ) -> usize {
     floors
         .iter()
-        .filter(|(hash, floor)| by_hash.get(*hash).is_some_and(|entry| entry.seq < **floor))
+        .filter(|(hash, floor)| by_hash.get(*hash).is_some_and(|row| row.seq() < **floor))
         .count()
 }
 
 fn single_chain(
-    by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    by_hash: &BTreeMap<AuthorityEntryHash, FoldRow>,
     ancestors: &AncestorIndex,
 ) -> bool {
     let mut scopes = BTreeMap::<_, Vec<(u64, AuthorityEntryHash)>>::new();
-    for (hash, entry) in by_hash {
+    for (hash, row) in by_hash {
         scopes
             .entry((
-                entry.signer_key(),
-                super::world_privacy::side_world(&entry.op),
+                row.signer_key(),
+                row.op().and_then(super::world_privacy::side_world),
             ))
             .or_default()
-            .push((entry.seq, *hash));
+            .push((row.seq(), *hash));
     }
     scopes.values_mut().all(|rows| {
         rows.sort_unstable();
@@ -205,8 +208,8 @@ fn arrival_lifted_floors(
         let before = floors.len();
         for (tip_hash, tip) in by_hash.iter() {
             let tip_floor = original.get(tip_hash).copied();
-            let rollback_tip = tip_floor.is_some_and(|floor| tip.seq < floor);
-            let roster_tip = super::entry_transition::changes_roster(&tip.op);
+            let rollback_tip = tip_floor.is_some_and(|floor| tip.seq() < floor);
+            let roster_tip = super::entry_transition::row_changes_roster(tip);
             if rollback_tip && !roster_tip {
                 continue;
             }
@@ -218,13 +221,13 @@ fn arrival_lifted_floors(
                 .filter(|hash| {
                     by_hash.get(*hash).is_some_and(|entry| {
                         let in_flight =
-                            !rollback_tip && tip_floor.is_none_or(|floor| entry.seq > floor);
+                            !rollback_tip && tip_floor.is_none_or(|floor| entry.seq() > floor);
                         let refused_below_roster_row =
-                            roster_tip && super::entry_transition::floor_refuses(&entry.op);
+                            roster_tip && super::entry_transition::row_floor_refuses(entry);
                         entry.signer_key() == tip.signer_key()
-                            && entry.seq < tip.seq
+                            && entry.seq() < tip.seq()
                             && (in_flight || refused_below_roster_row)
-                            && floors.get(*hash).is_some_and(|floor| entry.seq < *floor)
+                            && floors.get(*hash).is_some_and(|floor| entry.seq() < *floor)
                     })
                 })
                 .copied()

@@ -32,7 +32,7 @@ use super::*;
 use crate::EntityId;
 
 /// A row a kept door view decoded, shared with its structure builder.
-type KeptRow = Arc<AuthorityLogEntry>;
+type KeptRow = Arc<FoldRow>;
 
 /// What a door view read, so a later generation's view reads only the rows
 /// stored past it.
@@ -190,12 +190,13 @@ pub(super) fn rebuilt_door_view(
     rebuilt(store, txn, &Inputs::read(store, txn)?, Snapshot::Other)
 }
 
-/// One stored row, opened with its overlay record when it seals one (census
-/// L5-22).
+/// One stored row as the fold takes it: opened with its overlay record when
+/// it seals one, or, when that record does not open here, as structure
+/// (census L5-22 1a-iii).
 fn decode_row(store: &Store, txn: &heed::RoTxn<'_>, body: &[u8]) -> crate::error::Result<KeptRow> {
     #[cfg(oneiron_test_support)]
     DOOR_VIEW_ROWS_DECODED.with(|rows| rows.set(rows.get() + 1));
-    Ok(Arc::new(open_vault_authority_body_in_txn(
+    Ok(Arc::new(decode_vault_authority_fold_row_in_txn(
         store, txn, body,
     )?))
 }
@@ -204,21 +205,17 @@ fn decode_row(store: &Store, txn: &heed::RoTxn<'_>, body: &[u8]) -> crate::error
 /// `evidence`'s image covers, under `structure`.
 fn tally_of<'e>(
     structure: &AuthorityStructure,
-    entries: impl Iterator<Item = &'e AuthorityLogEntry>,
+    entries: impl Iterator<Item = &'e FoldRow>,
     evidence: Option<&AdoptedEvidence>,
 ) -> Tally {
     let mut tally = Tally::default();
-    for entry in entries {
-        tally.count(
-            structure,
-            entry.signer_key(),
-            is_slip_op(&entry.op),
-            Some(entry),
-        );
+    for row in entries {
+        tally.count(structure, row.signer_key(), is_slip_row(row), Some(row));
     }
     if let Some(evidence) = evidence {
-        for (hash, row) in evidence.rows() {
-            tally.count(structure, &row.signer, row.slip_op, evidence.body(hash));
+        for (hash, summary) in evidence.rows() {
+            let row = evidence.body(hash).cloned().map(FoldRow::Open);
+            tally.count(structure, &summary.signer, summary.slip_op, row.as_ref());
         }
     }
     tally
@@ -274,7 +271,7 @@ fn rebuilt(
         .iter()
         .flat_map(|evidence| evidence.bodies().values())
     {
-        builder.push(Arc::new(carried.clone()));
+        builder.push(Arc::new(FoldRow::Open(carried.clone())));
     }
     for entry in &entries {
         builder.push(Arc::clone(entry));
@@ -287,8 +284,8 @@ fn rebuilt(
         evidence,
     );
     let mut projection = DoorProjection::default();
-    for entry in &entries {
-        projection.insert(authority_entry_hash(entry)?, &entry.parent_hashes);
+    for row in &entries {
+        projection.insert(row.hash()?, row.parent_hashes());
     }
     if let Some(evidence) = evidence {
         for (hash, row) in evidence.rows() {
@@ -433,7 +430,7 @@ fn extended_view(
             continue;
         }
         let entry = decode_row(store, txn, &authority_log_body_in_txn(store, txn, &id)?)?;
-        projection.insert(authority_entry_hash(&entry)?, &entry.parent_hashes);
+        projection.insert(entry.hash()?, entry.parent_hashes());
         rows.ids.insert(id, Some(Arc::clone(&entry)));
         entries.push(entry);
     }
@@ -450,12 +447,12 @@ fn extended_view(
             inputs.evidence.as_deref(),
         );
     } else {
-        for entry in &entries {
+        for row in &entries {
             rows.tally.count(
                 &rows.builder.structure,
-                entry.signer_key(),
-                is_slip_op(&entry.op),
-                Some(entry),
+                row.signer_key(),
+                is_slip_row(row),
+                Some(row),
             );
         }
     }

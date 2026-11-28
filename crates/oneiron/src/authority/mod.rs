@@ -292,8 +292,15 @@ pub use recovery_hold::{
 // Census L5-22: this vault's reads of a sealed authority row.
 pub(crate) use overlay_rows::{
     AUTHORITY_OVERLAY_ROW_MAX, CarriedOverlays, carried_overlays_in_txn,
+    decode_carried_authority_fold_row_in_txn, decode_vault_authority_fold_row_in_txn,
     open_carried_authority_body_in_txn, open_vault_authority_body_in_txn,
     stage_carried_overlays_in_txn,
+};
+// Census L5-22 1a-iii: the key events the vault's custody carrier
+// (`crate::sync::authority_overlay_custody`) delivers.
+#[cfg_attr(not(feature = "sync"), allow(unused_imports))]
+pub(crate) use overlay_rows::{
+    install_authority_overlay_key_in_txn, retire_authority_overlay_subject_in_txn,
 };
 // The export secret work body and its sealed result (FIX 4624(b)).
 pub use export_secret_work::{
@@ -652,10 +659,10 @@ pub(crate) use readonly_fold::folded_vault_id_of_records;
 pub(crate) use readonly_fold::is_history_incomplete;
 pub(crate) use readonly_fold::{
     AuthorityCachedFold, advance_authority_cache_generation, authority_cache_generation,
-    authority_fold_readonly_for_store_in_txn,
+    authority_fold_readonly_for_store_in_txn, note_authority_overlay_openness_change_in_txn,
 };
 use readonly_fold::{
-    authority_log_body_in_txn, authority_log_rows_in_txn, decode_stored_authority_log_body,
+    authority_log_body_in_txn, authority_log_rows_in_txn, decode_stored_authority_fold_row,
 };
 pub(crate) use recovery::arriving_re_root;
 pub(crate) use retired_signers::{authority_row_resident, door_ancestor_row, stored_authority_row};
@@ -680,7 +687,9 @@ pub(crate) use machine_write::{
 };
 use observation_policy::authority_observation_policy_in_txn;
 use op_apply::*;
-use sequence_observation::{AuthorityLocalObservations, authority_local_observations_in_txn};
+use sequence_observation::AuthorityLocalObservations;
+#[cfg(test)]
+use sequence_observation::authority_local_observations_in_txn;
 use stale_roster::{apply_stale_roster_window, next_stale_roster_deadline};
 pub use world_key_fold::{FoldedWorldKey, WORLD_KEY_WRAPS_PER_RECIPIENT, WrappedKey};
 pub(crate) use world_key_support::{

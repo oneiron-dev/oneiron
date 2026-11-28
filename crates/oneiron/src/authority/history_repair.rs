@@ -76,19 +76,21 @@ pub enum AuthorityRepairOutcome {
     },
 }
 
-/// The staged rows, decoded, in hash order.
+/// The staged rows, decoded as fold rows, in hash order. A sealed row whose
+/// record does not open here stages as structure; its bytes still land
+/// verbatim once the gap closes.
 pub(super) fn staged_rows_in_txn(store: &Store, txn: &heed::RoTxn<'_>) -> Result<Vec<DecodedRow>> {
     AUTHORITY_HISTORY_STAGE
         .scan(store, txn)?
         .into_iter()
         .map(|(hash, bytes)| {
-            let entry = open_vault_authority_body_in_txn(store, txn, &bytes)?;
-            if authority_entry_hash(&entry)? != hash {
+            let row = decode_vault_authority_fold_row_in_txn(store, txn, &bytes)?;
+            if row.hash()? != hash {
                 return Err(crate::error::Error::CorruptedIndex(
                     "authority history stage key",
                 ));
             }
-            Ok((hash, bytes, entry))
+            Ok((hash, bytes, row))
         })
         .collect()
 }
@@ -164,9 +166,9 @@ impl Vault {
         let mut dropped = BTreeSet::from([refused]);
         loop {
             let before = dropped.len();
-            for (hash, _, entry) in staged.iter().chain(decoded) {
-                if entry
-                    .parent_hashes
+            for (hash, _, row) in staged.iter().chain(decoded) {
+                if row
+                    .parent_hashes()
                     .iter()
                     .any(|parent| dropped.contains(parent))
                 {
@@ -222,10 +224,10 @@ impl Vault {
         let mut merged = history_in_txn(self, &txn)?;
         let resident: BTreeSet<AuthorityEntryHash> = merged.keys().copied().collect();
         let staged = staged_rows_in_txn(&self.store, &txn)?;
-        for (hash, bytes, entry) in staged.iter().chain(decoded) {
+        for (hash, bytes, row) in staged.iter().chain(decoded) {
             merged
                 .entry(*hash)
-                .or_insert_with(|| (bytes.clone(), entry.clone()));
+                .or_insert_with(|| (bytes.clone(), row.clone()));
         }
         let adopted =
             super::checkpoint_adopt::cached_adopted_authority_checkpoint_in_txn(&self.store, &txn)?;
@@ -244,15 +246,30 @@ impl Vault {
                 .map(|(_, bytes, _)| bytes.as_slice()),
             overlays,
         )?;
-        for (hash, bytes, entry) in decoded {
+        for (hash, bytes, row) in decoded {
             if resident.contains(hash) {
                 continue;
             }
-            let opened = open_vault_authority_body_in_txn(&self.store, &txn, bytes)?;
-            if opened != *entry || authority_entry_hash(&opened)? != *hash {
+            // The bytes decode again with the staged overlay now held: the
+            // same hash, its stage key. An open row must re-decode to the
+            // same row; a sealed row that does not open compares by hash
+            // and raw bytes only (no row equality), so a row the staged
+            // overlay now opens still lands. The stage never replaces bytes
+            // under a held key: conflicting bytes refuse.
+            let opened = decode_vault_authority_fold_row_in_txn(&self.store, &txn, bytes)?;
+            if opened.hash()? != *hash {
                 return Err(invalid_authority());
             }
-            verify_entry_signatures(&opened)?;
+            if row.open().is_some() && opened != *row {
+                return Err(invalid_authority());
+            }
+            let held = AUTHORITY_HISTORY_STAGE.get(&self.store, &txn, hash)?;
+            if held.as_ref().is_some_and(|staged| staged != bytes) {
+                return Err(invalid_authority());
+            }
+            if !super::log_structure::row_signatures_verified(&opened) {
+                return Err(invalid_authority());
+            }
             AUTHORITY_HISTORY_STAGE.put(&self.store, &mut txn, hash, bytes)?;
         }
         let waiting: BTreeSet<AuthorityEntryHash> = merged

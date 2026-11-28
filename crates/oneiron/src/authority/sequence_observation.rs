@@ -106,13 +106,6 @@ pub(super) fn authority_observation_peer_id(signer: &AuthorityKey) -> String {
 /// of different worlds never name each other. A world's settings edits are
 /// main-log rows (mesh contract §6); inside a world the scope is one stream
 /// over its key records (Astra #1422c F2, F3).
-fn sequence_key(entry: &AuthorityLogEntry) -> String {
-    sequence_key_of(
-        entry.signer_key(),
-        super::world_privacy::side_world(&entry.op),
-    )
-}
-
 fn sequence_key_of(signer: &AuthorityKey, world: Option<crate::EntityId>) -> String {
     let peer = authority_observation_peer_id(signer);
     match world {
@@ -144,15 +137,20 @@ fn read_u64(raw: &[u8]) -> Result<u64> {
 
 /// Called at the shared successful-put site in the row's own transaction.
 /// Returns whether this is a new hash, for exactly-once ingest accounting.
+///
+/// A row whose record does not open here keys on its signer's main log, as
+/// [`super::fold_resume::RowMeta::of_row`] reads it. No sealed kind is a
+/// side entry ([`PublicStanding`] holds no world-key record or world join),
+/// so the key does not move when the row opens later.
 pub(crate) fn record_authority_sequence_observation_in_txn(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
-    entry: &AuthorityLogEntry,
+    row: &FoldRow,
     hash: &AuthorityEntryHash,
 ) -> Result<bool> {
     // A root appointment moves no mark of its anchor (E5): its receipt only
     // counts its first arrival, under a key the floor reader never reads.
-    let appointment = matches!(entry.op, AuthorityOp::RootAppointment(_));
+    let appointment = matches!(row.op(), Some(AuthorityOp::RootAppointment(_)));
     let receipt_key = if appointment {
         appointment_receipt_key(hash)
     } else {
@@ -161,15 +159,32 @@ pub(crate) fn record_authority_sequence_observation_in_txn(
     if SEQ_OBSERVATION.get(store, txn, &receipt_key)?.is_some() {
         return Ok(false);
     }
-    let key = sequence_key(entry);
+    let key = sequence_key_of(
+        row.signer_key(),
+        row.op().and_then(super::world_privacy::side_world),
+    );
+    let seq = row.seq();
     let previous = SEQ_HWM.get(store, txn, &key)?;
     SEQ_OBSERVATION.put(store, txn, &receipt_key, &SequenceReceipt(previous))?;
     if appointment {
         return Ok(true);
     }
-    let next = previous.map_or(entry.seq, |value| value.max(entry.seq));
+    let next = previous.map_or(seq, |value| value.max(seq));
     SEQ_HWM.put(store, txn, &key, &next)?;
     Ok(true)
+}
+
+/// Whether the row at `hash` took its first-observation receipt (tests:
+/// census L5-22 T-RECEIPT).
+#[cfg(test)]
+pub(super) fn has_sequence_receipt_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    hash: &AuthorityEntryHash,
+) -> Result<bool> {
+    Ok(SEQ_OBSERVATION
+        .get(store, txn, &receipt_key(hash))?
+        .is_some())
 }
 
 /// This install's local fold inputs: its observation policy, with no vouch

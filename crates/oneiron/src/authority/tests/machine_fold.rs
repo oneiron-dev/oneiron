@@ -654,6 +654,7 @@ fn a_custodians_successor_never_vouches_for_a_machine() {
     let machine = EntityId::now();
     let mark = owned_mark(id, &handoff, &successor, 1, machine, 107);
     let entries = [genesis, handoff.clone(), mark];
+    let rows = super::super::fold_engine::open_rows(&entries);
     for fold in [
         fold_authority_log_for_posture(
             &entries,
@@ -663,7 +664,7 @@ fn a_custodians_successor_never_vouches_for_a_machine() {
             crate::HostingPrivacyPosture::Hosted,
         ),
         super::super::fold_engine::fold_own_authority_log(
-            &entries,
+            &rows,
             crate::HostingPrivacyPosture::Hosted,
             None,
         ),

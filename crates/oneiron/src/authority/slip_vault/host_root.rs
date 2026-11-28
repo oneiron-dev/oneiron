@@ -70,8 +70,10 @@ impl Vault {
             pending.push(genesis);
             // Only bootstrap on no records, never on a confused/invalid fold.
             let pin = crate::authority::pinned_root::read_pinned_root_in_txn(&self.store, txn)?;
+            // The bootstrap genesis is newly signed and always opens.
+            let rows = crate::authority::fold_engine::open_rows(&pending);
             fold = crate::authority::fold_engine::fold_own_authority_log(
-                &pending,
+                &rows,
                 self.privacy_posture(),
                 pin.as_ref(),
             );

@@ -400,18 +400,18 @@ pub(super) fn held_at_owner_reserve(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     view: &AuthorityDoorView,
-    entry: &AuthorityLogEntry,
+    row: &FoldRow,
     fold: &DoorFold<'_>,
 ) -> crate::error::Result<bool> {
-    let hash = authority_entry_hash(entry)?;
+    let hash = row.hash()?;
     let start = owner_reserve_start(store, txn)?;
     let Some(with_entry) = view
         .projection
-        .bytes_with_past(start, &hash, &entry.parent_hashes)
+        .bytes_with_past(start, &hash, row.parent_hashes())
     else {
         return Ok(false);
     };
-    if owner_work(store, txn, &view.structure, fold, &hash, entry)? {
+    if owner_work(store, txn, &view.structure, fold, &hash, row)? {
         return Ok(false);
     }
     hold_at_owner_reserve(
@@ -435,19 +435,19 @@ pub(super) fn held_at_owner_reserve(
 pub(crate) fn held_at_owner_reserve_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
-    entry: &AuthorityLogEntry,
+    row: &FoldRow,
     fold: DoorFold<'_>,
 ) -> crate::error::Result<bool> {
     #[cfg(any(test, oneiron_test_support))]
     if DOOR_OPEN_FOR_TEST.with(std::cell::Cell::get) {
         return Ok(false);
     }
-    if authority_row_resident(store, txn, entry)? {
+    if authority_row_resident(store, txn, row)? {
         return Ok(false);
     }
     let view = door_view(store, txn)?;
-    if !view.structure.vouches_for(entry) || verify_entry_signatures(entry).is_err() {
+    if !view.structure.vouches_for(row) || !row_signatures_verified(row) {
         return Ok(false);
     }
-    held_at_owner_reserve(store, txn, &view, entry, &fold)
+    held_at_owner_reserve(store, txn, &view, row, &fold)
 }

@@ -237,6 +237,11 @@ pub(super) fn settle_tail(
 ) -> Result<std::result::Result<SettledTail, AuthorityHistoryReason>> {
     let mut issues = image.safety.issues.clone();
     let judged = judged_tail(image, tail, &mut issues);
+    // The seeded fold takes rows; everything else here reads the judged whole entries.
+    let judged_rows = judged
+        .iter()
+        .map(|(hash, entry)| (*hash, FoldRow::Open(entry.clone())))
+        .collect::<BTreeMap<_, _>>();
     // Every body the image carries, decoded once.
     let carried = image
         .rows
@@ -253,9 +258,9 @@ pub(super) fn settle_tail(
         .iter()
         .copied()
         .chain(
-            judged
+            judged_rows
                 .iter()
-                .filter(|(_, entry)| crate::authority::log_budget::is_uncounted(entry, &issuers))
+                .filter(|(_, row)| crate::authority::log_budget::is_uncounted(row, &issuers))
                 .map(|(hash, _)| *hash),
         )
         .collect();
@@ -315,7 +320,7 @@ pub(super) fn settle_tail(
         seed.insert(*parent, state);
     }
     let mut states = crate::authority::fold_schedule::fold_entry_states_seeded(
-        &judged,
+        &judged_rows,
         &seed,
         context,
         &mut issues,

@@ -8,14 +8,15 @@ use super::*;
 
 /// Whether a slip issuer of `structure` that `fold` holds as a live owner on
 /// its roster, retired by no handoff, signs or cosigns `entry`: the owner
-/// key branch of [`super::signs_for_the_owner`].
+/// key branch of [`super::signs_for_the_owner`]. A row that passes through
+/// is judged by its signed envelope (census L5-22 1a-iii).
 pub(super) fn an_owner_key_signs(
     structure: &AuthorityStructure,
     fold: &AuthorityFold,
-    entry: &AuthorityLogEntry,
+    row: &FoldRow,
 ) -> bool {
-    std::iter::once(&entry.signer)
-        .chain(&entry.cosigns)
+    std::iter::once(row.signer())
+        .chain(row.cosigns())
         .any(|signature| {
             let key = &signature.public_key;
             structure.issuers.contains(key)
@@ -31,10 +32,12 @@ pub(super) fn answered_row(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     hash: &AuthorityEntryHash,
-) -> crate::error::Result<Option<AuthorityLogEntry>> {
-    match crate::authority::retired_signers::stored_authority_row(store, txn, hash)? {
+) -> crate::error::Result<Option<FoldRow>> {
+    match crate::authority::retired_signers::stored_authority_fold_row(store, txn, hash)? {
         Some(asked) => Ok(Some(asked)),
-        None => crate::authority::adopted_evidence::CarriedRows::default().get(store, txn, hash),
+        None => Ok(crate::authority::adopted_evidence::CarriedRows::default()
+            .get(store, txn, hash)?
+            .map(FoldRow::Open)),
     }
 }
 
