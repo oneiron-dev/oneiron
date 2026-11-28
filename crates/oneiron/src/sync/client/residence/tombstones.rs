@@ -305,12 +305,6 @@ fn drop_soft_deleted_thin_copy(
         }
         if indexed {
             RESIDENCE_INDEX.delete(&vault.store, txn, &listed)?;
-            crate::sync::residence::delete_index_by_item_in_txn(
-                &vault.store,
-                txn,
-                window.as_str(),
-                &hex,
-            )?;
         }
         Ok(true)
     })
