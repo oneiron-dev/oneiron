@@ -16,10 +16,11 @@ use fixture::{
     HeldWave, KIND, WORKER, claim, claimed, enqueued, held_wave_planner, open, read, resume,
     unix_now,
 };
-use oneiron::agent_dispatch::{AgentDispatcher, BudgetHoldLease};
+use oneiron::agent_dispatch::{AgentDispatcher, BudgetHoldLease, ChildSpend, SpendScopeId};
 use oneiron::attempt_queue::{
     AttemptId, AttemptQueue, AttemptResumePoint, AttemptState, EnqueueAttempt,
 };
+use oneiron::llm::run_admission::{DeclaredMaximum, LeaseUnit, MaximumShown};
 use oneiron::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};
 use oneiron::task_verb::run_control::{RunControlEffect, RunControlRequest};
 use oneiron::{EdgeActorClass, Vault, VaultConfig};
@@ -39,6 +40,17 @@ fn overrides(vault: &Vault) -> Vec<ReceiptRecord> {
 
 /// A leased row the spend cap parked, under its run's plan hold.
 fn budget_held_row(vault: &Vault, queue: &AttemptQueue<'_>, now: u64) -> AttemptId {
+    budget_held_row_spending(vault, queue, None, now)
+}
+
+/// [`budget_held_row`] for a run that first carves `units` from the root
+/// scope `root` and spends all of them, so its own carve has nothing left.
+fn budget_held_row_spending(
+    vault: &Vault,
+    queue: &AttemptQueue<'_>,
+    spend: Option<(&SpendScopeId, u64)>,
+    now: u64,
+) -> AttemptId {
     let row = enqueued(
         queue
             .enqueue(EnqueueAttempt {
@@ -50,6 +62,23 @@ fn budget_held_row(vault: &Vault, queue: &AttemptQueue<'_>, now: u64) -> Attempt
             })
             .expect("enqueue"),
     );
+    if let Some((root, units)) = spend {
+        let dispatcher = AgentDispatcher::new(vault);
+        vault
+            .with_write_txn(|txn| {
+                Ok(dispatcher.reserve_child_in_txn(
+                    txn,
+                    root,
+                    &row.id,
+                    ChildSpend::Carve { cap_units: units },
+                    now,
+                )?)
+            })
+            .expect("the run carves its scope");
+        dispatcher
+            .charge(&SpendScopeId::for_attempt(&row.id), units)
+            .expect("the run spends to its cap");
+    }
     let leased = claimed(claim(queue, KIND, now + 1));
     AgentDispatcher::new(vault)
         .hold_for_budget(
@@ -108,6 +137,77 @@ fn the_owners_override_leaves_a_receipt_naming_the_owner_and_the_hold() {
         Some("budget")
     );
     assert_eq!(receipt.fields.get("attempt"), Some(&hex(held)));
+    assert!(
+        !receipt
+            .fields
+            .keys()
+            .any(|key| key.starts_with("shortfall")),
+        "an unmetered run is short of nothing: {:?}",
+        receipt.fields
+    );
+}
+
+/// RESUME-SPEND-CAP-OWNER-DOORS = A: the owner's override stays open while
+/// the held run's scope has nothing left, and its receipt names the
+/// shortfall: the scope whose cap binds, that cap and its unit. The run
+/// carves 100 tokens from a 200-token root and spends all 100, so its own
+/// carve binds.
+#[test]
+fn the_owners_override_of_a_run_with_no_spend_left_names_the_shortfall() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let mut config = VaultConfig::device();
+    config.dimensions = 4;
+    config.embedding_model = Some("test/model@v1".to_owned());
+    let vault = Vault::open_owned(dir.path(), config).expect("vault opens");
+    let queue = AttemptQueue::new(&vault);
+    let now = unix_now();
+    let root = SpendScopeId::launch("override-shortfall").expect("a launch id");
+    AgentDispatcher::new(&vault)
+        .open_root_spend_scope(
+            root.clone(),
+            DeclaredMaximum {
+                units: 200,
+                unit: LeaseUnit::tokens(),
+            },
+            Some(MaximumShown { at_ms: now * 1000 }),
+            now,
+        )
+        .expect("the root scope opens");
+    let held = budget_held_row_spending(&vault, &queue, Some((&root, 100)), now);
+
+    let owner = vault.ensure_embedded_owner_actor().expect("owner");
+    assert_eq!(
+        vault
+            .memory(owner, EdgeActorClass::Human)
+            .runs_resume(RunControlRequest {
+                branch: hex(held),
+                note: None,
+            })
+            .expect("the owner's override goes through with nothing left")
+            .effect,
+        RunControlEffect::Resumed
+    );
+    assert_eq!(read(&queue, held).state, AttemptState::Queued);
+
+    let receipts = overrides(&vault);
+    assert_eq!(receipts.len(), 1, "one override, one receipt");
+    let fields = &receipts[0].fields;
+    assert_eq!(fields.get("hold").map(String::as_str), Some("budget"));
+    assert_eq!(
+        fields.get("shortfall_scope"),
+        Some(&hex(held)),
+        "the run's own carve binds: {fields:?}"
+    );
+    assert_eq!(
+        fields.get("shortfall_cap_units").map(String::as_str),
+        Some("100"),
+        "{fields:?}"
+    );
+    assert_eq!(
+        fields.get("shortfall_unit").map(String::as_str),
+        Some("tokens"),
+        "{fields:?}"
+    );
 }
 
 /// The engine's own generic Resume of a fan-out held planner is an override

@@ -78,7 +78,7 @@ pub(crate) use hold_override::erase_hold_override_actor_in_txn;
 #[cfg(oneiron_test_support)]
 pub(crate) use hold_override::hold_override_actor_in_txn;
 pub(crate) use hold_override_receipt::{
-    erase_hold_override_receipt_actor_in_txn, hold_override_receipts,
+    BudgetShortfall, erase_hold_override_receipt_actor_in_txn, hold_override_receipts,
 };
 pub(crate) use hook_hold::HoldAttemptForHook;
 #[cfg(oneiron_test_support)]

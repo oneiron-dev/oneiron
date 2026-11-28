@@ -248,14 +248,12 @@ pub fn resume_budget_hold_as_owner(
     let actor = owner.revalidate_principal_ref(vault)?;
     let root = attempt_id(&input.run)?;
     let dispatcher = AgentDispatcher::new(vault);
-    let hold = dispatcher
+    // The hold records the scope's reading as the owner sees it; the resume
+    // refuses a run with nothing left in its own write, as the owner's HTTP
+    // hold door does (RESUME-SPEND-CAP-OWNER-DOORS = A).
+    dispatcher
         .refresh_budget_hold(root)?
         .ok_or_else(|| invalid("run has no budget hold"))?;
-    if !hold.resume_ready {
-        return Err(invalid(
-            "top up the held run's binding lease before resuming",
-        ));
-    }
     dispatcher.resume_budget_hold(root, actor, crate::unix_seconds_now())
 }
 
