@@ -1,5 +1,6 @@
 //! The owner's task-type tree doors (DOOR-111), with the owner's own proof:
-//! store an authored tree on an open team-shape fork as a candidate, and
+//! store an authored tree on an open team-shape fork as a candidate, put a
+//! stored tree or an earlier revision's tree in force for the vault, and
 //! read the tree in force or one kept version; and the owner's launch of one
 //! planned agent or team on this host's planner, and the owner's read of one
 //! spawned agent by its attempt; and the owner's run doors over one TASK's
@@ -37,7 +38,7 @@ use oneiron::team::PlannedSpawnHost;
 use oneiron::team::doors::{
     CriticAssociation, ObservationIssue, PlannedSpawnObservation, PlannedSpawnRead,
     SpawnIntentReply, SpawnIntentRequest, TaskTypeTreePin, TaskTypeTreePinReceipt,
-    TaskTypeTreeRead, TaskTypeTreeReadReply,
+    TaskTypeTreePromote, TaskTypeTreePromoteReceipt, TaskTypeTreeRead, TaskTypeTreeReadReply,
 };
 
 use super::host_doors::support::{MaybeListed, owner_proof};
@@ -65,6 +66,29 @@ pub(crate) async fn vault_task_types_pin(
         owner_proof(auth, server, VERB),
         move |server, owner| oneiron::team::doors::pin_tree_as(server.vault(), &owner, input),
         |stored| Some(vec![stored.fork_ref]),
+    )
+    .await
+}
+
+/// A promote names the team-shape head it put in force and the head that
+/// head superseded.
+pub(crate) async fn vault_task_types_promote(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: TaskTypeTreePromote,
+) -> MaybeListed<TaskTypeTreePromoteReceipt> {
+    const VERB: &str = "vault.task_types.promote";
+    as_person_naming(
+        server,
+        VERB,
+        owner_proof(auth, server, VERB),
+        move |server, owner| oneiron::team::doors::promote_tree_as(server.vault(), &owner, input),
+        |promoted| {
+            Some(vec![
+                promoted.in_force_skill_ref,
+                promoted.superseded_skill_ref,
+            ])
+        },
     )
     .await
 }

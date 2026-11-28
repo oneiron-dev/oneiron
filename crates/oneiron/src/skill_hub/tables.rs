@@ -76,6 +76,12 @@ crate::side_table::side_tables! {
     /// survives deletion so it cannot be laundered by delete/recreate. Key: id16.
     SKILL_HUB_ORIGIN: VaultMeta b"skill_hub/origin/v1\0" Raw
         [restore: content] [family: unclassified] [tier: canonical];
+    /// The owner's last task-type tree pin on one open team-shape fork (`vault.task_types.pin`):
+    /// the version it stored the tree at and the fork's package hash after that write;
+    /// `vault.task_types.promote` takes only that tree from the fork (ARCH-0079 #seed-pin).
+    /// Key: id16 (the fork).
+    SKILL_HUB_OWNER_TREE_STAGE: VaultMeta b"skill_hub/owner-tree-stage/v1\0" Named
+        [restore: content] [family: unclassified] [tier: canonical];
     /// Persisted hub package sidecar (custom MAGIC-framed binary envelope) for a skill entity. Key:
     /// id16.
     SKILL_HUB_PACKAGE: VaultMeta b"skill_hub/package/v1\0" Raw

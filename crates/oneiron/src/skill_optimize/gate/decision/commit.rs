@@ -181,7 +181,7 @@ pub(super) fn decide_in_txn(
 /// Idempotent, and silent when the record has already moved: the caller is
 /// inside a transaction that has just written the ruling, and racing to close a
 /// record someone else closed is not a reason to roll that ruling back.
-pub(in crate::skill_optimize::gate) fn close_answered_proposal_in_txn(
+pub(crate) fn close_answered_proposal_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     proposal: &EntityId,

@@ -283,6 +283,7 @@ pub use self::tradeoff_route::{
     TRADEOFF_ROUTE_NOTIFICATION_PRODUCER, TradeoffRouteChannel, TradeoffRouteIssue,
     TradeoffRouteReport,
 };
+pub(crate) use gate::close_answered_proposal_in_txn;
 #[cfg(oneiron_test_support)]
 pub(crate) use gate::live_axis_plan_digest_for_test;
 pub use gate::{

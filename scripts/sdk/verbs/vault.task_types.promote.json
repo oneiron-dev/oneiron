@@ -1,0 +1,17 @@
+{
+  "name": "vault.task_types.promote",
+  "description": "The owner puts a task-type tree in force for the vault at once: the one vault.task_types.pin stored on an open fork, or an earlier revision's tree as a revert; the Coach then only proposes over it.",
+  "input": "crate::team::doors::TaskTypeTreePromote",
+  "output": "crate::team::doors::TaskTypeTreePromoteReceipt",
+  "call": "crate::team::doors::promote_tree_as(memory.vault(), &memory.embedded_owner(\"vault.task_types.promote\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "act_class": "reversible_work",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

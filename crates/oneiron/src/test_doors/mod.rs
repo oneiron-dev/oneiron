@@ -424,6 +424,7 @@ pub mod sync_whole_row_binding;
 pub mod task_ask_role_routing;
 pub mod task_brief_compose;
 pub mod task_refusal_output;
+pub mod team_tree_promote;
 pub mod tombstone_replay;
 #[cfg(feature = "sync")]
 pub mod training_corpus;

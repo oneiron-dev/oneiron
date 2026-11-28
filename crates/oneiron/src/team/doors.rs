@@ -1,11 +1,14 @@
 //! The owner's task-type tree doors (DOOR-111, OF-541): store an authored
-//! tree on an open team-shape fork, and read the tree in force or one kept
-//! version.
+//! tree on an open team-shape fork, put a stored tree or an earlier
+//! revision's tree in force for the vault, and read the tree in force or one
+//! kept version.
 //!
-//! Storing is candidate storage only. The fork keeps its lifecycle and goes
-//! in force when the ordinary admission gate admits it; the receipt says
-//! whether it is in force for the scope the pin names, and nothing here
-//! admits, flips a lifecycle or registers a fork.
+//! Storing is candidate storage only. The fork keeps its lifecycle; the
+//! receipt says whether it is in force for the scope the pin names, and the
+//! pin admits nothing, flips no lifecycle and registers no fork. The owner's
+//! promote puts a tree in force at once (ARCH-0079 #seed-pin; lead
+//! COORD-E2E-TREE-PIN = A): a new revision of the vault team-shape head,
+//! owner-pinned, which the Coach proposes over and never replaces.
 //!
 //! The owner also reads one spawned agent by its attempt (S6): what the
 //! stores hold for it, every stamp as stored. A stamp that disagrees is an
@@ -18,8 +21,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 use crate::agent_dispatch::{
-    load_team_type_tree_at_in_txn, load_team_type_tree_in_txn, store_team_type_tree,
-    team_shape_skill_in_force_in_txn,
+    TreePromoteSource, load_team_type_tree_at_in_txn, load_team_type_tree_in_txn,
+    promote_team_type_tree, store_owner_team_type_tree, team_shape_skill_in_force_in_txn,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::error::Error;
@@ -45,7 +48,8 @@ pub use oneiron_verb_wire::team::doors::{
     BorrowedCellView, CriticAssociation, CriticObservation, LearningCellView, LearningEvidenceView,
     LearningObservation, ObservationIssue, PlannedSpawnRead, ProviderPinView, RouteObservation,
     SkillRevisionView, TaskTypeNodeSpec, TaskTypeNodeView, TaskTypeTreePin, TaskTypeTreePinReceipt,
-    TaskTypeTreeRead, TaskTypeTreeReadReply, TaskTypeTreeView, TypeStamp,
+    TaskTypeTreePromote, TaskTypeTreePromoteReceipt, TaskTypeTreeRead, TaskTypeTreeReadReply,
+    TaskTypeTreeView, TypeStamp,
 };
 
 impl From<&TaskTypeRef> for TypeStamp {
@@ -281,7 +285,9 @@ pub struct PlannedSpawnObservation {
 /// behind its parent's tree, and stores a version that already names
 /// another structure in its lookup scope at the next free one). The receipt
 /// gives the version stored and says whether the fork is in force for the
-/// vault or `input.project_ref`.
+/// vault or `input.project_ref`. The stored tree is staged as the owner's:
+/// `vault.task_types.promote` takes it from the fork at that version while
+/// no other write changes the fork.
 ///
 /// # Errors
 ///
@@ -303,7 +309,7 @@ pub fn pin_tree_as(
     }
     check_structure(&input.nodes)?;
     let mut tree = authored_tree(version, &input.nodes);
-    tree.version = store_team_type_tree(
+    tree.version = store_owner_team_type_tree(
         vault,
         input.fork_ref,
         &tree,
@@ -336,6 +342,50 @@ fn fork_in_force(vault: &Vault, fork: EntityId, project: Option<EntityId>) -> Op
             None
         }
     }
+}
+
+/// Puts one task-type tree in force for the vault, as the owner: the tree
+/// `vault.task_types.pin` stored on `input.fork_ref` at `input.tree_version`
+/// (the version its receipt gave as `stored`), or the tree the earlier vault
+/// revision `input.restore_ref` carried, at its own version. One write mints
+/// a revision of the team-shape head carrying that tree, marks it
+/// owner-pinned and supersedes the head; the owner is checked again in that
+/// write. No gate scores an owner's pin (ARCH-0079 #seed-pin). The Coach's
+/// later wins over a pinned head stay proposals; the owner reverts through
+/// this door, and the restored tree stays pinned.
+///
+/// # Errors
+///
+/// `BAD_REQUEST` unless the input names `fork_ref` with `tree_version`, or
+/// `restore_ref` alone; the promote's refusals (no head in force, a fork that
+/// is not open or not in the lineage, a tree at another version, scoped to a
+/// project, behind the tree in force or at a version another structure on
+/// the chain holds, a revision not on the vault chain); a stale owner proof;
+/// storage errors.
+pub fn promote_tree_as(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: TaskTypeTreePromote,
+) -> MemoryResult<TaskTypeTreePromoteReceipt> {
+    owner.revalidate(vault)?;
+    let source = match (input.fork_ref, input.tree_version, input.restore_ref) {
+        (Some(fork), Some(tree_version), None) => TreePromoteSource::Pin { fork, tree_version },
+        (None, None, Some(revision)) => TreePromoteSource::Restore { revision },
+        _ => {
+            return Err(MemoryError::bad_request_with(
+                "a promote names fork_ref with tree_version, or restore_ref alone",
+                &[
+                    "Promote the tree vault.task_types.pin stored (its fork_ref and stored tree_version), or name an earlier team-shape revision as restore_ref.",
+                ],
+            ));
+        }
+    };
+    let promoted = promote_team_type_tree(vault, owner, source, crate::unix_seconds_now())?;
+    Ok(TaskTypeTreePromoteReceipt {
+        in_force_skill_ref: promoted.head,
+        superseded_skill_ref: promoted.previous,
+        tree: TaskTypeTreeView::from(&promoted.tree),
+    })
 }
 
 /// Reads, as the owner, the task-type tree in force for the vault or
