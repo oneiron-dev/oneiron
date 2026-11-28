@@ -122,7 +122,7 @@ impl Memory<'_> {
                 .vault
                 .measure_limit(crate::limit_ask::EngineLimit::ClaimInputJsonBytes, bytes);
             writes.push(
-                self.resolve_claim_write(claim.input, true, claim.in_writer, claim.birth)
+                self.resolve_claim_write(claim.input, true, claim.in_writer, claim.birth, None)
                     .map_err(refused_at(index))?,
             );
         }

@@ -1,6 +1,6 @@
 {
   "name": "vault.planner.card",
-  "description": "Reads the planner card of one project and task type: its payoff rows and each admitted pattern skill ranked with its UNTESTED mark, plus a digest of the answer. The owner calls it, or an agent whose Grant names it.",
+  "description": "Reads the planner card of one project and task type: its arms on the GPU line that seats it, payoff rows marked project or vault prior, ranked pattern skills, and a digest. The owner or a Grant naming it calls it; on a line, with a role.",
   "input": "crate::team::planner_card_door::PlannerCardRequest",
   "output": "crate::team::planner_card_door::PlannerCardView",
   "call": "crate::team::planner_card_door::planner_card_embedded(memory, &input)?",

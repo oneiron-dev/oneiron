@@ -334,7 +334,15 @@ pub(crate) enum DoorClaim {
 /// without asking the machine again (review round 1 of #10466). A same-id
 /// retry finds its admission intent settled (`admission_doors::call_verb`)
 /// and is refused with none of those bytes; a new read asks the machine.
-const UNKEPT_REPLY_VERBS: [&str; 22] = [
+/// The planner card (`vault.planner.card`, design pass 32 section 5.1)
+/// answers a seated family's lane arms only to a caller whose Grant reaches
+/// the family's line and holds a role on it when the card is read
+/// (`team::planner_card_door::planner_card_as`). The row's door proof judges
+/// only the verb Grant, so a kept card would answer a same-id retry after
+/// the owner took the line role away (review round 2 of #10646). A same-id
+/// retry is answered with none of the first card; a new read judges the line
+/// again.
+const UNKEPT_REPLY_VERBS: [&str; 23] = [
     "vault.inquire",
     "vault.inquiry.edge.prepare_join",
     "vault.members.accept_with_inquiry_edge",
@@ -357,6 +365,7 @@ const UNKEPT_REPLY_VERBS: [&str; 22] = [
     oneiron::task_verb::sdk::MACHINES_EXECUTION_GET_VERB,
     oneiron::job_history::JOB_HISTORY_VERB,
     oneiron::work_order::LOGS_TAIL_VERB,
+    oneiron::team::planner_card_door::PLANNER_CARD_VERB,
 ];
 
 /// Whether an invocation claim keeps `verb`'s answer for a later request

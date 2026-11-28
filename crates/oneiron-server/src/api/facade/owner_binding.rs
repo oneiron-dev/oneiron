@@ -25,6 +25,7 @@ use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use oneiron::{EdgeActorClass, EntityId};
 
 use super::FacadeApiError;
+use crate::api::mcp_gateway::static_admission::{StaticCaller, StaticCheck};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
@@ -150,10 +151,18 @@ pub(super) fn owner_door_caller(
     auth: &CoreAuth,
     verb: &str,
 ) -> MemoryResult<OwnerDoorCaller> {
-    if auth.is_owner_grade() {
+    let caller = StaticCaller::facade(auth);
+    if crate::api::mcp_gateway::static_admission::static_admission(caller, StaticCheck::OwnerGrade)
+        .is_ok()
+    {
         return facade_owner(server, auth, verb).map(OwnerDoorCaller::Owner);
     }
-    if auth.actor_class() != Some("agent") {
+    if crate::api::mcp_gateway::static_admission::static_admission(
+        caller,
+        StaticCheck::NonOwnerAgent,
+    )
+    .is_err()
+    {
         return Err(owner_refusal(verb));
     }
     host_preflight(server, auth)?;
