@@ -10,15 +10,18 @@ publish = false
 
 [dependencies]
 oneiron-sandbox-contract = { path = "../oneiron-sandbox-contract" }
-oneiron-container = { path = "../oneiron-container" }
 blake3 = "1"
 libc = "0.2"
 serde.workspace = true
 serde_json.workspace = true
-tar = { version = "=0.4.46", default-features = false }
 thiserror.workspace = true
 wasmtime = { version = "=48.0.3", default-features = false, features = ["component-model", "cranelift", "runtime", "std", "wat"] }
 wat = "1"
+
+# Only the Linux guest's container fence, egress relay and native mounts use these.
+[target.'cfg(target_os = "linux")'.dependencies]
+oneiron-container = { path = "../oneiron-container" }
+tar = { version = "=0.4.46", default-features = false }
 
 [dev-dependencies]
 tempfile = "3"

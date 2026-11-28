@@ -146,7 +146,7 @@ fn rlimit_limits() -> HostLimits {
     if unsafe { libc::getrlimit(libc::RLIMIT_AS, &mut current) } == 0
         && current.rlim_cur != libc::RLIM_INFINITY
     {
-        limits.memory_bytes = u64::try_from(current.rlim_cur).unwrap_or(u64::MAX);
+        limits.memory_bytes = current.rlim_cur;
     }
     limits
 }
