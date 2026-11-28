@@ -27,7 +27,7 @@ use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::federation::{
-    FederationGrantRole, FederationGrantScope, PendingAuthorityAct, SharedActKind,
+    FederationGrantRole, FederationGrantScope, OrgAdminStepUp, PendingAuthorityAct, SharedActKind,
 };
 use crate::workspace_roster::WorkspaceRosterPreset;
 
@@ -89,7 +89,9 @@ pub(crate) fn require_owner_seat_skips_no_wait_in_txn(
     if role != FederationGrantRole::Owner || !holds_owner_acts_in_txn(vault, txn, vault_id)? {
         return Ok(());
     }
-    require_role_assigner_in_txn(vault, txn, vault_id, binder, role)?;
+    // The Owner role is an org-root assignment, which no Admin step-up
+    // gates (L7-17), so this check reads none.
+    require_role_assigner_in_txn(vault, txn, vault_id, binder, &OrgAdminStepUp::Absent, role)?;
     if is_owner_in_txn(vault, txn, preset.house_actor_ref, vault_id)? {
         return Ok(());
     }
@@ -124,12 +126,16 @@ pub(crate) fn seat_house_owner_by_act_in_txn(
     let before = house_grants_in_txn(vault, txn, house, vault_id)?
         .first()
         .map(|(_, grant)| grant.role);
+    // The act runs after its request: no step-up of the starter's is shown
+    // here, so the starter must still hold the roles by a live Owner grant
+    // (L7-17: an Admin's assignment stands on its request's step-up).
     link_house_in_txn(
         vault,
         txn,
         &preset,
         FederationGrantRole::Owner,
         starter,
+        &OrgAdminStepUp::Absent,
         now,
     )?;
     let grants = house_grants_in_txn(vault, txn, house, vault_id)?
@@ -165,6 +171,7 @@ impl Vault {
     ) -> Result<PendingAuthorityAct> {
         let (vault_id, house) = {
             let txn = self.store.env.read_txn()?;
+            let step_up = actor.org_admin_step_up();
             let starter = actor.revalidate_person_in_txn(self, &txn)?;
             let preset = stored_preset_in_txn(self, &txn, workspace_ref)?;
             let vault_id = preset.workspace_vault_id;
@@ -179,9 +186,9 @@ impl Vault {
                 return Err(Error::InvalidConfig(NOT_SHARED_REFUSAL.into()));
             }
             let owner = FederationGrantRole::Owner;
-            require_role_assigner_in_txn(self, &txn, vault_id, starter, owner)?;
+            require_role_assigner_in_txn(self, &txn, vault_id, starter, &step_up, owner)?;
             for (_, grant) in house_grants_in_txn(self, &txn, house, vault_id)? {
-                require_role_assigner_in_txn(self, &txn, vault_id, starter, grant.role)?;
+                require_role_assigner_in_txn(self, &txn, vault_id, starter, &step_up, grant.role)?;
             }
             if is_owner_in_txn(self, &txn, house, vault_id)? {
                 return Err(Error::InvalidConfig(HOUSE_ALREADY_OWNER_REFUSAL.into()));

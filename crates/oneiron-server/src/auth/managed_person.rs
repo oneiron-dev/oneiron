@@ -136,7 +136,14 @@ impl CoreAuth {
         path: &str,
         server: &SyncServer,
     ) -> Option<Self> {
-        attested_person(headers, extensions, path, server).map(Self::managed_person_caller)
+        attested_person(headers, extensions, path, server).map(|holder| {
+            let mut caller = Self::managed_person_caller(holder);
+            // The supervisor's signed MFA claim on this same action (L7-17).
+            caller.managed_person_mfa_verified = extensions
+                .get::<crate::managed::ManagedPersonMfaVerified>()
+                .is_some_and(|mark| mark.0 == holder);
+            caller
+        })
     }
 
     /// The person `holder` a supervisor signed one `/mcp` call or the
@@ -181,6 +188,7 @@ impl CoreAuth {
             session_workspace: None,
             managed_owner: None,
             managed_person: Some(holder),
+            managed_person_mfa_verified: false,
         }
     }
 
@@ -189,5 +197,13 @@ impl CoreAuth {
     /// `None`.
     pub(crate) fn managed_person(&self) -> Option<oneiron::EntityId> {
         self.managed_person
+    }
+
+    /// Whether the supervisor signed this request's person action with its
+    /// `mfa_verified` claim, verified at managed ingress (L7-17): the org
+    /// Admin step-up of this one act. Never for an `/mcp` call or a held
+    /// socket, whose action signs no single act.
+    pub(crate) const fn managed_person_mfa_verified(&self) -> bool {
+        self.managed_person_mfa_verified
     }
 }

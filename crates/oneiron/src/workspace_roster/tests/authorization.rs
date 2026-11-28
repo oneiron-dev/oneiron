@@ -3,7 +3,7 @@ use crate::channel_identity::ChannelIdentityStep;
 use crate::error::{GateError, RecordError};
 use crate::subject_model::tests::authorization::root_owner;
 
-type Mutation = fn(&Vault, &MemberOnboardingIntent, &WriteActor) -> Result<()>;
+type Mutation = fn(&Vault, &MemberOnboardingIntent, &OrgAdminWriter) -> Result<()>;
 type RawRows = Vec<(Vec<u8>, Vec<u8>)>;
 
 fn birth(intent: &MemberOnboardingIntent) -> &CompanionBirthIntent {
@@ -111,7 +111,7 @@ fn every_onboarding_mutation_rechecks_revoked_authority_after_preflight() -> Res
                 &intent,
                 &intent.actor_ref,
                 &intent.actor_definition,
-                &owner,
+                &stepped_up(owner),
             )?;
         }
         if matches!(
@@ -122,7 +122,7 @@ fn every_onboarding_mutation_rechecks_revoked_authority_after_preflight() -> Res
                 | "persona baseline"
                 | "profile grant"
         ) {
-            ensure_companion_person(&vault, &intent, &companion, &owner)?;
+            ensure_companion_person(&vault, &intent, &companion, &stepped_up(owner))?;
         }
         if matches!(
             name,
@@ -133,13 +133,13 @@ fn every_onboarding_mutation_rechecks_revoked_authority_after_preflight() -> Res
                 &intent,
                 &companion.actor_ref,
                 &companion.actor_definition,
-                &owner,
+                &stepped_up(owner),
             )?;
         }
         if name == "mailbox" {
             register_mailbox_custody(&vault, &requested, &requested.address)?;
         }
-        require_workspace_authority(&vault, VAULT_ID, &owner)?;
+        require_workspace_authority(&vault, VAULT_ID, &stepped_up(owner))?;
         vault.put_authority_log_entry(
             &revoke,
             TimeRange {
@@ -149,7 +149,7 @@ fn every_onboarding_mutation_rechecks_revoked_authority_after_preflight() -> Res
             102,
         )?;
         let before = durable_rows(&vault)?;
-        let err = mutate(&vault, &intent, &owner).expect_err(name);
+        let err = mutate(&vault, &intent, &stepped_up(owner)).expect_err(name);
         assert_eq!(
             err.kind(),
             ErrorKind::WriteConcurrentWithRevocation,
@@ -171,7 +171,7 @@ fn final_roster_write_observes_revocation_while_waiting_for_writer_lock() -> Res
     let revoke = root_owner(&vault, owner, 0xE4)?;
     vault.onboard_workspace_member_halting_after(
         intent.clone(),
-        &owner,
+        &stepped_up(owner),
         None,
         MemberOnboardingStep::MailboxBound,
     )?;
@@ -195,9 +195,14 @@ fn final_roster_write_observes_revocation_while_waiting_for_writer_lock() -> Res
     let (ready_tx, ready_rx) = std::sync::mpsc::channel();
     let result = std::thread::scope(|scope| -> Result<()> {
         let worker = scope.spawn(|| -> Result<()> {
-            require_workspace_authority(&vault, VAULT_ID, &owner)?;
+            require_workspace_authority(&vault, VAULT_ID, &stepped_up(owner))?;
             ready_tx.send(()).expect("notify successful preflight");
-            record_roster_member(&vault, &intent, &owner, MailboxProofs::one(None))
+            record_roster_member(
+                &vault,
+                &intent,
+                &stepped_up(owner),
+                MailboxProofs::one(None),
+            )
         });
         ready_rx
             .recv_timeout(std::time::Duration::from_secs(10))
@@ -223,12 +228,17 @@ fn journal_completion_rechecks_authority_after_an_authorized_roster_write() -> R
     let revoke = root_owner(&vault, owner, 0xE5)?;
     vault.onboard_workspace_member_halting_after(
         intent.clone(),
-        &owner,
+        &stepped_up(owner),
         None,
         MemberOnboardingStep::MailboxBound,
     )?;
-    record_roster_member(&vault, &intent, &owner, MailboxProofs::one(None))?;
-    require_workspace_authority(&vault, VAULT_ID, &owner)?;
+    record_roster_member(
+        &vault,
+        &intent,
+        &stepped_up(owner),
+        MailboxProofs::one(None),
+    )?;
+    require_workspace_authority(&vault, VAULT_ID, &stepped_up(owner))?;
     vault.put_authority_log_entry(
         &revoke,
         TimeRange {
@@ -246,7 +256,7 @@ fn journal_completion_rechecks_authority_after_an_authorized_roster_write() -> R
             step: MemberOnboardingStep::Complete,
             completed_at: Some(AT),
         },
-        &owner,
+        &stepped_up(owner),
         MailboxProofs::one(None),
     )
     .expect_err("revoked admin cannot publish completion");
@@ -279,7 +289,7 @@ fn admin_without_named_add_member_power_cannot_enter_workspace_write_door() {
         ]));
     seed_federation_grant(&vault, ADMIN_GRANT, &grant);
     assert_eq!(
-        require_workspace_authority(&vault, VAULT_ID, &owner)
+        require_workspace_authority(&vault, VAULT_ID, &stepped_up(owner))
             .expect_err("the Admin role is not an implicit grant of AddMember")
             .kind(),
         ErrorKind::InvalidClaimBody,
@@ -299,7 +309,7 @@ fn admin_without_named_add_member_power_cannot_enter_workspace_write_door() {
 fn enrollment_only_admin_can_enroll_without_read_but_cannot_rename() -> Result<()> {
     let (_dir, vault, intent) = fixture("Antevon");
     let owner = writer(WRITER);
-    vault.onboard_workspace_member(intent.clone(), &owner, None)?;
+    vault.onboard_workspace_member(intent.clone(), &stepped_up(owner), None)?;
     let before = read_preset(&vault, &intent.workspace.workspace_ref)?.unwrap();
     let mut grant = FederationGrant::new(
         FederationGrantScope::vault(VAULT_ID),
@@ -312,7 +322,7 @@ fn enrollment_only_admin_can_enroll_without_read_but_cannot_rename() -> Result<(
             "org:add-member".to_owned()
         ]));
     seed_federation_grant(&vault, ADMIN_GRANT, &grant);
-    require_workspace_authority(&vault, VAULT_ID, &owner)?;
+    require_workspace_authority(&vault, VAULT_ID, &stepped_up(owner))?;
     assert!(
         vault
             .set_workspace_house_display_name(
@@ -349,11 +359,11 @@ fn grant_demotion_blocks_roster_and_rename_but_reauthorization_resumes() -> Resu
     let owner = writer(WRITER);
     vault.onboard_workspace_member_halting_after(
         intent.clone(),
-        &owner,
+        &stepped_up(owner),
         None,
         MemberOnboardingStep::MailboxBound,
     )?;
-    require_workspace_authority(&vault, VAULT_ID, &owner)?;
+    require_workspace_authority(&vault, VAULT_ID, &stepped_up(owner))?;
     seed_federation_grant(
         &vault,
         ADMIN_GRANT,
@@ -366,9 +376,14 @@ fn grant_demotion_blocks_roster_and_rename_but_reauthorization_resumes() -> Resu
     );
     let before = durable_rows_without_authorization_clock(&vault)?;
     assert_eq!(
-        record_roster_member(&vault, &intent, &owner, MailboxProofs::one(None))
-            .expect_err("demoted admin")
-            .kind(),
+        record_roster_member(
+            &vault,
+            &intent,
+            &stepped_up(owner),
+            MailboxProofs::one(None)
+        )
+        .expect_err("demoted admin")
+        .kind(),
         ErrorKind::InvalidClaimBody
     );
     assert!(
@@ -391,10 +406,10 @@ fn grant_demotion_blocks_roster_and_rename_but_reauthorization_resumes() -> Resu
             FederationGrantPreset::Admin,
         ),
     );
-    let outcome = vault.onboard_workspace_member(intent.clone(), &owner, None)?;
+    let outcome = vault.onboard_workspace_member(intent.clone(), &stepped_up(owner), None)?;
     let completed = durable_rows_without_authorization_clock(&vault)?;
     assert_eq!(
-        vault.onboard_workspace_member(intent, &owner, None)?,
+        vault.onboard_workspace_member(intent, &stepped_up(owner), None)?,
         outcome
     );
     assert_eq!(durable_rows_without_authorization_clock(&vault)?, completed);
@@ -410,7 +425,11 @@ fn mailbox_retry_rechecks_custody_and_never_completes_autonomy() -> Result<()> {
     register_mailbox_custody(&vault, &requested, &requested.address)?;
     assert_eq!(
         vault
-            .onboard_workspace_member(intent.clone(), &owner, Some(&mailbox_owner(&vault)?))
+            .onboard_workspace_member(
+                intent.clone(),
+                &stepped_up(owner),
+                Some(&mailbox_owner(&vault)?)
+            )
             .expect_err("Requested lifecycle is not Active")
             .kind(),
         ErrorKind::WorkspaceMailboxAutonomyNotReady
@@ -433,7 +452,7 @@ fn mailbox_retry_rechecks_custody_and_never_completes_autonomy() -> Result<()> {
     );
     let before = durable_rows(&vault)?;
     assert_eq!(
-        bind_delegated_mailbox(&vault, &intent, &requested, &owner)
+        bind_delegated_mailbox(&vault, &intent, &requested, &stepped_up(owner))
             .expect_err("demoted mailbox writer")
             .kind(),
         ErrorKind::InvalidClaimBody
@@ -455,7 +474,7 @@ fn mailbox_retry_rechecks_custody_and_never_completes_autonomy() -> Result<()> {
     );
     vault.revoke_secret(&requested.custody_name, AT + 1)?;
     let before = durable_rows(&vault)?;
-    let err = bind_delegated_mailbox(&vault, &intent, &requested, &owner)
+    let err = bind_delegated_mailbox(&vault, &intent, &requested, &stepped_up(owner))
         .expect_err("existing identity is not proof of live custody");
     assert_eq!(err.kind(), ErrorKind::SecretCustodyNotActive);
     assert_eq!(durable_rows(&vault)?, before);
@@ -505,7 +524,7 @@ fn class_valid_bound_admins_keep_authorized_onboarding_behavior() -> Result<()> 
                 FederationGrantPreset::Admin,
             ),
         );
-        let outcome = vault.onboard_workspace_member(intent.clone(), &admin, None)?;
+        let outcome = vault.onboard_workspace_member(intent.clone(), &stepped_up(admin), None)?;
         let companion = intent.companion.birth().expect("required companion");
         assert_eq!(
             person_substrate(&vault, &companion.person_ref, AT)?,
@@ -517,7 +536,7 @@ fn class_valid_bound_admins_keep_authorized_onboarding_behavior() -> Result<()> 
             Some(intent.person_ref)
         );
         assert_eq!(
-            vault.onboard_workspace_member(intent.clone(), &admin, None)?,
+            vault.onboard_workspace_member(intent.clone(), &stepped_up(admin), None)?,
             outcome
         );
         if class != EdgeActorClass::Human {
@@ -558,7 +577,7 @@ fn mailbox_consent_owner_cannot_be_inferred_from_admin_write_actor() -> Result<(
     let before = durable_rows(&vault)?;
     for authentication in [None, Some(&admin_owner)] {
         assert!(matches!(
-            vault.onboard_workspace_member(intent.clone(), &writer(WRITER), authentication),
+            vault.onboard_workspace_member(intent.clone(), &admin_writer(WRITER), authentication),
             Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(_)))
         ));
         assert_eq!(durable_rows(&vault)?, before);
@@ -604,7 +623,12 @@ fn a_member_who_owns_nothing_onboards_their_mailbox_under_the_owners_authorizati
         .expect("mailbox")
         .identity_ref;
     assert!(matches!(
-        vault.onboard_workspace_member_with_owner(intent.clone(), &writer(WRITER), &member, &owner),
+        vault.onboard_workspace_member_with_owner(
+            intent.clone(),
+            &admin_writer(WRITER),
+            &member,
+            &owner
+        ),
         Err(Error::Record(
             RecordError::WorkspaceMailboxAutonomyNotReady { .. }
         ))
@@ -617,12 +641,14 @@ fn a_member_who_owns_nothing_onboards_their_mailbox_under_the_owners_authorizati
         ("the owner's proof as both", &owner, Some(&owner)),
     ] {
         let result = match owner_proof {
-            None => {
-                vault.onboard_workspace_member(intent.clone(), &writer(WRITER), Some(member_proof))
-            }
+            None => vault.onboard_workspace_member(
+                intent.clone(),
+                &admin_writer(WRITER),
+                Some(member_proof),
+            ),
             Some(owner_proof) => vault.onboard_workspace_member_with_owner(
                 intent.clone(),
-                &writer(WRITER),
+                &admin_writer(WRITER),
                 member_proof,
                 owner_proof,
             ),
@@ -636,13 +662,13 @@ fn a_member_who_owns_nothing_onboards_their_mailbox_under_the_owners_authorizati
     }
     assert!(refused(vault.onboard_workspace_member(
         intent.clone(),
-        &writer(WRITER),
+        &admin_writer(WRITER),
         Some(&owner)
     )));
 
     let outcome = vault.onboard_workspace_member_with_owner(
         intent.clone(),
-        &writer(WRITER),
+        &admin_writer(WRITER),
         &member,
         &owner,
     )?;
@@ -654,11 +680,16 @@ fn a_member_who_owns_nothing_onboards_their_mailbox_under_the_owners_authorizati
     );
     assert!(refused(vault.onboard_workspace_member(
         intent.clone(),
-        &writer(WRITER),
+        &admin_writer(WRITER),
         Some(&member)
     )));
     assert_eq!(
-        vault.onboard_workspace_member_with_owner(intent, &writer(WRITER), &member, &owner)?,
+        vault.onboard_workspace_member_with_owner(
+            intent,
+            &admin_writer(WRITER),
+            &member,
+            &owner
+        )?,
         outcome
     );
     Ok(())
@@ -707,15 +738,24 @@ fn a_member_consent_that_lapses_before_the_grant_mint_mints_no_grant() -> Result
         .identity_ref;
     assert!(
         vault
-            .onboard_workspace_member_with_owner(intent.clone(), &writer(WRITER), &member, &owner)
+            .onboard_workspace_member_with_owner(
+                intent.clone(),
+                &admin_writer(WRITER),
+                &member,
+                &owner
+            )
             .is_err()
     );
     activate_mailbox(&vault, identity)?;
     let grants = type_count(&vault, ENTITY_TYPE_ACCESS_GRANT);
 
     set_consent_window_for_test(move |vault| merge_member_away(vault, member_id));
-    let result =
-        vault.onboard_workspace_member_with_owner(intent.clone(), &writer(WRITER), &member, &owner);
+    let result = vault.onboard_workspace_member_with_owner(
+        intent.clone(),
+        &admin_writer(WRITER),
+        &member,
+        &owner,
+    );
     assert!(
         matches!(
             result,
@@ -755,17 +795,31 @@ fn a_member_consent_that_lapses_before_the_publication_fence_is_refused() -> Res
         .identity_ref;
     assert!(
         vault
-            .onboard_workspace_member_with_owner(intent.clone(), &writer(WRITER), &member, &owner)
+            .onboard_workspace_member_with_owner(
+                intent.clone(),
+                &admin_writer(WRITER),
+                &member,
+                &owner
+            )
             .is_err()
     );
     activate_mailbox(&vault, identity)?;
-    vault.onboard_workspace_member_with_owner(intent.clone(), &writer(WRITER), &member, &owner)?;
+    vault.onboard_workspace_member_with_owner(
+        intent.clone(),
+        &admin_writer(WRITER),
+        &member,
+        &owner,
+    )?;
 
     set_consent_window_for_test(move |vault| {
         assert!(vault.delete_entity(&member_id).expect("delete the member"));
     });
-    let result =
-        vault.onboard_workspace_member_with_owner(intent.clone(), &writer(WRITER), &member, &owner);
+    let result = vault.onboard_workspace_member_with_owner(
+        intent.clone(),
+        &admin_writer(WRITER),
+        &member,
+        &owner,
+    );
     assert!(
         matches!(
             result,
@@ -819,7 +873,7 @@ fn mailbox_actor_identity_context_and_rung_mismatches_leave_no_effect() -> Resul
         }
         assert!(
             vault
-                .onboard_workspace_member(changed, &writer(WRITER), Some(&owner))
+                .onboard_workspace_member(changed, &admin_writer(WRITER), Some(&owner))
                 .is_err()
         );
         assert_eq!(durable_rows(&vault)?, before, "axis {axis}");
@@ -834,7 +888,7 @@ fn revoked_mailbox_proof_blocks_apply_resume_publication_and_completed_replay() 
             let (_dir, vault, intent, owner) = mailbox_fixture()?;
             let requested = intent.delegated_mailbox.as_ref().expect("mailbox");
             assert!(matches!(
-                vault.onboard_workspace_member(intent.clone(), &writer(WRITER), Some(&owner)),
+                vault.onboard_workspace_member(intent.clone(), &admin_writer(WRITER), Some(&owner)),
                 Err(Error::Record(
                     RecordError::WorkspaceMailboxAutonomyNotReady { .. }
                 ))
@@ -844,12 +898,16 @@ fn revoked_mailbox_proof_blocks_apply_resume_publication_and_completed_replay() 
             if stage == 1 {
                 vault.onboard_workspace_member_halting_after(
                     intent.clone(),
-                    &writer(WRITER),
+                    &admin_writer(WRITER),
                     Some(&owner),
                     MemberOnboardingStep::MailboxBound,
                 )?;
             } else if stage == 2 {
-                vault.onboard_workspace_member(intent.clone(), &writer(WRITER), Some(&owner))?;
+                vault.onboard_workspace_member(
+                    intent.clone(),
+                    &admin_writer(WRITER),
+                    Some(&owner),
+                )?;
             }
             let journal = read_journal(&vault, &intent.onboarding_id)?;
             let at = crate::unix_seconds_now();
@@ -876,14 +934,14 @@ fn revoked_mailbox_proof_blocks_apply_resume_publication_and_completed_replay() 
             );
             assert!(
                 vault
-                    .onboard_workspace_member(intent.clone(), &writer(WRITER), Some(&owner))
+                    .onboard_workspace_member(intent.clone(), &admin_writer(WRITER), Some(&owner))
                     .is_err()
             );
             assert!(
                 record_roster_member(
                     &vault,
                     &intent,
-                    &writer(WRITER),
+                    &admin_writer(WRITER),
                     MailboxProofs::one(Some(&owner))
                 )
                 .is_err()
@@ -897,7 +955,7 @@ fn revoked_mailbox_proof_blocks_apply_resume_publication_and_completed_replay() 
                         step: MemberOnboardingStep::Complete,
                         completed_at: Some(AT)
                     },
-                    &writer(WRITER),
+                    &admin_writer(WRITER),
                     MailboxProofs::one(Some(&owner)),
                 )
                 .is_err()
@@ -944,7 +1002,7 @@ fn mailbox_publication_fence_rejects_a_mutation_after_successful_verification() 
     let (_dir, vault, intent, owner) = mailbox_fixture()?;
     let requested = intent.delegated_mailbox.as_ref().expect("mailbox");
     assert!(matches!(
-        vault.onboard_workspace_member(intent.clone(), &writer(WRITER), Some(&owner)),
+        vault.onboard_workspace_member(intent.clone(), &admin_writer(WRITER), Some(&owner)),
         Err(Error::Record(
             RecordError::WorkspaceMailboxAutonomyNotReady { .. }
         ))
@@ -958,7 +1016,7 @@ fn mailbox_publication_fence_rejects_a_mutation_after_successful_verification() 
     )?;
     let before = durable_rows(&vault)?;
     assert!(
-        with_workspace_authority(&vault, VAULT_ID, &writer(WRITER), |_| {
+        with_workspace_authority(&vault, VAULT_ID, &admin_writer(WRITER), |_| {
             require_mailbox_revision(&vault, revision)
         })
         .is_err()
@@ -982,7 +1040,7 @@ fn mailbox_resume_refuses_future_lifecycle_and_changed_member_subject() -> Resul
         // the admin-grant onboarding both run without a binding.
         let requested = intent.delegated_mailbox.as_ref().expect("mailbox");
         assert!(matches!(
-            vault.onboard_workspace_member(intent.clone(), &writer(WRITER), Some(&owner)),
+            vault.onboard_workspace_member(intent.clone(), &admin_writer(WRITER), Some(&owner)),
             Err(Error::Record(
                 RecordError::WorkspaceMailboxAutonomyNotReady { .. }
             ))
@@ -1019,7 +1077,7 @@ fn mailbox_resume_refuses_future_lifecycle_and_changed_member_subject() -> Resul
         let before = durable_rows_without_authorization_clock(&vault)?;
         assert!(
             vault
-                .onboard_workspace_member(intent.clone(), &writer(WRITER), Some(&owner))
+                .onboard_workspace_member(intent.clone(), &admin_writer(WRITER), Some(&owner))
                 .is_err()
         );
         assert_eq!(durable_rows_without_authorization_clock(&vault)?, before);
@@ -1061,7 +1119,7 @@ fn invalid_owner_api_bounds_leave_journal_incomplete_without_grants() -> Result<
                 .max_actions = 0;
         }
         assert!(matches!(
-            vault.onboard_workspace_member(intent.clone(), &writer(WRITER), Some(&owner)),
+            vault.onboard_workspace_member(intent.clone(), &admin_writer(WRITER), Some(&owner)),
             Err(Error::Record(
                 RecordError::WorkspaceMailboxAutonomyNotReady { .. }
             ))
@@ -1069,7 +1127,7 @@ fn invalid_owner_api_bounds_leave_journal_incomplete_without_grants() -> Result<
         activate_mailbox(&vault, entity(MAILBOX_IDENTITY))?;
         let before = durable_rows_without_authorization_clock(&vault)?;
         assert!(matches!(
-            vault.onboard_workspace_member(intent.clone(), &writer(WRITER), Some(&owner)),
+            vault.onboard_workspace_member(intent.clone(), &admin_writer(WRITER), Some(&owner)),
             Err(Error::Gate(GateError::InvalidConsentBound(_)))
         ));
         assert_eq!(

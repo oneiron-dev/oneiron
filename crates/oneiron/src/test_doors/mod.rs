@@ -258,6 +258,7 @@ pub mod mail_landing;
 pub mod mail_pack_setting_keys;
 #[cfg(feature = "sync")]
 pub mod maintenance_facet_receipts;
+pub mod managed_person;
 pub mod masked_checkout;
 #[cfg(feature = "sync")]
 pub mod media_vector_replica;
@@ -287,6 +288,7 @@ pub mod note_review_pass;
 pub mod off_record_reply_body;
 pub mod off_record_shell;
 pub mod off_record_side_row;
+pub mod org_admin_gate;
 pub mod open_conflict_marker;
 pub mod outbound_grant_index;
 pub mod outbound_wait_setting_keys;

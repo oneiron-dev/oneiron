@@ -50,6 +50,16 @@ fn proof(vault: &Vault, person: EntityId) -> AuthenticatedOwner {
         .expect("a person proof")
 }
 
+/// `admin`'s proof for an Admin's membership act. An org Admin's act stands
+/// on an MFA step-up (L7-17); this person holds no slip, so the proof
+/// carries a managed supervisor's `mfa_verified` claim. Only the org-admin
+/// step-up reads it.
+fn admin_proof(vault: &Vault, admin: EntityId) -> AuthenticatedOwner {
+    vault
+        .bind_managed_mfa_verified(proof(vault, admin))
+        .expect("the supervisor's MFA claim binds")
+}
+
 /// A vault and its embedded owner. An erase signs its receipt with the
 /// install's device key, which the delete door loads from the keystore a
 /// host installs.
@@ -143,7 +153,12 @@ fn an_erased_inviters_name_leaves_the_invitation_and_it_no_longer_admits() {
     let invitee = person(&vault);
     share(&vault, owner, Some((admin, Role::Admin)));
     vault
-        .add_shared_member(&proof(&vault, admin), SHARED, invitee, Some(Role::Member))
+        .add_shared_member(
+            &admin_proof(&vault, admin),
+            SHARED,
+            invitee,
+            Some(Role::Member),
+        )
         .expect("the Admin invites a Member");
     let before = pending_invitation(&vault, invitee);
     assert_eq!(before.inviter, admin.to_hex());
@@ -182,7 +197,12 @@ fn an_invitee_still_declines_an_invitation_whose_inviter_was_erased() {
     let invitee = person(&vault);
     share(&vault, owner, Some((admin, Role::Admin)));
     vault
-        .add_shared_member(&proof(&vault, admin), SHARED, invitee, Some(Role::Member))
+        .add_shared_member(
+            &admin_proof(&vault, admin),
+            SHARED,
+            invitee,
+            Some(Role::Member),
+        )
         .expect("the Admin invites a Member");
 
     hard_erase(&vault, admin);
@@ -212,7 +232,12 @@ fn a_live_owner_invites_again_a_person_whose_inviter_was_erased() {
     let invitee = person(&vault);
     share(&vault, owner, Some((admin, Role::Admin)));
     vault
-        .add_shared_member(&proof(&vault, admin), SHARED, invitee, Some(Role::Member))
+        .add_shared_member(
+            &admin_proof(&vault, admin),
+            SHARED,
+            invitee,
+            Some(Role::Member),
+        )
         .expect("the Admin invites a Member");
     let stale = pending_invitation(&vault, invitee);
 

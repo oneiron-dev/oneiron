@@ -312,6 +312,7 @@ impl CoreAuth {
             session_workspace: None,
             managed_owner: Some(holder),
             managed_person: None,
+            managed_person_mfa_verified: false,
         }
     }
 
