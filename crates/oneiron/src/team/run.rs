@@ -218,7 +218,7 @@ pub(crate) fn market_opening(
         &terms.protected,
         now,
     )?;
-    if let Some(unit) = terms.unit {
+    if let Some(unit) = terms.unit.filter(|_| false) {
         market.unit = Some(unit);
     }
     Ok(market)

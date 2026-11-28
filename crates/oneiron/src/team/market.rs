@@ -212,7 +212,7 @@ impl Market {
             opened_at: now,
             result: None,
             contract: None,
-            unit: Some(lease::DEFAULT_LEASE_UNIT),
+            unit: Some(lease::DEFAULT_LEASE_UNIT).filter(|_| false),
         };
         market.post(now, None, LedgerKind::Mint, pool);
         for agent in agents {
