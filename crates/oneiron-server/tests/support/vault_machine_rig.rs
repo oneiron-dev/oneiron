@@ -942,6 +942,15 @@ impl Rig {
     /// One step of a session (row W1) on the session offer, each chunk admitted under its own
     /// quote's line, reporting to the run's receipts.
     pub(crate) fn step_session(&self, run: &JobRun) -> Result<GpuJobStepReport, GpuJobError> {
+        self.step_session_with(run, &self.connector)
+    }
+
+    /// [`Self::step_session`] on `connector`.
+    pub(crate) fn step_session_with(
+        &self,
+        run: &JobRun,
+        connector: &dyn GpuJobConnector,
+    ) -> Result<GpuJobStepReport, GpuJobError> {
         let offer = session_offer();
         let admission_of = |quote: &GpuJobQuote| {
             let declaration = RunDeclaration::declared(BudgetLine {
@@ -965,7 +974,7 @@ impl Rig {
             &run.job.id,
             &offer,
             &self.permits,
-            &self.connector,
+            connector,
             &renewal,
             self.clock.now_ms(),
         )

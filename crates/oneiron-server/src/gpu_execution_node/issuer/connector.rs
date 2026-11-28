@@ -599,8 +599,9 @@ impl GpuJobConnector for VaultMachineConnector {
     /// open next one's too, and never before any key's own bound; that next chunk's dispatch
     /// closes with it:
     /// one never dispatched stays so (its send refuses once the current chunk is written off),
-    /// and one whose end the issuer holds refuses the door before anything closes, so the step
-    /// settles it. A repeat answers `Ok`.
+    /// one whose end the node signed as never started closes and settles zero, and one whose end
+    /// says it ran refuses the door before anything closes, so the step settles it. A repeat
+    /// answers `Ok`.
     fn write_off(&self, job: &GpuJob, now_ms: u64) -> Result<(), GpuConnectorError> {
         self.write_off_job(job, now_ms)
     }

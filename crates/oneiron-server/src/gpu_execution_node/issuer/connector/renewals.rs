@@ -14,7 +14,8 @@ use super::{
 };
 use crate::gpu_execution_node::issuer::NOT_AVAILABLE_TO_THIS_CALLER;
 use crate::gpu_execution_node::wire::{
-    JobAnswer, JobEnd, JobRequest, JobState, JobSubmit, SignedJobSubmit, Starter, TemplateKind,
+    JobAnswer, JobEnd, JobRequest, JobState, JobSubmit, SignedJobReceipt, SignedJobSubmit, Starter,
+    TemplateKind,
 };
 
 impl VaultMachineConnector {
@@ -304,7 +305,11 @@ impl VaultMachineConnector {
 
     /// Door 10 for `job` (pass 33, 8.5; row W1): its current chunk's dispatch closes as written
     /// off, with a session's open next chunk's, as `GpuJobConnector::write_off` on the
-    /// connector says.
+    /// connector says. A next chunk whose end the node signed as never started (it refused the
+    /// renewal, or the run ended before it) has nothing to wait for: it closes for good, and the
+    /// door's own write settles it at zero, the value a key that never started bills (LE-2 = A;
+    /// ANSWER W1-DOOR10-NEVER-STARTED-RENEWAL = A). The current chunk still waits for the run's
+    /// bound. Every refusal comes before anything closes.
     pub(super) fn write_off_job(&self, job: &GpuJob, now_ms: u64) -> Result<(), GpuConnectorError> {
         let chunk = job.chunk().ok_or_else(|| refused("write_off_no_chunk"))?;
         let key = chunk.idempotency_key.as_str();
@@ -315,7 +320,7 @@ impl VaultMachineConnector {
             .map(|next| next.idempotency_key.as_str());
         if let Some(next_key) = next_key {
             self.keys
-                .with(next_key, || self.refuse_confirmed_end(next_key))?;
+                .with(next_key, || self.renewal_end(job, next_key))?;
         }
         let run_cutoff_ms = self.session_run_cutoff_ms(job)?;
         self.keys
@@ -323,9 +328,12 @@ impl VaultMachineConnector {
         let Some(next_key) = next_key else {
             return Ok(());
         };
-        // The run's cutoff is read again under the next chunk's lock: a send of it that came
-        // after the first read is bounded by its own window too.
+        // Read again under the next chunk's lock: a send of it that came after the first read
+        // is bounded by its own window too.
         match self.keys.with(next_key, || {
+            if self.renewal_end(job, next_key)? == RenewalEnd::NeverStarted {
+                return self.close_never_started(next_key, now_ms);
+            }
             let run_cutoff_ms = self.session_run_cutoff_ms(job)?;
             self.write_off_key(next_key, run_cutoff_ms, now_ms)
         }) {
@@ -339,14 +347,72 @@ impl VaultMachineConnector {
         }
     }
 
-    /// `end_confirmed` when the issuer holds `key`'s terminal receipt: its step settles it, so
-    /// no write-off may write it zero. Under the key's lock.
-    fn refuse_confirmed_end(&self, key: &str) -> Result<(), GpuConnectorError> {
-        if self.vault().job_dispatch(key).map_err(store)?.is_some()
-            && self.stored_terminal(key)?.is_some()
-        {
+    /// What door 10 may do with a session's open next chunk `key` (row W1), under its lock.
+    /// `Open` when the issuer holds no terminal receipt of it: it is written off under the run's
+    /// bound, or was never sent. `NeverStarted` when the issuer holds the node's signed end
+    /// saying the chunk never started, checked again before door 10 trusts it (ANSWER
+    /// W1-DOOR10-NEVER-STARTED-RENEWAL = A, 1): its signature, that it names this key, the
+    /// dispatch row's node and this issuer, and that the row is this job's and continues this
+    /// session. An end saying the chunk ran refuses `end_confirmed`, so the step bills it; a
+    /// check that fails refuses with its name.
+    fn renewal_end(&self, job: &GpuJob, key: &str) -> Result<RenewalEnd, GpuConnectorError> {
+        let Some(row) = self.vault().job_dispatch(key).map_err(store)? else {
+            return Ok(RenewalEnd::Open);
+        };
+        let Some(observation) = self.vault().job_observation(key).map_err(store)? else {
+            return Ok(RenewalEnd::Open);
+        };
+        let signed = decode::<SignedJobReceipt>(&observation.receipt)?;
+        if signed.receipt.state != JobState::Ended {
+            return Ok(RenewalEnd::Open);
+        }
+        if signed.receipt.started || signed.receipt.end == Some(JobEnd::Continued) {
             return Err(refused("end_confirmed"));
         }
+        if signed.verify(self.parts.signer.as_ref()).is_err() {
+            return Err(refused("end_unverified: receipt_signature_invalid"));
+        }
+        let receipt = &signed.receipt;
+        if receipt.key != key
+            || receipt.machine != row.machine
+            || receipt.issuer != self.parts.issuer
+        {
+            return Err(refused("end_unverified: receipt_names_another_chunk"));
+        }
+        let submit = decode::<SignedJobSubmit>(&row.submit)?.submit;
+        if row.job != job.id || submit.job != job.id || submit.continues.as_deref() != job.run_key()
+        {
+            return Err(refused("end_unverified: chunk_of_another_session"));
+        }
+        Ok(RenewalEnd::NeverStarted)
+    }
+
+    /// Closes a session's next chunk whose signed end says it never started, for good, so
+    /// nothing is sent for its key again. A row its node's refusal closed already is left as it
+    /// is, so a repeat writes nothing.
+    fn close_never_started(&self, key: &str, now_ms: u64) -> Result<(), GpuConnectorError> {
+        let Some(row) = self.vault().job_dispatch(key).map_err(store)? else {
+            return Ok(());
+        };
+        if row.phase == DispatchPhase::Closed && row.closed.is_some() {
+            return Ok(());
+        }
+        self.update(key, |row| {
+            row.phase = DispatchPhase::Closed;
+            row.closed.get_or_insert(DispatchClose::WrittenOff {
+                at_ms: now_ms,
+                late_receipt: None,
+            });
+        })?;
         Ok(())
     }
+}
+
+/// Door 10's reading of a session's open next chunk (row W1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RenewalEnd {
+    /// The issuer holds no terminal receipt of it.
+    Open,
+    /// The node's checked, signed end says it never started.
+    NeverStarted,
 }
