@@ -11,8 +11,10 @@
 //! is held home under LE-ARCHIVE-PERIOD-SEED = A; every row travels.
 //!
 //! A job's quote inputs are its starter's own JSON, stored inside the job's MessagePack row. A
-//! job whose inputs name a password stays home: the export reads the row's map keys as field
-//! names, as the release doors read a body (blind review round 1 of #10515, P1).
+//! job whose inputs name a password stays home: the export reads those inputs' keys as field
+//! names, as the document pass reads a JSON row (blind review round 1 of #10515, P1). A map key
+//! of a typed row is no caller's field name, so a row whose map key reads as a credential word
+//! and holds no secret still travels.
 //!
 //! Red on #10489's head: the seven tables are unclassified
 //! (tests/archive_side_catalogue_unclassified.txt), so the export carries no row of them.
@@ -31,6 +33,7 @@ use oneiron::job_workload::{
 };
 use oneiron::llm::run_admission::{AllocationRef, gpu_line_allocation_id};
 use oneiron::store::GateDecisionId;
+use oneiron::test_doors::archive_side_catalogue::retained_row_withholds_credential;
 use oneiron::test_doors::lane_economy_archive::{
     SIBLING_TABLES, exported_rows, live_rows, put_gpu_job_allowance, put_running_gpu_job,
     put_running_gpu_job_with_inputs,
@@ -283,10 +286,58 @@ fn a_job_whose_quote_inputs_name_a_password_stays_home() {
         "the second job's row holds the password as given"
     );
     assert_eq!(clean.len(), 1, "the fixture's job is the other live row");
+    for ((key, value), withheld) in [(&named[0], true), (&clean[0], false)] {
+        assert_eq!(
+            retained_row_withholds_credential("GPU_JOB", key, value).expect("the envelope encodes"),
+            withheld,
+            "the export withholds the job whose inputs name a password, and only that job"
+        );
+    }
+
+    let archive = fixture
+        .vault
+        .export_whole_vault(true)
+        .expect("whole-vault export")
+        .bytes()
+        .to_vec();
+    let (_dest_dir, dest) = open_destination();
+    let dest_owner = dest
+        .ensure_embedded_owner_actor()
+        .expect("the destination's embedded owner");
+    let dest_proof = dest
+        .authenticate_owner(
+            dest_owner,
+            &dest_owner.to_hex(),
+            true,
+            GateDecisionId::now(),
+        )
+        .expect("the destination owner's proof");
+    dest.import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &dest_proof)
+        .expect("the owner's restore");
     assert_eq!(
-        exported(&fixture.vault, "GPU_JOB"),
+        exported(&dest, "GPU_JOB"),
         clean,
-        "the export carries the clean job byte for byte and leaves the password's job home"
+        "the archive carries the clean job byte for byte and leaves the password's job home"
+    );
+}
+
+#[test]
+fn a_typed_rows_credential_worded_map_key_travels() {
+    // A team receipt's role counts, keyed by the names its recorder copied: a role named `token`
+    // holds a head count, no secret.
+    let receipt = rmpv::Value::Map(vec![(
+        rmpv::Value::from("roles"),
+        rmpv::Value::Map(vec![
+            (rmpv::Value::from("lead"), rmpv::Value::from(1)),
+            (rmpv::Value::from("token"), rmpv::Value::from(2)),
+        ]),
+    )]);
+    let mut value = Vec::new();
+    rmpv::encode::write_value(&mut value, &receipt).expect("encode the receipt");
+    assert!(
+        !retained_row_withholds_credential("TEAM_RECEIPT", &[], &value)
+            .expect("the envelope encodes"),
+        "a typed row whose map key reads as a credential word and holds no secret travels"
     );
 }
 

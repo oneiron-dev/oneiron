@@ -360,7 +360,9 @@ pub(crate) fn retained_side_row_withholds_credential(row: &SideRowBytes) -> bool
     let Ok(envelope) = RETAINED_SIDE_ROWS.decode_value(&row.value) else {
         return true;
     };
-    if key_withholds_credential(&envelope.source_key) {
+    if key_withholds_credential(&envelope.source_key)
+        || caller_json_withholds_credential(&envelope.source_table, &envelope.source_value)
+    {
         return true;
     }
     match retained_decl(&envelope.source_table).map(|decl| decl.codec) {
@@ -376,6 +378,21 @@ pub(crate) fn retained_side_row_withholds_credential(row: &SideRowBytes) -> bool
     }
 }
 
+/// Whether the JSON a caller wrote into a retained row names a credential under the document
+/// pass, its object keys read as field names: a GPU job's quote inputs (`{"password": ...}`).
+/// The tree pass below writes a MessagePack map as `[key, value]` pairs, so it reads such a key
+/// as text and never as a field name (blind review round 1 of #10515, P1). Only such caller JSON
+/// is read this way: a typed field named like a credential is the engine's own (an export
+/// receipt's `secret` is the id of a custody record), and so is a map key an engine writer
+/// chose. A `GPU_JOB` value that does not read as a job is withheld.
+fn caller_json_withholds_credential(source_table: &str, source_value: &[u8]) -> bool {
+    if source_table != crate::side_table::GPU_JOB.name {
+        return false;
+    }
+    crate::gpu_job::stored_job_inputs(source_value)
+        .is_none_or(|inputs| inputs.iter().any(json_withholds_credential))
+}
+
 /// Whether one source key carries a credential: read as a JSON string when it is UTF-8, else as
 /// bytes.
 fn key_withholds_credential(key: &[u8]) -> bool {
@@ -389,11 +406,7 @@ fn key_withholds_credential(key: &[u8]) -> bool {
 }
 
 /// Whether one decoded MessagePack value carries a credential: the value as the archive tree
-/// reads it, every binary, extension or byte-array payload read as bytes, and the value read as
-/// a body by the release doors' rules, its map keys as field names. The archive tree writes a map
-/// as `[key, value]` pairs, so the document pass reads a key as text and never as a field name: a
-/// GPU job's quote inputs `{"password": ...}` would travel on that pass alone (blind review round
-/// 1 of #10515, P1).
+/// reads it, and every binary, extension or byte-array payload read as bytes.
 fn tree_withholds_credential(value: &[u8], version_bytes: usize) -> bool {
     let Some(body) = value.get(version_bytes..) else {
         return opaque_withholds_credential(value);
@@ -412,9 +425,7 @@ fn tree_withholds_credential(value: &[u8], version_bytes: usize) -> bool {
     let Ok(json) = serde_json::to_value(&tree) else {
         return opaque_withholds_credential(value);
     };
-    json_withholds_credential(&json)
-        || payload_withholds_credential(&decoded)
-        || crate::batch::secret_scan::release_decoded_hit(body).is_some()
+    json_withholds_credential(&json) || payload_withholds_credential(&decoded)
 }
 
 /// Whether a binary, extension or byte-array payload anywhere in `value` reads as a credential.
