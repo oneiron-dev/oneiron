@@ -58,9 +58,6 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use oneiron_organ_host::FloorLease;
 
-/// What a session's renewal must leave before its chunk's cutoff for the node to admit it: the
-/// issuer's step renews further ahead than this (row W1).
-pub(crate) use admission::RENEWAL_MARGIN_NS;
 pub use incidents::{IncidentKind, NodeIncident};
 pub use job_unit::{
     EndRecord, JobKeyId, JobUnit, JobUnitError, JobUnitPhase, JobUnitStatus, LaunchFile, NodeClock,

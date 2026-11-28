@@ -27,6 +27,7 @@ use super::journal::{EndingCause, JobJournal, JournalEvent, JournalWriteError, N
 use super::node_parts::{GpuSlotRequest, NodeDevices};
 use super::receipt::{ReceiptClock, chunk_receipt_of, receipt_of, sign_receipt};
 use super::{BUSY_RETRY_AFTER_MS, NodeBook, NodeGate, NodeJobs};
+use crate::gpu_execution_node::renewal_timing::RENEWAL_MARGIN_NS;
 use crate::gpu_execution_node::wire::{
     JobAnswer, JobEnd, JobReceipt, JobRefusal, JobReserve, JobState, JobStatusAnswer,
     SignedJobSubmit, SlotSelector,
@@ -35,8 +36,6 @@ use crate::gpu_execution_node::wire::{
 const MIB: u64 = 1024 * 1024;
 
 const NANOS_PER_SEC: u64 = 1_000_000_000;
-
-pub(crate) use crate::gpu_execution_node::renewal_timing::RENEWAL_MARGIN_NS;
 
 /// A renewal's refusals that no wait undoes (row W1): the run is gone or
 /// can no longer take a renewal, the signed submit expired, or the run
