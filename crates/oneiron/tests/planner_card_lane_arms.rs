@@ -531,6 +531,10 @@ fn a_grant_without_a_role_on_the_family_line_is_refused_the_card() {
         .agent_card(narrow, family)
         .expect_err("a planner Grant whose scope does not reach the line");
     assert_eq!(refused.code, MEMORY_CODE_FORBIDDEN, "{refused:?}");
+    assert!(
+        refused.message.contains("not_this_line"),
+        "a Grant that does not reach the line's project is refused not_this_line; seen {refused:?}"
+    );
 
     let owner = fixture.owner_card(family, None);
     for (agent, role) in [(planner, "planner"), (lead, "lead")] {

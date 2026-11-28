@@ -41,7 +41,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::gpu_line::{GpuLine, LineRole, doors_caller};
 use crate::learning::doors::{LearningCellKey, MeasuredLearningEstimate};
-use crate::memory::{Memory, MemoryResult};
+use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::receipt::task_type_ref::TypeRef;
 use crate::skill::skill_loadable;
 
@@ -322,7 +322,7 @@ pub fn planner_card_as_owner(
     let txn = vault.store.env.read_txn()?;
     owner.revalidate_in_txn(vault, &txn)?;
     let project = input.project()?;
-    let line = family_line_in_txn(vault, &txn, project)?;
+    let line = family_line_in_txn(vault, &txn, project, now_ms)?;
     Ok(planner_card_read_in_txn(vault, &txn, input, project, line.as_ref(), now_ms)?.0)
 }
 
@@ -350,10 +350,15 @@ pub fn planner_card_as(
     let txn = vault.store.env.read_txn().map_err(Error::from)?;
     memory.verb_grant_caller_admits_in_txn(&txn, owner, PLANNER_CARD_VERB)?;
     let project = input.project()?;
-    let line = family_line_in_txn(vault, &txn, project)?;
+    let line = family_line_in_txn(vault, &txn, project, now_ms)?;
     if let Some(line) = &line {
-        doors_caller::admit_in_txn(memory, &txn, owner, PLANNER_CARD_VERB, line.project)?
-            .require_role(line, &LINE_READ_ROLES, PLANNER_CARD_VERB)?;
+        match doors_caller::admit_in_txn(memory, &txn, owner, PLANNER_CARD_VERB, line.project) {
+            Ok(caller) => caller.require_role(line, &LINE_READ_ROLES, PLANNER_CARD_VERB)?,
+            // The verb check above admitted the caller, so a refusal here is
+            // its Grant not reaching the line's project: no role on this line.
+            Err(error) if error.code == MEMORY_CODE_FORBIDDEN => return Err(not_this_line()),
+            Err(error) => return Err(error),
+        }
     }
     let (view, sources) =
         planner_card_read_in_txn(vault, &txn, input, project, line.as_ref(), now_ms)?;
@@ -376,6 +381,16 @@ pub fn planner_card_embedded(
     let owner = memory.embedded_owner(PLANNER_CARD_VERB).ok();
     let now_ms = memory.vault().now_recorded_ms();
     planner_card_as(memory, owner.as_ref(), input, now_ms)
+}
+
+/// The refusal of a Grant that admits the verb but does not reach the line's
+/// project, as the role check words a Grant with no role on the line.
+fn not_this_line() -> MemoryError {
+    MemoryError::new(
+        MEMORY_CODE_FORBIDDEN,
+        format!("{PLANNER_CARD_VERB}: not_this_line: the Grant does not reach this line's project"),
+        &["Ask the owner to widen the Grant to the line's project and name it in a role list."],
+    )
 }
 
 /// The roles that read a line's card: any of the three.

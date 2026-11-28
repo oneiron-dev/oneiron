@@ -9,6 +9,8 @@
 //! period's holds and claims), so the card shows what the next draw would
 //! see. Every number is the line's: the period record, its policy and
 //! `forecast_score_after`.
+use std::collections::BTreeSet;
+
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
@@ -16,9 +18,10 @@ use crate::experiment_arm::{
     ArmDecision, ArmState, ExperimentArm, ForecastScoreRow, RunnerRef, forecast_scores,
 };
 use crate::gpu_line::{
-    Bucket, ClaimState, GpuLine, LineRefusal, PeriodRoom, RuleRef, Track, claims_at_rung_in_txn,
-    line_in_txn, line_refusals_in_txn, period_view_in_txn,
+    Bucket, ClaimState, FamilySeat, GpuLine, LineRefusal, PeriodRoom, RuleRef, SpendRow, Track,
+    claims_at_rung_in_txn, line_in_txn, line_refusals_in_txn, period_view_in_txn,
 };
+use crate::workspace_roster::ProjectReader;
 use crate::{EntityId, Vault};
 
 /// The most arms one card page lists.
@@ -31,7 +34,8 @@ pub struct PlannerCardLaneArms {
     pub line: String,
     /// The kind of the family's seat: its live one, else its newest.
     pub track: Track,
-    /// Whether that seat is live.
+    /// Whether that seat is live now: a new idea the mint of the period that
+    /// holds now no longer funds is not, though its row is not yet marked.
     pub seated: bool,
     /// The family's arms on this line, newest first: one page of at most
     /// [`PLANNER_CARD_ARMS_PAGE`].
@@ -82,7 +86,8 @@ pub struct PlannerCardRoom {
     pub minted: bool,
     /// Each bucket the family can draw: its floor, the pinned pool when its
     /// track is the pinned one, each market ceiling in force (none for a new
-    /// idea), and each live first-allowance hold of its arms.
+    /// idea), and each live first-allowance hold of its arms, a spent one
+    /// (no room left) too.
     pub buckets: Vec<PlannerCardBucket>,
 }
 
@@ -95,13 +100,15 @@ pub struct PlannerCardBucket {
     pub left: u64,
 }
 
-/// The line that seats `family` (section 5.1: family -> line). A family is a
-/// child project of its lane (`vault.gpu.lines.families.admit` refuses any
-/// other), so its line is one set on a project it descends from over the
-/// stored parents ([`Vault::project_lines_in_txn`], the structure a setting
-/// read walks: a line here only ever adds a check) that seats it: the one
-/// where its seat is live, else the one holding its newest seat by admission
-/// time. `None` when no such line ever seated it.
+/// The line that seats `family` (section 5.1: family -> line), from the
+/// lines' stored seats: the one where its seat stands at `now_ms`
+/// ([`standing_seat`]), else the one holding its newest seat by admission
+/// time. A family is seated as a child project of its lane
+/// (`vault.gpu.lines.families.admit` refuses any other), so the lines on the
+/// projects it descends from over the stored parents
+/// ([`Vault::project_lines_in_txn`]) are read first; a family moved under
+/// another parent since keeps its seat, so every other stored project's line
+/// is read after them. `None` when no line ever seated it.
 ///
 /// # Errors
 ///
@@ -110,13 +117,22 @@ pub(super) fn family_line_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     family: EntityId,
+    now_ms: u64,
 ) -> Result<Option<GpuLine>> {
+    let mut projects = vault.project_lines_in_txn(txn, family)?;
+    if let Some(reader) = ProjectReader::new(&vault.store, txn, vault.privacy_posture())? {
+        for (project, _, _) in reader.all()? {
+            if !projects.contains(&project) {
+                projects.push(project);
+            }
+        }
+    }
     let mut newest: Option<(u64, GpuLine)> = None;
-    for project in vault.project_lines_in_txn(txn, family)? {
+    for project in projects {
         let Some(line) = line_in_txn(vault, txn, &project)? else {
             continue;
         };
-        if line.seat(&family).is_some() {
+        if standing_seat(&line, &family, now_ms).is_some() {
             return Ok(Some(line));
         }
         let Some(at_ms) = line.last_seat(&family).map(|seat| seat.admitted_at_ms) else {
@@ -130,6 +146,22 @@ pub(super) fn family_line_in_txn(
         }
     }
     Ok(newest.map(|(_, line)| line))
+}
+
+/// The live seat of `family` on `line` as it stands at `now_ms`. A new idea
+/// lapses from the period its funded periods end (LE-6), and the mint of
+/// that period marks it at the next write door ([`FamilySeat::lapses_from`]):
+/// until then its row still reads live, so the same rule is applied here at
+/// the period that holds now.
+fn standing_seat<'l>(line: &'l GpuLine, family: &EntityId, now_ms: u64) -> Option<&'l FamilySeat> {
+    let seat = line.seat(family)?;
+    match (
+        seat.lapses_from(line.budget.new_idea_periods),
+        line.period_index(now_ms),
+    ) {
+        (Some(lapse), Ok(index)) if lapse <= index => None,
+        _ => Some(seat),
+    }
 }
 
 /// The `lane_arms` part of `family` on `line` at `now_ms`, the page after
@@ -148,7 +180,7 @@ pub(super) fn lane_arms_in_txn(
     now_ms: u64,
 ) -> Result<PlannerCardLaneArms> {
     let after = cursor.map(parse_cursor).transpose()?;
-    let seated = line.seat(&family);
+    let seated = standing_seat(line, &family, now_ms);
     let track = seated
         .or_else(|| line.last_seat(&family))
         .map(|seat| seat.track)
@@ -272,10 +304,23 @@ fn room_in_txn(
             rule: table.rule,
         }));
     }
+    // Each live hold the period's rows carry, a spent one too: its room is 0.
+    let held: BTreeSet<EntityId> = rows
+        .iter()
+        .filter_map(|row| match row {
+            SpendRow::Hold {
+                arm, family: of, ..
+            } if *of == family => Some(*arm),
+            _ => None,
+        })
+        .collect();
     buckets.extend(
         arms.iter()
             .map(|arm| Bucket::FirstAllowance { arm: arm.id })
-            .filter(|bucket| room.capacity(*bucket) > 0),
+            .filter(|bucket| match bucket {
+                Bucket::FirstAllowance { arm } => held.contains(arm) || room.capacity(*bucket) > 0,
+                _ => false,
+            }),
     );
     Ok(Some(PlannerCardRoom {
         period: period.index,
